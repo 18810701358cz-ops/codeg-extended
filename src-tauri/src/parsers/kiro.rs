@@ -595,16 +595,47 @@ pub(crate) fn canonical_tool(name: &str, input: &Value) -> Option<CanonicalTool>
 /// (`write`'s `command` reads as a shell command, `read` has no path); a
 /// `command` with no `path` beside it is `shell`, which Kiro spells no other
 /// way.
+///
+/// The caller REPLACES the approval card's input with [`canonical_tool`]'s,
+/// so a tool is recognized only when its input holds that tool's own
+/// arguments and nothing else — every one of which the canonical form
+/// carries. An MCP tool that merely shares an argument name (`command`,
+/// `operations`) is left alone, or its other arguments would vanish from
+/// what the user is approving.
 pub(crate) fn tool_name_from_input(input: &Value) -> Option<&'static str> {
     let args = input.as_object()?;
-    if args.get("operations").is_some_and(Value::is_array) {
-        return Some("read");
+    if let Some(operations) = args.get("operations").and_then(Value::as_array) {
+        let known = operations.iter().all(|op| {
+            op.as_object().is_some_and(|op| {
+                let own: &[&str] = match op.get("mode").and_then(Value::as_str).unwrap_or("Line") {
+                    "Line" => &["mode", "path", "offset", "limit"],
+                    "Directory" => &["mode", "path", "depth"],
+                    "Image" => &["mode", "image_paths"],
+                    _ => return false,
+                };
+                only_own_arguments(op, own)
+            })
+        });
+        return (known && only_own_arguments(args, &["operations"])).then_some("read");
     }
     let command = args.get("command")?.as_str()?;
     if args.get("path").is_some_and(Value::is_string) {
-        return matches!(command, "create" | "strReplace" | "insert").then_some("write");
+        let own: &[&str] = match command {
+            "create" => &["command", "path", "content"],
+            "strReplace" => &["command", "path", "oldStr", "newStr", "replaceAll"],
+            "insert" => &["command", "path", "content", "insertLine"],
+            _ => return None,
+        };
+        return only_own_arguments(args, own).then_some("write");
     }
-    Some("shell")
+    only_own_arguments(args, &["command", "working_dir"]).then_some("shell")
+}
+
+/// Whether every key of `args` is one of `own` or the purpose every Kiro tool
+/// call carries.
+fn only_own_arguments(args: &serde_json::Map<String, Value>, own: &[&str]) -> bool {
+    args.keys()
+        .all(|key| key == TOOL_PURPOSE_KEY || own.contains(&key.as_str()))
 }
 
 /// The text one part of a tool result contributes. `json` parts are
@@ -1351,6 +1382,55 @@ mod tests {
             None
         );
         assert_eq!(name(serde_json::json!({"query": "x"})), None);
+        // Every argument of the built-in, including the purpose, still counts.
+        assert_eq!(
+            name(serde_json::json!({
+                "__tool_use_purpose": "List it", "command": "ls", "working_dir": "/w"
+            })),
+            Some("shell")
+        );
+        assert_eq!(
+            name(serde_json::json!({"operations": [
+                {"mode": "Directory", "path": "/w", "depth": 1}
+            ]})),
+            Some("read")
+        );
+    }
+
+    // The permission path replaces the approval card's input with the
+    // canonical one, so an input carrying anything the canonical form would
+    // drop is left as sent. These are MCP calls that merely share an argument
+    // name with a built-in.
+    #[test]
+    fn an_input_with_foreign_arguments_is_not_taken_for_a_builtin() {
+        let name = |v: Value| tool_name_from_input(&v);
+        // `operations` would make it a read, and the command would vanish.
+        assert_eq!(
+            name(serde_json::json!({
+                "command": "rm -rf /repo",
+                "operations": [{"mode": "Line", "path": "/repo/README.md"}]
+            })),
+            None
+        );
+        // A shell-looking call whose target would vanish.
+        assert_eq!(
+            name(serde_json::json!({"command": "deploy", "target": "prod"})),
+            None
+        );
+        // A write with an argument the canonical write does not carry.
+        assert_eq!(
+            name(serde_json::json!({
+                "command": "create", "path": "/a", "content": "x", "mode": "0755"
+            })),
+            None
+        );
+        // A read operation with a field the canonical read does not carry.
+        assert_eq!(
+            name(serde_json::json!({"operations": [
+                {"mode": "Line", "path": "/a", "offset": 1, "host": "prod"}
+            ]})),
+            None
+        );
     }
 
     #[test]
