@@ -446,11 +446,12 @@ pub async fn mcp_install_from_marketplace(
 /// Save `spec` for `server_id` to exactly the agents in `apps`.
 ///
 /// `shown_spec` is the spec the editor loaded for this server before the user
-/// edited it (`None` for a new server): Kiro keeps its own value for every
-/// field the save left as shown (see `upsert_kiro_server_at`). It has to come
-/// from the editor — a scan taken now could already reflect a change another
-/// agent made while the editor was open, and then misread which fields the
-/// user touched.
+/// edited it: Kiro keeps its own value for every field the save left as shown
+/// (see `upsert_kiro_server_at`). It comes from the editor because a scan
+/// taken now could already reflect a change another agent made while the
+/// editor was open, and then misread which fields the user touched. A client
+/// that sends none (a new server, or an older build) gets the scan's spec for
+/// the id as the closest stand-in, and a new server has none.
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn mcp_upsert_local_server(
     server_id: String,
@@ -459,8 +460,6 @@ pub async fn mcp_upsert_local_server(
     shown_spec: Option<Value>,
 ) -> Result<LocalMcpServer, AppCommandError> {
     let canonical_spec = canonicalize_spec(&spec, "local MCP save")?;
-    // Canonicalized like the saved spec, so a field left alone compares equal.
-    let shown = shown_spec.and_then(|shown| canonicalize_spec(&shown, "local MCP save").ok());
     let target_apps = normalize_apps(apps);
     if target_apps.is_empty() {
         return Err(mcp_invalid_input("at least one target app is required")
@@ -487,7 +486,17 @@ pub async fn mcp_upsert_local_server(
     // Nothing below is reversible, and the walk REMOVES the server from every
     // non-target agent, so a target whose config cannot take it has to be
     // caught before the first write rather than halfway through.
-    require_complete_scan(&scan_local_servers())?;
+    let scan = scan_local_servers();
+    require_complete_scan(&scan)?;
+    // Canonicalized like the saved spec, so a field left alone compares equal.
+    let shown = match shown_spec {
+        Some(shown) => canonicalize_spec(&shown, "local MCP save").ok(),
+        None => scan
+            .servers
+            .iter()
+            .find(|server| server.id == server_id)
+            .map(|server| server.spec.clone()),
+    };
     with_upsert_preflight(&target_set, || {
         for app in ALL_MCP_APPS {
             if target_set.contains(&app) {
