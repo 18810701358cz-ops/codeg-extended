@@ -547,10 +547,16 @@ export async function acpUpdateSystemAgent(
   agentType: AgentType,
   taskId: string
 ): Promise<string | null> {
-  return getTransport().call("acp_update_system_agent", {
-    agentType,
-    taskId,
-  })
+  // The updater downloads a whole build (Kiro's are 150–360 MB), and the
+  // backend gives it up to 15 minutes (`SYSTEM_UPDATE_TIMEOUT`). Outlast that,
+  // so a slow update ends with the backend's own answer instead of the default
+  // 60 s web-call timeout — which would report a failure and free the Upgrade
+  // button while the updater is still running.
+  return getTransport().call(
+    "acp_update_system_agent",
+    { agentType, taskId },
+    { timeoutMs: 16 * 60_000 }
+  )
 }
 
 export async function acpInstallUvTool(taskId: string): Promise<void> {
