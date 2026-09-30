@@ -443,13 +443,24 @@ pub async fn mcp_install_from_marketplace(
     })
 }
 
+/// Save `spec` for `server_id` to exactly the agents in `apps`.
+///
+/// `shown_spec` is the spec the editor loaded for this server before the user
+/// edited it (`None` for a new server): Kiro keeps its own value for every
+/// field the save left as shown (see `upsert_kiro_server_at`). It has to come
+/// from the editor — a scan taken now could already reflect a change another
+/// agent made while the editor was open, and then misread which fields the
+/// user touched.
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn mcp_upsert_local_server(
     server_id: String,
     spec: Value,
     apps: Vec<McpAppType>,
+    shown_spec: Option<Value>,
 ) -> Result<LocalMcpServer, AppCommandError> {
     let canonical_spec = canonicalize_spec(&spec, "local MCP save")?;
+    // Canonicalized like the saved spec, so a field left alone compares equal.
+    let shown = shown_spec.and_then(|shown| canonicalize_spec(&shown, "local MCP save").ok());
     let target_apps = normalize_apps(apps);
     if target_apps.is_empty() {
         return Err(mcp_invalid_input("at least one target app is required")
@@ -476,16 +487,7 @@ pub async fn mcp_upsert_local_server(
     // Nothing below is reversible, and the walk REMOVES the server from every
     // non-target agent, so a target whose config cannot take it has to be
     // caught before the first write rather than halfway through.
-    let scan = scan_local_servers();
-    require_complete_scan(&scan)?;
-    // What the editor showed for this server before the edit: Kiro keeps its
-    // own value for a field the save did not change (see
-    // `upsert_kiro_server_at`).
-    let shown = scan
-        .servers
-        .iter()
-        .find(|server| server.id == server_id)
-        .map(|server| server.spec.clone());
+    require_complete_scan(&scan_local_servers())?;
     with_upsert_preflight(&target_set, || {
         for app in ALL_MCP_APPS {
             if target_set.contains(&app) {
@@ -4291,7 +4293,9 @@ fn upsert_kiro_server_edited(id: &str, spec: &Value, shown: &Value) -> Result<()
 /// (see [`merge_kiro_extension_fields`]): writing it back would silently
 /// re-enable a server the user disabled only in Kiro, or hand Kiro the tool
 /// approvals the user gave only to Cline. A field the user did change is
-/// theirs, and is written.
+/// theirs, and is written. Only an entry the Kiro reader lists counts as
+/// Kiro's own: one it skips (no command or url, a `registry` reference) was
+/// never shown, so nothing in it is carried over.
 fn upsert_kiro_server_at(
     path: &Path,
     id: &str,
@@ -4307,6 +4311,7 @@ fn upsert_kiro_server_at(
     let existing = root
         .get("mcpServers")
         .and_then(|servers| servers.get(id))
+        .filter(|existing| canonicalize_spec(existing, "Kiro config").is_ok())
         .and_then(Value::as_object);
     if let (Some(shown), Some(existing), Some(entry)) = (shown, existing, entry.as_object_mut()) {
         let stdio = spec.get("type").and_then(Value::as_str) == Some("stdio");
@@ -7610,6 +7615,31 @@ mod tests {
         // written as given.
         upsert_kiro_server_at(&path, "fs", &shown, None).unwrap();
         assert_eq!(read(&path)["autoApprove"], json!(["write_file"]));
+    }
+
+    // Only an entry the Kiro reader lists is Kiro's own. One it skips (here:
+    // no command or url) was never shown, so a save that puts the server on
+    // Kiro must not revive anything it holds — a hidden approval included.
+    #[test]
+    fn a_kiro_entry_the_reader_skips_lends_nothing_to_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings").join("mcp.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            json!({"mcpServers": {"fs": {"autoApprove": ["write_file"], "disabled": true}}})
+                .to_string(),
+        )
+        .unwrap();
+        assert!(read_kiro_servers_at(&path).unwrap().is_empty());
+
+        let shown = json!({"type": "stdio", "command": "npx", "args": ["fs"]});
+        upsert_kiro_server_at(&path, "fs", &shown, Some(&shown)).unwrap();
+        let root: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            root["mcpServers"]["fs"],
+            json!({"command": "npx", "args": ["fs"]})
+        );
     }
 
     #[test]

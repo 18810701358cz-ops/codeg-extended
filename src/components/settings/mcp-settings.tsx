@@ -695,6 +695,10 @@ export function McpSettings() {
         serverId: selectedLocal.id,
         spec: parsedSpec,
         apps,
+        // What the editor was loaded with — it is reset from this spec
+        // whenever the selection or the scan changes — so the backend can
+        // tell the fields the user edited from the ones they left alone.
+        shownSpec: selectedLocal.spec,
       })
       const next = await refreshLocalServers()
       toast.success(t("toasts.saveSuccess"))

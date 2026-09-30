@@ -2146,11 +2146,16 @@ export async function mcpUpsertLocalServer(params: {
   serverId: string
   spec: Record<string, unknown>
   apps: McpAppType[]
+  /** The spec the editor loaded before the edit (omit for a new server): an
+   * agent that keeps per-server settings of its own (Kiro) keeps them for
+   * every field the edit left alone. */
+  shownSpec?: Record<string, unknown> | null
 }): Promise<LocalMcpServer> {
   return getTransport().call("mcp_upsert_local_server", {
     serverId: params.serverId,
     spec: params.spec,
     apps: params.apps,
+    shownSpec: params.shownSpec ?? null,
   })
 }
 
