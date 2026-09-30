@@ -3428,8 +3428,11 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // `authMethods` — sign-in is the CLI's own `kiro-cli login`, which
             // the ACP server reuses. `session/new` answers with standard
             // `modes` (the agent configs: kiro_default / kiro_planner /
-            // kiro_guide, plus any user agent under `~/.kiro/agents`) and
-            // `models`, so the composer selectors need no per-agent code.
+            // kiro_guide, plus any user agent under `~/.kiro/agents`) and the
+            // pre-config-options `models`, but no `configOptions`; reasoning
+            // effort and thinking arrive on `_kiro.dev/metadata`. The composer
+            // selectors are therefore built per agent in `acp::connection`
+            // (see `synthesize_kiro_model_option`).
             //
             // SYSTEM, NOT BINARY. Kiro ships only through its own installers:
             // a universal `Kiro CLI.dmg` on macOS (an app bundle that links

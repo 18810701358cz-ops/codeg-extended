@@ -249,6 +249,13 @@ fn merge_agent_env_with_color(
 /// silently loses its confirmation prompts; `--force` also turns cursor's own
 /// sandbox off (`approvalMode: unrestricted` → `insecure_none`), which is not
 /// something to switch on for someone who never asked.
+pub(crate) fn cursor_force_enabled(value: Option<&str>) -> bool {
+    let Some(value) = value.map(str::trim) else {
+        return false;
+    };
+    value == "1" || value.eq_ignore_ascii_case("true")
+}
+
 /// The Kiro panel's permission-mode knob (see the `System` launch branch).
 pub(crate) const KIRO_TRUST_ALL_TOOLS_ENV: &str = "KIRO_TRUST_ALL_TOOLS";
 
@@ -257,13 +264,6 @@ pub(crate) const KIRO_TRUST_ALL_TOOLS_ENV: &str = "KIRO_TRUST_ALL_TOOLS";
 /// anything unrecognized leave the CLI asking — the safe side.
 pub(crate) fn kiro_trust_all_tools_enabled(value: Option<&str>) -> bool {
     cursor_force_enabled(value)
-}
-
-pub(crate) fn cursor_force_enabled(value: Option<&str>) -> bool {
-    let Some(value) = value.map(str::trim) else {
-        return false;
-    };
-    value == "1" || value.eq_ignore_ascii_case("true")
 }
 
 /// Cursor subscription-mode launch policy. When the user picked the official
@@ -4329,22 +4329,67 @@ fn set_select_current(opts: &mut [SessionConfigOptionInfo], id: &str, value: &st
     }
 }
 
+/// Edit the session's emitted selectors and re-emit them, as ONE step against
+/// every other writer of that list.
+///
+/// Kiro's selectors have two writers that run concurrently: the conversation
+/// loop answering a pick (`set_kiro_config_option`) and the builder-chain
+/// handler for `_kiro.dev/metadata`, which Kiro sends right around the replies
+/// the loop waits on. Each edits a copy — the emit helpers take the state's
+/// write lock themselves (see `emit_grok_incompatible_agent_switch`), so the
+/// copy is made first — and a copy made before the other writer's emit could
+/// otherwise be emitted after it: a model switch reverting in its selector,
+/// or an effort selector Kiro just withdrew coming back. The emit is gated on
+/// the list and the reasoning state still being the ones the copy was made
+/// from; when either moved, the edit is redone on the newer ones. `edit`
+/// returns whether there is anything to emit.
+async fn edit_emitted_options(
+    state: &Arc<RwLock<SessionState>>,
+    emitter: &EventEmitter,
+    mut edit: impl FnMut(&mut Vec<SessionConfigOptionInfo>, Option<&KiroReasoning>) -> bool,
+) {
+    loop {
+        let (base, reasoning) = {
+            let guard = state.read().await;
+            (guard.config_options.clone(), guard.kiro_reasoning.clone())
+        };
+        let Some(base) = base else {
+            return;
+        };
+        let mut next = base.clone();
+        if !edit(&mut next, reasoning.as_ref()) {
+            return;
+        }
+        let emitted = emit_with_state_gated(
+            state,
+            emitter,
+            AcpEvent::SessionConfigOptions {
+                config_options: next,
+            },
+            |s| s.config_options.as_ref() == Some(&base) && s.kiro_reasoning == reasoning,
+        )
+        .await;
+        if emitted {
+            return;
+        }
+    }
+}
+
 /// Update one selector of the session's emitted options and re-emit them.
-/// Clones out of the read guard first — the emit helpers take the same
-/// state's write lock (see `emit_grok_incompatible_agent_switch`).
 async fn update_emitted_option(
     state: &Arc<RwLock<SessionState>>,
     emitter: &EventEmitter,
     id: &str,
     value: &str,
 ) {
-    let current = state.read().await.config_options.clone();
-    if let Some(mut opts) = current {
-        if opts.iter().any(|o| o.id == id) {
-            set_select_current(&mut opts, id, value);
-            emit_session_config_options_info(state, emitter, opts).await;
+    edit_emitted_options(state, emitter, |opts, _| {
+        if !opts.iter().any(|o| o.id == id) {
+            return false;
         }
-    }
+        set_select_current(opts, id, value);
+        true
+    })
+    .await;
 }
 
 /// On connect, re-apply the agent, model, thinking and effort the user last
@@ -4368,10 +4413,21 @@ async fn apply_kiro_preferred_options(
             sel.current_value != pref && sel.options.iter().any(|x| x.value == pref)
         })
     };
+    // Whether the saved model replaced the one the session started on. The
+    // reasoning state known after that still describes the OLD model — Kiro
+    // reports the new one's in a later `_kiro.dev/metadata`, and nothing in
+    // that notification says which model it is about — so it cannot rule a
+    // saved value out: checked against it, an effort the old model lacks (the
+    // default `auto` takes none) would be skipped for good, since no later
+    // metadata re-applies a saved value.
+    let mut model_switched = false;
     if let Some(pref) = preferred_config_values.get(KIRO_MODEL_OPTION_ID) {
         if wanted(KIRO_MODEL_OPTION_ID, pref, opts) {
             match set_kiro_model(cx, session_id, pref).await {
-                Ok(()) => set_select_current(opts, KIRO_MODEL_OPTION_ID, pref),
+                Ok(()) => {
+                    set_select_current(opts, KIRO_MODEL_OPTION_ID, pref);
+                    model_switched = true;
+                }
                 Err(e) => tracing::error!("[ACP] failed to apply preferred kiro model '{pref}': {e}"),
             }
         }
@@ -4396,12 +4452,17 @@ async fn apply_kiro_preferred_options(
     }
     // The reasoning state arrives in a notification that may not have landed
     // yet, so a saved value is sent whenever the known state does not already
-    // rule it out; Kiro's next metadata is the authority either way.
+    // rule it out; Kiro's next metadata is the authority either way. After a
+    // model switch nothing known rules anything out (see `model_switched`).
     if let Some(enabled) = preferred_config_values
         .get(KIRO_THINKING_OPTION_ID)
         .and_then(|pref| kiro_thinking_value(pref))
     {
-        let known = state.read().await.kiro_reasoning.clone();
+        let known = if model_switched {
+            None
+        } else {
+            state.read().await.kiro_reasoning.clone()
+        };
         let applicable = known
             .as_ref()
             .is_none_or(|r| r.thinking_toggleable && r.thinking != Some(enabled));
@@ -4417,7 +4478,11 @@ async fn apply_kiro_preferred_options(
         }
     }
     if let Some(pref) = preferred_config_values.get(KIRO_EFFORT_OPTION_ID) {
-        let known = state.read().await.kiro_reasoning.clone();
+        let known = if model_switched {
+            None
+        } else {
+            state.read().await.kiro_reasoning.clone()
+        };
         let applicable = known.as_ref().is_none_or(|r| {
             r.levels.contains(pref) && r.current.as_deref() != Some(pref.as_str())
         });
@@ -4447,9 +4512,9 @@ async fn apply_kiro_metadata(
         if guard.kiro_reasoning.as_ref() == Some(&reasoning) {
             return;
         }
-        guard.kiro_reasoning = Some(reasoning.clone());
+        guard.kiro_reasoning = Some(reasoning);
     }
-    rebuild_kiro_reasoning_selectors(state, emitter, &reasoning).await;
+    rebuild_kiro_reasoning_selectors(state, emitter).await;
 }
 
 /// Put the reasoning selectors in their slot — right after the model
@@ -4470,23 +4535,25 @@ fn place_kiro_reasoning_selectors(opts: &mut Vec<SessionConfigOptionInfo>, reaso
     );
 }
 
-/// Rebuild the reasoning selectors in the emitted options from `reasoning`.
-/// A no-op until codeg has emitted Kiro's own selectors.
+/// Rebuild the reasoning selectors in the emitted options from the session's
+/// latest reasoning state. A no-op until codeg has emitted Kiro's own
+/// selectors, and while Kiro has reported no reasoning state.
 async fn rebuild_kiro_reasoning_selectors(
     state: &Arc<RwLock<SessionState>>,
     emitter: &EventEmitter,
-    reasoning: &KiroReasoning,
 ) {
-    let current = state.read().await.config_options.clone();
-    let Some(mut opts) = current else {
-        return;
-    };
-    // Only a session whose selectors codeg built itself has an effort slot.
-    if !opts.iter().any(|o| o.id == KIRO_MODEL_OPTION_ID) {
-        return;
-    }
-    place_kiro_reasoning_selectors(&mut opts, reasoning);
-    emit_session_config_options_info(state, emitter, opts).await;
+    edit_emitted_options(state, emitter, |opts, reasoning| {
+        let Some(reasoning) = reasoning else {
+            return false;
+        };
+        // Only a session whose selectors codeg built itself has an effort slot.
+        if !opts.iter().any(|o| o.id == KIRO_MODEL_OPTION_ID) {
+            return false;
+        }
+        place_kiro_reasoning_selectors(opts, reasoning);
+        true
+    })
+    .await;
 }
 
 /// Apply a composer selector change, on whichever channel this agent really
@@ -5084,9 +5151,7 @@ async fn apply_and_emit_session_config_options(
             // no selectors to update and was only stored; apply it now.
             let latest = state.read().await.kiro_reasoning.clone();
             if latest != reasoning {
-                if let Some(latest) = latest {
-                    rebuild_kiro_reasoning_selectors(state, emitter, &latest).await;
-                }
+                rebuild_kiro_reasoning_selectors(state, emitter).await;
             }
             return;
         }
@@ -5622,19 +5687,20 @@ fn build_resume_session_request(
 /// typed response, handing back the raw top-level `models` alongside it.
 ///
 /// That field is the one reason these requests are untyped: grok puts its
-/// per-model reasoning-effort data there, and the typed responses have no field
-/// for it (the stable schema carries no session-model API), so it has to be read
-/// off the raw JSON before the typed parse drops it. Everything else is exactly
-/// the typed exchange — `UntypedMessage::new` serializes the very same request,
-/// the reply goes through the same serde impl (whose `configOptions` already
-/// skips an option kind this build does not know, one entry at a time), and a
-/// JSON-RPC error comes back as the same `Err(agent_client_protocol::Error)`
-/// with `.code` / `.to_string()` intact. `session/load` needs none of this and is
-/// a plain typed send.
+/// per-model reasoning-effort data there, Kiro its whole model catalog, and the
+/// typed responses have no field for it (the stable schema carries no
+/// session-model API), so it has to be read off the raw JSON before the typed
+/// parse drops it. Everything else is exactly the typed exchange —
+/// `UntypedMessage::new` serializes the very same request, the reply goes
+/// through the same serde impl (whose `configOptions` already skips an option
+/// kind this build does not know, one entry at a time), and a JSON-RPC error
+/// comes back as the same `Err(agent_client_protocol::Error)` with `.code` /
+/// `.to_string()` intact. `session/load` goes through here for Kiro only; every
+/// other agent's load is a plain typed send.
 ///
 /// `models` is `None` when the reply carries none. Other agents can send one too
-/// (codex-acp reports its model state there), but only grok's is ever read:
-/// every caller checks the agent before parsing it.
+/// (codex-acp reports its model state there), but only grok's and Kiro's are
+/// ever read: every caller checks the agent before parsing it.
 pub(crate) async fn send_capturing_models<Resp: serde::de::DeserializeOwned>(
     cx: &ConnectionTo<Agent>,
     method: &str,
@@ -8762,7 +8828,9 @@ async fn handle_permission_request(
     // Kiro's permission `toolCall` names no tool (no `_meta`), and in its raw
     // shape a `write` reads as the shell command `create` / `strReplace` and
     // shows no diff. Rewrite it like the live frames (see `kiro_live_tool`),
-    // telling the tool by its arguments.
+    // telling the tool by its arguments — only when they are all the
+    // built-in's own, so an MCP call that shares an argument name keeps every
+    // argument on the card (see `tool_name_from_input`).
     if agent_type == AgentType::Kiro {
         if let Some(raw_input) = tool_call_value.get_mut("rawInput") {
             let canonical = crate::parsers::kiro::tool_name_from_input(raw_input)
@@ -17095,6 +17163,196 @@ mod kiro_ext_tests {
             None
         );
         assert!(calls.is_empty());
+    }
+
+    /// The two requests a Kiro selector goes out on, as the agent side of a
+    /// test pipe receives them.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+    #[request(method = "session/set_model", response = serde_json::Value)]
+    #[serde(transparent)]
+    struct FakeKiroSetModel(serde_json::Value);
+
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+    #[request(method = "_kiro.dev/commands/execute", response = serde_json::Value)]
+    #[serde(transparent)]
+    struct FakeKiroExecute(serde_json::Value);
+
+    /// Replay `prefs` onto a session showing `opts` over a pipe to a fake Kiro
+    /// that accepts everything, and return what it was sent (in order)
+    /// together with the selectors afterwards.
+    async fn replay_against_fake_kiro(
+        state: &Arc<RwLock<SessionState>>,
+        opts: Vec<SessionConfigOptionInfo>,
+        prefs: BTreeMap<String, String>,
+    ) -> (Vec<serde_json::Value>, Vec<SessionConfigOptionInfo>) {
+        use agent_client_protocol::Channel;
+
+        let sent: Arc<std::sync::Mutex<Vec<serde_json::Value>>> = Arc::default();
+        let (client_end, agent_end) = Channel::duplex();
+        let agent = tokio::spawn({
+            let model_log = Arc::clone(&sent);
+            let command_log = Arc::clone(&sent);
+            Agent
+                .builder()
+                .on_receive_request(
+                    async move |req: FakeKiroSetModel,
+                                responder: Responder<serde_json::Value>,
+                                _cx: ConnectionTo<Client>| {
+                        model_log.lock().unwrap().push(req.0);
+                        responder.respond(serde_json::json!({}))
+                    },
+                    on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |req: FakeKiroExecute,
+                                responder: Responder<serde_json::Value>,
+                                _cx: ConnectionTo<Client>| {
+                        command_log.lock().unwrap().push(req.0);
+                        responder.respond(serde_json::json!({"success": true, "message": "ok"}))
+                    },
+                    on_receive_request!(),
+                )
+                .connect_with(agent_end, async |_cx: ConnectionTo<Client>| {
+                    std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                })
+        });
+        let state = Arc::clone(state);
+        let opts = Client
+            .builder()
+            .connect_with(client_end, async move |cx: ConnectionTo<Agent>| {
+                let mut opts = opts;
+                apply_kiro_preferred_options(
+                    &cx,
+                    &SessionId::new("s1"),
+                    &state,
+                    &EventEmitter::Noop,
+                    &mut opts,
+                    &prefs,
+                    None,
+                )
+                .await;
+                Ok(opts)
+            })
+            .await
+            .expect("client connection");
+        agent.abort();
+        let sent = sent.lock().unwrap().clone();
+        (sent, opts)
+    }
+
+    fn kiro_state() -> Arc<RwLock<SessionState>> {
+        Arc::new(RwLock::new(SessionState::new(
+            "conn-kiro".to_string(),
+            AgentType::Kiro,
+            None,
+            "win".to_string(),
+            None,
+        )))
+    }
+
+    // The session opens on Kiro's default `auto`, whose metadata (no effort,
+    // no thinking switch) lands before the saved model is restored. That state
+    // describes `auto`, not the restored model, so it must not veto the saved
+    // thinking and effort — no later metadata would ever re-apply them.
+    #[tokio::test]
+    async fn a_restored_model_gets_its_saved_reasoning_despite_the_old_models_state() {
+        let state = kiro_state();
+        state.write().await.kiro_reasoning = Some(KiroReasoning::default());
+        let mut models = kiro_models();
+        models["currentModelId"] = serde_json::json!("auto");
+        let opts = vec![synthesize_kiro_model_option(Some(&models)).unwrap()];
+        let prefs = BTreeMap::from([
+            ("model".to_string(), "claude-opus-5.5".to_string()),
+            ("thinking".to_string(), "on".to_string()),
+            ("reasoning_effort".to_string(), "high".to_string()),
+        ]);
+
+        let (sent, opts) = replay_against_fake_kiro(&state, opts, prefs).await;
+
+        assert_eq!(
+            sent,
+            [
+                serde_json::json!({"sessionId": "s1", "modelId": "claude-opus-5.5"}),
+                serde_json::json!({"sessionId": "s1", "command": {
+                    "command": "reasoning", "args": {"thinkingEnabled": true}
+                }}),
+                serde_json::json!({"sessionId": "s1", "command": {
+                    "command": "effort", "args": {"level": "high"}
+                }}),
+            ]
+        );
+        let SessionConfigKindInfo::Select(sel) = &opts[0].kind else {
+            panic!("select expected");
+        };
+        assert_eq!(sel.current_value, "claude-opus-5.5");
+    }
+
+    // Without a model switch the known state still rules out what the model
+    // cannot take, or already runs at.
+    #[tokio::test]
+    async fn without_a_model_switch_the_known_reasoning_still_rules_values_out() {
+        let state = kiro_state();
+        state.write().await.kiro_reasoning = Some(KiroReasoning {
+            levels: vec!["low".into(), "high".into()],
+            current: Some("high".into()),
+            thinking_toggleable: false,
+            thinking: None,
+        });
+        let opts = vec![synthesize_kiro_model_option(Some(&kiro_models())).unwrap()];
+        let prefs = BTreeMap::from([
+            ("model".to_string(), "claude-opus-5.5".to_string()),
+            ("thinking".to_string(), "on".to_string()),
+            ("reasoning_effort".to_string(), "high".to_string()),
+        ]);
+
+        let (sent, _) = replay_against_fake_kiro(&state, opts, prefs).await;
+
+        assert!(sent.is_empty(), "{sent:?}");
+    }
+
+    // The set path and the `_kiro.dev/metadata` handler both rewrite the
+    // emitted selectors from a copy. A copy taken before the other writer's
+    // emit must not be emitted after it: here the metadata handler withdraws
+    // the effort selector between the model pick's copy and its emit, and the
+    // pick has to land on the list without it.
+    #[tokio::test]
+    async fn a_selector_edit_is_redone_on_a_list_another_writer_emitted_first() {
+        let state = kiro_state();
+        let reasoning = KiroReasoning {
+            levels: vec!["low".into(), "high".into()],
+            current: Some("high".into()),
+            ..KiroReasoning::default()
+        };
+        let mut opts = vec![synthesize_kiro_model_option(Some(&kiro_models())).unwrap()];
+        place_kiro_reasoning_selectors(&mut opts, &reasoning);
+        state.write().await.kiro_reasoning = Some(reasoning);
+        emit_session_config_options_info(&state, &EventEmitter::Noop, opts).await;
+
+        let mut edits = 0;
+        edit_emitted_options(&state, &EventEmitter::Noop, |opts, _| {
+            edits += 1;
+            if edits == 1 {
+                // The metadata for `auto` arrives mid-edit: stored and
+                // emitted without an effort selector.
+                let mut other = state.try_write().expect("no lock is held while editing");
+                other.kiro_reasoning = Some(KiroReasoning::default());
+                let mut without_effort = other.config_options.clone().unwrap();
+                without_effort.retain(|o| o.id != KIRO_EFFORT_OPTION_ID);
+                other.config_options = Some(without_effort);
+            }
+            set_select_current(opts, KIRO_MODEL_OPTION_ID, "auto");
+            true
+        })
+        .await;
+
+        assert_eq!(edits, 2, "the stale copy is recomputed, not emitted");
+        let opts = state.read().await.config_options.clone().unwrap();
+        let ids: Vec<_> = opts.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(ids, ["model"]);
+        let SessionConfigKindInfo::Select(sel) = &opts[0].kind else {
+            panic!("select expected");
+        };
+        assert_eq!(sel.current_value, "auto");
     }
 }
 
