@@ -476,11 +476,25 @@ pub async fn mcp_upsert_local_server(
     // Nothing below is reversible, and the walk REMOVES the server from every
     // non-target agent, so a target whose config cannot take it has to be
     // caught before the first write rather than halfway through.
-    require_complete_scan(&scan_local_servers())?;
+    let scan = scan_local_servers();
+    require_complete_scan(&scan)?;
+    // What the editor showed for this server before the edit: Kiro keeps its
+    // own value for a field the save did not change (see
+    // `upsert_kiro_server_at`).
+    let shown = scan
+        .servers
+        .iter()
+        .find(|server| server.id == server_id)
+        .map(|server| server.spec.clone());
     with_upsert_preflight(&target_set, || {
         for app in ALL_MCP_APPS {
             if target_set.contains(&app) {
-                upsert_server_for_app(app, &server_id, &canonical_spec)?;
+                match (app, shown.as_ref()) {
+                    (McpAppType::Kiro, Some(shown)) => {
+                        upsert_kiro_server_edited(&server_id, &canonical_spec, shown)?
+                    }
+                    _ => upsert_server_for_app(app, &server_id, &canonical_spec)?,
+                }
             } else {
                 let _ = remove_server_for_app(app, &server_id)?;
             }
@@ -4259,16 +4273,60 @@ fn canonical_to_kiro_entry(spec: &Value) -> Result<Value, AppCommandError> {
 }
 
 fn upsert_kiro_server(id: &str, spec: &Value) -> Result<(), AppCommandError> {
-    upsert_kiro_server_at(&kiro_mcp_json_path(), id, spec)
+    upsert_kiro_server_at(&kiro_mcp_json_path(), id, spec, None)
 }
 
-fn upsert_kiro_server_at(path: &Path, id: &str, spec: &Value) -> Result<(), AppCommandError> {
+/// [`upsert_kiro_server`] for a save from the MCP editor, which knows the spec
+/// the editor showed for the server before the user edited it.
+fn upsert_kiro_server_edited(id: &str, spec: &Value, shown: &Value) -> Result<(), AppCommandError> {
+    upsert_kiro_server_at(&kiro_mcp_json_path(), id, spec, Some(shown))
+}
+
+/// Write `spec` as Kiro's entry for `id`.
+///
+/// With `shown` (the spec the editor showed before the edit), a Kiro field the
+/// save left exactly as shown keeps the value Kiro's own entry has — its
+/// absence included. The editor shows ONE spec per server, and for a server
+/// another agent also holds, a field both agents model is the other agent's
+/// (see [`merge_kiro_extension_fields`]): writing it back would silently
+/// re-enable a server the user disabled only in Kiro, or hand Kiro the tool
+/// approvals the user gave only to Cline. A field the user did change is
+/// theirs, and is written.
+fn upsert_kiro_server_at(
+    path: &Path,
+    id: &str,
+    spec: &Value,
+    shown: Option<&Value>,
+) -> Result<(), AppCommandError> {
     let mut root = read_json_file(path)?;
     if !root.is_object() {
         root = json!({});
     }
 
-    let entry = canonical_to_kiro_entry(spec)?;
+    let mut entry = canonical_to_kiro_entry(spec)?;
+    let existing = root
+        .get("mcpServers")
+        .and_then(|servers| servers.get(id))
+        .and_then(Value::as_object);
+    if let (Some(shown), Some(existing), Some(entry)) = (shown, existing, entry.as_object_mut()) {
+        let stdio = spec.get("type").and_then(Value::as_str) == Some("stdio");
+        for key in KIRO_EXTENSION_KEYS {
+            if spec.get(*key) != shown.get(*key) {
+                continue;
+            }
+            match existing
+                .get(*key)
+                .filter(|value| is_kiro_extension_field(key, value, stdio))
+            {
+                Some(value) => {
+                    entry.insert((*key).to_string(), value.clone());
+                }
+                None => {
+                    entry.remove(*key);
+                }
+            }
+        }
+    }
 
     let obj = root.as_object_mut().ok_or_else(|| {
         mcp_configuration_invalid(format!("invalid JSON root in {}", path.display()))
@@ -7436,7 +7494,7 @@ mod tests {
         let mut edited = servers["fetch"].clone();
         edited["cwd"] = json!("/somewhere");
         edited["timeout"] = json!("soon");
-        upsert_kiro_server_at(&path, "fetch", &edited).unwrap();
+        upsert_kiro_server_at(&path, "fetch", &edited, None).unwrap();
         let root: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let fetch = &root["mcpServers"]["fetch"];
@@ -7494,6 +7552,64 @@ mod tests {
         merge_kiro_extension_fields(&mut resolved, &kiro, &with_cline);
         assert_eq!(resolved["disabled"], json!(true));
         assert_eq!(resolved["autoApprove"], json!(["t"]));
+    }
+
+    // The editor shows one spec per server, so for a server Cline also holds
+    // it shows Cline's `disabled` and `autoApprove`. Saving an unrelated edit
+    // must not write those into Kiro: a server disabled only in Kiro stays
+    // disabled, and Kiro gets no approval the user gave only to Cline. A field
+    // the user did change is written.
+    #[test]
+    fn a_save_keeps_kiros_own_value_for_every_field_it_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings").join("mcp.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            json!({"mcpServers": {
+                "fs": {"command": "npx", "args": ["fs-v1"], "disabled": true, "timeout": 5000}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let read = |path: &Path| -> Value {
+            serde_json::from_str::<Value>(&std::fs::read_to_string(path).unwrap()).unwrap()
+                ["mcpServers"]["fs"]
+                .clone()
+        };
+        // What the editor showed: Cline's projection, which won the scan.
+        let shown = json!({
+            "type": "stdio", "command": "npx", "args": ["fs-v1"],
+            "disabled": false, "autoApprove": ["write_file"], "timeout": 5000
+        });
+
+        // Only `args` changed.
+        let mut edited = shown.clone();
+        edited["args"] = json!(["fs-v2"]);
+        upsert_kiro_server_at(&path, "fs", &edited, Some(&shown)).unwrap();
+        let fs = read(&path);
+        assert_eq!(fs["args"], json!(["fs-v2"]));
+        assert_eq!(fs["disabled"], json!(true), "still disabled in Kiro");
+        assert!(fs.get("autoApprove").is_none(), "no approval Kiro never had");
+        assert_eq!(fs["timeout"], json!(5000));
+
+        // The user turns `disabled` on and sets a timeout: both are written.
+        let before = json!({
+            "type": "stdio", "command": "npx", "args": ["fs-v2"],
+            "disabled": false, "timeout": 5000
+        });
+        let mut edited = before.clone();
+        edited["disabled"] = json!(true);
+        edited["timeout"] = json!(9000);
+        upsert_kiro_server_at(&path, "fs", &edited, Some(&before)).unwrap();
+        let fs = read(&path);
+        assert_eq!(fs["disabled"], json!(true));
+        assert_eq!(fs["timeout"], json!(9000));
+
+        // Without a shown spec (an install, a newly added agent) the spec is
+        // written as given.
+        upsert_kiro_server_at(&path, "fs", &shown, None).unwrap();
+        assert_eq!(read(&path)["autoApprove"], json!(["write_file"]));
     }
 
     #[test]
