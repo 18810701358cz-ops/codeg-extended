@@ -1511,6 +1511,7 @@
       "notInstalled": "未安装",
       "recommendedLocal": "推荐：{recommendedVersion} · 本地：{localVersion}",
       "localOnly": "本地：{localVersion}",
+      "localUndetected": "本地：未检测到版本",
       "localInstalled": "{versionText}。已安装。",
       "systemInstalled": "{versionText}。由其官方安装程序安装和更新，Codeg 直接启动这份安装。",
       "systemInstalledUpdatable": "{versionText}。通过官方安装程序安装；点击「升级」会运行它自带的更新程序。",

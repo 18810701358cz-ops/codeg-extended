@@ -1511,6 +1511,7 @@
       "notInstalled": "未安裝",
       "recommendedLocal": "建議：{recommendedVersion} · 本地：{localVersion}",
       "localOnly": "本機：{localVersion}",
+      "localUndetected": "本機：未偵測到版本",
       "localInstalled": "{versionText}。已安裝。",
       "systemInstalled": "{versionText}。由其官方安裝程式安裝與更新，Codeg 直接啟動這份安裝。",
       "systemInstalledUpdatable": "{versionText}。透過官方安裝程式安裝；點擊「升級」會執行它內建的更新程式。",

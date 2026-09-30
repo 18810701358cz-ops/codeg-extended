@@ -1511,6 +1511,7 @@
       "notInstalled": "Not installed",
       "recommendedLocal": "Recommended: {recommendedVersion} · Local: {localVersion}",
       "localOnly": "Local: {localVersion}",
+      "localUndetected": "Local: version not detected",
       "localInstalled": "{versionText}. Installed.",
       "systemInstalled": "{versionText}. Installed and updated by its own installer; Codeg launches it as-is.",
       "systemInstalledUpdatable": "{versionText}. Installed with the official installer; Upgrade runs its own updater.",

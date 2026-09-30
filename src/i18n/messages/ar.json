@@ -1511,6 +1511,7 @@
       "notInstalled": "غير مثبت",
       "recommendedLocal": "الموصى به: {recommendedVersion} · المحلي: {localVersion}",
       "localOnly": "المحلي: {localVersion}",
+      "localUndetected": "المحلي: لم يتم اكتشاف الإصدار",
       "localInstalled": "{versionText}. مثبت.",
       "systemInstalled": "{versionText}. يثبّته ويحدّثه مثبّته الرسمي، ويشغّله Codeg كما هو.",
       "systemInstalledUpdatable": "{versionText}. مثبَّت بالمثبّت الرسمي؛ يشغّل «ترقية» أداة التحديث الخاصة به.",

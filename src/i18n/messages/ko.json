@@ -1511,6 +1511,7 @@
       "notInstalled": "설치되지 않음",
       "recommendedLocal": "권장: {recommendedVersion} · 로컬: {localVersion}",
       "localOnly": "로컬: {localVersion}",
+      "localUndetected": "로컬: 버전을 확인할 수 없음",
       "localInstalled": "{versionText}. 설치되어 있습니다.",
       "systemInstalled": "{versionText}. 공식 설치 프로그램으로 설치·업데이트되며 Codeg는 그대로 실행합니다.",
       "systemInstalledUpdatable": "{versionText}. 공식 설치 프로그램으로 설치됨. 「업그레이드」는 자체 업데이트 프로그램을 실행합니다.",

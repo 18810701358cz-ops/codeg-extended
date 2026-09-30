@@ -1511,6 +1511,7 @@
       "notInstalled": "未インストール",
       "recommendedLocal": "推奨: {recommendedVersion} · ローカル: {localVersion}",
       "localOnly": "ローカル：{localVersion}",
+      "localUndetected": "ローカル：バージョンを検出できません",
       "localInstalled": "{versionText}。インストール済みです。",
       "systemInstalled": "{versionText}。公式インストーラーでインストール・更新され、Codeg はそのまま起動します。",
       "systemInstalledUpdatable": "{versionText}。公式インストーラーでインストール済み。「アップグレード」で同梱のアップデーターを実行します。",

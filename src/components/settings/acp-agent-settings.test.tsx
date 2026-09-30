@@ -1213,6 +1213,67 @@ describe("unreviewed latest release in Version Status", () => {
   })
 })
 
+describe("getAgentChecks for a system agent", () => {
+  const url = "https://kiro.dev/docs/getting-started/installation/"
+  const kiro = (installed_version: string | null) =>
+    makeAgent({
+      agent_type: "kiro" as AgentType,
+      distribution_type: "system",
+      registry_version: null,
+      installed_version,
+      install_url: url,
+      supports_self_update: true,
+    })
+  const preflight = (status: "pass" | "fail"): { result: PreflightResult } => ({
+    result: {
+      agent_type: "kiro" as AgentType,
+      agent_name: "Kiro CLI",
+      passed: status === "pass",
+      checks: [
+        {
+          check_id: "system_cli",
+          label: "kiro-cli",
+          status,
+          message: "",
+          fixes: [],
+        },
+      ],
+      adapter: null,
+    },
+  })
+  const versionCard = (checks: ReturnType<typeof getAgentChecks>) =>
+    checks.find((c) => c.check_id === "version_status")
+
+  // The preflight resolves the binary a launch runs; `--version` coming back
+  // empty (a probe that timed out right after an update) does not make the
+  // CLI missing, and Upgrade stays on offer.
+  it("keeps a found CLI installed when its version could not be read", () => {
+    const card = versionCard(getAgentChecks(kiro(null), preflight("pass")))
+    expect(card?.status).toBe("pass")
+    expect(card?.message).toContain("its own updater")
+    expect(card?.fixes.map((fix) => fix.kind)).toEqual(["upgrade_system"])
+  })
+
+  // A version left over from before the CLI was removed must not offer an
+  // Upgrade the backend can only refuse.
+  it("reports a CLI the preflight could not find as missing", () => {
+    const card = versionCard(getAgentChecks(kiro("2.24.1"), preflight("fail")))
+    expect(card?.status).toBe("fail")
+    expect(card?.fixes).toEqual([
+      expect.objectContaining({ kind: "open_url", payload: url }),
+    ])
+  })
+
+  it("goes by the version until the preflight has answered", () => {
+    expect(versionCard(getAgentChecks(kiro("2.24.1"), undefined))?.status).toBe(
+      "pass"
+    )
+    expect(versionCard(getAgentChecks(kiro(null), undefined))?.status).toBe(
+      "fail"
+    )
+  })
+})
+
 describe("getAgentChecks uv gating", () => {
   const uvMissingPreflight: { result: PreflightResult } = {
     result: {

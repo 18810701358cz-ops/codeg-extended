@@ -4095,7 +4095,10 @@ export function providerToRebindTo(
 export function buildVersionCheck(
   agent: AcpAgentInfo,
   uvReady: boolean = true,
-  latestRelease: AgentLatestRelease | null = null
+  latestRelease: AgentLatestRelease | null = null,
+  // For a `system` agent: whether the preflight found the user's install
+  // (its `system_cli` check), or `undefined` before a preflight has answered.
+  systemCliFound?: boolean
 ): UiCheckItem | null {
   // An agent codeg launches but never installs (Kiro CLI): no pin to compare
   // against, and installing or removing it is its own installer's job. The
@@ -4104,7 +4107,14 @@ export function buildVersionCheck(
   // the copy the terminal runs and the one Codeg launches stay the same.
   if (agent.distribution_type === "system") {
     const installed = agent.installed_version
-    if (installed) {
+    // Whether the install is there is the preflight's call: it resolves the
+    // very binary a launch would run. The version is only what `--version`
+    // printed — it can come back empty for a CLI that is present (a probe
+    // that timed out, say right after an update) and stay set after the CLI
+    // was removed (a refresh keeps the last version it saw). Without a
+    // preflight answer yet, a known version is the evidence there is.
+    const found = systemCliFound ?? Boolean(installed)
+    if (found) {
       return {
         check_id: "version_status",
         label: acpText("version.statusLabel", "Version Status"),
@@ -4117,9 +4127,14 @@ export function buildVersionCheck(
             ? "{versionText}. Installed with the official installer; Upgrade runs its own updater."
             : "{versionText}. Installed and updated by its own installer; Codeg launches it as-is.",
           {
-            versionText: acpText("version.localOnly", "Local: {localVersion}", {
-              localVersion: installed,
-            }),
+            versionText: installed
+              ? acpText("version.localOnly", "Local: {localVersion}", {
+                  localVersion: installed,
+                })
+              : acpText(
+                  "version.localUndetected",
+                  "Local: version not detected"
+                ),
           }
         ),
         fixes: agent.supports_self_update
@@ -4436,7 +4451,15 @@ export function getAgentChecks(
   )
   const uvReady =
     agent.distribution_type !== "uvx" || !uvCheck || uvCheck.status === "pass"
-  const versionCheck = buildVersionCheck(agent, uvReady, latestRelease ?? null)
+  const systemCliCheck = current?.result?.checks?.find(
+    (check) => check.check_id === "system_cli"
+  )
+  const versionCheck = buildVersionCheck(
+    agent,
+    uvReady,
+    latestRelease ?? null,
+    systemCliCheck ? systemCliCheck.status === "pass" : undefined
+  )
   const remoteChecks: UiCheckItem[] = (current?.result?.checks ?? []).map(
     (check) => ({
       ...check,
@@ -11139,7 +11162,17 @@ supports_websockets = true`}
                         selectedAgent.agent_type,
                         enabled,
                         envMapToText(env),
-                        selectedAgent.model_provider_id
+                        selectedAgent.model_provider_id,
+                        // Both keys this panel owns, folded into the raw
+                        // editor's draft. The enable switch and the generic env
+                        // Save persist that draft WHOLESALE, so without this a
+                        // switch from trust-all back to ask would be silently
+                        // undone the next time either one fires. `undefined`
+                        // (the key field was cleared) deletes the line.
+                        {
+                          KIRO_API_KEY: env.KIRO_API_KEY,
+                          KIRO_TRUST_ALL_TOOLS: env.KIRO_TRUST_ALL_TOOLS,
+                        }
                       )
                     }
                   />
