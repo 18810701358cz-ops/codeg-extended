@@ -4305,6 +4305,17 @@ fn remove_kiro_server_at(path: &Path, id: &str) -> Result<bool, AppCommandError>
         return Ok(false);
     };
 
+    // An entry the reader skips — a `registry` reference, or anything else
+    // `canonicalize_spec` rejects — was never listed as Kiro's, so no edit made
+    // in codeg can be about it. Saving a same-named server for other agents
+    // still walks Kiro to remove it from every agent it was not assigned to,
+    // and that walk must leave such an entry alone.
+    let representable = servers
+        .get(id)
+        .is_some_and(|spec| canonicalize_spec(spec, "Kiro config").is_ok());
+    if !representable {
+        return Ok(false);
+    }
     let removed = servers.remove(id).is_some();
     if removed {
         write_json_file(path, &root)?;
@@ -7441,6 +7452,12 @@ mod tests {
 
         assert!(remove_kiro_server_at(&path, "fetch").unwrap());
         assert!(!remove_kiro_server_at(&path, "fetch").unwrap());
+
+        // The registry reference was never listed as Kiro's, so the remove
+        // walk a same-named save for other agents runs leaves it in place.
+        assert!(!remove_kiro_server_at(&path, "reg").unwrap());
+        let root: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["mcpServers"]["reg"], json!({"type": "registry"}));
     }
 
     // Kiro's client speaks streamable HTTP only, so an SSE server is excluded
