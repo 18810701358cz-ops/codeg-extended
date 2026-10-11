@@ -34,6 +34,7 @@
 //!    notification finds nothing and is silently ignored.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -359,6 +360,9 @@ pub struct InflightEntry {
 #[derive(Default)]
 pub struct InflightCalls {
     inner: Mutex<HashMap<String, InflightEntry>>,
+    /// Consecutive empty `check_user_feedback` deliveries for this process.
+    /// One companion serves one agent, so this is the loop the model is in.
+    feedback_poll: FeedbackPollGuard,
 }
 
 impl InflightCalls {
@@ -383,6 +387,14 @@ impl InflightCalls {
     pub async fn drain_all(&self) -> Vec<InflightEntry> {
         let mut map = self.inner.lock().await;
         map.drain().map(|(_k, v)| v).collect()
+    }
+
+    /// Render one delivered `check_user_feedback` outcome, counting it toward
+    /// the consecutive-empty streak. A later call on the same `InflightCalls`
+    /// sees the updated streak. Notes reset it.
+    fn render_observed_feedback(&self, outcome: &Value) -> Value {
+        let count = outcome.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        render_feedback_result_with_streak(outcome, self.feedback_poll.observe(count))
     }
 }
 
@@ -1267,7 +1279,14 @@ async fn register_and_spawn_feedback(
                         // leaving the notes pending for the next check
                         // (at-least-once at the agent-facing boundary).
                         let outcome = resp.outcome;
-                        let response = ok(id_for_response, render_feedback_result(&outcome));
+                        // Count this delivery on the process-lifetime guard
+                        // before rendering, so the Nth empty result can tell
+                        // the model to stop polling. A cancel that suppresses
+                        // the response never reaches this arm.
+                        let response = ok(
+                            id_for_response,
+                            inflight_for_task.render_observed_feedback(&outcome),
+                        );
                         let commit: futures_util::future::BoxFuture<'static, ()> =
                             Box::pin(async move {
                                 commit_feedback_after_delivery(&socket, &token, &outcome).await;
@@ -1466,30 +1485,75 @@ fn render_batch_report(tasks: &[Value]) -> Value {
     })
 }
 
-/// Map a serialized [`super::types::DelegationTaskReport`] into MCP `tools/call`
-/// result content. Shared by `delegate_to_agent` and `cancel_delegation`, which
-/// each resolve to a single report; `get_delegation_status` no longer uses this
-/// path — it always renders via [`render_status_result`] / [`render_batch_report`].
-/// Kept separate so unit tests can assert the mapping without a real socket.
-///
-/// The human-readable `content` text is the result for a `completed` task and
-/// the `message` (status note / failure reason) otherwise. `isError` is set
-/// ONLY for `failed` — `running` (ack), `canceled` (a successful cancel or a
-/// canceled task), and `unknown` are all valid tool results the LLM should read
-/// rather than treat as errors. The full report rides along in
-/// `structuredContent` so the frontend can read `status` + the child ids.
+/// Consecutive empty `check_user_feedback` deliveries after which the result
+/// tells the model to stop polling. Earlier empty results already say not to
+/// call again until the next checkpoint; this is the harder stop for a loop
+/// that ignores that sentence.
+const FEEDBACK_EMPTY_STREAK_STOP: u32 = 3;
+
+/// Process-local counter of consecutive empty feedback pulls. A delivery that
+/// carries notes resets it. Each agent launch is its own `codeg-mcp`, so the
+/// counter does not cross agents.
+#[derive(Default)]
+struct FeedbackPollGuard {
+    empty_streak: AtomicU32,
+}
+
+impl FeedbackPollGuard {
+    /// `Some(n)` is the empty streak including this call (1, 2, 3, …).
+    /// `None` means this delivery carried notes and the streak is now 0.
+    fn observe(&self, count: u64) -> Option<u32> {
+        if count == 0 {
+            let prev = self.empty_streak.fetch_add(1, Ordering::Relaxed);
+            Some(prev.saturating_add(1))
+        } else {
+            self.empty_streak.store(0, Ordering::Relaxed);
+            None
+        }
+    }
+}
+
+/// Instruction returned for an empty pull. `streak` includes the call being
+/// rendered. The same sentence is the `content` text and the structured
+/// `hint`, because some hosts show the model only one of the two.
+fn empty_feedback_instruction(streak: u32) -> String {
+    if streak >= FEEDBACK_EMPTY_STREAK_STOP {
+        format!(
+            "No new feedback from the user. You have called check_user_feedback {streak} times \
+             in a row with no feedback. Stop polling and proceed with your task. Do not call \
+             this tool again until you reach the next natural checkpoint."
+        )
+    } else {
+        "No new feedback from the user. Continue with your current task. Do not call \
+         check_user_feedback again until you reach the next natural checkpoint (after a \
+         sub-task, or before a significant decision)."
+            .to_string()
+    }
+}
+
 /// Map the `check_user_feedback` round-trip outcome (a `{ count, feedback:[..] }`
 /// envelope from the listener) into an MCP `tools/call` result.
 ///
 /// The human-readable `content` text is the steering the LLM acts on: when
 /// notes are present it frames them as high-priority user corrections and asks
-/// the agent to adjust and acknowledge; when empty it says so plainly. The raw
-/// envelope rides along in `structuredContent`. `isError` is always `false` — a
-/// successful check with no feedback is a valid result, not an error.
+/// the agent to adjust and acknowledge; when empty it says there is nothing
+/// new and not to call again until the next checkpoint. The raw envelope rides
+/// along in `structuredContent`, plus a `hint` on the empty path so a host that
+/// persists only `{count, feedback}` still shows the instruction. `isError` is
+/// always `false` — a successful check with no feedback is a valid result, not
+/// an error.
+///
+/// This entry point does not track repeats. The companion passes the streak
+/// from [`InflightCalls`] through `render_feedback_result_with_streak`.
 pub fn render_feedback_result(outcome: &Value) -> Value {
+    render_feedback_result_with_streak(outcome, None)
+}
+
+fn render_feedback_result_with_streak(outcome: &Value, empty_streak: Option<u32>) -> Value {
     let count = outcome.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let text = if count == 0 {
-        "No new feedback from the user. Continue with your current plan.".to_string()
+    let (text, hint) = if count == 0 {
+        let instruction = empty_feedback_instruction(empty_streak.unwrap_or(1));
+        (instruction.clone(), Some(instruction))
     } else {
         let mut s = format!(
             "The user sent {count} message(s) while you were working. Treat this as \
@@ -1502,17 +1566,21 @@ pub fn render_feedback_result(outcome: &Value) -> Value {
                 s.push_str(&format!("{}. {}\n", i + 1, body));
             }
         }
-        s
+        (s, None)
     };
+    let mut structured = json!({
+        "count": count,
+        "feedback": outcome.get("feedback").cloned().unwrap_or_else(|| json!([])),
+    });
+    if let Some(hint) = hint {
+        structured["hint"] = Value::String(hint);
+    }
     json!({
         "content": [{ "type": "text", "text": text }],
         "isError": false,
-        // Rebuild the structured payload from count + feedback only — the
-        // listener's internal `_commit_ids` must not leak to the agent's host.
-        "structuredContent": {
-            "count": count,
-            "feedback": outcome.get("feedback").cloned().unwrap_or_else(|| json!([])),
-        },
+        // `structured` is count + feedback, and `hint` only when empty. The
+        // listener's internal `_commit_ids` are not copied.
+        "structuredContent": structured,
     })
 }
 
@@ -1536,7 +1604,8 @@ pub fn render_ask_result(outcome: &Value) -> Value {
         .unwrap_or_default();
     let text = if declined || answers.is_empty() {
         "The user dismissed the question(s) without choosing an answer. Proceed \
-         using your best judgment and reasonable defaults."
+         using your best judgment and reasonable defaults. Do not call \
+         ask_user_question again to confirm that you should proceed."
             .to_string()
     } else {
         let mut s = String::from("The user answered your question(s):\n");
@@ -1558,6 +1627,10 @@ pub fn render_ask_result(outcome: &Value) -> Value {
                 i + 1
             ));
         }
+        s.push_str(
+            "Execute based on these answers now. Do not call ask_user_question \
+             again to confirm that you should proceed.\n",
+        );
         s
     };
     json!({
@@ -3900,6 +3973,18 @@ fn render_session_summary_text(o: &Value) -> String {
     out
 }
 
+/// Map a serialized [`super::types::DelegationTaskReport`] into MCP `tools/call`
+/// result content. Shared by `delegate_to_agent` and `cancel_delegation`, which
+/// each resolve to a single report; `get_delegation_status` no longer uses this
+/// path — it always renders via [`render_status_result`] / [`render_batch_report`].
+/// Kept separate so unit tests can assert the mapping without a real socket.
+///
+/// The human-readable `content` text is the result for a `completed` task and
+/// the `message` (status note / failure reason) otherwise. `isError` is set
+/// ONLY for `failed` — `running` (ack), `canceled` (a successful cancel or a
+/// canceled task), and `unknown` are all valid tool results the LLM should read
+/// rather than treat as errors. The full report rides along in
+/// `structuredContent` so the frontend can read `status` + the child ids.
 pub fn render_task_report(report: &Value) -> Value {
     let status = report.get("status").and_then(|v| v.as_str()).unwrap_or("");
     let is_error = status == "failed";
@@ -4652,6 +4737,31 @@ mod tests {
         assert_eq!(names, vec!["check_user_feedback".to_string()]);
     }
 
+    /// Issue #861: the description used to say "Call it proactively" with no
+    /// negative constraint, which is the safe exit a looping model takes.
+    #[tokio::test]
+    async fn check_user_feedback_description_forbids_repeated_empty_calls() {
+        let resp = unwrap_respond(
+            dispatch_with_features(
+                FEEDBACK_ONLY,
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            )
+            .await,
+        );
+        let desc = resp.result.unwrap()["tools"][0]["description"]
+            .as_str()
+            .unwrap()
+            .to_ascii_lowercase();
+        assert!(
+            desc.contains("do not call") || desc.contains("never call"),
+            "description must forbid another call after an empty result, got {desc}"
+        );
+        assert!(
+            desc.contains("no feedback") || desc.contains("empty"),
+            "description must mention the empty-result case, got {desc}"
+        );
+    }
+
     #[tokio::test]
     async fn check_user_feedback_spawns_when_enabled() {
         let line = json!({
@@ -4758,6 +4868,32 @@ mod tests {
         assert_eq!(on, vec!["ask_user_question".to_string()]);
     }
 
+    /// Issue #861: after an answer, the description must say to execute and
+    /// not to call again to confirm. The existing "should I proceed?" line
+    /// was not enough on its own.
+    #[tokio::test]
+    async fn ask_user_question_description_forbids_confirm_execution() {
+        let resp = unwrap_respond(
+            dispatch_with_features(
+                ASK_ONLY,
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            )
+            .await,
+        );
+        let desc = resp.result.unwrap()["tools"][0]["description"]
+            .as_str()
+            .unwrap()
+            .to_ascii_lowercase();
+        assert!(
+            desc.contains("do not call"),
+            "description must forbid a follow-up confirm call, got {desc}"
+        );
+        assert!(
+            desc.contains("execute") || desc.contains("proceed"),
+            "description must tell the model to act after an answer, got {desc}"
+        );
+    }
+
     fn ask_args() -> Value {
         json!({
             "questions": [{
@@ -4833,6 +4969,39 @@ mod tests {
         assert_eq!(rendered["isError"], false);
         let text = rendered["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("dismissed"));
+    }
+
+    /// Issue #861: after the user answers (or dismisses), the result itself
+    /// must say not to call again just to confirm execution. The tool
+    /// description already forbids "should I proceed?" and the model ignored it.
+    #[test]
+    fn render_ask_result_says_do_not_confirm_execution() {
+        let answered = render_ask_result(&json!({
+            "declined": false,
+            "answers": [{
+                "question": "Start?",
+                "header": "Go",
+                "multiSelect": false,
+                "selected": ["开始执行 (Recommended)"]
+            }]
+        }));
+        let answered_text = answered["content"][0]["text"].as_str().unwrap();
+        assert!(
+            answered_text.to_ascii_lowercase().contains("do not call"),
+            "an answer must tell the model not to re-ask, got {answered_text}"
+        );
+        assert!(
+            answered_text.to_ascii_lowercase().contains("proceed")
+                || answered_text.to_ascii_lowercase().contains("execute"),
+            "an answer must tell the model to act, got {answered_text}"
+        );
+
+        let declined = render_ask_result(&json!({ "declined": true, "answers": [] }));
+        let declined_text = declined["content"][0]["text"].as_str().unwrap();
+        assert!(
+            declined_text.to_ascii_lowercase().contains("do not call"),
+            "a dismissal must also forbid a confirm-execution re-ask, got {declined_text}"
+        );
     }
 
     // -- get_session_info feature gating + parsing + rendering -------------
@@ -5251,6 +5420,125 @@ mod tests {
         assert_eq!(rendered["structuredContent"]["count"], 0);
     }
 
+    /// Issue #861: an empty pull must tell the model to keep working and not
+    /// to poll again until the next checkpoint. Hosts that persist only the
+    /// structured `{count, feedback}` object (the loop in the report showed
+    /// exactly that JSON) need the same instruction on `hint`.
+    #[test]
+    fn render_feedback_empty_tells_agent_not_to_call_again_until_checkpoint() {
+        let rendered = render_feedback_result(&json!({ "count": 0, "feedback": [] }));
+        assert_eq!(rendered["isError"], false);
+        let text = rendered["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("No new feedback"),
+            "empty check must stay recognizable as no feedback, got {text}"
+        );
+        assert!(
+            text.to_ascii_lowercase().contains("do not call"),
+            "empty check must tell the model not to poll again, got {text}"
+        );
+        assert!(
+            text.to_ascii_lowercase().contains("checkpoint"),
+            "empty check must name when calling again is allowed, got {text}"
+        );
+        let hint = rendered["structuredContent"]["hint"].as_str().unwrap_or("");
+        assert!(
+            hint.to_ascii_lowercase().contains("do not call"),
+            "structured payload must carry the same instruction, got {hint}"
+        );
+        assert_eq!(rendered["structuredContent"]["count"], 0);
+        assert_eq!(rendered["structuredContent"]["feedback"], json!([]));
+    }
+
+    /// The third consecutive empty delivery is the stop-polling guard. One
+    /// and two stay on the softer "do not call again until" wording so a
+    /// single checkpoint check is not scolded.
+    #[test]
+    fn render_feedback_repeated_empty_tells_agent_to_stop_polling() {
+        let empty = json!({ "count": 0, "feedback": [] });
+        let once = render_feedback_result_with_streak(&empty, Some(1));
+        let twice = render_feedback_result_with_streak(&empty, Some(2));
+        let third = render_feedback_result_with_streak(&empty, Some(3));
+        for rendered in [&once, &twice] {
+            let text = rendered["content"][0]["text"].as_str().unwrap();
+            assert!(
+                !text.to_ascii_lowercase().contains("stop polling"),
+                "streak below 3 must not scold, got {text}"
+            );
+        }
+        let text = third["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.to_ascii_lowercase().contains("stop polling"),
+            "third empty check must tell the model to stop, got {text}"
+        );
+        assert!(
+            text.contains('3'),
+            "stop message must name the streak, got {text}"
+        );
+        let hint = third["structuredContent"]["hint"].as_str().unwrap();
+        assert!(hint.contains('3'));
+        assert!(hint.to_ascii_lowercase().contains("stop polling"));
+        assert_eq!(third["structuredContent"]["count"], 0);
+        assert_eq!(third["isError"], false);
+    }
+
+    #[test]
+    fn render_feedback_with_notes_does_not_carry_a_stop_hint() {
+        let outcome = json!({
+            "count": 1,
+            "feedback": [{ "text": "use the existing helper", "created_at": "t" }],
+            "_commit_ids": ["secret"],
+        });
+        let rendered = render_feedback_result_with_streak(&outcome, Some(9));
+        let text = rendered["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("high-priority steering"));
+        assert!(text.contains("use the existing helper"));
+        assert!(rendered["structuredContent"].get("hint").is_none());
+        assert!(rendered["structuredContent"].get("_commit_ids").is_none());
+        assert!(!text.contains("secret"));
+    }
+
+    #[test]
+    fn feedback_poll_guard_counts_consecutive_empties_and_resets_on_notes() {
+        let guard = FeedbackPollGuard::default();
+        assert_eq!(guard.observe(0), Some(1));
+        assert_eq!(guard.observe(0), Some(2));
+        assert_eq!(guard.observe(0), Some(3));
+        assert_eq!(guard.observe(1), None);
+        assert_eq!(guard.observe(0), Some(1));
+    }
+
+    /// The companion shares one guard across calls on the same `InflightCalls`.
+    /// A note in the middle must bring the next empty pull back to the soft
+    /// wording, not leave it stuck on "stop polling".
+    #[test]
+    fn inflight_feedback_guard_escalates_then_resets() {
+        let inflight = InflightCalls::new();
+        let empty = json!({ "count": 0, "feedback": [] });
+        let first = inflight.render_observed_feedback(&empty);
+        let first_text = first["content"][0]["text"].as_str().unwrap();
+        assert!(first_text.to_ascii_lowercase().contains("do not call"));
+        assert!(!first_text.to_ascii_lowercase().contains("stop polling"));
+        let _second = inflight.render_observed_feedback(&empty);
+        let third = inflight.render_observed_feedback(&empty);
+        let third_text = third["content"][0]["text"].as_str().unwrap();
+        assert!(third_text.to_ascii_lowercase().contains("stop polling"));
+        assert!(third["structuredContent"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains('3'));
+        let notes = json!({
+            "count": 1,
+            "feedback": [{ "text": "go", "created_at": "t" }],
+        });
+        let with_notes = inflight.render_observed_feedback(&notes);
+        assert!(with_notes["structuredContent"].get("hint").is_none());
+        let again = inflight.render_observed_feedback(&empty);
+        let again_text = again["content"][0]["text"].as_str().unwrap();
+        assert!(again_text.to_ascii_lowercase().contains("do not call"));
+        assert!(!again_text.to_ascii_lowercase().contains("stop polling"));
+    }
+
     #[test]
     fn render_feedback_lists_notes_as_high_priority_steering() {
         let outcome = json!({
@@ -5454,6 +5742,95 @@ mod tests {
             !*saw_commit.lock().await,
             "a cancelled check must not commit"
         );
+    }
+
+    /// Three empty pulls on one companion must escalate on the third response
+    /// the agent actually receives. This is the spawn path, not only the
+    /// pure renderer: a refactor that forgets to consult the shared guard
+    /// would keep returning the soft sentence forever.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn feedback_spawn_repeated_empty_escalates_stop_polling() {
+        use crate::acp::delegation::transport::{read_frame, write_frame, BrokerMessage};
+        use tokio::net::UnixListener;
+
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let sock = dir.path().join("fb-empty.sock").to_string_lossy().to_string();
+        let listener = UnixListener::bind(&sock).unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                match read_frame::<_, BrokerMessage>(&mut conn).await.unwrap() {
+                    BrokerMessage::Feedback(_) => {
+                        write_frame(
+                            &mut conn,
+                            &BrokerResponse {
+                                outcome: json!({
+                                    "count": 0,
+                                    "feedback": [],
+                                    "_commit_ids": [],
+                                }),
+                            },
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    other => panic!("expected Feedback, got {other:?}"),
+                }
+            }
+        });
+
+        let ctx = CompanionContext {
+            parent_connection_id: "p".into(),
+            socket_path: sock,
+            token: "tok".into(),
+            features: FEEDBACK_ONLY,
+            custom_agents: Vec::new(),
+            disabled_agents: Vec::new(),
+        };
+        let inflight = Arc::new(InflightCalls::new());
+        let mut texts = Vec::new();
+        for id in 1..=3 {
+            let call_line = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": { "name": "check_user_feedback", "arguments": {} }
+            })
+            .to_string();
+            let action = dispatch_line(&ctx, inflight.clone(), &call_line).await;
+            let LineAction::Spawn(call) = action else {
+                panic!("expected Spawn");
+            };
+            let result = call.future.await;
+            let resp = result.response.expect("empty check is delivered");
+            let text = resp.result.unwrap()["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            texts.push(text);
+            if let Some(after) = result.after_relay {
+                after.await;
+            }
+        }
+        assert!(
+            texts[0].to_ascii_lowercase().contains("do not call")
+                && !texts[0].to_ascii_lowercase().contains("stop polling"),
+            "first empty: {}",
+            texts[0]
+        );
+        assert!(
+            texts[1].to_ascii_lowercase().contains("do not call")
+                && !texts[1].to_ascii_lowercase().contains("stop polling"),
+            "second empty: {}",
+            texts[1]
+        );
+        assert!(
+            texts[2].to_ascii_lowercase().contains("stop polling") && texts[2].contains('3'),
+            "third empty: {}",
+            texts[2]
+        );
+        server.abort();
     }
 
     // ── browser tools ──────────────────────────────────────────────────────
