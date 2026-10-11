@@ -182,6 +182,39 @@ const CODEX_NOTE_PREFIX = "user_note: "
 const CODEX_OTHER_OPTION = "None of the above"
 
 /**
+ * qodercli's native AskUserQuestion persists its result as plain sentences —
+ * the Claude-Code lineage llmContent, not the companion's JSON envelope:
+ *   answered: `Your questions have been answered: "Q1"="A1", "Q2"="A2". You can
+ *     now continue with these answers in mind.`
+ *   declined: `The user did not answer the questions.`
+ * Each pair's value is double-quoted (a custom "Other" answer too) and may
+ * itself contain commas, so pairs are extracted by a global regex instead of
+ * splitting on ", ". A single-question answer may trail a
+ * ` selected preview:` block and/or ` notes: …`; both are ignored — only the
+ * `"Q"="A"` pairs count. The sentences carry no header, so each answer keeps
+ * `header: ""` and the card matches it by question text (`byQuestion`).
+ */
+const ANSWERED_SENTENCE_RE = /Your questions have been answered:/
+const ANSWER_PAIR_RE = /"([^"]+)"="([^"]*)"/g
+
+function parseAnsweredSentence(body: string): AskQuestionOutcome | null {
+  if (!ANSWERED_SENTENCE_RE.test(body)) return null
+  const answers: AskQuestionAnswer[] = []
+  for (const match of body.matchAll(ANSWER_PAIR_RE)) {
+    const question = match[1].trim()
+    const answer = match[2].trim()
+    // A pair with no question text names nothing; drop it.
+    if (!question) continue
+    answers.push({
+      header: "",
+      question,
+      selected: answer ? [answer] : [],
+    })
+  }
+  return { declined: false, answers }
+}
+
+/**
  * Decode one codex `request_user_input` answer list into what the user chose.
  *
  * codex encodes an answer as option labels plus a free-form note written as a
@@ -358,6 +391,9 @@ function parseOutcomeJson(output: string): AskQuestionOutcome | null {
  * `content` instead of `structuredContent` (see `render_ask_result`):
  *   "The user dismissed the question(s) …"  (declined)
  *   "The user answered your question(s):\n1. [Header] Question\n   → a, b\n…"
+ * qodercli / claude-code's native AskUserQuestion persists yet another shape —
+ * plain sentences ("Your questions have been answered: …" / "The user did not
+ * answer the questions.") — parsed by `parseAnsweredSentence`.
  *
  * Returns `null` when there is no output yet (the call is still in flight). In
  * the fallback, selections are split on ", " (lossy for a label containing a
@@ -375,7 +411,19 @@ export function parseAskQuestionOutcome(
   const fromJson = parseOutcomeJson(body)
   if (fromJson) return fromJson
 
-  if (/\bdismissed the question/i.test(body)) {
+  // qodercli / claude-code's native AskUserQuestion sentences (see
+  // `parseAnsweredSentence`) — before the line-based fallback, whose
+  // `N. [header] question` shape cannot match them and would report an empty
+  // "no selection" outcome for a genuinely answered ask.
+  const fromSentence = parseAnsweredSentence(body)
+  if (fromSentence) return fromSentence
+
+  // The decline sentences ride one arm: the companion's dismissal wording and
+  // qodercli's "did not answer" sentence (an unanswered native ask).
+  if (
+    /\bdismissed the question/i.test(body) ||
+    /The user did not answer the questions/.test(body)
+  ) {
     return { declined: true, answers: [] }
   }
 

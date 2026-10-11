@@ -476,6 +476,62 @@ describe("parseAskQuestionOutcome", () => {
     ])
   })
 
+  it("reads qoder's decline sentence as declined", () => {
+    // qodercli's native AskUserQuestion persists the decline as a bare
+    // sentence (the Claude-Code lineage llmContent), not a JSON envelope.
+    expect(
+      parseAskQuestionOutcome("The user did not answer the questions.")
+    ).toEqual({
+      declined: true,
+      answers: [],
+    })
+  })
+
+  it("parses qoder's answered sentence into one answer per quoted pair", () => {
+    // Verbatim llmContent from a real qoder session (ef841d1d…, line 22): the
+    // native AskUserQuestion result is a sentence of "Q"="A" pairs, values
+    // double-quoted — not the companion's JSON envelope. Without this the card
+    // showed "no selection" for a genuinely answered ask.
+    const output =
+      'Your questions have been answered: "你订阅主要拿来干什么？"="AI 编程 Agent 日常主力", ' +
+      '"预算大概什么范围？"="100-200 元/月". You can now continue with these answers in mind.'
+    expect(parseAskQuestionOutcome(output)).toEqual({
+      declined: false,
+      answers: [
+        {
+          header: "",
+          question: "你订阅主要拿来干什么？",
+          selected: ["AI 编程 Agent 日常主力"],
+        },
+        {
+          header: "",
+          question: "预算大概什么范围？",
+          selected: ["100-200 元/月"],
+        },
+      ],
+    })
+  })
+
+  it("keeps a comma-bearing value whole and ignores trailing preview/notes blocks", () => {
+    // Pair values may contain commas, so pairs are regex-extracted rather than
+    // split on ", "; a single-question answer can trail a ` selected preview:`
+    // block and `notes:` — neither may leak into the picks.
+    const output =
+      'Your questions have been answered: "Pick one"="Alpha, beta, and more". ' +
+      "You can now continue with these answers in mind. selected preview:\n" +
+      'some preview "text" here\nnotes: user wrote a note'
+    expect(parseAskQuestionOutcome(output)).toEqual({
+      declined: false,
+      answers: [
+        {
+          header: "",
+          question: "Pick one",
+          selected: ["Alpha, beta, and more"],
+        },
+      ],
+    })
+  })
+
   it("falls back to the human-readable text when there is no JSON", () => {
     const output =
       "The user answered your question(s):\n" +
