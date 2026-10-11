@@ -1037,11 +1037,13 @@ export function buildStreamingTurnsFromLiveMessage(
   liveMessage: LiveMessage,
   opts?: {
     /**
-     * When false (the COMPLETE_TURN promotion path), parented subagent
-     * text/thinking is still routed OUT of the main thread but no
-     * `agent_transcript` is attached — the transcript is transient live-only
-     * data and must not survive into promoted `localTurns` (the authoritative
-     * detail reload that replaces them has no counterpart for it).
+     * When false, parented subagent text/thinking is still routed OUT of the
+     * main thread but no `agent_transcript` is attached — used by callers that
+     * render a derived view of a turn which is already covered elsewhere. The
+     * COMPLETE_TURN promotion passes nothing (defaults to true): the settled
+     * card keeps its interleaved timeline, and the authoritative detail reload
+     * that later replaces `localTurns` carries `agent_stats.timeline` parsed
+     * from the child's own transcript, so there is no window without one.
      */
     attachAgentTranscripts?: boolean
   }
@@ -1474,9 +1476,10 @@ export function buildStreamingTurnsFromLiveMessage(
         const children = isAgent
           ? (agentChildren.get(block.info.tool_call_id) ?? [])
           : []
-        // Live subagent transcript for the RUNNING card only: at settle the
-        // card flips to the real result (and history has no counterpart), so
-        // the final-state branch below never attaches it.
+        // The subagent transcript stays attached at settle, so the finished
+        // card keeps the interleaved order it showed live; once history
+        // reloads from disk the parsed `agent_stats.timeline` takes over as
+        // the card's timeline source.
         const transcript =
           attachAgentTranscripts && isAgent
             ? agentTranscripts.get(block.info.tool_call_id)
@@ -1513,6 +1516,7 @@ export function buildStreamingTurnsFromLiveMessage(
               : resolvedOutput,
             is_error: block.info.status === "failed",
             ...(agentStats ? { agent_stats: agentStats } : {}),
+            ...(transcript?.length ? { agent_transcript: transcript } : {}),
           })
           currentGroupHasCompletedTool = true
         } else if (
@@ -2202,14 +2206,15 @@ function reducer(
           : current.liveMessage
 
       // Convert liveMessage to completed MessageTurns (split into rounds).
-      // No agent transcripts on promotion: they are transient live-only data
-      // (see the option's doc) — parented blocks are still routed out of the
-      // main thread, just not re-attached to the promoted card.
+      // Agent transcripts ride along on promotion: the settled card keeps the
+      // interleaved order it showed live, and the authoritative detail reload
+      // that later replaces `localTurns` supplies `agent_stats.timeline`
+      // parsed from the child's own transcript — see the option's doc.
       const streamingTurns = sourceLiveMessage
         ? buildStreamingTurnsFromLiveMessage(
             current.conversationId,
             sourceLiveMessage,
-            { attachAgentTranscripts: false }
+            { attachAgentTranscripts: true }
           ).turns
         : []
 

@@ -1,7 +1,16 @@
 import { memo, useMemo, useState, type ReactNode } from "react"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
-import type { AgentToolCall, AgentType } from "@/lib/types"
+import type {
+  AgentToolCall,
+  AgentTranscriptEntry,
+  AgentType,
+} from "@/lib/types"
 import { tryParseJson, extractJsonField } from "./content-parts-renderer"
+import {
+  groupConsecutiveToolRuns,
+  ToolGroupPart,
+  type AdaptedToolCallPart,
+} from "./tool-group-part"
 import { SubagentSessionDialog } from "./subagent-session-dialog"
 import { useSessionViewerHost } from "./session-viewer-host"
 import { shortAgentId } from "@/lib/collab-tool"
@@ -45,18 +54,16 @@ function formatDuration(ms: number): string {
 function adaptToolCalls(
   calls: AgentToolCall[],
   parentId: string
-): AdaptedContentPart[] {
-  return calls.map(
-    (call, i): Extract<AdaptedContentPart, { type: "tool-call" }> => ({
-      type: "tool-call",
-      toolCallId: `${parentId}-sub-${i}`,
-      toolName: call.tool_name,
-      input: call.input_preview ?? null,
-      state: call.is_error ? "output-error" : "output-available",
-      output: call.output_preview ?? null,
-      errorText: call.is_error ? (call.output_preview ?? undefined) : undefined,
-    })
-  )
+): AdaptedToolCallPart[] {
+  return calls.map((call, i) => ({
+    type: "tool-call",
+    toolCallId: `${parentId}-sub-${i}`,
+    toolName: call.tool_name,
+    input: call.input_preview ?? null,
+    state: call.is_error ? "output-error" : "output-available",
+    output: call.output_preview ?? null,
+    errorText: call.is_error ? (call.output_preview ?? undefined) : undefined,
+  }))
 }
 
 // A parsed JSON field is only usable here if it's a non-empty STRING. Some
@@ -125,9 +132,11 @@ function parseTaskOutcomeEnvelope(
   return null
 }
 
-/** Render bound for the live subagent transcript — the DATA is uncapped;
- *  only the visible tail is limited (entries only split at kind boundaries,
- *  so the count stays small in practice; this is a backstop). */
+/** Render bound for the RUNNING card's transcript — the DATA is uncapped; the
+ *  live tail is what stays limited (entries only split at kind boundaries, so
+ *  the count stays small in practice; this is a backstop). Once the card
+ *  settles the bound does NOT apply: the full arrival order is the point of
+ *  the settled view, so history renders every entry. */
 const AGENT_TRANSCRIPT_RENDER_TAIL = 20
 
 interface GrokSubagentProgress {
@@ -301,10 +310,19 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
     backgroundSettled && backgroundLifecycle?.status !== "completed"
 
   const [promptOpen, setPromptOpen] = useState(false)
+  // Settled cards lead with the conclusion; the timeline pill starts closed.
+  const [timelineOpen, setTimelineOpen] = useState(false)
 
-  const transcriptTail = useMemo(
-    () => (part.agentTranscript ?? []).slice(-AGENT_TRANSCRIPT_RENDER_TAIL),
-    [part.agentTranscript]
+  // While the card runs, only the newest tail of the transcript is rendered.
+  // Once settled the whole timeline is: the live transcript is still attached
+  // at settle, and once history reloads from disk the parsed
+  // `agent_stats.timeline` takes its place — same entries, same order.
+  const displayTranscript = useMemo(
+    () =>
+      isRunning
+        ? (part.agentTranscript ?? []).slice(-AGENT_TRANSCRIPT_RENDER_TAIL)
+        : (part.agentTranscript ?? []),
+    [isRunning, part.agentTranscript]
   )
 
   const subagentType = useMemo(
@@ -420,6 +438,65 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
     () => adaptToolCalls(agentStats?.tool_calls ?? [], part.toolCallId),
     [agentStats?.tool_calls, part.toolCallId]
   )
+
+  // The timeline's display stream: tool_call markers materialize into their
+  // child cards and consecutive ones collapse into one pill group (a text or
+  // thinking entry breaks the run — same semantics as the main thread's
+  // grouping); prose/thinking stay standalone in arrival order. A marker
+  // pointing outside `adaptedToolCalls` is dropped rather than rendered as a
+  // hole.
+  const transcriptSegments = useMemo(() => {
+    const display: Array<{
+      call?: AdaptedToolCallPart
+      other?: Extract<AgentTranscriptEntry, { type: "text" | "thinking" }>
+    }> = []
+    displayTranscript.forEach((entry) => {
+      if (entry.type === "tool_call") {
+        const tc = adaptedToolCalls[entry.childIndex]
+        if (tc) display.push({ call: tc })
+        return
+      }
+      display.push({ other: entry })
+    })
+    return groupConsecutiveToolRuns(display)
+  }, [displayTranscript, adaptedToolCalls])
+
+  const transcriptSegmentNodes = transcriptSegments.map((segment) => {
+    if (segment.kind === "calls") {
+      return (
+        <ToolGroupPart
+          key={`subagent-embed-group-${segment.start}`}
+          part={{
+            type: "tool-group",
+            items: segment.calls,
+            isStreaming: isRunning,
+          }}
+          renderItem={renderToolCall}
+        />
+      )
+    }
+    const entry = segment.value
+    const i = segment.index
+    if (entry.type === "thinking") {
+      return entry.text.trim() ? (
+        // Folded like the main thread's thinking (same contract as
+        // <ReasoningPart>): a subagent's reasoning is reference
+        // material — it stays collapsed until the reader opens it.
+        <Reasoning key={`subagent-embed-${i}`} isStreaming={false}>
+          <ReasoningTrigger />
+          <ReasoningContent>{entry.text}</ReasoningContent>
+        </Reasoning>
+      ) : null
+    }
+    return (
+      <div
+        key={`subagent-embed-${i}`}
+        className="text-sm prose prose-sm dark:prose-invert max-w-none [&_ul]:list-inside [&_ol]:list-inside"
+      >
+        <MessageResponse>{entry.text}</MessageResponse>
+      </div>
+    )
+  })
 
   // Grok live sub-agent ticker — the only live signal of the child's work
   // (grok forwards no child chunks/tool calls). Shown while the child runs:
@@ -574,65 +651,87 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
           </Collapsible>
         )}
 
-        {/* Subagent tool calls — rendered with the same ToolCallPart
-      as the outer conversation for consistent appearance. Hidden while the
-      live timeline is up: there the child's tool calls appear in position as
-      `tool_call` transcript entries, and rendering both would double them. */}
-        {adaptedToolCalls.length > 0 &&
-          !(isRunning && transcriptTail.length > 0) && (
-            <div className="space-y-2">
-              {adaptedToolCalls.map((tc, i) =>
-                renderToolCall(
-                  tc as Extract<AdaptedContentPart, { type: "tool-call" }>,
-                  `subagent-tc-${i}`
-                )
-              )}
-            </div>
-          )}
-
-        {/* Live subagent transcript (claude-agent-acp ≥0.63) — streaming
-          text/thinking/child-tool markers attributed to this Agent call, in
-          arrival order. LIVE-only by construction: the store stops attaching
-          it at settle and promotion never carries it, so this section
-          disappears when the real result takes over below. Render is
-          tail-bounded; the data is not. */}
-        {isRunning && transcriptTail.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="text-3xs font-medium uppercase tracking-wide text-muted-foreground/70">
-              {t("agentLiveTranscript")}
-            </div>
-            {transcriptTail.map((entry, i) => {
-              if (entry.type === "tool_call") {
-                const tc = adaptedToolCalls[entry.childIndex]
-                return tc
-                  ? renderToolCall(
-                      tc as Extract<AdaptedContentPart, { type: "tool-call" }>,
-                      `subagent-embed-${i}`
-                    )
-                  : null
-              }
-              if (entry.type === "thinking") {
-                return entry.text.trim() ? (
-                  // Folded like the main thread's thinking (same contract as
-                  // <ReasoningPart>): a subagent's reasoning is reference
-                  // material — it stays collapsed until the reader opens it.
-                  <Reasoning key={i} isStreaming={false}>
-                    <ReasoningTrigger />
-                    <ReasoningContent>{entry.text}</ReasoningContent>
-                  </Reasoning>
-                ) : null
-              }
-              return (
-                <div
-                  key={i}
-                  className="text-sm prose prose-sm dark:prose-invert max-w-none [&_ul]:list-inside [&_ol]:list-inside"
-                >
-                  <MessageResponse>{entry.text}</MessageResponse>
-                </div>
-              )
-            })}
-          </div>
+        {/* Child tool calls when no timeline carries them in position — a
+      card whose stats predate timelines (or whose child transcript was never
+      parsed). Rendered through the same pill group the main thread folds
+      consecutive tool calls into, single calls included. */}
+        {adaptedToolCalls.length > 0 && displayTranscript.length === 0 && (
+          <ToolGroupPart
+            key="subagent-tc-group"
+            part={{
+              type: "tool-group",
+              items: adaptedToolCalls,
+              isStreaming: isRunning,
+            }}
+            renderItem={renderToolCall}
+          />
         )}
+
+        {/* The child's mixed timeline — thinking/text/child-tool markers in
+          arrival order (claude-agent-acp ≥0.63 live, or the child's own JSONL
+          parsed into `agent_stats.timeline` on history). While the card runs
+          it streams in place (tail-bounded) under the live heading; once the
+          card settles the whole interleaved record collapses into one pill,
+          closed by default — the finished card leads with its conclusion, and
+          the process is one click away. That is the settled shape every host
+          converges on: Claude Code's `Done (N tool uses · …)` line, codex's
+          `⌃t to view transcript`, ZCode's permanently compact capsule. The
+          tail bound never applies to settled data.
+          The pill's summary prefers the child's total duration (the
+          transcript's own span, or the task-reported one); the entry count is
+          the fallback for agents that supply neither. Right after settle the
+          detail may not have landed yet, so the count can show until
+          FETCH_DETAIL_SUCCESS re-renders the card with parsed stats. */}
+        {displayTranscript.length > 0 &&
+          (isRunning ? (
+            <div className="space-y-1.5">
+              <div className="text-3xs font-medium uppercase tracking-wide text-muted-foreground/70">
+                {t("agentLiveTranscript")}
+              </div>
+              {transcriptSegmentNodes}
+            </div>
+          ) : (
+            <Collapsible
+              open={timelineOpen}
+              onOpenChange={setTimelineOpen}
+              className="w-full"
+            >
+              <CollapsibleTrigger
+                className={cn(
+                  "group inline-flex max-w-full items-center gap-1.5 rounded-full bg-muted/60 px-3.5 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ws-msg-chip"
+                )}
+              >
+                <ChevronRightIcon
+                  aria-hidden="true"
+                  className={cn(
+                    "size-3 shrink-0 opacity-60 transition-transform",
+                    timelineOpen && "rotate-90"
+                  )}
+                />
+                <span className="min-w-0 truncate">
+                  {agentStats?.total_duration_ms
+                    ? t("agentProcessDuration", {
+                        duration: formatDuration(agentStats.total_duration_ms),
+                      })
+                    : t("agentProcessCount", {
+                        count: displayTranscript.length,
+                      })}
+                </span>
+              </CollapsibleTrigger>
+              <CollapsibleContent
+                className={cn(
+                  "w-full outline-none",
+                  "data-[state=open]:animate-in data-[state=closed]:animate-out",
+                  "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+                  "data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1"
+                )}
+              >
+                <div className="mt-3 w-full space-y-3">
+                  {transcriptSegmentNodes}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          ))}
 
         {/* Running indicator (in-turn streaming, a live background launch whose
           ack just replaced the stream, or a cursor background-task envelope) */}
@@ -679,6 +778,24 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
             <pre className="whitespace-pre-wrap break-words text-xs text-destructive">
               {part.errorText}
             </pre>
+          </div>
+        )}
+
+        {/* Orphaned result recovery: a turn the provider killed mid-flight
+          leaves its pending async Agent calls as errors ("no result") while
+          the children actually finished — their reports exist only in the
+          task files the parser recovered into `recovered_result`. Rendered
+          ONLY on an errored card; a normally completed async child delivered
+          its result via the notification turn, and this field stays invisible
+          there. */}
+        {isError && agentStats?.recovered_result && (
+          <div className="space-y-2">
+            <div className="text-xs text-muted-foreground">
+              {t("agentRecoveredNote")}
+            </div>
+            <div className="text-sm prose prose-sm dark:prose-invert max-w-none [&_ul]:list-inside [&_ol]:list-inside">
+              <MessageResponse>{agentStats.recovered_result}</MessageResponse>
+            </div>
           </div>
         )}
 

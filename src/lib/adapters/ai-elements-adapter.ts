@@ -2530,7 +2530,14 @@ export function adaptMessageTurn(
               : undefined,
           agentStats: matchedResult.agent_stats ?? undefined,
           meta: block.meta ?? null,
-          agentTranscript: matchedResult.agent_transcript ?? undefined,
+          // The settled card keeps its interleaved view from whichever source
+          // survives: the live transcript while localTurns still holds it, the
+          // parsed child transcript once history reloads from disk.
+          agentTranscript: matchedResult.agent_transcript?.length
+            ? matchedResult.agent_transcript
+            : matchedResult.agent_stats?.timeline?.length
+              ? matchedResult.agent_stats.timeline
+              : undefined,
         })
       } else {
         // Position-based matching: if this tool_use has no ID, check next block
@@ -2573,7 +2580,12 @@ export function adaptMessageTurn(
                 : undefined,
             agentStats: positionalResult.agent_stats ?? undefined,
             meta: block.meta ?? null,
-            agentTranscript: positionalResult.agent_transcript ?? undefined,
+            // Same dual source as the id-matched branch above.
+            agentTranscript: positionalResult.agent_transcript?.length
+              ? positionalResult.agent_transcript
+              : positionalResult.agent_stats?.timeline?.length
+                ? positionalResult.agent_stats.timeline
+                : undefined,
           })
         } else {
           // For live streaming, unmatched tools are still running.

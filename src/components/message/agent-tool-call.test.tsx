@@ -489,6 +489,9 @@ describe("AgentToolCallPart live subagent transcript", () => {
       </NextIntlClientProvider>
     )
     expandRunningCapsule()
+    // The lone child call folds into the same one-item pill the main thread
+    // uses; open it to reach the card inside.
+    fireEvent.click(screen.getByRole("button", { name: "Read files 1 time" }))
     const before = screen.getByText("before the read")
     const child = screen.getByTestId("child-tool-call")
     const after = screen.getByText("after the read")
@@ -503,7 +506,7 @@ describe("AgentToolCallPart live subagent transcript", () => {
     expect(child.textContent).toBe("Read")
   })
 
-  it("skips empty thinking entries and renders nothing when settled", () => {
+  it("renders blank thinking entries as nothing and collapses the timeline after settle", () => {
     renderCard(
       withTranscript("input-available", [{ type: "thinking", text: "   " }])
     )
@@ -511,15 +514,23 @@ describe("AgentToolCallPart live subagent transcript", () => {
     // Label shows (the list is non-empty) but the blank entry renders nothing.
     expect(screen.getByText("Live activity")).toBeInTheDocument()
 
-    // A settled card never shows the transcript section — the store stops
-    // attaching it, and even a stale prop must not render.
+    // A settled card keeps the timeline data but folds it into one pill,
+    // CLOSED by default — the conclusion leads, the process is one click
+    // away (history swaps the live transcript for agent_stats.timeline).
     const settled = withTranscript("output-available", [
-      { type: "text", text: "stale transcript" },
+      { type: "text", text: "settled transcript" },
     ])
     renderCard({ ...settled, output: "final result" })
     fireEvent.click(screen.getByRole("button", { name: "Completed" }))
-    expect(screen.queryByText("stale transcript")).not.toBeInTheDocument()
+    // Collapsed by default: the pill shows the step count, the content does
+    // not mount.
+    const trigger = screen.getByRole("button", {
+      name: "Sub-agent activity · 1 steps",
+    })
+    expect(screen.queryByText("settled transcript")).not.toBeInTheDocument()
     expect(screen.getByText("final result")).toBeInTheDocument()
+    fireEvent.click(trigger)
+    expect(screen.getByText("settled transcript")).toBeInTheDocument()
   })
 
   it("bounds the rendered tail to the newest entries", () => {
@@ -534,6 +545,302 @@ describe("AgentToolCallPart live subagent transcript", () => {
     expect(screen.queryByText("entry-4")).not.toBeInTheDocument()
     expect(screen.getByText("entry-5")).toBeInTheDocument()
     expect(screen.getByText("entry-24")).toBeInTheDocument()
+  })
+})
+
+describe("AgentToolCallPart settled timeline and tool grouping", () => {
+  const twoCalls = {
+    agentStats: {
+      tool_calls: [
+        { tool_name: "Read", is_error: false },
+        { tool_name: "Read", is_error: false },
+      ],
+    },
+  }
+
+  /** The capsule body is collapsed by default while running — expand it via
+   *  the pill trigger (same helper as the live-transcript describe above). */
+  const expandRunningCapsule = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Running" }))
+
+  /** Child cards stamped with their own id so order can be asserted. */
+  const renderWithChildren = (part: ToolCallPart) =>
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <AgentToolCallPart
+          part={part}
+          renderToolCall={(tc, key) => (
+            <span key={key} data-testid={tc.toolCallId ?? key}>
+              {tc.toolName}
+            </span>
+          )}
+        />
+      </NextIntlClientProvider>
+    )
+
+  it("keeps the full interleaved order on a settled card and folds the tool run into one pill", () => {
+    const part: ToolCallPart = {
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "output-available"
+      ),
+      ...twoCalls,
+      agentTranscript: [
+        { type: "thinking", text: "planning the sweep" },
+        { type: "tool_call", childIndex: 0 },
+        { type: "tool_call", childIndex: 1 },
+        { type: "text", text: "both files read" },
+      ],
+    }
+    renderWithChildren(part)
+    fireEvent.click(screen.getByRole("button", { name: "Completed" }))
+
+    // Settled: the whole timeline folds into one pill carrying the step
+    // count, closed by default — the live heading never appears.
+    const timeline = screen.getByRole("button", {
+      name: "Sub-agent activity · 4 steps",
+    })
+    expect(screen.queryByText("Live activity")).not.toBeInTheDocument()
+    expect(screen.queryByText("planning the sweep")).not.toBeInTheDocument()
+    expect(screen.queryByText("both files read")).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Read files 2 times" })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(timeline)
+
+    // The interleaved order survives: thinking → tools → text.
+    fireEvent.click(screen.getByRole("button", { name: "Thought" }))
+    const thought = screen.getByText("planning the sweep")
+    const pill = screen.getByRole("button", { name: "Read files 2 times" })
+    const text = screen.getByText("both files read")
+    expect(
+      timeline.compareDocumentPosition(thought) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      thought.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      pill.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    // Both child cards live inside the one tool pill, in transcript order.
+    fireEvent.click(pill)
+    const first = screen.getByTestId("call-agent-sub-0")
+    const second = screen.getByTestId("call-agent-sub-1")
+    expect(
+      first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it("leads the settled pill with the duration when the stats carry one", () => {
+    // formatDuration(138_000) = "2.3m" — the summary prefers the child's
+    // total duration (transcript-derived or task-reported) over the entry
+    // count, which is only a fallback for agents that supply neither.
+    const part: ToolCallPart = {
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "output-available"
+      ),
+      agentStats: {
+        tool_calls: twoCalls.agentStats.tool_calls,
+        total_duration_ms: 138_000,
+      },
+      agentTranscript: [
+        { type: "tool_call", childIndex: 0 },
+        { type: "tool_call", childIndex: 1 },
+      ],
+    }
+    renderWithChildren(part)
+    fireEvent.click(screen.getByRole("button", { name: "Completed" }))
+
+    const trigger = screen.getByRole("button", {
+      name: "Sub-agent activity · 2.3m",
+    })
+    expect(
+      screen.queryByText("Sub-agent activity · 2 steps")
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(trigger)
+    // The two consecutive calls are one tool pill inside the timeline.
+    fireEvent.click(screen.getByRole("button", { name: "Read files 2 times" }))
+    expect(screen.getByTestId("call-agent-sub-0")).toBeInTheDocument()
+    expect(screen.getByTestId("call-agent-sub-1")).toBeInTheDocument()
+  })
+
+  it("folds stats-only cards (no timeline) into one pill and shows no timeline", () => {
+    const part: ToolCallPart = {
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "output-available"
+      ),
+      ...twoCalls,
+      output: "final result",
+    }
+    renderWithChildren(part)
+    fireEvent.click(screen.getByRole("button", { name: "Completed" }))
+
+    expect(screen.queryByText(/Sub-agent activity/)).not.toBeInTheDocument()
+    // Every child call — exactly two — sits inside the single pill group.
+    fireEvent.click(screen.getByRole("button", { name: "Read files 2 times" }))
+    expect(screen.getByTestId("call-agent-sub-0")).toBeInTheDocument()
+    expect(screen.getByTestId("call-agent-sub-1")).toBeInTheDocument()
+    expect(screen.getByText("final result")).toBeInTheDocument()
+  })
+
+  it("keeps the live tail bound and the live label while running", () => {
+    const entries = [
+      ...Array.from({ length: 22 }, (_, i) => ({
+        type: "text" as const,
+        text: `entry-${i}`,
+      })),
+      { type: "tool_call" as const, childIndex: 0 },
+    ]
+    const part: ToolCallPart = {
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "input-available"
+      ),
+      ...twoCalls,
+      agentTranscript: entries,
+    }
+    renderWithChildren(part)
+    expandRunningCapsule()
+
+    expect(screen.getByText("Live activity")).toBeInTheDocument()
+    expect(screen.queryByText(/Sub-agent activity/)).not.toBeInTheDocument()
+    // Tail bound 20 over 23 entries → entries 0-2 never mount; the tool
+    // marker (now inside its pill) does.
+    expect(screen.queryByText("entry-2")).not.toBeInTheDocument()
+    expect(screen.getByText("entry-3")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Read files 1 time" })
+    ).toBeInTheDocument()
+  })
+
+  it("splits the tool run into separate pills when text breaks it", () => {
+    const part: ToolCallPart = {
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "output-available"
+      ),
+      ...twoCalls,
+      agentTranscript: [
+        { type: "tool_call", childIndex: 0 },
+        { type: "text", text: "halfway report" },
+        { type: "tool_call", childIndex: 1 },
+      ],
+    }
+    renderWithChildren(part)
+    fireEvent.click(screen.getByRole("button", { name: "Completed" }))
+
+    // The collapsed timeline holds everything; open it first.
+    const timeline = screen.getByRole("button", {
+      name: "Sub-agent activity · 3 steps",
+    })
+    expect(screen.queryByText("halfway report")).not.toBeInTheDocument()
+    fireEvent.click(timeline)
+
+    // Two one-call pills, the prose between them.
+    const pills = screen.getAllByRole("button", { name: "Read files 1 time" })
+    expect(pills).toHaveLength(2)
+    expect(screen.getByText("halfway report")).toBeInTheDocument()
+    fireEvent.click(pills[0])
+    fireEvent.click(pills[1])
+    const first = screen.getByTestId("call-agent-sub-0")
+    const prose = screen.getByText("halfway report")
+    const second = screen.getByTestId("call-agent-sub-1")
+    expect(
+      first.compareDocumentPosition(prose) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      prose.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it("toggles the settled timeline pill closed again", () => {
+    const part: ToolCallPart = {
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "output-available"
+      ),
+      agentTranscript: [
+        { type: "text", text: "first half" },
+        { type: "text", text: "second half" },
+      ],
+    }
+    renderWithChildren(part)
+    fireEvent.click(screen.getByRole("button", { name: "Completed" }))
+
+    const trigger = screen.getByRole("button", {
+      name: "Sub-agent activity · 2 steps",
+    })
+    expect(screen.queryByText("first half")).not.toBeInTheDocument()
+    fireEvent.click(trigger)
+    expect(screen.getByText("first half")).toBeInTheDocument()
+    expect(screen.getByText("second half")).toBeInTheDocument()
+    fireEvent.click(trigger)
+    expect(screen.queryByText("first half")).not.toBeInTheDocument()
+    expect(screen.queryByText("second half")).not.toBeInTheDocument()
+  })
+})
+
+describe("AgentToolCallPart orphaned result recovery", () => {
+  const erroredPart = {
+    ...basePart(
+      JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+      "output-error"
+    ),
+    errorText: "Error: tool execution produced no result",
+  }
+
+  it("renders the recovered report with its note on an errored card", () => {
+    // A turn aborted before the async child's result was delivered: the card
+    // is an error, the child's report survives only in agent_stats.
+    renderCard({
+      ...erroredPart,
+      agentStats: {
+        tool_calls: [{ tool_name: "Read", is_error: false }],
+        recovered_result: "The full research report.",
+      },
+    })
+    // Errored capsules open by default — the recovery needs no click.
+    expect(screen.getByText(/actually finished/)).toBeInTheDocument()
+    expect(screen.getByText("The full research report.")).toBeInTheDocument()
+    // The original error text stays visible above the recovery.
+    expect(
+      screen.getByText(/tool execution produced no result/)
+    ).toBeInTheDocument()
+  })
+
+  it("renders nothing extra when the errored card has nothing to recover", () => {
+    renderCard({
+      ...erroredPart,
+      agentStats: { tool_calls: [{ tool_name: "Read", is_error: false }] },
+    })
+    expect(screen.queryByText(/actually finished/)).not.toBeInTheDocument()
+  })
+
+  it("never renders the recovered report on a normally completed card", () => {
+    // A normally completed async child delivered its result via the
+    // notification turn — even when a parser attached the field, the card
+    // must not show it.
+    renderCard({
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "output-available"
+      ),
+      output: "normal result",
+      agentStats: {
+        tool_calls: [],
+        recovered_result: "stale duplicate report",
+      },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Completed" }))
+    expect(screen.queryByText(/actually finished/)).not.toBeInTheDocument()
+    expect(screen.queryByText("stale duplicate report")).not.toBeInTheDocument()
+    expect(screen.getByText("normal result")).toBeInTheDocument()
   })
 })
 
