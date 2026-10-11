@@ -105,9 +105,8 @@ describe("charts in a json-render card", () => {
     )
     expect(bar.style.height).toBe("300px")
     expect(bar.classList.contains("w-full")).toBe(true)
-    // A round chart's box: square, the card's width, and room for a legend.
-    expect(pie.style.maxHeight).toBe("300px")
-    expect(pie.classList.contains("aspect-square")).toBe(true)
+    // A round chart's box: the card's width, and room for a legend.
+    expect(pie.style.height).toBe("300px")
     expect(pie.classList.contains("w-full")).toBe(true)
 
     const charts = await screen.findAllByTestId("chart")

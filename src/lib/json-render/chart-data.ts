@@ -70,29 +70,24 @@ const ROUND_CHARTS: ReadonlySet<string> = new Set([
 
 /**
  * The box a chart draws in, which its loading placeholder takes too, so the
- * card does not jump when the chart arrives.
+ * card does not jump when the chart arrives: the card's full width, `height`
+ * tall, and for a round chart with a legend under it 50 pixels more, as in
+ * shadcn's examples (their pie-with-legend box is 300 to the others' 250).
  *
- * A cartesian chart is full width and `height` tall. A round one is sized as
- * shadcn's examples size it — square, at most `height` tall, 50 pixels more
- * with a legend under it (their pie-with-legend box is 300 to the others'
- * 250) — plus the full width: their box sits in a block, while a card's
- * content is a flex column, where `mx-auto` alone shrinks the box to its
- * content, and a chart has none until it is sized.
+ * Their round charts sit in a square capped by a `max-height` instead
+ * (`mx-auto aspect-square max-h-[250px]`), which a card cannot use: WebKit —
+ * the desktop app's webview on macOS — sizes the chart inside, 100% tall,
+ * from the square before the cap, so the chart is drawn as tall as the card
+ * is wide and spills out of it.
  */
 export function chartBox(
   type: string,
   props: { height?: unknown; legend?: unknown }
-): { className: string; style: { height?: number; maxHeight?: number } } {
-  if (!ROUND_CHARTS.has(type)) {
-    return {
-      className: "aspect-auto w-full",
-      style: { height: chartHeight(props.height) },
-    }
-  }
-  const legend = props.legend === true ? 50 : 0
+): { className: string; style: { height: number } } {
+  const legend = ROUND_CHARTS.has(type) && props.legend === true ? 50 : 0
   return {
-    className: "mx-auto aspect-square w-full",
-    style: { maxHeight: chartHeight(props.height) + legend },
+    className: "aspect-auto w-full",
+    style: { height: chartHeight(props.height) + legend },
   }
 }
 

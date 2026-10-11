@@ -9,11 +9,12 @@
  *
  * Everything here is json-render's own — its compiler, its provider and
  * renderer, its shadcn components — wired the way its chat examples wire
- * them. The one component Codeg swaps is `Link`: json-render's is a bare
+ * them. Codeg swaps two components. `Link`: json-render's is a bare
  * `<a href>`, and Codeg's main window has no navigation guard, so a click on
  * it would navigate the whole app away. Codeg's own Markdown link opens it
- * the way every other link in the chat opens. The one thing Codeg adds is
- * charts, which json-render leaves to each app (`./json-render-charts.tsx`).
+ * the way every other link in the chat opens. And `Card`, for one without
+ * a shadow. The one thing Codeg adds is charts, which json-render leaves to
+ * each app (`./json-render-charts.tsx`).
  */
 
 import {
@@ -43,6 +44,7 @@ import {
   hasChildCycle,
   isSpecStream,
 } from "@/lib/json-render/spec"
+import { cn } from "@/lib/utils"
 
 /**
  * json-render's Link semantics on Codeg's link: `press` fires first, and an
@@ -81,6 +83,19 @@ function Link({ props, on }: BaseComponentProps<ShadcnProps<"Link">>) {
   )
 }
 
+const ShadcnCard = shadcnComponents.Card
+
+/** json-render's card without its shadow, whatever classes the spec gives
+ *  it: a card in a reply is part of the message, not a layer above it. */
+function Card({ props, ...rest }: BaseComponentProps<ShadcnProps<"Card">>) {
+  return (
+    <ShadcnCard
+      {...rest}
+      props={{ ...props, className: cn(props.className, "shadow-none") }}
+    />
+  )
+}
+
 /** Recharts and the charts that use it, loaded the first time a card has a
  *  chart: they weigh nearly as much as the rest of this chunk. */
 const JsonRenderChart = lazy(() => import("./json-render-charts"))
@@ -105,6 +120,7 @@ function chart(type: ChartType) {
 const { registry } = defineRegistry(jsonRenderCatalog, {
   components: {
     ...shadcnComponents,
+    Card,
     Link,
     AreaChart: chart("AreaChart"),
     BarChart: chart("BarChart"),

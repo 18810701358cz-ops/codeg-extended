@@ -233,13 +233,18 @@ describe("chart props", () => {
     })
   })
 
-  it("give round charts the card's width, square up to their height, and room for a legend", () => {
+  // Not a square capped by `max-height`, as in shadcn's examples: WebKit
+  // sizes the chart inside such a box from the square, past the cap.
+  it("give round charts the card's width at their height, and room for a legend", () => {
     for (const type of ["PieChart", "RadarChart", "RadialChart"]) {
       expect(chartBox(type, {})).toEqual({
-        className: "mx-auto aspect-square w-full",
-        style: { maxHeight: 250 },
+        className: "aspect-auto w-full",
+        style: { height: 250 },
       })
-      expect(chartBox(type, { legend: true }).style.maxHeight).toBe(300)
+      expect(chartBox(type, { legend: true, height: 200 })).toEqual({
+        className: "aspect-auto w-full",
+        style: { height: 250 },
+      })
     }
   })
 })

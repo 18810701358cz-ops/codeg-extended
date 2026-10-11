@@ -219,10 +219,13 @@ describe("json-render charts", () => {
     )
   })
 
-  it("give round charts the card's width, and room for a legend", () => {
-    // A card's content is a flex column: a round chart's box centred with
-    // `mx-auto` alone would shrink to a chart with no size of its own, and
-    // draw nothing. jsdom does no layout, so this checks the box itself.
+  it("give round charts the card's width at a set height, and room for a legend", () => {
+    // jsdom does no layout, so this checks the box itself. Its width: a
+    // card's content is a flex column, where a box centred with `mx-auto`
+    // alone shrinks to a chart with no size of its own, and draws nothing.
+    // Its height: in a square capped by `max-height`, as in shadcn's
+    // examples, WebKit sizes the chart from the square, past the cap, and
+    // it spills out of the card.
     const box = (type: ChartType, props: Record<string, unknown>) => {
       const chart = draw(type, props).querySelector<HTMLElement>(
         '[data-slot="chart"]'
@@ -234,14 +237,14 @@ describe("json-render charts", () => {
     for (const type of ["PieChart", "RadarChart", "RadialChart"] as const) {
       const plain = box(type, { ...pie, xKey: "browser", series: SERIES })
       expect(plain?.classList.contains("w-full")).toBe(true)
-      expect(plain?.style.maxHeight).toBe("250px")
+      expect(plain?.classList.contains("aspect-square")).toBe(false)
+      expect(plain?.style.height).toBe("250px")
+      expect(plain?.style.maxHeight).toBe("")
     }
-    expect(box("PieChart", { ...pie, legend: true })?.style.maxHeight).toBe(
+    expect(box("PieChart", { ...pie, legend: true })?.style.height).toBe(
       "300px"
     )
-    expect(box("PieChart", { ...pie, height: 200 })?.style.maxHeight).toBe(
-      "200px"
-    )
+    expect(box("PieChart", { ...pie, height: 200 })?.style.height).toBe("200px")
   })
 
   it("show any name as text and keep it out of the chart's style", () => {
