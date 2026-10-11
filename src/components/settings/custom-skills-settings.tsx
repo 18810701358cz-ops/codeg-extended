@@ -70,6 +70,7 @@ import {
   officecliListSkills,
 } from "@/lib/api"
 import { invalidateAgentSkillsCache } from "@/hooks/use-agent-skills"
+import { useLatestCall } from "@/hooks/use-latest-call"
 import { isLocalDesktop } from "@/lib/platform"
 import { piUsesCustomAgentDir } from "@/lib/pi-config"
 import {
@@ -177,7 +178,11 @@ export function CustomSkillsBody({
   const [deleteIds, setDeleteIds] = useState<string[] | null>(null)
   const [deleting, setDeleting] = useState(false)
 
+  // A late answer from an earlier Refresh must not overwrite a newer one.
+  const beginLoad = useLatestCall()
+
   const refresh = useCallback(async () => {
+    const current = beginLoad()
     setLoading(true)
     setLoadError(null)
     try {
@@ -185,6 +190,7 @@ export function CustomSkillsBody({
         customList(),
         acpListAgents(),
       ])
+      if (!current()) return
       setSkills(list)
       // `skills_capable` is derived backend-side from `skill_storage_spec`:
       // every built-in today, custom agents only once they declare the shared
@@ -197,13 +203,14 @@ export function CustomSkillsBody({
       )
       setReloadKey((k) => k + 1)
     } catch (err) {
+      if (!current()) return
       setLoadError(toErrorMessage(err))
       setSkills([])
       setAgents([])
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [])
+  }, [beginLoad])
 
   useEffect(() => {
     refresh().catch((err) => {
