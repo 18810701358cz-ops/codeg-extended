@@ -4537,7 +4537,7 @@
     "loading": "Chargement…",
     "switchLabel": "Interface générative (json-render)",
     "switchDescription": "Une fois activée, les agents lancés par Codeg reçoivent la compétence json-render, et les blocs de code spec de leurs réponses s'affichent sous forme de cartes interactives.",
-    "usage": "Tapez /json-render suivi de votre demande, par exemple /json-render présente dans un tableau les fichiers modifiés. Dans Codex, utilisez $json-render. Vous pouvez aussi simplement demander à l'agent de présenter le résultat en cartes ou en tableau.",
+    "usage": "Tapez /json-render suivi de votre demande, par exemple /json-render présente dans un tableau les fichiers modifiés. Dans Codex, utilisez $json-render. Vous pouvez aussi simplement demander à l'agent de présenter le résultat en cartes, en tableau ou en graphique.",
     "effect": "Les cartes apparaissent, ou redeviennent des blocs de code, immédiatement. La compétence est disponible dans les conversations démarrées après l'activation ; la désactiver la retire aussitôt de tous les agents.",
     "conflict": "Votre dossier central contient déjà une compétence personnelle nommée json-render. Renommez-la dans l'onglet Personnalisées pour utiliser la version intégrée.",
     "toasts": {

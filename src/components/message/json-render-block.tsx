@@ -12,10 +12,18 @@
  * them. The one component Codeg swaps is `Link`: json-render's is a bare
  * `<a href>`, and Codeg's main window has no navigation guard, so a click on
  * it would navigate the whole app away. Codeg's own Markdown link opens it
- * the way every other link in the chat opens.
+ * the way every other link in the chat opens. The one thing Codeg adds is
+ * charts, which json-render leaves to each app (`./json-render-charts.tsx`).
  */
 
-import { useContext, useMemo, type MouseEvent, type ReactNode } from "react"
+import {
+  lazy,
+  Suspense,
+  useContext,
+  useMemo,
+  type MouseEvent,
+  type ReactNode,
+} from "react"
 import {
   defineRegistry,
   JSONUIProvider,
@@ -26,7 +34,10 @@ import { shadcnComponents, type ShadcnProps } from "@json-render/shadcn"
 import { StreamdownContext } from "streamdown"
 
 import { MarkdownLink } from "@/components/ai-elements/markdown-link"
+import { Skeleton } from "@/components/ui/skeleton"
 import { jsonRenderCatalog } from "@/lib/json-render/catalog"
+import { chartBox } from "@/lib/json-render/chart-data"
+import type { ChartType } from "@/lib/json-render/charts"
 import {
   compileSpec,
   hasChildCycle,
@@ -70,8 +81,39 @@ function Link({ props, on }: BaseComponentProps<ShadcnProps<"Link">>) {
   )
 }
 
+/** Recharts and the charts that use it, loaded the first time a card has a
+ *  chart: they weigh nearly as much as the rest of this chunk. */
+const JsonRenderChart = lazy(() => import("./json-render-charts"))
+
+function chart(type: ChartType) {
+  return function Chart({
+    props,
+    loading,
+  }: BaseComponentProps<Record<string, unknown>>) {
+    return (
+      <Suspense fallback={<Skeleton {...chartBox(type, props)} />}>
+        <JsonRenderChart
+          type={type}
+          props={props}
+          streaming={loading === true}
+        />
+      </Suspense>
+    )
+  }
+}
+
 const { registry } = defineRegistry(jsonRenderCatalog, {
-  components: { ...shadcnComponents, Link },
+  components: {
+    ...shadcnComponents,
+    Link,
+    AreaChart: chart("AreaChart"),
+    BarChart: chart("BarChart"),
+    LineChart: chart("LineChart"),
+    PieChart: chart("PieChart"),
+    RadarChart: chart("RadarChart"),
+    RadialChart: chart("RadialChart"),
+    ScatterChart: chart("ScatterChart"),
+  },
 })
 
 export default function JsonRenderBlock({

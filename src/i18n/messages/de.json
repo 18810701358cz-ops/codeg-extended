@@ -4537,7 +4537,7 @@
     "loading": "Wird geladen…",
     "switchLabel": "Generative Oberfläche (json-render)",
     "switchDescription": "Wenn aktiviert, erhalten die von Codeg gestarteten Agenten den Skill json-render, und spec-Codeblöcke in ihren Antworten werden als interaktive Karten angezeigt.",
-    "usage": "Gib /json-render gefolgt von deiner Anfrage ein, zum Beispiel /json-render zeig die geänderten Dateien als Tabelle. In Codex verwendest du $json-render. Du kannst den Agenten auch einfach bitten, etwas als Karten oder Tabelle darzustellen.",
+    "usage": "Gib /json-render gefolgt von deiner Anfrage ein, zum Beispiel /json-render zeig die geänderten Dateien als Tabelle. In Codex verwendest du $json-render. Du kannst den Agenten auch einfach bitten, etwas als Karten, Tabelle oder Diagramm darzustellen.",
     "effect": "Karten erscheinen sofort bzw. werden sofort wieder zu Codeblöcken. Der Skill steht in Unterhaltungen bereit, die nach dem Aktivieren beginnen; beim Deaktivieren wird er sofort bei allen Agenten entfernt.",
     "conflict": "In deinem zentralen Skill-Ordner gibt es bereits einen eigenen Skill namens json-render. Benenne ihn im Tab Benutzerdefiniert um, um den integrierten zu verwenden.",
     "toasts": {

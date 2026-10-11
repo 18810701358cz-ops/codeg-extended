@@ -4537,7 +4537,7 @@
     "loading": "불러오는 중…",
     "switchLabel": "json-render 생성형 UI 사용",
     "switchDescription": "켜면 Codeg가 시작하는 에이전트에 json-render 스킬이 설치되고, 답변의 spec 코드 블록이 상호작용할 수 있는 카드로 표시됩니다.",
-    "usage": "입력창에 /json-render와 요청을 입력하세요. 예: /json-render 이번에 변경된 파일을 표로 보여 줘. Codex에서는 $json-render를 사용합니다. 에이전트에게 카드나 표로 보여 달라고 직접 요청할 수도 있습니다.",
+    "usage": "입력창에 /json-render와 요청을 입력하세요. 예: /json-render 이번에 변경된 파일을 표로 보여 줘. Codex에서는 $json-render를 사용합니다. 에이전트에게 카드, 표, 차트로 보여 달라고 직접 요청할 수도 있습니다.",
     "effect": "카드 표시와 코드 블록으로의 복귀는 바로 적용됩니다. 스킬은 켠 뒤 새로 시작한 대화에서 사용할 수 있고, 끄면 모든 에이전트에서 즉시 제거됩니다.",
     "conflict": "중앙 스킬 폴더에 직접 만든 json-render 스킬이 이미 있습니다. 내장 버전을 사용하려면 사용자 지정 탭에서 이름을 바꾸세요.",
     "toasts": {

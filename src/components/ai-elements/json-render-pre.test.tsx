@@ -64,6 +64,8 @@ beforeEach(() => {
 // here first and given time.
 beforeAll(async () => {
   await import("@/components/message/json-render-block")
+  // The chart chunk too, for the chart below.
+  await import("@/components/message/json-render-charts")
   const { container, unmount } = render(reply(SPEC))
   await waitFor(() => expect(card(container)).not.toBeNull(), {
     timeout: 10_000,
@@ -143,6 +145,60 @@ describe("spec fences in messages", () => {
     expect(container.textContent).toContain("Here it is:")
     expect(card(container)).toBeNull()
     errors.mockRestore()
+  })
+
+  it("draw a chart with the real chart chunk", async () => {
+    // jsdom lays nothing out; give the chart's measuring box a size.
+    const real = HTMLElement.prototype.getBoundingClientRect
+    const measure = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (!this.classList.contains("recharts-responsive-container")) {
+          return real.call(this)
+        }
+        return { width: 400, height: 250, top: 0, left: 0 } as DOMRect
+      })
+    const chart = fence(
+      [
+        ROOT,
+        line({
+          op: "add",
+          path: "/elements/main",
+          value: {
+            type: "Card",
+            props: { title: "Builds per day" },
+            children: ["bars"],
+          },
+        }),
+        line({
+          op: "add",
+          path: "/elements/bars",
+          value: {
+            type: "BarChart",
+            props: {
+              data: [
+                { day: "Mon", builds: 4 },
+                { day: "Tue", builds: 7 },
+              ],
+              xKey: "day",
+              series: [{ key: "builds", label: "Builds" }],
+            },
+            children: [],
+          },
+        }),
+      ].join("\n")
+    )
+    const { container } = render(reply(chart, "static"))
+    await waitFor(
+      () =>
+        expect(
+          container.querySelectorAll(".recharts-bar-rectangle path")
+        ).toHaveLength(2),
+      { timeout: 10_000 }
+    )
+    expect(screen.getByText("Builds per day")).toBeInTheDocument()
+    expect(container.textContent).not.toContain('"op"')
+    measure.mockRestore()
   })
 
   it("grow while the reply streams, from the first line on", async () => {

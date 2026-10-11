@@ -4537,7 +4537,7 @@
     "loading": "載入中…",
     "switchLabel": "啟用 json-render 生成式介面",
     "switchDescription": "開啟後，Codeg 會為啟動的代理裝上 json-render 技能，回覆中的 spec 程式碼區塊會渲染成可互動的卡片。",
-    "usage": "在輸入框輸入 /json-render 加上需求，例如 /json-render 用表格列出這次變更的檔案；Codex 用 $json-render。也可以直接請代理用卡片或表格呈現。",
+    "usage": "在輸入框輸入 /json-render 加上需求，例如 /json-render 用表格列出這次變更的檔案；Codex 用 $json-render。也可以直接請代理用卡片、表格或圖表呈現。",
     "effect": "卡片立即出現或退回程式碼區塊；技能在開啟後新建的對話中可用；關閉會立即從所有代理移除技能。",
     "conflict": "中央目錄中已有你自己的 json-render 技能。請在「自訂」頁替它改名，才能使用 Codeg 內建的版本。",
     "toasts": {

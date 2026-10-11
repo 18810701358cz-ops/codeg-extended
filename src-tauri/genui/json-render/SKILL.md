@@ -1,8 +1,8 @@
 ---
 name: json-render
-description: Show results as interactive UI inside Codeg's chat (cards, tables, tabs, accordions, badges, progress bars, simple forms) by writing a json-render spec code block in your reply. Use when the user invokes this skill or asks to see something as a card, table, dashboard or other visual layout in Codeg.
+description: Show results as interactive UI inside Codeg's chat (cards, tables, charts, tabs, accordions, badges, progress bars, simple forms) by writing a json-render spec code block in your reply. Use when the user invokes this skill or asks to see something as a card, table, chart, dashboard or other visual layout in Codeg.
 ---
-Codeg renders a ```spec code block in your reply as interactive UI inside the chat. Write the block directly in your reply message, never into a file. Use it when a visual layout genuinely helps (comparisons, status or progress summaries, structured results, checklists); answer in plain Markdown otherwise. The format reference follows.
+Codeg renders a ```spec code block in your reply as interactive UI inside the chat. Write the block directly in your reply message, never into a file. Use it when a visual layout genuinely helps (comparisons, trends, status or progress summaries, structured results, checklists); answer in plain Markdown otherwise. The format reference follows.
 
 OUTPUT FORMAT (text + JSONL, RFC 6902 JSON Patch):
 You respond conversationally. When generating UI, first write a brief explanation (1-3 sentences), then output JSONL patch lines wrapped in a ```spec code fence.
@@ -57,7 +57,7 @@ For lists where users can add/remove items (todos, carts, etc.), use pushState a
 
 IMPORTANT: State paths use RFC 6901 JSON Pointer syntax (e.g. "/todos/0/title"). Do NOT use JavaScript-style dot notation (e.g. "/todos.length" is WRONG). To generate unique IDs for new items, use "$id" instead of trying to read array length.
 
-AVAILABLE COMPONENTS (36):
+AVAILABLE COMPONENTS (43):
 
 - Card: { title?: string, description?: string, maxWidth?: "sm" | "md" | "lg" | "full", centered?: boolean, className?: string } - Container card for content sections. Use for forms/content boxes, NOT for page headers. [accepts children]
 - Stack: { direction?: "horizontal" | "vertical", gap?: "none" | "sm" | "md" | "lg" | "xl", align?: "start" | "center" | "end" | "stretch", justify?: "start" | "center" | "end" | "between" | "around", className?: string } - Flex container for layouts [accepts children]
@@ -95,6 +95,13 @@ AVAILABLE COMPONENTS (36):
 - ToggleGroup: { items: Array<{ label: string, value: string }>, type?: "single" | "multiple", value?: string } - Group of toggle buttons. Type 'single' (default) or 'multiple'. Use { $bindState } on value. [events: change]
 - ButtonGroup: { buttons: Array<{ label: string, value: string }>, selected?: string } - Segmented button group. Use { $bindState } on selected for selected value. [events: change]
 - Pagination: { totalPages: number, page?: number } - Page navigation. Use { $bindState } on page for current page number. [events: change]
+- AreaChart: { data: Array<Record<string, unknown>>, xKey: string, series: Array<{ key: string, label?: string }>, stacked?: boolean, curve?: "natural" | "linear" | "step", legend?: boolean, height?: number } - Area chart over categories. data: one object per x-axis point, e.g. [{"month":"Jan","desktop":186,"mobile":80}]; xKey: the field labelling each point ("month"); series: the numeric fields to plot, e.g. [{"key":"desktop","label":"Desktop"}]. stacked stacks the areas; curve is "natural" (default), "linear" or "step"; legend shows a legend; height is in pixels (default 250).
+- BarChart: { data: Array<Record<string, unknown>>, xKey: string, series: Array<{ key: string, label?: string }>, stacked?: boolean, horizontal?: boolean, labels?: boolean, legend?: boolean, height?: number } - Bar chart over categories. data, xKey and series as for AreaChart. stacked stacks the bars; horizontal lays them out sideways (good for long labels); labels prints each value on its bar.
+- LineChart: { data: Array<Record<string, unknown>>, xKey: string, series: Array<{ key: string, label?: string }>, curve?: "natural" | "linear" | "step", dots?: boolean, labels?: boolean, legend?: boolean, height?: number } - Line chart over categories, for trends. data, xKey and series as for AreaChart. curve is "natural" (default), "linear" or "step"; dots marks each point; labels prints each value above its point.
+- PieChart: { data: Array<Record<string, unknown>>, nameKey: string, valueKey: string, donut?: boolean, centerLabel?: string, labels?: boolean, legend?: boolean, height?: number } - Pie chart of the parts of a whole. data: one object per slice, e.g. [{"browser":"Chrome","visitors":275}]; nameKey: the field naming each slice ("browser"); valueKey: its numeric field ("visitors"). donut leaves a hole in the middle; centerLabel shows the total there with this caption under it; labels prints each value by its slice; legend lists the slices.
+- RadarChart: { data: Array<Record<string, unknown>>, xKey: string, series: Array<{ key: string, label?: string }>, grid?: "polygon" | "circle", filled?: boolean, dots?: boolean, legend?: boolean, height?: number } - Radar chart comparing values across several axes. data: one object per axis, e.g. [{"skill":"Speed","alice":80,"bob":65}]; xKey: the field naming each axis ("skill"); series: the numeric fields to plot, one shape each. grid is "polygon" (default) or "circle"; filled false draws outlines only; dots marks each value.
+- RadialChart: { data: Array<Record<string, unknown>>, nameKey: string, valueKey: string, centerLabel?: string, labels?: boolean, legend?: boolean, height?: number } - Radial bar chart: one ring per row, as long as its value. data, nameKey and valueKey as for PieChart. centerLabel shows the total in the middle with this caption under it; labels names each ring.
+- ScatterChart: { data: Array<Record<string, unknown>>, xKey: string, yKey: string, nameKey?: string, legend?: boolean, height?: number } - Scatter plot of points placed by two numeric fields. data: one object per point, e.g. [{"size":12,"ms":340,"team":"web"}]; xKey and yKey: the numeric fields for the two axes ("size", "ms"); nameKey: a field that groups the points into colored series ("team").
 
 AVAILABLE ACTIONS:
 
@@ -210,3 +217,4 @@ RULES:
 20. Always include realistic, professional-looking sample data. For blogs include 3-4 posts with varied titles, authors, dates, categories. For products include names, prices, images. Never leave data empty.
 21. The sample-data rules above apply only to mock-ups the user explicitly asks for. Otherwise show only real data from your work in this session (files, command output, test results); never invent numbers.
 22. The UI renders in a chat column of limited width: keep it compact, and never use viewport-height classes (h-screen, min-h-screen).
+23. Charts (AreaChart, BarChart, LineChart, PieChart, RadarChart, RadialChart, ScatterChart) take their values as JSON numbers, and their colors follow the theme. Put each chart in a Card whose title says what it shows, and use a Table instead when exact values matter more than the shape.

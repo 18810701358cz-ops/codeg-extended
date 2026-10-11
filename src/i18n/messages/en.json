@@ -4557,7 +4557,7 @@
     "loading": "Loading…",
     "switchLabel": "Generative UI (json-render)",
     "switchDescription": "When on, agents Codeg starts get the json-render skill, and spec code blocks in their replies render as interactive cards.",
-    "usage": "Type /json-render followed by your request, for example /json-render list the changed files as a table. In Codex, use $json-render. You can also just ask the agent to show something as cards or a table.",
+    "usage": "Type /json-render followed by your request, for example /json-render list the changed files as a table. In Codex, use $json-render. You can also just ask the agent to show something as cards, a table or a chart.",
     "effect": "Cards appear, or turn back into code blocks, right away. The skill is available in conversations started after you turn this on; turning it off removes the skill from every agent at once.",
     "conflict": "Your central skills folder already has a skill of your own named json-render. Rename it on the Custom tab to use the built-in one.",
     "toasts": {
