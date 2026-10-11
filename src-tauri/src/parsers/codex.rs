@@ -3053,6 +3053,8 @@ fn parse_codex_subagent_stats(
         lines_removed: None,
         other_tool_count: None,
         tool_calls,
+        timeline: Vec::new(),
+        recovered_result: None,
         // Codex's sub-agent rollout is folded into these stats; there is no
         // separate session for the card to open.
         child_session_id: None,

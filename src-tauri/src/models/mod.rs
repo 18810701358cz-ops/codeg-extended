@@ -34,8 +34,8 @@ pub use folder::{
     OpenedTabsSnapshot, SaveTabsOutcome, SidebarEntryKind, SidebarLayoutEntry,
 };
 pub use message::{
-    AgentExecutionStats, AgentToolCall, ContentBlock, ImageData, MessageRole, MessageTurn,
-    TurnRole, TurnUsage, UnifiedMessage,
+    AgentExecutionStats, AgentTimelineEntry, AgentToolCall, ContentBlock, ImageData, MessageRole,
+    MessageTurn, TurnRole, TurnUsage, UnifiedMessage,
 };
 pub use quick_message::QuickMessageInfo;
 pub use remote_workspace_connection::{
