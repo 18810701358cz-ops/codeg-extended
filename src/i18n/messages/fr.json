@@ -4535,14 +4535,21 @@
   },
   "GenerativeUiSettings": {
     "loading": "Chargement…",
-    "switchLabel": "Interface générative (json-render)",
-    "switchDescription": "Une fois activée, les agents lancés par Codeg reçoivent la compétence json-render, et les blocs de code spec de leurs réponses s'affichent sous forme de cartes interactives.",
-    "usage": "Tapez /json-render suivi de votre demande, par exemple /json-render présente dans un tableau les fichiers modifiés. Dans Codex, utilisez $json-render. Vous pouvez aussi simplement demander à l'agent de présenter le résultat en cartes, en tableau ou en graphique.",
-    "effect": "Les cartes apparaissent, ou redeviennent des blocs de code, immédiatement. La compétence est disponible dans les conversations démarrées après l'activation ; la désactiver la retire aussitôt de tous les agents.",
-    "conflict": "Votre dossier central contient déjà une compétence personnelle nommée json-render. Renommez-la dans l'onglet Personnalisées pour utiliser la version intégrée.",
-    "toasts": {
-      "saveFailed": "Impossible d'enregistrer le réglage",
-      "unlinkFailed": "Désactivée, mais json-render n'a pas pu être retiré de ces emplacements. Une nouvelle tentative aura lieu au prochain lancement de chaque agent."
+    "category": "Interface générative",
+    "skillName": "Rendu d'interface",
+    "skillDescription": "Permet à l'agent de répondre avec des cartes, des tableaux et des graphiques interactifs dans le chat de Codeg.",
+    "usage": "Tapez /ui-render suivi de votre demande, par exemple /ui-render présente dans un tableau les fichiers modifiés. Dans Codex, utilisez $ui-render. Vous pouvez aussi simplement demander à l'agent de présenter le résultat en cartes, en tableau ou en graphique. La compétence est disponible dans les conversations démarrées après l'activation.",
+    "conflict": "Votre dossier central contient déjà une compétence personnelle nommée ui-render. Renommez-la dans l'onglet Personnalisées pour utiliser la version intégrée.",
+    "notReadyHint": "Une compétence personnelle nommée ui-render occupe ce nom. Renommez-la dans l'onglet Personnalisées.",
+    "badges": {
+      "nameTaken": "Nom déjà pris"
+    },
+    "states": {
+      "not_linked": "Non activé",
+      "linked_to_codeg": "Activé",
+      "linked_elsewhere": "Bloqué — un autre lien existe",
+      "blocked_by_real_directory": "Bloqué — une compétence personnalisée occupe ce nom",
+      "broken": "Lien cassé"
     }
   },
   "QuickMessagesSettings": {

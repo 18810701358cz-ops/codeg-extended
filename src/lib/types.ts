@@ -618,14 +618,6 @@ export const FOLDER_LINKS_CHANGED_EVENT = "folder://links-changed"
  *  frontend-only cache. Mirrors the Rust `FEEDBACK_SETTINGS_CHANGED_EVENT`. */
 export const FEEDBACK_SETTINGS_CHANGED_EVENT = "feedback-settings://changed"
 
-/** Global side-channel announcing a generative-UI enable/disable (payload is
- *  `GenerativeUiSettings`). The settings UI runs in a separate window, so open
- *  conversations learn that spec fences render as cards — or no longer do —
- *  from this backend broadcast. Mirrors the Rust
- *  `GENERATIVE_UI_SETTINGS_CHANGED_EVENT`. */
-export const GENERATIVE_UI_SETTINGS_CHANGED_EVENT =
-  "generative-ui-settings://changed"
-
 /** Global side-channel announcing a create-from-chat switch move (payload is
  *  `ChatAuthoringSettings`). Load-bearing rather than cosmetic: these two flags
  *  share one record and have two editors — the settings form, which writes the

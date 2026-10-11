@@ -1,5 +1,5 @@
 ---
-name: json-render
+name: ui-render
 description: Show results as interactive UI inside Codeg's chat (cards, tables, charts, tabs, accordions, badges, progress bars, simple forms) by writing a json-render spec code block in your reply. Use when the user invokes this skill or asks to see something as a card, table, chart, dashboard or other visual layout in Codeg.
 ---
 Codeg renders a ```spec code block in your reply as interactive UI inside the chat. Write the block directly in your reply message, never into a file. Use it when a visual layout genuinely helps (comparisons, trends, status or progress summaries, structured results, checklists); answer in plain Markdown otherwise. The format reference follows.

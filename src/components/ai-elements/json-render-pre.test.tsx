@@ -1,13 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react"
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeAll, describe, expect, it, vi } from "vitest"
 
 vi.mock("@/components/ai-elements/link-safety", () => ({
   useStreamdownLinkSafety: () => ({ enabled: false }),
-}))
-
-const genui = vi.hoisted(() => ({ enabled: true }))
-vi.mock("@/hooks/use-generative-ui-enabled", () => ({
-  useGenerativeUiEnabled: () => genui.enabled,
 }))
 
 import { JsonRenderScope } from "./json-render-pre"
@@ -53,10 +48,6 @@ function reply(text: string, mode?: "streaming" | "static") {
 const card = (container: HTMLElement) =>
   container.querySelector("[data-json-render]")
 
-beforeEach(() => {
-  genui.enabled = true
-})
-
 // Load the card's chunk once up front. A fence the card claims would
 // otherwise show its code (the Suspense fallback) for a moment, and the
 // "stays code" checks below could pass on that moment alone. Under a full,
@@ -86,13 +77,6 @@ describe("spec fences in messages", () => {
 
   it("stay code outside an assistant reply", async () => {
     const { container } = render(<MessageResponse>{SPEC}</MessageResponse>)
-    await waitFor(() => expect(container.textContent).toContain('"op"'))
-    expect(card(container)).toBeNull()
-  })
-
-  it("stay code while generative UI is off", async () => {
-    genui.enabled = false
-    const { container } = render(reply(SPEC))
     await waitFor(() => expect(container.textContent).toContain('"op"'))
     expect(card(container)).toBeNull()
   })

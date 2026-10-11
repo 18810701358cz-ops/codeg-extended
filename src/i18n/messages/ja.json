@@ -4535,14 +4535,21 @@
   },
   "GenerativeUiSettings": {
     "loading": "読み込み中…",
-    "switchLabel": "json-render 生成 UI を有効にする",
-    "switchDescription": "オンにすると、Codeg が起動するエージェントに json-render スキルが入り、返信内の spec コードブロックが操作できるカードとして表示されます。",
-    "usage": "入力欄に /json-render と依頼内容を入力します。例: /json-render 今回変更したファイルを表で一覧にして。Codex では $json-render を使います。エージェントに、カードや表、グラフで見せてと頼むこともできます。",
-    "effect": "カードの表示とコードブロックへの戻りはすぐに反映されます。スキルはオンにした後に始めた会話で使えます。オフにすると、すべてのエージェントからスキルがすぐに外れます。",
-    "conflict": "中央フォルダーに、json-render という名前の自作スキルがすでにあります。組み込み版を使うには、「カスタム」タブで名前を変更してください。",
-    "toasts": {
-      "saveFailed": "設定を保存できませんでした",
-      "unlinkFailed": "オフにしましたが、次の場所から json-render を削除できませんでした。各エージェントの次回起動時に再試行します。"
+    "category": "生成 UI",
+    "skillName": "UI レンダリング",
+    "skillDescription": "エージェントが Codeg のチャットで、操作できるカード・表・グラフを使って回答できるようにします。",
+    "usage": "入力欄に /ui-render と依頼内容を入力します。例: /ui-render 今回変更したファイルを表で一覧にして。Codex では $ui-render を使います。エージェントに、カードや表、グラフで見せてと頼むこともできます。スキルは有効にした後に始めた会話で使えます。",
+    "conflict": "中央フォルダーに、ui-render という名前の自作スキルがすでにあります。組み込み版を使うには、「カスタム」タブで名前を変更してください。",
+    "notReadyHint": "ui-render という名前の自作スキルと重なっています。「カスタム」タブで名前を変更してください。",
+    "badges": {
+      "nameTaken": "名前が使用中"
+    },
+    "states": {
+      "not_linked": "未有効",
+      "linked_to_codeg": "有効",
+      "linked_elsewhere": "ブロック — 別のリンクが存在",
+      "blocked_by_real_directory": "ブロック — カスタムスキルがこの名前を占有",
+      "broken": "壊れたリンク"
     }
   },
   "QuickMessagesSettings": {

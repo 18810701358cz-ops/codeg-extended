@@ -1136,7 +1136,11 @@ mod tauri_app {
                             &computer_tools_for_init,
                         )
                         .await;
-                        crate::commands::generative_ui::apply_persisted_generative_ui_config(
+                        // The generative-UI skill's central copy, and the move
+                        // from 0.35.0's `json-render`: here, before any command
+                        // runs, so the move can never undo a change made on
+                        // the settings page.
+                        crate::commands::generative_ui::install_generative_ui_skill(
                             &db_for_init,
                         )
                         .await;
@@ -1907,8 +1911,6 @@ mod tauri_app {
                 feedback_commands::get_feedback_settings,
                 feedback_commands::set_feedback_settings,
                 feedback_commands::submit_session_feedback,
-                crate::commands::generative_ui::get_generative_ui_settings,
-                crate::commands::generative_ui::set_generative_ui_settings,
                 question_commands::get_question_settings,
                 question_commands::set_question_settings,
                 session_info_commands::get_session_info_settings,
@@ -2044,6 +2046,10 @@ mod tauri_app {
                 science_commands::science_apply_links,
                 science_commands::science_read_content,
                 science_commands::science_open_central_dir,
+                crate::commands::generative_ui::generative_ui_skill_info,
+                crate::commands::generative_ui::generative_ui_list_all_install_statuses,
+                crate::commands::generative_ui::generative_ui_apply_links,
+                crate::commands::generative_ui::generative_ui_read_content,
                 custom_skills_commands::custom_list,
                 custom_skills_commands::custom_list_all_install_statuses,
                 custom_skills_commands::custom_apply_links,

@@ -90,14 +90,6 @@ pub fn build_router(
             post(handlers::feedback::submit_session_feedback),
         )
         .route(
-            "/get_generative_ui_settings",
-            post(handlers::generative_ui::get_generative_ui_settings),
-        )
-        .route(
-            "/set_generative_ui_settings",
-            post(handlers::generative_ui::set_generative_ui_settings),
-        )
-        .route(
             "/get_question_settings",
             post(handlers::question::get_question_settings),
         )
@@ -1251,6 +1243,23 @@ pub fn build_router(
         .route(
             "/experts_open_central_dir",
             post(handlers::experts::experts_open_central_dir),
+        )
+        // ─── Generative UI (the ui-render skill) ───
+        .route(
+            "/generative_ui_skill_info",
+            post(handlers::generative_ui::generative_ui_skill_info),
+        )
+        .route(
+            "/generative_ui_list_all_install_statuses",
+            post(handlers::generative_ui::generative_ui_list_all_install_statuses),
+        )
+        .route(
+            "/generative_ui_apply_links",
+            post(handlers::generative_ui::generative_ui_apply_links),
+        )
+        .route(
+            "/generative_ui_read_content",
+            post(handlers::generative_ui::generative_ui_read_content),
         )
         // ─── Science ───
         .route("/science_list", post(handlers::science::science_list))

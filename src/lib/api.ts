@@ -5276,28 +5276,40 @@ export async function setCodegMcpToolGroup(
   return getTransport().call("set_codeg_mcp_tool_group", { key, enabled })
 }
 
-// ─── Generative UI (json-render) ───────────────────────────────────────
+// ─── Generative UI (the ui-render skill) ────────────────────────────────
+// Enabled per agent like the bundled packs; link statuses reuse the Expert*
+// DTOs, with `expertId` carrying the skill's id.
 
-/** Mirror of Rust `GenerativeUiSettings`. */
-export interface GenerativeUiSettings {
-  enabled: boolean
-  /** Reported, never saved: the central skill store holds a `json-render`
-   *  skill the user made, so Codeg leaves the skill alone until it is
-   *  renamed. */
-  skill_conflict: boolean
-  /** Reported by a switch-off, never saved: links it could not remove, as
-   *  `path: error`. Empty everywhere else. */
-  unlink_failures: string[]
+/** Mirror of Rust `GenerativeUiSkillInfo`. */
+export interface GenerativeUiSkillInfo {
+  /** The skill's name: its folder, and what the user types (`/ui-render`). */
+  id: string
+  /** The central skill store holds a skill of that name the user made, so
+   *  Codeg leaves the skill alone until it is renamed. */
+  conflict: boolean
 }
 
-export async function getGenerativeUiSettings(): Promise<GenerativeUiSettings> {
-  return getTransport().call("get_generative_ui_settings")
+export async function generativeUiSkillInfo(): Promise<GenerativeUiSkillInfo> {
+  return getTransport().call("generative_ui_skill_info")
 }
 
-export async function setGenerativeUiSettings(
-  settings: Pick<GenerativeUiSettings, "enabled">
-): Promise<GenerativeUiSettings> {
-  return getTransport().call("set_generative_ui_settings", { settings })
+/** One round-trip snapshot of the skill's link state for every agent. */
+export async function generativeUiListAllInstallStatuses(): Promise<
+  ExpertInstallStatus[]
+> {
+  return getTransport().call("generative_ui_list_all_install_statuses")
+}
+
+/** Apply a batch of enable/disable ops; returns one result per op. */
+export async function generativeUiApplyLinks(
+  ops: LinkOp[]
+): Promise<LinkOpResult[]> {
+  return getTransport().call("generative_ui_apply_links", { ops })
+}
+
+/** The skill's `SKILL.md`, for the matrix's preview drawer. */
+export async function generativeUiReadContent(): Promise<string> {
+  return getTransport().call("generative_ui_read_content")
 }
 
 // ─── Live feedback settings + submit ───────────────────────────────────

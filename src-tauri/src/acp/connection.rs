@@ -2365,11 +2365,6 @@ pub async fn spawn_agent_connection(
         crate::commands::acp::reconcile_hermes_runtime_env(&runtime_env);
     }
 
-    // Link the `json-render` skill in (generative UI on) or take ours back
-    // (off) before the agent starts and reads its skill directory.
-    // Best-effort; never blocks launch.
-    crate::commands::generative_ui::sync_skill_before_launch(agent_type).await;
-
     // Resolve the launch cwd from the same `working_dir` (via the same helper)
     // that run_connection uses for the session/new request, so the process
     // cwd, the ACP session cwd, and any os.getcwd()-derived agent state all

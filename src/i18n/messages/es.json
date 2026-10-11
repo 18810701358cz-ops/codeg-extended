@@ -4535,14 +4535,21 @@
   },
   "GenerativeUiSettings": {
     "loading": "Cargando…",
-    "switchLabel": "Interfaz generativa (json-render)",
-    "switchDescription": "Al activarla, los agentes que inicia Codeg reciben la habilidad json-render y los bloques de código spec de sus respuestas se muestran como tarjetas interactivas.",
-    "usage": "Escribe /json-render seguido de tu petición, por ejemplo /json-render muestra en una tabla los archivos modificados. En Codex, usa $json-render. También puedes pedirle al agente que lo muestre en tarjetas, en una tabla o en un gráfico.",
-    "effect": "Las tarjetas aparecen, o vuelven a ser bloques de código, al instante. La habilidad está disponible en las conversaciones iniciadas después de activarla; al desactivarla se quita de todos los agentes a la vez.",
-    "conflict": "Tu carpeta central de habilidades ya tiene una habilidad propia llamada json-render. Cámbiale el nombre en la pestaña Personalizadas para usar la integrada.",
-    "toasts": {
-      "saveFailed": "No se pudo guardar la configuración",
-      "unlinkFailed": "Desactivada, pero no se pudo quitar json-render de estas ubicaciones. Se volverá a intentar la próxima vez que se inicie cada agente."
+    "category": "Interfaz generativa",
+    "skillName": "Renderizado de UI",
+    "skillDescription": "Permite que el agente responda con tarjetas, tablas y gráficos interactivos en el chat de Codeg.",
+    "usage": "Escribe /ui-render seguido de tu petición, por ejemplo /ui-render muestra en una tabla los archivos modificados. En Codex, usa $ui-render. También puedes pedirle al agente que lo muestre en tarjetas, en una tabla o en un gráfico. El agente tiene la habilidad en las conversaciones iniciadas después de habilitarla.",
+    "conflict": "Tu carpeta central de habilidades ya tiene una habilidad propia llamada ui-render. Cámbiale el nombre en la pestaña Personalizadas para usar la integrada.",
+    "notReadyHint": "Una habilidad propia llamada ui-render ocupa el nombre. Cámbiale el nombre en la pestaña Personalizadas.",
+    "badges": {
+      "nameTaken": "Nombre en uso"
+    },
+    "states": {
+      "not_linked": "No habilitado",
+      "linked_to_codeg": "Habilitado",
+      "linked_elsewhere": "Bloqueado — existe otro vínculo",
+      "blocked_by_real_directory": "Bloqueado — una habilidad personalizada ocupa este nombre",
+      "broken": "Vínculo roto"
     }
   },
   "QuickMessagesSettings": {

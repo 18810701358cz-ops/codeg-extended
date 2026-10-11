@@ -4535,14 +4535,21 @@
   },
   "GenerativeUiSettings": {
     "loading": "Wird geladen…",
-    "switchLabel": "Generative Oberfläche (json-render)",
-    "switchDescription": "Wenn aktiviert, erhalten die von Codeg gestarteten Agenten den Skill json-render, und spec-Codeblöcke in ihren Antworten werden als interaktive Karten angezeigt.",
-    "usage": "Gib /json-render gefolgt von deiner Anfrage ein, zum Beispiel /json-render zeig die geänderten Dateien als Tabelle. In Codex verwendest du $json-render. Du kannst den Agenten auch einfach bitten, etwas als Karten, Tabelle oder Diagramm darzustellen.",
-    "effect": "Karten erscheinen sofort bzw. werden sofort wieder zu Codeblöcken. Der Skill steht in Unterhaltungen bereit, die nach dem Aktivieren beginnen; beim Deaktivieren wird er sofort bei allen Agenten entfernt.",
-    "conflict": "In deinem zentralen Skill-Ordner gibt es bereits einen eigenen Skill namens json-render. Benenne ihn im Tab Benutzerdefiniert um, um den integrierten zu verwenden.",
-    "toasts": {
-      "saveFailed": "Einstellung konnte nicht gespeichert werden",
-      "unlinkFailed": "Deaktiviert, aber json-render konnte an diesen Orten nicht entfernt werden. Beim nächsten Start des jeweiligen Agenten wird es erneut versucht."
+    "category": "Generative Oberfläche",
+    "skillName": "UI-Rendering",
+    "skillDescription": "Lässt den Agenten im Chat von Codeg mit interaktiven Karten, Tabellen und Diagrammen antworten.",
+    "usage": "Gib /ui-render gefolgt von deiner Anfrage ein, zum Beispiel /ui-render zeig die geänderten Dateien als Tabelle. In Codex verwendest du $ui-render. Du kannst den Agenten auch einfach bitten, etwas als Karten, Tabelle oder Diagramm darzustellen. Der Skill steht in Unterhaltungen bereit, die nach dem Aktivieren beginnen.",
+    "conflict": "In deinem zentralen Skill-Ordner gibt es bereits einen eigenen Skill namens ui-render. Benenne ihn im Tab Benutzerdefiniert um, um den integrierten zu verwenden.",
+    "notReadyHint": "Ein eigener Skill namens ui-render belegt den Namen. Benenne ihn im Tab Benutzerdefiniert um.",
+    "badges": {
+      "nameTaken": "Name belegt"
+    },
+    "states": {
+      "not_linked": "Nicht aktiviert",
+      "linked_to_codeg": "Aktiviert",
+      "linked_elsewhere": "Blockiert — ein anderer Link existiert",
+      "blocked_by_real_directory": "Blockiert — ein benutzerdefinierter Skill belegt diesen Namen",
+      "broken": "Defekter Link"
     }
   },
   "QuickMessagesSettings": {

@@ -1,11 +1,11 @@
 import { jsonRenderCatalog } from "./catalog"
 
 /**
- * The name of the skill Codeg links into an agent's skill directory while
- * generative UI is on. It is what the user types: `/json-render` (`$json-render`
- * in Codex).
+ * The name of the skill Codeg links into the skill directory of every agent it
+ * is enabled for (Settings > Skill Packs > UI). It is what the user types:
+ * `/ui-render` (`$ui-render` in Codex).
  */
-export const JSON_RENDER_SKILL_NAME = "json-render"
+export const UI_RENDER_SKILL_NAME = "ui-render"
 
 /** Always in the agent's skill list, so it says what the skill is for and that
  *  it only means something inside Codeg's chat. No backticks: two YAML readers
@@ -31,14 +31,14 @@ const CUSTOM_RULES = [
  * The `SKILL.md` an agent reads: a frontmatter block, then json-render's
  * official inline-mode guide for the shared catalog.
  *
- * The backend ships the committed copy in `src-tauri/genui/json-render/`;
+ * The backend ships the committed copy in `src-tauri/genui/ui-render/`;
  * `skill.test.ts` keeps that copy equal to this output, and rewrites it when
- * run with `UPDATE_JSON_RENDER_SKILL=1` (after a json-render upgrade).
+ * run with `UPDATE_UI_RENDER_SKILL=1` (after a json-render upgrade).
  */
-export function buildJsonRenderSkill(): string {
+export function buildUiRenderSkill(): string {
   const frontmatter = [
     "---",
-    `name: ${JSON_RENDER_SKILL_NAME}`,
+    `name: ${UI_RENDER_SKILL_NAME}`,
     `description: ${DESCRIPTION}`,
     "---",
   ].join("\n")

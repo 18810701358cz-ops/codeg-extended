@@ -189,13 +189,6 @@ pub const COMPUTER_TOOLS_SETTINGS_CHANGED_EVENT: &str = "computer-tools-settings
 /// (`{ "automations_enabled": bool, "work_tasks_enabled": bool }`).
 pub const CHAT_AUTHORING_SETTINGS_CHANGED_EVENT: &str = "chat-authoring-settings://changed";
 
-/// Global side-channel announcing a generative-UI enable/disable. Same
-/// cross-window rationale as [`FEEDBACK_SETTINGS_CHANGED_EVENT`]: the settings
-/// UI runs in a separate window, so open conversations learn that spec fences
-/// render as cards (or no longer do) only via this backend broadcast. Payload:
-/// `GenerativeUiSettings` (`{ "enabled": bool, "skill_conflict": bool }`).
-pub const GENERATIVE_UI_SETTINGS_CHANGED_EVENT: &str = "generative-ui-settings://changed";
-
 /// Announces a delegation-settings write. Same cross-window rationale as
 /// [`CHAT_AUTHORING_SETTINGS_CHANGED_EVENT`], and load-bearing for the same
 /// reason: the record has two editors — the settings form, which writes all

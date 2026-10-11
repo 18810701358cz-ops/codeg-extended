@@ -4555,14 +4555,21 @@
   },
   "GenerativeUiSettings": {
     "loading": "Loading…",
-    "switchLabel": "Generative UI (json-render)",
-    "switchDescription": "When on, agents Codeg starts get the json-render skill, and spec code blocks in their replies render as interactive cards.",
-    "usage": "Type /json-render followed by your request, for example /json-render list the changed files as a table. In Codex, use $json-render. You can also just ask the agent to show something as cards, a table or a chart.",
-    "effect": "Cards appear, or turn back into code blocks, right away. The skill is available in conversations started after you turn this on; turning it off removes the skill from every agent at once.",
-    "conflict": "Your central skills folder already has a skill of your own named json-render. Rename it on the Custom tab to use the built-in one.",
-    "toasts": {
-      "saveFailed": "Couldn't save the setting",
-      "unlinkFailed": "Turned off, but json-render could not be removed from these places. Each agent's next launch tries again."
+    "category": "Generative UI",
+    "skillName": "UI Render",
+    "skillDescription": "Lets the agent answer with interactive cards, tables and charts in Codeg's chat.",
+    "usage": "Type /ui-render followed by your request, for example /ui-render list the changed files as a table. In Codex, use $ui-render. You can also just ask the agent to show something as cards, a table or a chart. An agent gets the skill in conversations started after you enable it.",
+    "conflict": "Your central skills folder already has a skill of your own named ui-render. Rename it on the Custom tab to use the built-in one.",
+    "notReadyHint": "Your own skill named ui-render is in the way. Rename it on the Custom tab.",
+    "badges": {
+      "nameTaken": "Name in use"
+    },
+    "states": {
+      "not_linked": "Not enabled",
+      "linked_to_codeg": "Enabled",
+      "linked_elsewhere": "Blocked — another link exists",
+      "blocked_by_real_directory": "Blocked — a custom skill occupies this name",
+      "broken": "Broken link"
     }
   },
   "QuickMessagesSettings": {

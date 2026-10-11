@@ -360,9 +360,10 @@ async fn async_main() -> ExitCode {
         &state.computer_tools_config,
     )
     .await;
-    // And the generative-UI switch, which decides whether an agent launch
-    // links the `json-render` skill in or takes it back.
-    codeg_lib::commands::generative_ui::apply_persisted_generative_ui_config(&state.db.conn).await;
+    // The generative-UI skill's central copy, and the move from 0.35.0's
+    // `json-render`: before the server takes a request, so the move can never
+    // undo a change made on the settings page.
+    codeg_lib::commands::generative_ui::install_generative_ui_skill(&state.db.conn).await;
     // Computer use: only where whoever runs this server says so, by
     // CODEG_COMPUTER_USE — the server's web clients then share this
     // machine's windows with agents, and Stop them, from the panel. Nothing
