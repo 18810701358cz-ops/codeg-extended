@@ -8,7 +8,7 @@
 //! Resolution order (most fresh first):
 //! 1. live fetch of `models.dev/api.json` (when forced, or when the cache is
 //!    stale), normalized and written back to the on-disk cache;
-//! 2. the on-disk cache under `<data_dir>/cache/opencode/models-dev.json`;
+//! 2. the on-disk cache under `<data_dir>/cache/opencode/models-dev-v2.json`;
 //! 3. the snapshot bundled into the binary, so the catalog is always available
 //!    offline.
 
@@ -192,14 +192,21 @@ pub fn bundled_catalog() -> Vec<CatalogProvider> {
     serde_json::from_str::<Vec<CatalogProvider>>(BUNDLED_SNAPSHOT).unwrap_or_default()
 }
 
+fn cache_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("cache").join("opencode")
+}
+
 fn cache_path(data_dir: &Path) -> PathBuf {
     // v2: cache_read / cache_write joined the slim shape. A new filename so
     // an existing 24h cache is not served without those fields until it ages
     // out, which would leave cache tokens unpriced on Token Usage.
-    data_dir
-        .join("cache")
-        .join("opencode")
-        .join("models-dev-v2.json")
+    cache_dir(data_dir).join("models-dev-v2.json")
+}
+
+/// The pre-v2 cache. Nothing reads it any more, so [`write_cache`] removes it
+/// rather than leaving a megabyte-sized orphan in the data dir.
+fn legacy_cache_path(data_dir: &Path) -> PathBuf {
+    cache_dir(data_dir).join("models-dev.json")
 }
 
 fn read_cache(data_dir: &Path, require_fresh: bool) -> Option<Vec<CatalogProvider>> {
@@ -226,7 +233,9 @@ fn write_cache(data_dir: &Path, providers: &[CatalogProvider]) {
         }
     }
     if let Ok(text) = serde_json::to_string(providers) {
-        let _ = std::fs::write(&path, text);
+        if std::fs::write(&path, text).is_ok() {
+            let _ = std::fs::remove_file(legacy_cache_path(data_dir));
+        }
     }
 }
 
@@ -294,6 +303,47 @@ mod tests {
         let openai = openai.unwrap();
         assert_eq!(openai.auth_kind, "oauth");
         assert!(!openai.models.is_empty());
+    }
+
+    #[test]
+    fn bundled_snapshot_carries_cache_prices() {
+        // The snapshot is all an install that cannot reach models.dev ever
+        // sees, and Token Usage prices cache reads and writes (usually the
+        // bulk of an agent's tokens) from these two fields. A snapshot
+        // regenerated without them leaves that spend unpriced offline.
+        let catalog = bundled_catalog();
+        let anthropic = catalog
+            .iter()
+            .find(|p| p.id == "anthropic")
+            .expect("snapshot must include the anthropic provider");
+        // Values, not just presence: Anthropic bills a cache read below and a
+        // cache write above the plain input rate.
+        assert!(
+            anthropic.models.iter().any(|m| matches!(
+                (m.cost_in, m.cost_cache_read, m.cost_cache_write),
+                (Some(input), Some(read), Some(write)) if read < input && write > input
+            )),
+            "bundled snapshot has no cache read/write prices; regenerate it from models.dev"
+        );
+    }
+
+    #[test]
+    fn write_cache_replaces_the_legacy_cache() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let legacy = legacy_cache_path(dir.path());
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "[]").unwrap();
+
+        let providers = normalize_models_dev(
+            r#"{"demo":{"id":"demo","name":"Demo","models":{"m":{"id":"m","cost":{"input":1,"output":2,"cache_read":0.1,"cache_write":1.25}}}}}"#,
+        )
+        .expect("normalize");
+        write_cache(dir.path(), &providers);
+
+        assert!(!legacy.exists(), "the pre-v2 cache should be removed");
+        let cached = read_cache(dir.path(), true).expect("fresh v2 cache");
+        assert_eq!(cached[0].models[0].cost_cache_read, Some(0.1));
+        assert_eq!(cached[0].models[0].cost_cache_write, Some(1.25));
     }
 
     #[test]
