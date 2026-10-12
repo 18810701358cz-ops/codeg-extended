@@ -462,7 +462,28 @@ describe("maker listings", () => {
   })
 
   it("never fills a bucket the maker leaves unpublished from a cloud", () => {
-    const flash = resolveRate(index, "deepseek-v4-flash")
+    const hosted = buildRateIndex([
+      provider("azure", [
+        model({
+          id: "deepseek-v4-flash",
+          cost_in: 0.19,
+          cost_out: 0.51,
+          cost_cache_read: 0.05,
+          cost_cache_write: 0.25,
+        }),
+      ]),
+      provider("deepseek", [
+        model({
+          id: "deepseek-v4-flash",
+          cost_in: 0.15,
+          cost_out: 0.6,
+          cost_cache_read: 0.003,
+          cost_cache_write: null,
+        }),
+      ]),
+    ])
+    const flash = resolveRate(hosted, "deepseek-v4-flash")
+    expect(flash?.providerId).toBe("deepseek")
     expect(flash?.cacheWrite).toBeNull()
     expect(
       estimateItemCost(
@@ -485,6 +506,12 @@ describe("coveragePercent", () => {
   it("never shows 0% next to a priced amount", () => {
     expect(coveragePercent(1, 999)).toBe("<1")
     expect(coveragePercent(10, 990)).toBe("1")
+  })
+
+  it("stays below 100 while any token is unpriced", () => {
+    // Floating-point division rounds this ratio up to exactly 100.
+    expect(coveragePercent(9_007_199_254_740_989, 1)).toBe("99")
+    expect(coveragePercent(5, 0)).toBe("100")
   })
 
   it("is 0 when nothing was priced", () => {
@@ -553,6 +580,20 @@ describe("explicit provider scope", () => {
     expect(resolveRate(index, "openai/gpt-4o-20240513")).toBeNull()
     expect(resolveRate(index, "gpt-4o-20240513")).toBeNull()
     expect(resolveRate(index, "openai/gpt-4o-2024-05-13")?.input).toBe(5)
+  })
+
+  it("falls back from an unlisted dated key to the provider's own snapshots", () => {
+    const index = buildRateIndex([
+      provider("anthropic", [
+        model({ id: "claude-x", cost_in: 3 }),
+        model({ id: "claude-x-20250101", cost_in: 3 }),
+      ]),
+      // A reseller whose raw id is the scoped alias, at its own price.
+      provider("tempr", [model({ id: "anthropic/claude-x", cost_in: 9 })]),
+    ])
+    const rate = resolveRate(index, "anthropic/claude-x-20990101")
+    expect(rate?.providerId).toBe("anthropic")
+    expect(rate?.input).toBe(3)
   })
 
   it("still reads a reseller's own `vendor/model` id", () => {

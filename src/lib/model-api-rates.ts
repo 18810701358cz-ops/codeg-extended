@@ -373,5 +373,8 @@ export function coveragePercent(
   const total = pricedTokens + unpricedTokens
   if (pricedTokens <= 0 || total <= 0) return "0"
   const percent = Math.floor((100 * pricedTokens) / total)
-  return percent < 1 ? "<1" : String(percent)
+  if (percent < 1) return "<1"
+  // Float division can round up to 100 with a handful of unpriced tokens
+  // among quadrillions.
+  return String(unpricedTokens > 0 ? Math.min(percent, 99) : percent)
 }
