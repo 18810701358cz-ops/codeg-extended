@@ -6382,7 +6382,7 @@
     "truncatedNotice": "Cette période est très large — les chiffres ne couvrent que sa portion la plus récente.",
     "apiListEstimate": "≈ {amount} tarif API",
     "apiListEstimatePartial": "≈ {amount} tarif API · {percent}% des jetons",
-    "apiListEstimateHint": "Tarifs publics API issus de models.dev, lectures et écritures de cache comprises. Les abonnements facturent autrement."
+    "apiListEstimateHint": "Tarifs de base publics API issus de models.dev, lectures et écritures de cache comprises, hors majorations pour contexte long ou raisonnement. Les abonnements facturent autrement."
   },
   "Forge": {
     "title": "Panneau du dépôt",

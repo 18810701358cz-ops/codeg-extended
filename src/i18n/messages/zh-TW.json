@@ -6382,7 +6382,7 @@
     "truncatedNotice": "此範圍過大 —— 下面的數字只涵蓋其中最近的一段。",
     "apiListEstimate": "≈ {amount} API 標價",
     "apiListEstimatePartial": "≈ {amount} API 標價 · {percent}% 的 token",
-    "apiListEstimateHint": "來自 models.dev 的公開 API 標價，含快取讀寫。訂閱方案的計費方式不同。"
+    "apiListEstimateHint": "來自 models.dev 的公開 API 基礎標價，含快取讀寫，不含長上下文和推理加價。訂閱方案的計費方式不同。"
   },
   "Forge": {
     "title": "儲存庫面板",

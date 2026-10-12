@@ -6382,7 +6382,7 @@
     "truncatedNotice": "This range is very large — the numbers cover only the most recent slice of it.",
     "apiListEstimate": "≈ {amount} API list",
     "apiListEstimatePartial": "≈ {amount} API list · {percent}% of tokens",
-    "apiListEstimateHint": "Public API list rates from models.dev, including cache reads and writes. Subscription plans bill differently."
+    "apiListEstimateHint": "Base API list rates from models.dev, including cache reads and writes but not long-context or reasoning surcharges. Subscription plans bill differently."
   },
   "Forge": {
     "title": "Repository panel",

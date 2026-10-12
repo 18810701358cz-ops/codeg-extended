@@ -6382,7 +6382,7 @@
     "truncatedNotice": "Este periodo es muy amplio: las cifras cubren solo su tramo más reciente.",
     "apiListEstimate": "≈ {amount} tarifa API",
     "apiListEstimatePartial": "≈ {amount} tarifa API · {percent}% de tokens",
-    "apiListEstimateHint": "Tarifas públicas de API de models.dev, con lecturas y escrituras de caché. Los planes de suscripción facturan distinto."
+    "apiListEstimateHint": "Tarifas base públicas de API de models.dev, con lecturas y escrituras de caché pero sin recargos por contexto largo ni por razonamiento. Los planes de suscripción facturan distinto."
   },
   "Forge": {
     "title": "Panel del repositorio",

@@ -6382,7 +6382,7 @@
     "truncatedNotice": "期間が非常に長いため、表示中の数値は直近の一部のみを対象としています。",
     "apiListEstimate": "≈ {amount} APIリスト",
     "apiListEstimatePartial": "≈ {amount} APIリスト · トークンの {percent}%",
-    "apiListEstimateHint": "models.dev の公開 API リスト料金です。キャッシュの読み書きを含みます。サブスクリプションの課金とは異なります。"
+    "apiListEstimateHint": "models.dev の公開 API 基本リスト料金です。キャッシュの読み書きを含み、長いコンテキストや推論の割増料金は含みません。サブスクリプションの課金とは異なります。"
   },
   "Forge": {
     "title": "リポジトリパネル",

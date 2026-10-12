@@ -23,6 +23,15 @@ export interface ModelApiRate {
 }
 
 export interface RateIndex {
+  /** `provider/id` -> that provider's own listing of the model. */
+  own: Map<string, ModelApiRate[]>
+  /** Same, keyed with any date suffix stripped from the id. */
+  ownByKey: Map<string, ModelApiRate[]>
+  /**
+   * Raw catalog ids, kept apart from the provider-scoped keys above: many
+   * resellers' ids carry a `vendor/` namespace of their own (OpenRouter's
+   * `openai/gpt-5`), which would otherwise collide with `provider/id`.
+   */
   exact: Map<string, ModelApiRate[]>
   byKey: Map<string, ModelApiRate[]>
   byName: Map<string, ModelApiRate[]>
@@ -46,18 +55,44 @@ export interface ReportCost {
   unpricedModels: number
 }
 
-/** Prefer the lab's own listing when the same id is sold by many providers. */
-const PROVIDER_RANK: Record<string, number> = {
-  anthropic: 0,
-  openai: 1,
-  google: 2,
-  xai: 3,
-  groq: 4,
-  mistral: 5,
-  deepseek: 6,
-  "amazon-bedrock": 7,
-  azure: 8,
-}
+/**
+ * Model makers whose catalog listings are all their own models. A maker's own
+ * listing IS the API list price of its model, so when one lists the id it
+ * wins outright, even when a cloud or reseller (Azure, Bedrock, OpenCode Zen,
+ * OpenRouter...) sells the same id at another price: that is a different
+ * product, not a competing list price.
+ *
+ * Only makers that sell nothing but their own models belong here. One that
+ * also hosts other labs' models (Mistral lists GLM; Alibaba lists Kimi, GLM
+ * and DeepSeek) would otherwise win for a model it does not make. The order
+ * only matters between a maker's international and China endpoints.
+ */
+const LAB_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "google",
+  "xai",
+  "deepseek",
+  "moonshotai",
+  "moonshotai-cn",
+  "zai",
+  "zhipuai",
+  "minimax",
+  "minimax-cn",
+  "xiaomi",
+]
+
+/**
+ * Hosts preferred over other resellers, but never over a maker. Used only
+ * when no maker lists the id: a single host's price decides, and hosts that
+ * disagree leave the price ambiguous.
+ */
+const HOST_PROVIDERS = ["groq", "mistral", "amazon-bedrock", "azure"]
+
+const LABS = new Set(LAB_PROVIDERS)
+const PROVIDER_RANK = new Map(
+  [...LAB_PROVIDERS, ...HOST_PROVIDERS].map((id, rank) => [id, rank])
+)
 
 const DATE_SUFFIX = /-(?:\d{8}|\d{4}-\d{2}-\d{2})$/
 const PROVIDER_PREFIX = /^[a-z0-9][a-z0-9._-]*\//
@@ -94,7 +129,13 @@ function priceKey(rate: ModelApiRate): string {
 }
 
 function providerRank(id: string): number {
-  return PROVIDER_RANK[id] ?? 100
+  return PROVIDER_RANK.get(id) ?? 100
+}
+
+/** The first hit when every hit carries the same prices, else `null`. */
+function agreed(rates: ModelApiRate[]): ModelApiRate | null {
+  if (rates.length === 0) return null
+  return new Set(rates.map(priceKey)).size === 1 ? rates[0] : null
 }
 
 function push(
@@ -111,7 +152,7 @@ function push(
 function toRate(
   providerId: string,
   model: OpenCodeCatalogProvider["models"][number]
-): ModelApiRate | null {
+): ModelApiRate {
   const input = finiteOrNull(model.cost_in)
   const output = finiteOrNull(model.cost_out)
   const cacheRead = finiteOrNull(model.cost_cache_read)
@@ -127,32 +168,39 @@ function toRate(
   }
 }
 
-/** Collapse several catalog hits to one rate, or none if the price is ambiguous. */
+/**
+ * Collapse several catalog hits to one rate, or none if the price is
+ * ambiguous. A maker's own listing decides outright (see `LAB_PROVIDERS`),
+ * including any bucket it leaves unpublished, unless that maker's own hits
+ * disagree (a date-stripped key reaching two of its snapshots). Without a
+ * maker, hits that agree on every bucket collapse, a lone preferred host
+ * decides, and anything else stays unpriced.
+ */
 export function pickRate(rates: ModelApiRate[]): ModelApiRate | null {
   if (rates.length === 0) return null
   if (rates.length === 1) return rates[0]
 
-  const uniquePrices = new Set(rates.map(priceKey))
   const ranked = [...rates].sort(
     (a, b) =>
       providerRank(a.providerId) - providerRank(b.providerId) ||
       a.providerId.localeCompare(b.providerId)
   )
+  const maker = ranked[0].providerId
+  if (LABS.has(maker)) {
+    return agreed(ranked.filter((r) => r.providerId === maker))
+  }
+
+  const uniquePrices = new Set(rates.map(priceKey))
   if (uniquePrices.size === 1) return ranked[0]
 
-  const official = ranked.filter((r) => providerRank(r.providerId) < 100)
-  if (official.length === 1) return official[0]
-  if (official.length > 1) {
-    const officialPrices = new Set(official.map(priceKey))
-    if (officialPrices.size === 1) return official[0]
-    return null
-  }
-  return null
+  return agreed(ranked.filter((r) => providerRank(r.providerId) < 100))
 }
 
 export function buildRateIndex(
   providers: OpenCodeCatalogProvider[]
 ): RateIndex {
+  const own = new Map<string, ModelApiRate[]>()
+  const ownByKey = new Map<string, ModelApiRate[]>()
   const exact = new Map<string, ModelApiRate[]>()
   const byKey = new Map<string, ModelApiRate[]>()
   const byName = new Map<string, ModelApiRate[]>()
@@ -161,21 +209,19 @@ export function buildRateIndex(
   for (const provider of providers) {
     for (const model of provider.models) {
       const rate = toRate(provider.id, model)
-      if (!rate) continue
       const id = normalizeModelKey(model.id)
       const prefixed = `${normalizeModelKey(provider.id)}/${id}`
+      push(own, prefixed, rate)
+      push(ownByKey, stripDate(prefixed), rate)
       for (const key of lookupKeys(id)) push(byKey, key, rate)
       push(exact, id, rate)
-      push(exact, prefixed, rate)
-      push(byKey, prefixed, rate)
-      push(byKey, stripDate(prefixed), rate)
       idSet.add(id)
       const name = normalizeModelKey(model.name)
       if (name.length >= 3) push(byName, name, rate)
     }
   }
 
-  return { exact, byKey, byName, ids: [...idSet] }
+  return { own, ownByKey, exact, byKey, byName, ids: [...idSet] }
 }
 
 export function resolveRate(
@@ -191,10 +237,20 @@ export function resolveRate(
   // An exact model/version or explicit provider must not inherit another
   // listing's cheaper rate, even when its own rate is unpublished.
   const normalized = normalizeModelKey(trimmed)
+  const scoped = normalized.includes("/")
+  if (scoped) {
+    // `provider/model` where that provider lists the model resolves to its
+    // own listing alone; a reseller whose raw id is the same string does not
+    // get a vote. Its snapshots that disagree under a stripped date stay
+    // ambiguous.
+    const own =
+      index.own.get(normalized) ?? index.ownByKey.get(stripDate(normalized))
+    if (own) return agreed(own)
+  }
   if (index.exact.has(normalized)) {
     return pickRate(index.exact.get(normalized)!)
   }
-  if (normalized.includes("/")) {
+  if (scoped) {
     return pickRate(index.byKey.get(stripDate(normalized)) ?? [])
   }
 
@@ -302,4 +358,20 @@ export function estimateReportCost(
     pricedModels,
     unpricedModels,
   }
+}
+
+/**
+ * The share of tokens a partial estimate covers, as the whole percent in its
+ * "N% of tokens" label. Floored, so a partial estimate never reads as 100%;
+ * "<1" rather than "0" once anything was priced, so a dollar amount is never
+ * shown next to "0% of tokens".
+ */
+export function coveragePercent(
+  pricedTokens: number,
+  unpricedTokens: number
+): string {
+  const total = pricedTokens + unpricedTokens
+  if (pricedTokens <= 0 || total <= 0) return "0"
+  const percent = Math.floor((100 * pricedTokens) / total)
+  return percent < 1 ? "<1" : String(percent)
 }

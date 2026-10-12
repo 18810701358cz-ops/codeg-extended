@@ -81,6 +81,7 @@ import {
 } from "@/lib/token-usage"
 import {
   buildRateIndex,
+  coveragePercent,
   estimateItemCost,
   estimateReportCost,
   resolveRate,
@@ -735,9 +736,9 @@ export function TokenUsagePage() {
             cost.unpricedTokens > 0
               ? t("apiListEstimatePartial", {
                   amount: formatUsd(cost.usd),
-                  percent: Math.floor(
-                    (100 * cost.pricedTokens) /
-                      (cost.pricedTokens + cost.unpricedTokens)
+                  percent: coveragePercent(
+                    cost.pricedTokens,
+                    cost.unpricedTokens
                   ),
                 })
               : t("apiListEstimate", { amount: formatUsd(cost.usd) })
@@ -1170,8 +1171,9 @@ export function TokenUsagePage() {
                                   {apiEstimate.unpricedTokens > 0
                                     ? t("apiListEstimatePartial", {
                                         amount: formatUsd(apiEstimate.usd),
-                                        percent: Math.floor(
-                                          apiEstimate.coverage * 100
+                                        percent: coveragePercent(
+                                          apiEstimate.pricedTokens,
+                                          apiEstimate.unpricedTokens
                                         ),
                                       })
                                     : t("apiListEstimate", {

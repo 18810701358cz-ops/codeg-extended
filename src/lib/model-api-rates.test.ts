@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   buildRateIndex,
+  coveragePercent,
   estimateItemCost,
   estimateReportCost,
   pickRate,
@@ -183,13 +184,54 @@ describe("pickRate", () => {
     ).toBe("anthropic")
   })
 
-  it("refuses to guess when two official listings disagree", () => {
+  it("lets the maker's own listing win over clouds that disagree", () => {
     expect(
       pickRate([
-        rate({ providerId: "anthropic", input: 3 }),
+        rate({ providerId: "azure", cacheRead: 0.5 }),
         rate({ providerId: "amazon-bedrock", input: 3.6 }),
+        rate({ providerId: "anthropic", input: 3 }),
+      ])?.providerId
+    ).toBe("anthropic")
+  })
+
+  it("refuses to guess when hosts disagree and no maker lists the id", () => {
+    expect(
+      pickRate([
+        rate({ providerId: "amazon-bedrock", input: 3.6 }),
+        rate({ providerId: "azure", input: 3.3 }),
+        rate({ providerId: "openrouter", input: 3 }),
       ])
     ).toBeNull()
+  })
+
+  it("still lets a lone host decide over disagreeing resellers", () => {
+    expect(
+      pickRate([
+        rate({ providerId: "openrouter", input: 3.3 }),
+        rate({ providerId: "groq", input: 3 }),
+      ])?.providerId
+    ).toBe("groq")
+  })
+
+  it("stays ambiguous when the maker's own hits disagree", () => {
+    const index = buildRateIndex([
+      provider("anthropic", [
+        model({ id: "model", cost_in: 2 }),
+        model({ id: "model-20260101", cost_in: 8 }),
+      ]),
+    ])
+    // A newer snapshot the catalog does not list reaches both via the date
+    // strip; neither is its price.
+    expect(resolveRate(index, "model-20270101")).toBeNull()
+  })
+
+  it("ranks a model's own maker above a maker that also hosts it", () => {
+    expect(
+      pickRate([
+        rate({ providerId: "alibaba", id: "kimi-k3", input: 4 }),
+        rate({ providerId: "moonshotai", id: "kimi-k3", input: 3 }),
+      ])?.providerId
+    ).toBe("moonshotai")
   })
 
   it("collapses identical prices", () => {
@@ -320,5 +362,219 @@ describe("catalog identity boundaries", () => {
       resolveRate(index, "model")
     )
     expect(result).toEqual({ usd: 0, pricedTokens: 50, unpricedTokens: 100 })
+  })
+})
+
+// The listing shapes below are taken from the live models.dev catalog: a
+// maker and a cloud selling the same id with different cache prices, and a
+// reseller that leaves a bucket unpublished.
+describe("maker listings", () => {
+  const sol = {
+    id: "gpt-5.6-sol",
+    cost_in: 4,
+    cost_out: 20,
+    cost_cache_read: 0.4,
+    cost_cache_write: 5,
+  }
+  const index = buildRateIndex([
+    provider("azure", [
+      model({ ...sol, cost_cache_read: 0.5, cost_cache_write: 6.25 }),
+      model({
+        id: "claude-sonnet-5-5",
+        cost_in: 2,
+        cost_out: 10,
+        cost_cache_read: 0.2,
+        cost_cache_write: 2.5,
+      }),
+      model({
+        id: "deepseek-v4-flash",
+        cost_in: 0.19,
+        cost_out: 0.51,
+        cost_cache_read: null,
+        cost_cache_write: null,
+      }),
+    ]),
+    provider("opencode", [
+      model(sol),
+      model({
+        id: "kimi-k3",
+        cost_in: 3,
+        cost_out: 15,
+        cost_cache_read: 0.3,
+        cost_cache_write: null,
+      }),
+    ]),
+    provider("openai", [model(sol)]),
+    provider("anthropic", [
+      model({
+        id: "claude-sonnet-5-5",
+        cost_in: 2,
+        cost_out: 10,
+        cost_cache_read: 0.1,
+        cost_cache_write: 2.5,
+      }),
+    ]),
+    provider("deepseek", [
+      model({
+        id: "deepseek-v4-flash",
+        cost_in: 0.15,
+        cost_out: 0.6,
+        cost_cache_read: 0.003,
+        cost_cache_write: null,
+      }),
+    ]),
+    provider("moonshotai", [
+      model({
+        id: "kimi-k3",
+        cost_in: 3,
+        cost_out: 15,
+        cost_cache_read: 0.3,
+        cost_cache_write: 3,
+      }),
+    ]),
+  ])
+
+  it("prices a model at its maker's rate when a cloud disagrees", () => {
+    const sonnet = resolveRate(index, "claude-sonnet-5-5")
+    expect(sonnet?.providerId).toBe("anthropic")
+    expect(sonnet?.cacheRead).toBe(0.1)
+
+    const gpt = resolveRate(index, "gpt-5.6-sol")
+    expect(gpt?.providerId).toBe("openai")
+    expect(
+      estimateItemCost(
+        item("gpt-5.6-sol", {
+          input_tokens: 1_000_000,
+          output_tokens: 1_000_000,
+          cache_creation_tokens: 1_000_000,
+          cache_read_tokens: 1_000_000,
+        }),
+        gpt
+      ).usd
+    ).toBeCloseTo(4 + 20 + 5 + 0.4)
+
+    expect(resolveRate(index, "deepseek-v4-flash")?.providerId).toBe("deepseek")
+    expect(resolveRate(index, "kimi-k3")?.providerId).toBe("moonshotai")
+  })
+
+  it("still honors an explicit cloud prefix", () => {
+    expect(resolveRate(index, "azure/gpt-5.6-sol")?.cacheRead).toBe(0.5)
+  })
+
+  it("never fills a bucket the maker leaves unpublished from a cloud", () => {
+    const flash = resolveRate(index, "deepseek-v4-flash")
+    expect(flash?.cacheWrite).toBeNull()
+    expect(
+      estimateItemCost(
+        item("deepseek-v4-flash", {
+          input_tokens: 1_000_000,
+          cache_creation_tokens: 10,
+        }),
+        flash
+      )
+    ).toEqual({ usd: 0.15, pricedTokens: 1_000_000, unpricedTokens: 10 })
+  })
+})
+
+describe("coveragePercent", () => {
+  it("floors, so a partial estimate never reads as complete", () => {
+    expect(coveragePercent(995, 5)).toBe("99")
+    expect(coveragePercent(1, 1)).toBe("50")
+  })
+
+  it("never shows 0% next to a priced amount", () => {
+    expect(coveragePercent(1, 999)).toBe("<1")
+    expect(coveragePercent(10, 990)).toBe("1")
+  })
+
+  it("is 0 when nothing was priced", () => {
+    expect(coveragePercent(0, 50)).toBe("0")
+    expect(coveragePercent(0, 0)).toBe("0")
+  })
+})
+
+describe("explicit provider scope", () => {
+  it("prices `provider/model` from that provider alone", () => {
+    // Live catalog shape: Tempr's own id is the literal string
+    // `cerebras/qwen-3.8-27b`, with the cache read left unpublished.
+    const index = buildRateIndex([
+      provider("cerebras", [
+        model({
+          id: "qwen-3.8-27b",
+          cost_in: 0.99,
+          cost_out: 1.49,
+          cost_cache_read: 0.99,
+          cost_cache_write: null,
+        }),
+      ]),
+      provider("tempr", [
+        model({
+          id: "cerebras/qwen-3.8-27b",
+          cost_in: 0.99,
+          cost_out: 1.49,
+          cost_cache_read: null,
+          cost_cache_write: null,
+        }),
+      ]),
+    ])
+    const rate = resolveRate(index, "cerebras/qwen-3.8-27b")
+    expect(rate?.providerId).toBe("cerebras")
+    expect(rate?.cacheRead).toBe(0.99)
+  })
+
+  it("keeps a provider's unpublished price over a reseller's literal id", () => {
+    const index = buildRateIndex([
+      provider("custom", [
+        model({
+          id: "foo",
+          cost_in: null,
+          cost_out: null,
+          cost_cache_read: null,
+          cost_cache_write: null,
+        }),
+      ]),
+      provider("groq", [model({ id: "custom/foo", cost_in: 1 })]),
+    ])
+    const rate = resolveRate(index, "custom/foo")
+    expect(rate?.providerId).toBe("custom")
+    expect(
+      estimateItemCost(item("custom/foo", { input_tokens: 1_000_000 }), rate)
+        .usd
+    ).toBeNull()
+  })
+
+  it("abstains when a dated key reaches the provider's disagreeing snapshots", () => {
+    const index = buildRateIndex([
+      provider("openai", [
+        model({ id: "gpt-4o", cost_in: 2.5, cost_out: 10 }),
+        model({ id: "gpt-4o-2024-05-13", cost_in: 5, cost_out: 15 }),
+      ]),
+    ])
+    expect(resolveRate(index, "openai/gpt-4o-20240513")).toBeNull()
+    expect(resolveRate(index, "gpt-4o-20240513")).toBeNull()
+    expect(resolveRate(index, "openai/gpt-4o-2024-05-13")?.input).toBe(5)
+  })
+
+  it("still reads a reseller's own `vendor/model` id", () => {
+    const index = buildRateIndex([
+      provider("openrouter", [model({ id: "acme/model-x", cost_in: 1 })]),
+    ])
+    expect(resolveRate(index, "acme/model-x")?.providerId).toBe("openrouter")
+  })
+})
+
+describe("makers that also host other labs' models", () => {
+  it("never outrank a host for a model they do not make", () => {
+    // Live catalog shape: Moonshot does not list `kimi-k2.5`, Alibaba CN and
+    // Azure both host it at different prices.
+    const index = buildRateIndex([
+      provider("alibaba-cn", [
+        model({ id: "kimi-k2.5", cost_in: 0.574, cost_out: 2.411 }),
+      ]),
+      provider("azure", [
+        model({ id: "kimi-k2.5", cost_in: 0.6, cost_out: 3 }),
+      ]),
+    ])
+    expect(resolveRate(index, "kimi-k2.5")?.providerId).toBe("azure")
   })
 })
