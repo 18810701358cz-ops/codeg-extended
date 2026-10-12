@@ -727,8 +727,9 @@ describe("AgentToolCallPart settled timeline and tool grouping", () => {
     const trigger = screen.getByRole("button", {
       name: "Sub-agent activity · 2.3m",
     })
+    // The duration replaces the entry count; no step count shows alongside.
     expect(
-      screen.queryByText("Sub-agent activity · 2 steps")
+      screen.queryByText(/^Sub-agent activity · \d+ steps?$/)
     ).not.toBeInTheDocument()
 
     fireEvent.click(trigger)
