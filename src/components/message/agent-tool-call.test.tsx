@@ -511,8 +511,8 @@ describe("AgentToolCallPart live subagent transcript", () => {
       withTranscript("input-available", [{ type: "thinking", text: "   " }])
     )
     expandRunningCapsule()
-    // Label shows (the list is non-empty) but the blank entry renders nothing.
-    expect(screen.getByText("Live activity")).toBeInTheDocument()
+    // Blank prose is nothing to show: no live heading over an empty list.
+    expect(screen.queryByText("Live activity")).not.toBeInTheDocument()
 
     // A settled card keeps the timeline data but folds it into one pill,
     // CLOSED by default — the conclusion leads, the process is one click
@@ -760,11 +760,13 @@ describe("AgentToolCallPart settled timeline and tool grouping", () => {
 
   it("renders a transcript of tool markers alone exactly like a stats-only card", () => {
     // CodeBuddy's child prose never reaches the client, and position-matched
-    // children carry none either: their transcript is tool markers alone.
-    // With no prose there is no order to preserve, so neither the settled
-    // activity pill nor the live heading wraps the one tool pill.
+    // children carry none either: their transcript is tool markers alone
+    // (blank prose renders nothing, so it counts as none). With no prose
+    // there is no order to preserve, so neither the settled activity pill
+    // nor the live heading wraps the one tool pill.
     const markersOnly: NonNullable<ToolCallPart["agentTranscript"]> = [
       { type: "tool_call", childIndex: 0 },
+      { type: "thinking", text: "  \n" },
       { type: "tool_call", childIndex: 1 },
     ]
     const settled = renderWithChildren({

@@ -327,9 +327,13 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
   // child's tool calls with. A transcript of tool markers alone (CodeBuddy's
   // child prose never reaches the client; position-matched children carry
   // none) has no order beyond the calls' own, which `agent_stats.tool_calls`
-  // already keeps — such a card renders exactly like a stats-only one.
+  // already keeps — such a card renders exactly like a stats-only one. Blank
+  // prose renders nothing, so it counts as none.
   const hasTimeline = useMemo(
-    () => transcript.some((entry) => entry.type !== "tool_call"),
+    () =>
+      transcript.some(
+        (entry) => entry.type !== "tool_call" && entry.text.trim() !== ""
+      ),
     [transcript]
   )
 
