@@ -3758,6 +3758,8 @@
       "messageNav": {
         "title": "تنقل الرسائل",
         "collapse": "طي تنقل الرسائل",
+        "loadingEarlier": "جارٍ تحميل الرسائل السابقة…",
+        "loadEarlier": "تحميل الرسائل السابقة",
         "collapsedSummary": "الرسائل {count}",
         "fileCount": "{count, plural, one {# ملف} other {# ملفات}}",
         "remove": "إزالة",

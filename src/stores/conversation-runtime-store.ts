@@ -2122,6 +2122,7 @@ function reducer(
         turns: [...prependTurns, ...detail.turns],
         turns_offset: page.turns_offset,
         assistant_turns_before_offset: page.assistant_turns_before_offset,
+        user_turns_before_offset: page.user_turns_before_offset ?? null,
         prefix_hash: page.prefix_hash,
         uncovered_prefix_max_ts: page.uncovered_prefix_max_ts ?? null,
         // `turns_total` stays the window's own (newer) value: the page's
@@ -2779,6 +2780,15 @@ export interface RuntimeActions {
    */
   loadOlderTurns: (conversationId: number) => void
   /**
+   * Page older history in until global turn `throughIndex` is loaded (the
+   * message navigator's jump to a message above the window). Resolves whether
+   * it got there; see the implementation for when it gives up.
+   */
+  loadOlderTurnsThrough: (
+    conversationId: number,
+    throughIndex: number
+  ) => Promise<boolean>
+  /**
    * Record that turn content reached the wire while this session was not
    * prompting and was dropped unrendered (see `pendingOutOfTurnContent`).
    * Idempotent and O(1) once set — it is called per streamed token.
@@ -2934,6 +2944,12 @@ function isLatestGeneration(
 ): boolean {
   return fetchGeneration.get(conversationId) === generation
 }
+
+// The older-history page in flight per conversation (at most one: paging is
+// single-flight), resolving to whether it was prepended. Lets a jump that has
+// to page through several windows wait out a page the near-top trigger issued
+// instead of giving up on it.
+const olderPageRequests = new Map<number, Promise<boolean>>()
 
 // ─── Cross-client viewer detail sync ─────────────────────────────────────
 // A conversation whose turn completes on ANOTHER client (this client is only
@@ -3886,23 +3902,29 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
    * overlay folds stopped. The load lands its window instead; the near-top
    * trigger fires again the next time the list is scrolled up into the top,
    * and the loader row pages on click.
+   *
+   * Returns the request (resolving to whether its page was prepended), or
+   * null when none was issued.
    */
-  const loadOlderTurns = (conversationId: number): void => {
+  const requestOlderPage = (
+    conversationId: number,
+    limit: number
+  ): Promise<boolean> | null => {
     const session = get().byConversationId.get(conversationId)
     const detail = session?.detail ?? null
-    if (!session || !detail || !isWindowedDetail(detail)) return
+    if (!session || !detail || !isWindowedDetail(detail)) return null
     const beforeIndex = detail.turns_offset
-    if (beforeIndex <= 0 || session.loadingOlderTurns) return
-    if (session.detailLoading) return
+    if (beforeIndex <= 0 || session.loadingOlderTurns) return null
+    if (session.detailLoading) return null
     const expectedSeamHash = detail.prefix_hash
     const fetchId = session.dbConversationId ?? conversationId
     const generation = bumpFetchGeneration(conversationId)
     dispatch({ type: "LOAD_OLDER_TURNS_START", conversationId })
-    getFolderConversationTurns(fetchId, beforeIndex, OLDER_TURNS_PAGE_SIZE)
+    const request = getFolderConversationTurns(fetchId, beforeIndex, limit)
       .then((page) => {
         if (!isLatestGeneration(conversationId, generation)) {
           dispatch({ type: "LOAD_OLDER_TURNS_DONE", conversationId })
-          return
+          return false
         }
         // Seam broken by a prefix rewrite between requests: the loaded
         // window's coordinates are garbage now. Reset to a fresh tail
@@ -3911,21 +3933,81 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
         if (page.prefix_hash_before_index !== expectedSeamHash) {
           dispatch({ type: "LOAD_OLDER_TURNS_DONE", conversationId })
           refetchDetail(conversationId, { preserveLive: true })
-          return
+          return false
         }
+        const epoch =
+          get().byConversationId.get(conversationId)?.olderTurnsPrependEpoch
         dispatch({
           type: "PREPEND_OLDER_TURNS",
           conversationId,
           page,
           expectedSeamHash,
         })
+        // The reducer re-verifies the seam against the window it finds and
+        // drops the page on a mismatch; only a merge advances the epoch.
+        return (
+          get().byConversationId.get(conversationId)?.olderTurnsPrependEpoch !==
+          epoch
+        )
       })
       .catch(() => {
         // Transient (old server: the endpoint 501s — unreachable in practice
         // because a legacy detail never reports turns_offset > 0). Clear the
         // flag; the top sentinel retriggers on the next scroll.
         dispatch({ type: "LOAD_OLDER_TURNS_DONE", conversationId })
+        return false
       })
+      .finally(() => {
+        if (olderPageRequests.get(conversationId) === request) {
+          olderPageRequests.delete(conversationId)
+        }
+      })
+    olderPageRequests.set(conversationId, request)
+    return request
+  }
+
+  const loadOlderTurns = (conversationId: number): void => {
+    void requestOlderPage(conversationId, OLDER_TURNS_PAGE_SIZE)
+  }
+
+  /**
+   * Page history in until global turn `throughIndex` is loaded — what the
+   * message navigator does before it can scroll to a message above the
+   * window. Each page asks for everything down to the target (at least a
+   * normal page, so there is context above it); the server clamps a page to
+   * 500 turns and aligns its start to a user turn, so a target further up
+   * takes several, each seam-verified like any other. A page already in
+   * flight is waited out rather than raced.
+   *
+   * Resolves true once the window starts at or before `throughIndex`, false
+   * as soon as it can't get there: no windowed detail, a detail load in
+   * flight, or a page that failed, lost the fetch-generation race or broke
+   * the seam (which resets the window to a fresh tail).
+   */
+  const loadOlderTurnsThrough = async (
+    conversationId: number,
+    throughIndex: number
+  ): Promise<boolean> => {
+    for (;;) {
+      const detail = get().byConversationId.get(conversationId)?.detail ?? null
+      if (!isWindowedDetail(detail)) return false
+      const offset = detail.turns_offset
+      if (offset <= throughIndex) return true
+      const inFlight = olderPageRequests.get(conversationId)
+      if (inFlight) {
+        await inFlight
+        continue
+      }
+      const request = requestOlderPage(
+        conversationId,
+        Math.max(offset - throughIndex, OLDER_TURNS_PAGE_SIZE)
+      )
+      if (!request || !(await request)) return false
+      // A merged page always starts above the old window; anything else would
+      // ask for the same page forever.
+      const after = get().byConversationId.get(conversationId)?.detail ?? null
+      if (!isWindowedDetail(after) || after.turns_offset >= offset) return false
+    }
   }
 
   // Bring a passively-VIEWED conversation's detail up to date after its turn
@@ -4294,6 +4376,7 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
     fetchDetail,
     refetchDetail,
     loadOlderTurns,
+    loadOlderTurnsThrough,
     markOutOfTurnContent,
     syncViewerDetail,
     syncTurnMetadata,
@@ -4505,6 +4588,7 @@ export function resetConversationRuntimeStore(): void {
   // have no concurrent fetches — but a real in-place backend switch would need a
   // backend epoch here. See `RemoteConnectionGate`.
   fetchGeneration.clear()
+  olderPageRequests.clear()
   for (const cancel of viewerDetailSyncCancels.values()) cancel()
   viewerDetailSyncCancels.clear()
   for (const pending of pendingSessionReleases.values()) clearTimeout(pending)

@@ -1544,6 +1544,7 @@ pub async fn get_folder_conversation_core(
             turns_offset: None,
             turns_total: None,
             assistant_turns_before_offset: None,
+            user_turns_before_offset: None,
             prefix_hash: None,
             uncovered_prefix_max_ts: None,
         },
@@ -1842,6 +1843,7 @@ fn apply_turn_window(
     detail.turns_offset = Some(meta.offset);
     detail.turns_total = Some(meta.total);
     detail.assistant_turns_before_offset = Some(meta.assistant_before);
+    detail.user_turns_before_offset = Some(meta.user_before);
     detail.prefix_hash = Some(meta.prefix_hash);
     detail.uncovered_prefix_max_ts = meta.uncovered_prefix_max_ts;
 }
@@ -1957,9 +1959,32 @@ pub async fn get_folder_conversation_turns_core(
         turns_offset: meta.offset,
         turns_total: meta.total,
         assistant_turns_before_offset: meta.assistant_before,
+        user_turns_before_offset: meta.user_before,
         prefix_hash: meta.prefix_hash,
         prefix_hash_before_index: seam.prefix_hash,
         uncovered_prefix_max_ts: meta.uncovered_prefix_max_ts,
+    })
+}
+
+/// The message navigator's outline of the history above a loaded window:
+/// `full[0..min(before_index, total))`, each turn reduced by
+/// [`turn_window::nav_outline_turns`](crate::commands::turn_window::nav_outline_turns)
+/// to what the navigator reads. Same light path as the history page (full
+/// parse + delegation meta, no live correlation or sidebar events), so its
+/// turn ids are the ones a page of the same history carries.
+pub async fn get_folder_conversation_outline_core(
+    conn: &sea_orm::DatabaseConnection,
+    conversation_id: i32,
+    before_index: usize,
+) -> Result<ConversationOutline, AppCommandError> {
+    use crate::commands::turn_window;
+    let (detail, _parsed_title) = get_folder_conversation_core(conn, conversation_id).await?;
+    let turns = detail.turns;
+    let end = before_index.min(turns.len());
+    Ok(ConversationOutline {
+        turns: turn_window::nav_outline_turns(&turns[..end]),
+        turns_total: turns.len(),
+        prefix_hash: turn_window::prefix_fingerprint(&turns[..end]),
     })
 }
 
@@ -1995,6 +2020,16 @@ pub async fn get_folder_conversation_turns(
     limit: usize,
 ) -> Result<ConversationTurnsPage, AppCommandError> {
     get_folder_conversation_turns_core(&db.conn, conversation_id, before_index, limit).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_folder_conversation_outline(
+    db: tauri::State<'_, AppDatabase>,
+    conversation_id: i32,
+    before_index: usize,
+) -> Result<ConversationOutline, AppCommandError> {
+    get_folder_conversation_outline_core(&db.conn, conversation_id, before_index).await
 }
 
 /// Emit a `conversation://changed` Upsert for `conversation_id` so every
@@ -6664,6 +6699,7 @@ mod tests {
             turns_offset: None,
             turns_total: None,
             assistant_turns_before_offset: None,
+            user_turns_before_offset: None,
             prefix_hash: None,
             uncovered_prefix_max_ts: None,
         }
@@ -6699,6 +6735,7 @@ mod tests {
         assert_eq!(detail.turns_offset, Some(2));
         assert_eq!(detail.turns_total, Some(4));
         assert_eq!(detail.assistant_turns_before_offset, Some(1));
+        assert_eq!(detail.user_turns_before_offset, Some(1));
         assert_eq!(
             detail.turns.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
             vec!["turn-2", "turn-3"]
@@ -6774,6 +6811,7 @@ mod tests {
             page.prefix_hash, page.prefix_hash_before_index,
             "empty transcript: both fingerprints are the seed"
         );
+        assert_eq!(page.user_turns_before_offset, 0);
 
         // Seam-proof shape on a synthetic list: the page [start..before) must
         // report H(0..start) as its own fingerprint and H(0..before) as the
@@ -6788,6 +6826,28 @@ mod tests {
         assert_eq!(
             seam.prefix_hash,
             crate::commands::turn_window::prefix_fingerprint(&turns[..2])
+        );
+    }
+
+    #[tokio::test]
+    async fn outline_core_cuts_the_prefix_at_before_index() {
+        // A conversation without an external_id parses to zero turns: the
+        // outline is empty, `before_index` clamps to the total, and the
+        // fingerprint is the seed — the same value a windowed detail of this
+        // transcript reports as its prefix hash.
+        let db = fresh_in_memory_db().await;
+        let folder_id = seed_folder(&db, "/tmp/outline").await;
+        let conv_id = create_conversation_core(&db.conn, folder_id, AgentType::ClaudeCode, None)
+            .await
+            .expect("create conversation");
+        let outline = get_folder_conversation_outline_core(&db.conn, conv_id, 10)
+            .await
+            .expect("outline fetch");
+        assert!(outline.turns.is_empty());
+        assert_eq!(outline.turns_total, 0);
+        assert_eq!(
+            outline.prefix_hash,
+            crate::commands::turn_window::prefix_fingerprint(&[])
         );
     }
 }

@@ -177,6 +177,26 @@ pub async fn get_folder_conversation_turns(
     Ok(Json(result))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetFolderConversationOutlineParams {
+    pub conversation_id: i32,
+    pub before_index: usize,
+}
+
+pub async fn get_folder_conversation_outline(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<GetFolderConversationOutlineParams>,
+) -> Result<Json<ConversationOutline>, AppCommandError> {
+    let result = conv_commands::get_folder_conversation_outline_core(
+        &state.db.conn,
+        params.conversation_id,
+        params.before_index,
+    )
+    .await?;
+    Ok(Json(result))
+}
+
 pub async fn list_folders() -> Result<Json<Vec<FolderInfo>>, AppCommandError> {
     let result = conv_commands::list_folders().await?;
     Ok(Json(result))

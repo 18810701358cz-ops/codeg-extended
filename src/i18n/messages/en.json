@@ -3758,6 +3758,8 @@
       "messageNav": {
         "title": "Message navigation",
         "collapse": "Collapse message navigation",
+        "loadingEarlier": "Loading earlier messages…",
+        "loadEarlier": "Load earlier messages",
         "collapsedSummary": "Messages {count}",
         "fileCount": "{count, plural, one {# file} other {# files}}",
         "remove": "Remove",

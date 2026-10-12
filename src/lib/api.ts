@@ -56,6 +56,7 @@ import type {
   WorkTaskTemplate,
   ConversationSummary,
   ConversationDetail,
+  ConversationOutline,
   ConversationTurnsPage,
   DbConversationDetail,
   FolderInfo,
@@ -2404,6 +2405,17 @@ export async function getFolderConversationTurns(
     conversationId,
     beforeIndex,
     limit,
+  })
+}
+
+/** Fetch the message navigator's outline of the history before `beforeIndex`. */
+export async function getFolderConversationOutline(
+  conversationId: number,
+  beforeIndex: number
+): Promise<ConversationOutline> {
+  return getTransport().call("get_folder_conversation_outline", {
+    conversationId,
+    beforeIndex,
   })
 }
 

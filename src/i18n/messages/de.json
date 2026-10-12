@@ -3758,6 +3758,8 @@
       "messageNav": {
         "title": "Nachrichtennavigation",
         "collapse": "Nachrichtennavigation ausblenden",
+        "loadingEarlier": "Frühere Nachrichten werden geladen…",
+        "loadEarlier": "Frühere Nachrichten laden",
         "collapsedSummary": "Nachrichten {count}",
         "fileCount": "{count, plural, one {# Datei} other {# Dateien}}",
         "remove": "Entfernen",
