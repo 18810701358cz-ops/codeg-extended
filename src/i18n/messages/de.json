@@ -3593,7 +3593,7 @@
         "agentEffortLabel": "Aufwand",
         "agentRunning": "Läuft...",
         "agentLiveTranscript": "Live-Aktivität",
-        "agentProcessCount": "Subagent-Aktivität · {count} Schritte",
+        "agentProcessCount": "{count, plural, one {Subagent-Aktivität · # Schritt} other {Subagent-Aktivität · # Schritte}}",
         "agentProcessDuration": "Subagent-Aktivität · {duration}",
         "agentRecoveredNote": "Der Sub-Agent wurde tatsächlich fertig; sein Ergebnis wurde nie zugestellt, weil der Turn abbrach:",
         "agentProgressTools": "{count} Tool-Aufrufe",

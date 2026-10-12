@@ -3593,7 +3593,7 @@
         "agentEffortLabel": "Effort",
         "agentRunning": "Running...",
         "agentLiveTranscript": "Live activity",
-        "agentProcessCount": "Sub-agent activity · {count} steps",
+        "agentProcessCount": "{count, plural, one {Sub-agent activity · # step} other {Sub-agent activity · # steps}}",
         "agentProcessDuration": "Sub-agent activity · {duration}",
         "agentRecoveredNote": "The sub-agent actually finished; its result was never delivered because the turn aborted:",
         "agentProgressTools": "{count} tool calls",

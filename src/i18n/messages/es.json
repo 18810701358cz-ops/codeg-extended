@@ -3593,7 +3593,7 @@
         "agentEffortLabel": "Esfuerzo",
         "agentRunning": "Ejecutando...",
         "agentLiveTranscript": "Actividad en vivo",
-        "agentProcessCount": "Actividad del subagente · {count} pasos",
+        "agentProcessCount": "{count, plural, one {Actividad del subagente · # paso} other {Actividad del subagente · # pasos}}",
         "agentProcessDuration": "Actividad del subagente · {duration}",
         "agentRecoveredNote": "El subagente realmente terminó; su resultado nunca se entregó porque el turno se abortó:",
         "agentProgressTools": "{count} llamadas a herramientas",
