@@ -132,11 +132,14 @@ function parseTaskOutcomeEnvelope(
   return null
 }
 
-/** Render bound for the RUNNING card's transcript — the DATA is uncapped; the
- *  live tail is what stays limited (entries only split at kind boundaries, so
- *  the count stays small in practice; this is a backstop). Once the card
- *  settles the bound does NOT apply: the full arrival order is the point of
- *  the settled view, so history renders every entry. */
+/** Render bound for the RUNNING card's PROSE — the DATA is uncapped. While the
+ *  card runs only the newest thinking/text entries render (prose splits at
+ *  every child tool call, so a long sub-agent outgrows any fixed count; this
+ *  keeps the live view a tail). The child's tool-call markers are never
+ *  dropped: every call stays reachable in its pill, as it was before the
+ *  timeline existed. Once the card settles the bound does NOT apply: the full
+ *  arrival order is the point of the settled view, so history renders every
+ *  entry. */
 const AGENT_TRANSCRIPT_RENDER_TAIL = 20
 
 interface GrokSubagentProgress {
@@ -313,16 +316,21 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
   // Settled cards lead with the conclusion; the timeline pill starts closed.
   const [timelineOpen, setTimelineOpen] = useState(false)
 
-  // While the card runs, only the newest tail of the transcript is rendered.
-  // Once settled the whole timeline is: the live transcript is still attached
-  // at settle, and once history reloads from disk the parsed
-  // `agent_stats.timeline` takes its place — same entries, same order.
-  const displayTranscript = useMemo(
-    () =>
-      isRunning
-        ? (part.agentTranscript ?? []).slice(-AGENT_TRANSCRIPT_RENDER_TAIL)
-        : (part.agentTranscript ?? []),
-    [isRunning, part.agentTranscript]
+  // The child's timeline: the live transcript while it is attached (it stays
+  // attached at settle), the parsed `agent_stats.timeline` once history
+  // reloads from disk — same entries, same order.
+  const transcript = useMemo(
+    () => part.agentTranscript ?? [],
+    [part.agentTranscript]
+  )
+  // A timeline is only worth drawing when it holds prose to interleave the
+  // child's tool calls with. A transcript of tool markers alone (CodeBuddy's
+  // child prose never reaches the client; position-matched children carry
+  // none) has no order beyond the calls' own, which `agent_stats.tool_calls`
+  // already keeps — such a card renders exactly like a stats-only one.
+  const hasTimeline = useMemo(
+    () => transcript.some((entry) => entry.type !== "tool_call"),
+    [transcript]
   )
 
   const subagentType = useMemo(
@@ -444,45 +452,70 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
   // thinking entry breaks the run — same semantics as the main thread's
   // grouping); prose/thinking stay standalone in arrival order. A marker
   // pointing outside `adaptedToolCalls` is dropped rather than rendered as a
-  // hole.
+  // hole. While the card runs, prose older than the newest
+  // AGENT_TRANSCRIPT_RENDER_TAIL entries is skipped; markers never are.
+  //
+  // Every item carries its index in the WHOLE transcript (`at`) and is keyed
+  // by it. Keying by the position in what is visible would hand an entry's
+  // component to its neighbour each time the tail slides: an opened
+  // <Reasoning> would fold, and Streamdown — which memoizes its elements on
+  // source position alone — would keep painting the previous entry's words.
   const transcriptSegments = useMemo(() => {
+    if (!hasTimeline) return []
+    const proseCount = transcript.filter(
+      (entry) => entry.type !== "tool_call"
+    ).length
+    let proseToSkip = isRunning
+      ? Math.max(0, proseCount - AGENT_TRANSCRIPT_RENDER_TAIL)
+      : 0
     const display: Array<{
-      call?: AdaptedToolCallPart
-      other?: Extract<AgentTranscriptEntry, { type: "text" | "thinking" }>
+      call?: { part: AdaptedToolCallPart; at: number }
+      other?: {
+        entry: Extract<AgentTranscriptEntry, { type: "text" | "thinking" }>
+        at: number
+      }
     }> = []
-    displayTranscript.forEach((entry) => {
+    transcript.forEach((entry, at) => {
       if (entry.type === "tool_call") {
         const tc = adaptedToolCalls[entry.childIndex]
-        if (tc) display.push({ call: tc })
+        if (tc) display.push({ call: { part: tc, at } })
         return
       }
-      display.push({ other: entry })
+      if (proseToSkip > 0) {
+        proseToSkip -= 1
+        return
+      }
+      display.push({ other: { entry, at } })
     })
     return groupConsecutiveToolRuns(display)
-  }, [displayTranscript, adaptedToolCalls])
+  }, [hasTimeline, transcript, isRunning, adaptedToolCalls])
 
   const transcriptSegmentNodes = transcriptSegments.map((segment) => {
     if (segment.kind === "calls") {
       return (
         <ToolGroupPart
-          key={`subagent-embed-group-${segment.start}`}
+          key={`subagent-embed-group-${segment.calls[0].at}`}
           part={{
             type: "tool-group",
-            items: segment.calls,
+            items: segment.calls.map((call) => call.part),
             isStreaming: isRunning,
           }}
           renderItem={renderToolCall}
         />
       )
     }
-    const entry = segment.value
-    const i = segment.index
+    const { entry, at } = segment.value
     if (entry.type === "thinking") {
       return entry.text.trim() ? (
         // Folded like the main thread's thinking (same contract as
         // <ReasoningPart>): a subagent's reasoning is reference
-        // material — it stays collapsed until the reader opens it.
-        <Reasoning key={`subagent-embed-${i}`} isStreaming={false}>
+        // material — it stays collapsed until the reader opens it. The
+        // running card's newest entry is the thought still being written,
+        // so it reads "Thinking…" until anything follows it.
+        <Reasoning
+          key={`subagent-embed-${at}`}
+          isStreaming={isRunning && at === transcript.length - 1}
+        >
           <ReasoningTrigger />
           <ReasoningContent>{entry.text}</ReasoningContent>
         </Reasoning>
@@ -490,7 +523,7 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
     }
     return (
       <div
-        key={`subagent-embed-${i}`}
+        key={`subagent-embed-${at}`}
         className="text-sm prose prose-sm dark:prose-invert max-w-none [&_ul]:list-inside [&_ol]:list-inside"
       >
         <MessageResponse>{entry.text}</MessageResponse>
@@ -652,10 +685,11 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
         )}
 
         {/* Child tool calls when no timeline carries them in position — a
-      card whose stats predate timelines (or whose child transcript was never
-      parsed). Rendered through the same pill group the main thread folds
-      consecutive tool calls into, single calls included. */}
-        {adaptedToolCalls.length > 0 && displayTranscript.length === 0 && (
+      card whose stats predate timelines, whose child transcript was never
+      parsed, or whose transcript holds no prose to interleave them with.
+      Rendered through the same pill group the main thread folds consecutive
+      tool calls into, single calls included. */}
+        {adaptedToolCalls.length > 0 && !hasTimeline && (
           <ToolGroupPart
             key="subagent-tc-group"
             part={{
@@ -670,8 +704,8 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
         {/* The child's mixed timeline — thinking/text/child-tool markers in
           arrival order (claude-agent-acp ≥0.63 live, or the child's own JSONL
           parsed into `agent_stats.timeline` on history). While the card runs
-          it streams in place (tail-bounded) under the live heading; once the
-          card settles the whole interleaved record collapses into one pill,
+          it streams in place (prose tail-bounded) under the live heading; once
+          the card settles the whole interleaved record collapses into one pill,
           closed by default — the finished card leads with its conclusion, and
           the process is one click away. That is the settled shape every host
           converges on: Claude Code's `Done (N tool uses · …)` line, codex's
@@ -682,7 +716,7 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
           the fallback for agents that supply neither. Right after settle the
           detail may not have landed yet, so the count can show until
           FETCH_DETAIL_SUCCESS re-renders the card with parsed stats. */}
-        {displayTranscript.length > 0 &&
+        {hasTimeline &&
           (isRunning ? (
             <div className="space-y-1.5">
               <div className="text-3xs font-medium uppercase tracking-wide text-muted-foreground/70">
@@ -714,7 +748,7 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
                         duration: formatDuration(agentStats.total_duration_ms),
                       })
                     : t("agentProcessCount", {
-                        count: displayTranscript.length,
+                        count: transcript.length,
                       })}
                 </span>
               </CollapsibleTrigger>
@@ -785,19 +819,23 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
           leaves its pending async Agent calls as errors ("no result") while
           the children actually finished — their reports exist only in the
           task files the parser recovered into `recovered_result`. Rendered
-          ONLY on an errored card; a normally completed async child delivered
-          its result via the notification turn, and this field stays invisible
-          there. */}
-        {isError && agentStats?.recovered_result && (
-          <div className="space-y-2">
-            <div className="text-xs text-muted-foreground">
-              {t("agentRecoveredNote")}
+          ONLY on an errored card whose child's task COMPLETED: a normally
+          completed async child delivered its result via the notification
+          turn, and a task that did not complete holds no report — Qoder files
+          the error message there for `failed`/`cancelled`, and a placeholder
+          for a dead process's task it rewrites to `interrupted`. */}
+        {isError &&
+          agentStats?.status === "completed" &&
+          agentStats.recovered_result && (
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground">
+                {t("agentRecoveredNote")}
+              </div>
+              <div className="text-sm prose prose-sm dark:prose-invert max-w-none [&_ul]:list-inside [&_ol]:list-inside">
+                <MessageResponse>{agentStats.recovered_result}</MessageResponse>
+              </div>
             </div>
-            <div className="text-sm prose prose-sm dark:prose-invert max-w-none [&_ul]:list-inside [&_ol]:list-inside">
-              <MessageResponse>{agentStats.recovered_result}</MessageResponse>
-            </div>
-          </div>
-        )}
+          )}
 
         {/* Cursor task failure envelope ({error}) — the wire marks the call
           "completed", so this renders where the error styling belongs. */}

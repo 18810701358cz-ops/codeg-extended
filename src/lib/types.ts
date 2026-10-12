@@ -137,12 +137,14 @@ export interface AgentExecutionStats {
    *  anchors into `tool_calls` at the same ordinal). Lets the settled card
    *  replay the child's mixed timeline when the live transcript is gone. */
   timeline?: AgentTranscriptEntry[]
-  /** The child's final report, recovered from its task file after the parent
+  /** What the child's task file filed as its outcome (Qoder): for a
+   *  `status: "completed"` run, its final report, recovered after the parent
    *  turn died before the async result was delivered (the card's tool_result
-   *  is then an error). Rendered ONLY on an errored card — a normally
-   *  completed async child delivered its result via the notification turn, so
-   *  this field stays invisible there (display policy lives in the card,
-   *  parsers attach it blindly). */
+   *  is then an error); other statuses file an error message or a
+   *  placeholder. Rendered ONLY on an errored card whose `status` is
+   *  `completed` — a normally completed async child delivered its result via
+   *  the notification turn, so this field stays invisible there (display
+   *  policy lives in the card, parsers attach it blindly). */
   recovered_result?: string
   /** The child's own session id, when the sub-agent ran as a standalone session
    *  on disk instead of as chunks folded into the parent (Grok: every

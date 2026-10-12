@@ -1,5 +1,5 @@
 import { type ReactElement } from "react"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it } from "vitest"
 
@@ -522,10 +522,10 @@ describe("AgentToolCallPart live subagent transcript", () => {
     ])
     renderCard({ ...settled, output: "final result" })
     fireEvent.click(screen.getByRole("button", { name: "Completed" }))
-    // Collapsed by default: the pill shows the step count, the content does
-    // not mount.
+    // Collapsed by default: the pill shows the step count (singular for one
+    // step), the content does not mount.
     const trigger = screen.getByRole("button", {
-      name: "Sub-agent activity · 1 steps",
+      name: "Sub-agent activity · 1 step",
     })
     expect(screen.queryByText("settled transcript")).not.toBeInTheDocument()
     expect(screen.getByText("final result")).toBeInTheDocument()
@@ -545,6 +545,74 @@ describe("AgentToolCallPart live subagent transcript", () => {
     expect(screen.queryByText("entry-4")).not.toBeInTheDocument()
     expect(screen.getByText("entry-5")).toBeInTheDocument()
     expect(screen.getByText("entry-24")).toBeInTheDocument()
+  })
+
+  it("labels the child's newest thought as streaming while the card runs", () => {
+    const live = (entries: NonNullable<ToolCallPart["agentTranscript"]>) => (
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <AgentToolCallPart
+          part={withTranscript("input-available", entries)}
+          renderToolCall={() => null}
+        />
+      </NextIntlClientProvider>
+    )
+    const thinking = [
+      { type: "text" as const, text: "looking around" },
+      { type: "thinking" as const, text: "pondering" },
+    ]
+    const { rerender } = render(live(thinking))
+    expandRunningCapsule()
+    // The tail entry is the thought being written right now — the main
+    // thread's "Thinking…" contract, not a finished "Thought".
+    expect(
+      screen.getByRole("button", { name: "Thinking…" })
+    ).toBeInTheDocument()
+
+    // Anything after it means the child moved on: the thought is finished.
+    rerender(live([...thinking, { type: "text", text: "found it" }]))
+    expect(
+      screen.queryByRole("button", { name: "Thinking…" })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Thought" })).toBeInTheDocument()
+  })
+
+  it("keeps an opened thought open while the live tail slides past the bound", async () => {
+    // 20 entries — exactly the bound, nothing dropped yet: 18 texts, a
+    // (finished) thought, one more text.
+    const entries: NonNullable<ToolCallPart["agentTranscript"]> = [
+      ...Array.from({ length: 18 }, (_, i) => ({
+        type: "text" as const,
+        text: `entry-${i}`,
+      })),
+      { type: "thinking", text: "deep thought" },
+      { type: "text", text: "entry-18" },
+    ]
+    const renderLive = (list: typeof entries) => (
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <AgentToolCallPart
+          part={withTranscript("input-available", list)}
+          renderToolCall={() => null}
+        />
+      </NextIntlClientProvider>
+    )
+    const { rerender } = render(renderLive(entries))
+    expandRunningCapsule()
+    fireEvent.click(screen.getByRole("button", { name: "Thought" }))
+    expect(screen.getByText("deep thought")).toBeInTheDocument()
+
+    // One more entry pushes the oldest out of the tail. Every entry keeps its
+    // identity — its place in the whole transcript, not in the visible slice:
+    // the thought the reader opened stays open, and no rendered paragraph is
+    // handed another entry's text (Streamdown memoizes its elements on source
+    // position alone, so a reused instance given same-length text keeps
+    // painting the old words).
+    rerender(renderLive([...entries, { type: "text", text: "entry-19" }]))
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/^entry-\d+$/).map((el) => el.textContent)
+      ).toEqual(Array.from({ length: 19 }, (_, i) => `entry-${i + 1}`))
+    )
+    expect(screen.getByText("deep thought")).toBeInTheDocument()
   })
 })
 
@@ -650,6 +718,7 @@ describe("AgentToolCallPart settled timeline and tool grouping", () => {
       agentTranscript: [
         { type: "tool_call", childIndex: 0 },
         { type: "tool_call", childIndex: 1 },
+        { type: "text", text: "both read" },
       ],
     }
     renderWithChildren(part)
@@ -689,6 +758,80 @@ describe("AgentToolCallPart settled timeline and tool grouping", () => {
     expect(screen.getByText("final result")).toBeInTheDocument()
   })
 
+  it("renders a transcript of tool markers alone exactly like a stats-only card", () => {
+    // CodeBuddy's child prose never reaches the client, and position-matched
+    // children carry none either: their transcript is tool markers alone.
+    // With no prose there is no order to preserve, so neither the settled
+    // activity pill nor the live heading wraps the one tool pill.
+    const markersOnly: NonNullable<ToolCallPart["agentTranscript"]> = [
+      { type: "tool_call", childIndex: 0 },
+      { type: "tool_call", childIndex: 1 },
+    ]
+    const settled = renderWithChildren({
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "output-available"
+      ),
+      ...twoCalls,
+      agentTranscript: markersOnly,
+      output: "final result",
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Completed" }))
+    expect(screen.queryByText(/Sub-agent activity/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Read files 2 times" }))
+    expect(screen.getByTestId("call-agent-sub-0")).toBeInTheDocument()
+    expect(screen.getByTestId("call-agent-sub-1")).toBeInTheDocument()
+    settled.unmount()
+
+    renderWithChildren({
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "input-available"
+      ),
+      ...twoCalls,
+      agentTranscript: markersOnly,
+    })
+    expandRunningCapsule()
+    expect(screen.queryByText("Live activity")).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Read files 2 times" })
+    ).toBeInTheDocument()
+  })
+
+  it("keeps every child call reachable while the live prose tail slides", () => {
+    // Two early calls, then enough prose to push the early entries past the
+    // live bound. Old prose may age out of the running card; the child's
+    // calls may not — before the timeline existed every call stayed listed,
+    // and the pill's tally must count all of them.
+    const part: ToolCallPart = {
+      ...basePart(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "input-available"
+      ),
+      ...twoCalls,
+      agentTranscript: [
+        { type: "tool_call", childIndex: 0 },
+        { type: "text", text: "between-calls" },
+        { type: "tool_call", childIndex: 1 },
+        ...Array.from({ length: 21 }, (_, i) => ({
+          type: "text" as const,
+          text: `later-${i}`,
+        })),
+      ],
+    }
+    renderWithChildren(part)
+    expandRunningCapsule()
+
+    // 22 prose entries, bound 20: the two oldest prose entries go…
+    expect(screen.queryByText("between-calls")).not.toBeInTheDocument()
+    expect(screen.queryByText("later-0")).not.toBeInTheDocument()
+    expect(screen.getByText("later-1")).toBeInTheDocument()
+    // …and the two calls they separated now sit in one pill, both counted.
+    fireEvent.click(screen.getByRole("button", { name: "Read files 2 times" }))
+    expect(screen.getByTestId("call-agent-sub-0")).toBeInTheDocument()
+    expect(screen.getByTestId("call-agent-sub-1")).toBeInTheDocument()
+  })
+
   it("keeps the live tail bound and the live label while running", () => {
     const entries = [
       ...Array.from({ length: 22 }, (_, i) => ({
@@ -710,10 +853,11 @@ describe("AgentToolCallPart settled timeline and tool grouping", () => {
 
     expect(screen.getByText("Live activity")).toBeInTheDocument()
     expect(screen.queryByText(/Sub-agent activity/)).not.toBeInTheDocument()
-    // Tail bound 20 over 23 entries → entries 0-2 never mount; the tool
-    // marker (now inside its pill) does.
-    expect(screen.queryByText("entry-2")).not.toBeInTheDocument()
-    expect(screen.getByText("entry-3")).toBeInTheDocument()
+    // Tail bound 20 over 22 prose entries → prose 0-1 never mounts; the tool
+    // marker is not prose, does not count against the bound, and mounts
+    // inside its pill.
+    expect(screen.queryByText("entry-1")).not.toBeInTheDocument()
+    expect(screen.getByText("entry-2")).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Read files 1 time" })
     ).toBeInTheDocument()
@@ -802,6 +946,7 @@ describe("AgentToolCallPart orphaned result recovery", () => {
       ...erroredPart,
       agentStats: {
         tool_calls: [{ tool_name: "Read", is_error: false }],
+        status: "completed",
         recovered_result: "The full research report.",
       },
     })
@@ -812,6 +957,28 @@ describe("AgentToolCallPart orphaned result recovery", () => {
     expect(
       screen.getByText(/tool execution produced no result/)
     ).toBeInTheDocument()
+  })
+
+  it("shows no recovered report unless the child's task completed", () => {
+    // Qoder files a `result` on every terminal task, not only a finished one:
+    // the error message for `failed`/`cancelled`, and a placeholder ("The
+    // process that owned this subagent task is no longer running.") when a
+    // dead process's `running` task is rewritten to `interrupted`. None of
+    // those is a report the child finished.
+    for (const status of ["interrupted", "failed", "cancelled", undefined]) {
+      const { unmount } = renderCard({
+        ...erroredPart,
+        agentStats: {
+          tool_calls: [{ tool_name: "Read", is_error: false }],
+          ...(status ? { status } : {}),
+          recovered_result:
+            "The process that owned this subagent task is no longer running.",
+        },
+      })
+      expect(screen.queryByText(/actually finished/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/no longer running/)).not.toBeInTheDocument()
+      unmount()
+    }
   })
 
   it("renders nothing extra when the errored card has nothing to recover", () => {
@@ -834,6 +1001,8 @@ describe("AgentToolCallPart orphaned result recovery", () => {
       output: "normal result",
       agentStats: {
         tool_calls: [],
+        // A completed task, so only the card's own success keeps this hidden.
+        status: "completed",
         recovered_result: "stale duplicate report",
       },
     })

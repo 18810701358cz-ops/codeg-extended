@@ -71,13 +71,16 @@ pub struct AgentExecutionStats {
     /// so the two stay consistent by construction.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub timeline: Vec<AgentTimelineEntry>,
-    /// The child's final report, recovered from its task file after the parent
-    /// turn died before the async result was delivered (the card's tool_result
-    /// is then an error, and the report exists only here). DISPLAY POLICY IS
-    /// THE FRONTEND'S: an errored card may render it; a normally completed
-    /// async child delivered its result via the notification turn, so this
-    /// field must stay invisible there. Parsers stay dumb and attach it
-    /// whenever the task file carries one.
+    /// What the child's task file filed as its outcome (Qoder): for a run
+    /// whose `status` is `completed`, its final report — recoverable here after
+    /// the parent turn died before the async result was delivered (the card's
+    /// tool_result is then an error, and the report exists only here). Other
+    /// statuses file the error message or a placeholder instead. DISPLAY
+    /// POLICY IS THE FRONTEND'S: only an errored card whose `status` is
+    /// `completed` renders it; a normally completed async child delivered its
+    /// result via the notification turn, so this field must stay invisible
+    /// there. Parsers stay dumb and attach it whenever the task file carries
+    /// one.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub recovered_result: Option<String>,
     /// The child's own session id, when the sub-agent ran as a standalone
