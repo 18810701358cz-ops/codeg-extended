@@ -212,6 +212,11 @@ http = "1"
 percent-encoding = "2"
 http-body = "1"
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+# Direct deps (already in the graph via reqwest) so a remote workspace's
+# WebSockets dial through the TCP connector its HTTP requests use, Happy
+# Eyeballs included — see `remote_proxy::connect_remote_ws`.
+hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
+tower-service = "0.3"
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io", "rt", "compat"] }
 prost = "0.13"
