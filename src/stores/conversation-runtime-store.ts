@@ -1070,8 +1070,8 @@ export function buildStreamingTurnsFromLiveMessage(
   const childToolCallIds = new Set<string>()
   // Live subagent transcripts, keyed by the launching Agent tool call's id.
   // Fed by parented text/thinking blocks (claude-agent-acp ≥0.63 subagent
-  // transcripts); attached to the in-progress Agent card's tool_result as
-  // `agent_transcript`.
+  // transcripts) and a marker per child tool call; attached to the Agent
+  // card's tool_result, running or settled, as `agent_transcript`.
   const agentTranscripts = new Map<string, AgentTranscriptEntry[]>()
   // Agent id → the kind of prose that agent is currently in the middle of, or
   // absent once its own tool call ended that run. Drives the rejoin above.

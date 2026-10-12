@@ -260,9 +260,10 @@ export type ContentBlock =
        */
       images?: ImageData[] | null
       /**
-       * LIVE-stream data: the in-flight transcript of a Claude native
-       * subagent — text/thinking chunks attributed to this Agent tool call
-       * via `_meta.claudeCode.parentToolUseId` (claude-agent-acp ≥0.63) —
+       * LIVE-stream data: the in-flight transcript of a native subagent —
+       * a marker per child tool call, plus (Claude Code only) the text/
+       * thinking chunks attributed to this Agent tool call via
+       * `_meta.claudeCode.parentToolUseId` (claude-agent-acp ≥0.63) —
        * rendered inside the live Agent capsule. Still attached at settle so
        * the finished card keeps the interleaved order it showed live; once
        * history reloads from disk, the parsed `agent_stats.timeline` takes
