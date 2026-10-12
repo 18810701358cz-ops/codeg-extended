@@ -297,11 +297,10 @@ impl ReportedContext {
 /// by construction.
 ///
 /// Same correction `parsers::codex::codex_usage_counters` applies for the same
-/// reason. This is what `FACT_SCHEMA_VERSION` 3 exists for: sessions with real
-/// counters are not only the ones codeg launched with the usage launch env —
-/// a custom/BYO model has always exposed them, and the parser reads every
-/// session under `~/.qoder/projects` — so stored rows need a full rebuild
-/// under the new rule.
+/// reason. Deliberately NOT a `FACT_SCHEMA_VERSION` bump: the only transcripts
+/// that can carry non-zero counters are ones recorded with the launch env this
+/// release also introduces, so there are no stored rows computed the old way to
+/// rebuild.
 fn qoder_turn_usage(value: &Value) -> Option<TurnUsage> {
     let mut usage = extract_usage(value)?;
     let cached = usage
@@ -781,16 +780,7 @@ fn parse_transcript(bytes: &[u8]) -> Transcript {
                     .pointer("/message/model")
                     .and_then(Value::as_str)
                     .map(String::from);
-                // Last NON-EMPTY model wins: a mid-session switch has to land
-                // in `summary.model` (the details dialog reads it ahead of the
-                // turns) and in the context-window fallback below. Pinning the
-                // FIRST model here left both on the session's opening model —
-                // a switch to Qwen3.8-Flash still displayed DeepSeek-Flash
-                // next to the new model's 200K window. Blank strings are
-                // skipped rather than stored: an empty `model` would both
-                // overwrite the last valid one and block the launch-model
-                // fallback.
-                if entry_model.as_deref().is_some_and(|m| !m.trim().is_empty()) {
+                if model.is_none() {
                     model.clone_from(&entry_model);
                 }
                 let message_id = value
@@ -843,7 +833,7 @@ fn parse_transcript(bytes: &[u8]) -> Transcript {
                     if usage.is_some() {
                         last.usage = usage;
                     }
-                    if entry_model.as_deref().is_some_and(|m| !m.trim().is_empty()) {
+                    if entry_model.is_some() {
                         last.model = entry_model;
                     }
                 } else {
@@ -1330,49 +1320,6 @@ mod tests {
             s.ended_at.as_ref().map(|t| t.to_rfc3339()),
             Some("2026-08-16T15:45:34+00:00".to_string())
         );
-    }
-
-    // A mid-session model switch must reach the summary: the details dialog
-    // reads `summary.model` ahead of the turns, so a summary pinned to the
-    // session's OPENING model contradicted the context gauge (which follows
-    // the last turn's window — Qwen3.8-Flash's 200K next to DeepSeek-Flash).
-    #[test]
-    fn summary_model_follows_a_mid_session_switch() {
-        let tmp = tempfile::tempdir().unwrap();
-        const SWITCHED_ANSWER_LINE: &str = r#"{"type":"assistant","uuid":"b1","timestamp":"2026-08-16T15:46:00.000Z","message":{"id":"chatcmpl-2","type":"message","role":"assistant","model":"qfmodel","stop_reason":"end_turn","content":[{"type":"text","text":"second","citations":null}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}},"parentUuid":"a3","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"cli","version":"1.1.45","gitBranch":"main"}"#;
-        write_session(
-            tmp.path(),
-            "s1",
-            &[
-                RUNTIME_CONFIG,
-                USER_LINE,
-                THINKING_LINE,
-                TOOL_USE_LINE,
-                TOOL_RESULT_LINE,
-                ANSWER_LINE,
-                SWITCHED_ANSWER_LINE,
-            ],
-        );
-
-        let summaries = parser_in(tmp.path()).list_conversations().unwrap();
-        assert_eq!(summaries[0].model.as_deref(), Some("qfmodel"));
-        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
-        assert_eq!(detail.summary.model.as_deref(), Some("qfmodel"));
-    }
-
-    // A blank `model` on a later record must not blank the summary (or block
-    // the launch-model fallback): only non-empty strings may overwrite the
-    // last valid one, matching the "Last NON-EMPTY model wins" contract.
-    #[test]
-    fn summary_model_ignores_a_blank_later_model() {
-        let tmp = tempfile::tempdir().unwrap();
-        const BLANK_MODEL_LINE: &str = r#"{"type":"assistant","uuid":"b2","timestamp":"2026-08-16T15:47:00.000Z","message":{"id":"chatcmpl-3","type":"message","role":"assistant","model":"","stop_reason":"end_turn","content":[{"type":"text","text":"third","citations":null}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}},"parentUuid":"a3","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"cli","version":"1.1.45","gitBranch":"main"}"#;
-        write_session(tmp.path(), "s1", &[USER_LINE, ANSWER_LINE, BLANK_MODEL_LINE]);
-
-        let summaries = parser_in(tmp.path()).list_conversations().unwrap();
-        assert_eq!(summaries[0].model.as_deref(), Some("qmodel_38max"));
-        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
-        assert_eq!(detail.summary.model.as_deref(), Some("qmodel_38max"));
     }
 
     #[test]
