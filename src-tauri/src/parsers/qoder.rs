@@ -1384,6 +1384,13 @@ mod tests {
             .filter(|t| matches!(t.role, crate::models::TurnRole::Assistant))
             .collect();
         assert_eq!(assistants.len(), 1, "the two fragments are one bubble");
+        assert!(
+            assistants[0]
+                .blocks
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { .. })),
+            "the blank-model fragment's tool call is kept, not dropped"
+        );
         assert_eq!(assistants[0].model.as_deref(), Some("qmodel_38max"));
     }
 
@@ -1468,7 +1475,14 @@ mod tests {
         write_session(tmp.path(), "s1", &[USER_LINE, ANSWER_LINE]);
         let no_id = SUB_AGENT_CALL.replace(r#""id":"msg-sub-1","#, "");
         let empty_id = SUB_AGENT_CALL.replace(r#""id":"msg-sub-1""#, r#""id":"""#);
-        write_subagent(tmp.path(), "s1", "aExplore-1", &[&no_id, &empty_id]);
+        // Two of each shape: neither the missing ids nor the empty ones may
+        // collapse into one call between themselves.
+        write_subagent(
+            tmp.path(),
+            "s1",
+            "aExplore-1",
+            &[&no_id, &no_id, &empty_id, &empty_id],
+        );
 
         let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
         let usage = detail
@@ -1478,9 +1492,9 @@ mod tests {
             .find(|t| matches!(t.role, crate::models::TurnRole::Assistant))
             .and_then(|t| t.usage.clone())
             .expect("turn usage");
-        assert_eq!(usage.input_tokens, 5 + 2 * 1_000);
-        assert_eq!(usage.cache_read_input_tokens, 5 + 2 * 34_000);
-        assert_eq!(usage.output_tokens, 2 + 2 * 300);
+        assert_eq!(usage.input_tokens, 5 + 4 * 1_000);
+        assert_eq!(usage.cache_read_input_tokens, 5 + 4 * 34_000);
+        assert_eq!(usage.output_tokens, 2 + 4 * 300);
     }
 
     #[test]
