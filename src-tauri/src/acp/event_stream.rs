@@ -1030,9 +1030,10 @@ mod tests {
                             is_error: false,
                         }],
                         // The child's whole thinking/text activity rides
-                        // here (up to 16 KiB per entry, any number of
-                        // entries), and so can the recovered report: both must
-                        // be counted, escape-aware like every other string.
+                        // here (up to 16,384 characters per entry, any number
+                        // of entries), and so can the recovered report: both
+                        // must be counted, escape-aware like every other
+                        // string.
                         timeline: (0..40)
                             .map(|i| match i % 3 {
                                 0 => AgentTimelineEntry {
@@ -1113,6 +1114,59 @@ mod tests {
             },
         });
         assert_ge_serialized(&env);
+    }
+
+    #[test]
+    fn agent_stats_estimate_counts_each_variable_field_on_its_own() {
+        // The test above has fixed budgets to spare; here each variable-size
+        // field of `agent_stats` stands alone at a size no budget absorbs, so
+        // leaving any one of them out of the estimate fails by name.
+        use crate::models::message::{AgentExecutionStats, AgentTimelineEntry};
+
+        let big = "a \"quoted\" \\ line\n\t".repeat(200);
+        let entry = |entry_type: &str, text: Option<String>| AgentTimelineEntry {
+            entry_type: entry_type.into(),
+            text,
+            child_index: None,
+        };
+        let cases = [
+            (
+                "timeline text",
+                AgentExecutionStats {
+                    timeline: vec![entry("thinking", Some(big.clone()))],
+                    ..Default::default()
+                },
+            ),
+            (
+                "timeline type",
+                AgentExecutionStats {
+                    timeline: vec![entry(&big, None)],
+                    ..Default::default()
+                },
+            ),
+            (
+                "recovered_result",
+                AgentExecutionStats {
+                    recovered_result: Some(big.clone()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "child_session_id",
+                AgentExecutionStats {
+                    child_session_id: Some(big.clone()),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let undercounted: Vec<&str> = cases
+            .iter()
+            .filter(|(_, stats)| {
+                agent_stats_size(stats) < serde_json::to_string(stats).unwrap().len()
+            })
+            .map(|(field, _)| *field)
+            .collect();
+        assert!(undercounted.is_empty(), "undercounted: {undercounted:?}");
     }
 
     #[test]
