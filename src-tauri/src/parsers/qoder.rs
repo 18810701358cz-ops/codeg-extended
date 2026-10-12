@@ -1069,39 +1069,70 @@ fn parse_detail(path: &Path, conversation_id: &str) -> Result<ConversationDetail
 /// Attach each sub-agent's own transcript to the `Agent` tool result that
 /// launched it, as `agent_stats`.
 ///
-/// Qoder writes one `subagents/agent-<agentId>.jsonl` per delegated run, an
-/// `agent-<agentId>.meta.json` naming the launching tool call (`toolUseId`)
-/// and the agent type, and `task-*.json` with the run's status / usage. The
-/// conversation itself stays the main chain; this only annotates the Agent
-/// card with the sub-agent's PROCESS (its tool calls), mirroring what
+/// Qoder (1.1.68, same layout as Claude Code) writes one
+/// `subagents/agent-<agentId>.jsonl` per delegated run, an
+/// `agent-<agentId>.meta.json` naming the agent type (`agentType`) and the
+/// launching tool call (`toolUseId`, absent when there is none), and a
+/// `task-<taskId>.json` keyed back by `parentToolUseId`. The task file records
+/// the run's lifecycle — `status` (`running` → `completed` / `failed` /
+/// `cancelled`, or `interrupted` once a later process finds its owner gone)
+/// and `result` (the final report, the error message, or a placeholder) — but
+/// no usage or duration: those ride only on the task notification the run
+/// delivers to the parent. The conversation itself stays the main chain; this
+/// only annotates the Agent card with the sub-agent's PROCESS, mirroring what
 /// `parsers::claude` does for Claude Code's sidechain layout.
 ///
 /// The mapping is explicit (`meta.json` → parent tool-call id), never
 /// positional: it survives parallel sub-agents, interleaved streams, and a
-/// session resumed long after the run.
+/// session resumed long after the run. Only runs whose tool call is in the
+/// turns being built are parsed — a run launched on a branch since rewound
+/// away has nothing to annotate here.
 fn attach_subagent_tool_calls(turns: &mut [MessageTurn], session_path: &Path) {
     let dir = session_path.with_extension("").join("subagents");
     let Ok(entries) = fs::read_dir(&dir) else {
         return;
     };
 
+    // The tool results in view that still have no stats: the only ids a meta
+    // or task file is worth reading for.
+    let mut pending: HashSet<String> = turns
+        .iter()
+        .flat_map(|turn| turn.blocks.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id: Some(id),
+                agent_stats: None,
+                ..
+            } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+
     struct TaskInfo {
         status: Option<String>,
-        total_tokens: Option<u64>,
-        duration_ms: Option<u64>,
-        tool_uses: Option<u32>,
-        // The child's final report, as written by the task file itself. Only
-        // reachable when the parent turn died before the async result was
-        // delivered — the delivery path erases the need for it everywhere else.
+        // What the task file filed as the run's outcome. For a COMPLETED run
+        // that is the child's final report — reachable here even when the
+        // parent turn died before the async result was delivered. The parser
+        // attaches it whatever the status; the card decides what to show.
         result: Option<String>,
     }
+
+    // Directory order is filesystem-defined. Read in name order so that two
+    // files naming the same tool call resolve the same way on every parse
+    // (the first one wins, below and in `tasks`).
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
 
     let mut tasks: HashMap<String, TaskInfo> = HashMap::new();
     // (parent tool-call id, transcript path, agent type)
     let mut agents: Vec<(String, PathBuf, Option<String>)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
+    for path in paths {
+        let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
         if name.starts_with("task-") && name.ends_with(".json") {
             let Ok(bytes) = fs::read(&path) else { continue };
             let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
@@ -1110,26 +1141,15 @@ fn attach_subagent_tool_calls(turns: &mut [MessageTurn], session_path: &Path) {
             let Some(parent) = value
                 .get("parentToolUseId")
                 .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
+                .filter(|s| pending.contains(*s))
             else {
                 continue;
             };
-            let usage = value.get("usage");
             tasks.entry(parent.to_string()).or_insert_with(|| TaskInfo {
                 status: value
                     .get("status")
                     .and_then(Value::as_str)
                     .map(str::to_string),
-                total_tokens: usage
-                    .and_then(|u| u.get("total_tokens"))
-                    .and_then(Value::as_u64),
-                duration_ms: usage
-                    .and_then(|u| u.get("duration_ms"))
-                    .and_then(Value::as_u64),
-                tool_uses: usage
-                    .and_then(|u| u.get("tool_uses"))
-                    .and_then(Value::as_u64)
-                    .map(|n| n as u32),
                 result: value
                     .get("result")
                     .and_then(Value::as_str)
@@ -1144,7 +1164,7 @@ fn attach_subagent_tool_calls(turns: &mut [MessageTurn], session_path: &Path) {
             let Some(parent) = value
                 .get("toolUseId")
                 .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
+                .filter(|s| pending.contains(*s))
             else {
                 continue;
             };
@@ -1164,70 +1184,41 @@ fn attach_subagent_tool_calls(turns: &mut [MessageTurn], session_path: &Path) {
             }
         }
     }
-    // Directory order is filesystem-defined; attach deterministically.
-    agents.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (parent, transcript, agent_type) in agents {
+        // A second run naming the same tool call: the first (in name order)
+        // already landed, and stats are never overwritten.
+        if !pending.remove(&parent) {
+            continue;
+        }
         let (calls, timeline, _usage, _started, transcript_duration) =
             crate::parsers::claude::parse_subagent_tool_calls(&transcript);
         let info = tasks.remove(&parent);
-        let (mut read, mut search, mut bash, mut edit, mut other) = (0u32, 0u32, 0u32, 0u32, 0u32);
-        for call in &calls {
-            match call.tool_name.as_str() {
-                "Read" => read += 1,
-                "Grep" | "Glob" | "LS" | "List" => search += 1,
-                "Bash" => bash += 1,
-                "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => edit += 1,
-                _ => other += 1,
-            }
-        }
         let stats = AgentExecutionStats {
             agent_type,
             status: info.as_ref().and_then(|i| i.status.clone()),
-            // The task file carries no duration; the child transcript's own
-            // first/last-record span fills the gap.
-            total_duration_ms: info
-                .as_ref()
-                .and_then(|i| i.duration_ms)
-                .or(transcript_duration),
-            total_tokens: info.as_ref().and_then(|i| i.total_tokens),
-            total_tool_use_count: Some(
-                info.as_ref()
-                    .and_then(|i| i.tool_uses)
-                    .filter(|n| *n > 0)
-                    .unwrap_or(calls.len() as u32),
-            ),
-            read_count: Some(read),
-            search_count: Some(search),
-            bash_count: Some(bash),
-            edit_file_count: Some(edit),
-            other_tool_count: Some(other),
+            // Neither the task nor the meta file records a duration; the child
+            // transcript's own first/last-record span stands in.
+            total_duration_ms: transcript_duration,
+            total_tool_use_count: Some(calls.len() as u32),
             tool_calls: calls,
             timeline,
-            recovered_result: info
-                .as_ref()
-                .and_then(|i| i.result.clone())
-                .filter(|s| !s.trim().is_empty()),
+            recovered_result: info.and_then(|i| i.result),
             ..Default::default()
         };
-        for turn in turns.iter_mut() {
-            let mut attached = false;
-            for block in turn.blocks.iter_mut() {
-                if let ContentBlock::ToolResult {
-                    tool_use_id,
+        let target = turns
+            .iter_mut()
+            .flat_map(|turn| turn.blocks.iter_mut())
+            .find_map(|block| match block {
+                ContentBlock::ToolResult {
+                    tool_use_id: Some(id),
                     agent_stats,
                     ..
-                } = block
-                {
-                    if tool_use_id.as_deref() == Some(parent.as_str()) && agent_stats.is_none() {
-                        *agent_stats = Some(stats.clone());
-                        attached = true;
-                    }
-                }
-            }
-            if attached {
-                break;
-            }
+                } if *id == parent && agent_stats.is_none() => Some(agent_stats),
+                _ => None,
+            });
+        if let Some(slot) = target {
+            *slot = Some(stats);
         }
     }
 }
@@ -1376,6 +1367,9 @@ mod tests {
             ]
         );
         assert_eq!(stats.tool_calls[0].tool_name, "Read");
+        // No task file here, and Qoder's never records a duration anyway: the
+        // child transcript's own first-to-last record span (34.000 → 35.500).
+        assert_eq!(stats.total_duration_ms, Some(1_500));
     }
 
     /// A turn the provider killed mid-flight: the CLI writes an `is_error`
@@ -1401,7 +1395,9 @@ mod tests {
         .unwrap();
         std::fs::write(
             sub.join("task-t1.json"),
-            r#"{"parentToolUseId":"call_agent1","status":"completed","usage":{"total_tokens":99,"duration_ms":4200,"tool_uses":3},"result":"The full research report, thousands of words."}"#,
+            // The shape qodercli 1.1.68 writes once the run completes: no
+            // usage or duration (those ride only on the task notification).
+            r#"{"taskId":"t1","sessionId":"s1","executionId":"e1","agentId":"aExplore-abc123","agentType":"Explore","description":"调研","invocationName":"Explore","parentToolUseId":"call_agent1","status":"completed","summary":"Agent \"Explore\" finished","result":"The full research report, thousands of words.","createdAt":1786895133100,"updatedAt":1786895138000,"completedAt":1786895138000}"#,
         )
         .unwrap();
         let child_use = r#"{"type":"assistant","uuid":"c1","timestamp":"2026-08-16T15:45:35.000Z","message":{"role":"assistant","model":"qmodel","content":[{"type":"tool_use","id":"call_r1","name":"Read","input":{"file_path":"/private/tmp/probe/NOTES.md"}}]},"isSidechain":true,"sessionId":"s1"}"#;
@@ -1461,11 +1457,11 @@ mod tests {
             r#"{"agentType":"Explore","toolUseId":"call_agent1","description":"调研","invocationName":"Explore"}"#,
         )
         .unwrap();
-        // Same task shape, but the report field is absent (delivered normally
-        // through the notification turn — nothing to recover).
+        // A task still `running` — the only state Qoder writes without a
+        // `result` (every terminal transition files one).
         std::fs::write(
             sub.join("task-t1.json"),
-            r#"{"parentToolUseId":"call_agent1","status":"completed","usage":{"total_tokens":99,"duration_ms":4200,"tool_uses":3}}"#,
+            r#"{"taskId":"t1","sessionId":"s1","executionId":"e1","agentId":"aExplore-abc123","agentType":"Explore","description":"调研","invocationName":"Explore","parentToolUseId":"call_agent1","status":"running","createdAt":1786895133100,"updatedAt":1786895133100}"#,
         )
         .unwrap();
         let child_use = r#"{"type":"assistant","uuid":"c1","timestamp":"2026-08-16T15:45:35.000Z","message":{"role":"assistant","model":"qmodel","content":[{"type":"tool_use","id":"call_r1","name":"Read","input":{"file_path":"/private/tmp/probe/NOTES.md"}}]},"isSidechain":true,"sessionId":"s1"}"#;
@@ -1490,8 +1486,118 @@ mod tests {
                 _ => None,
             })
             .expect("Agent result carries agent_stats");
-        assert_eq!(stats.status.as_deref(), Some("completed"));
+        assert_eq!(stats.status.as_deref(), Some("running"));
         assert_eq!(stats.recovered_result, None);
+    }
+
+    /// Session `s1` launching one Agent call (`call_agent1`) whose tool_result
+    /// is `agent_result`; returns its (created) `subagents` directory.
+    fn agent_session_with_subagents(root: &Path, agent_result: &str) -> PathBuf {
+        let agent_use = r#"{"type":"assistant","uuid":"a9","timestamp":"2026-08-16T15:45:33.100Z","message":{"role":"assistant","model":"qmodel","stop_reason":"tool_use","content":[{"type":"tool_use","id":"call_agent1","name":"Agent","input":{"description":"调研","subagent_type":"Explore"}}]},"parentUuid":"u1","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.68","gitBranch":"main"}"#;
+        let active_leaf = r#"{"type":"active-leaf","sessionId":"s1","leafUuid":"u9","explicit":false,"timestamp":1786895139000}"#;
+        let path = write_session(
+            root,
+            "s1",
+            &[USER_LINE, agent_use, agent_result, active_leaf],
+        );
+        let sub = path.with_extension("").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+        sub
+    }
+
+    /// One child run under `sub`: its meta file naming `tool_use_id`, and a
+    /// transcript holding a single call of `tool` (and that call's result).
+    fn write_child_run(sub: &Path, agent_id: &str, tool_use_id: &str, tool: &str) {
+        std::fs::write(
+            sub.join(format!("agent-{agent_id}.meta.json")),
+            format!(
+                r#"{{"agentType":"Explore","toolUseId":"{tool_use_id}","description":"调研"}}"#
+            ),
+        )
+        .unwrap();
+        let call = format!(
+            r#"{{"type":"assistant","uuid":"c1","timestamp":"2026-08-16T15:45:35.000Z","message":{{"role":"assistant","model":"qmodel","content":[{{"type":"tool_use","id":"call_{agent_id}","name":"{tool}","input":{{}}}}]}},"isSidechain":true,"sessionId":"s1"}}"#
+        );
+        let result = format!(
+            r#"{{"type":"user","uuid":"c2","timestamp":"2026-08-16T15:45:36.000Z","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"call_{agent_id}","content":"ok"}}]}},"isSidechain":true,"sessionId":"s1"}}"#
+        );
+        std::fs::write(
+            sub.join(format!("agent-{agent_id}.jsonl")),
+            format!("{call}\n{result}\n"),
+        )
+        .unwrap();
+    }
+
+    fn agent_stats_of(tmp: &Path, tool_use_id: &str) -> Option<AgentExecutionStats> {
+        parser_in(tmp)
+            .get_conversation("s1")
+            .unwrap()
+            .turns
+            .iter()
+            .flat_map(|t| t.blocks.iter())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id: Some(id),
+                    agent_stats,
+                    ..
+                } if id == tool_use_id => Some(agent_stats.clone()),
+                _ => None,
+            })
+            .expect("the Agent result is in the turns")
+    }
+
+    /// A dead process's `running` task is rewritten to `interrupted` with a
+    /// placeholder `result` (qodercli 1.1.68). The parser stays dumb and lands
+    /// both; the status is what lets the card refuse to present the
+    /// placeholder as the child's report.
+    #[test]
+    fn an_interrupted_tasks_placeholder_result_rides_along_with_its_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let errored = r#"{"type":"user","uuid":"u9","timestamp":"2026-08-16T15:45:39.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_agent1","is_error":true,"content":"Error: tool execution produced no result"}]},"sourceToolAssistantUUID":"a9","promptId":"s1","parentUuid":"a9","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.68","gitBranch":"main"}"#;
+        let sub = agent_session_with_subagents(tmp.path(), errored);
+        write_child_run(&sub, "aExplore-abc123", "call_agent1", "Read");
+        std::fs::write(
+            sub.join("task-t1.json"),
+            r#"{"taskId":"t1","agentId":"aExplore-abc123","parentToolUseId":"call_agent1","status":"interrupted","summary":"Agent task \"调研\" stopped before it could finish.","result":"The process that owned this subagent task is no longer running.","createdAt":1786895133100,"updatedAt":1786895200000,"completedAt":1786895200000}"#,
+        )
+        .unwrap();
+
+        let stats = agent_stats_of(tmp.path(), "call_agent1").expect("stats attached");
+        assert_eq!(stats.status.as_deref(), Some("interrupted"));
+        assert_eq!(
+            stats.recovered_result.as_deref(),
+            Some("The process that owned this subagent task is no longer running.")
+        );
+    }
+
+    /// Runs naming the same tool call resolve the same way on every parse —
+    /// the first in file-name order — whatever order the directory lists them
+    /// in; a run naming a tool call that is not in the turns is skipped.
+    #[test]
+    fn the_first_run_in_name_order_wins_a_shared_tool_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = r#"{"type":"user","uuid":"u9","timestamp":"2026-08-16T15:45:39.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_agent1","content":"report"}]},"sourceToolAssistantUUID":"a9","promptId":"s1","parentUuid":"a9","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.68","gitBranch":"main"}"#;
+        let sub = agent_session_with_subagents(tmp.path(), result);
+        // Twelve rivals, each calling a tool named after its run, created out
+        // of name order with the winner neither first nor last: a listing in
+        // creation order (or its reverse) never agrees with name order, and a
+        // hash-ordered one only by a one-in-twelve chance.
+        for n in [7, 3, 0, 10, 5, 1, 11, 8, 2, 9, 4, 6] {
+            let run = format!("run-{n:02}");
+            write_child_run(&sub, &run, "call_agent1", &run);
+        }
+        // Sorts ahead of every rival, but its tool call is not in the turns.
+        write_child_run(&sub, "a-elsewhere", "call_rewound_away", "Grep");
+
+        let stats = agent_stats_of(tmp.path(), "call_agent1").expect("stats attached");
+        assert_eq!(
+            stats
+                .tool_calls
+                .iter()
+                .map(|c| c.tool_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run-00"]
+        );
     }
 
     #[test]
