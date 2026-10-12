@@ -93,9 +93,11 @@ export type AdaptedToolCallPart = {
    */
   meta?: Record<string, unknown> | null
   /**
-   * Live subagent transcript (claude-agent-acp ≥0.63), forwarded from
-   * `ContentBlock.tool_result.agent_transcript`. Present only on a RUNNING
-   * Agent card during streaming — promotion and history never carry it.
+   * The child's mixed timeline: the live transcript
+   * (`ContentBlock.tool_result.agent_transcript`, claude-agent-acp ≥0.63),
+   * which stays attached through settle and promotion, or — once history
+   * reloads from disk — the parsed `agent_stats.timeline`. Its `tool_call`
+   * markers index into `agentStats.tool_calls`.
    */
   agentTranscript?: AgentTranscriptEntry[] | null
 }

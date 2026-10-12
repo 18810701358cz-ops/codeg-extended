@@ -556,7 +556,7 @@ describe("adaptMessageTurn — agent timeline passthrough", () => {
     })
   })
 
-  it("never fabricates a timeline on a non-agent tool result", () => {
+  it("never fabricates a timeline for a result with neither transcript nor stats", () => {
     const content = adaptAgentTurn({}).content
     const part = content[0]
     if (part.type !== "tool-call") throw new Error("expected a tool-call")

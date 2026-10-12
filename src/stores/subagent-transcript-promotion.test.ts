@@ -7,7 +7,7 @@
  *    attach stats only, which erased the interleaved order the running card
  *    had shown);
  *  - the COMPLETE_TURN promotion keeps that transcript on the promoted
- *    `localTurns` copy (it used to pass `attachAgentTranscripts: false`);
+ *    `localTurns` copy (it used to promote without it);
  *  - the transcript stays OUT of the main thread either way — the child's
  *    text/thinking never appears as top-level blocks.
  */

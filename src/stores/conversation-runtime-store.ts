@@ -1034,21 +1034,8 @@ export function isLiveTurnId(id: string): boolean {
 
 export function buildStreamingTurnsFromLiveMessage(
   conversationId: number,
-  liveMessage: LiveMessage,
-  opts?: {
-    /**
-     * When false, parented subagent text/thinking is still routed OUT of the
-     * main thread but no `agent_transcript` is attached — used by callers that
-     * render a derived view of a turn which is already covered elsewhere. The
-     * COMPLETE_TURN promotion passes nothing (defaults to true): the settled
-     * card keeps its interleaved timeline, and the authoritative detail reload
-     * that later replaces `localTurns` carries `agent_stats.timeline` parsed
-     * from the child's own transcript, so there is no window without one.
-     */
-    attachAgentTranscripts?: boolean
-  }
+  liveMessage: LiveMessage
 ): BuiltStreamingTurns {
-  const attachAgentTranscripts = opts?.attachAgentTranscripts !== false
   // Consolidate codex collab capsules first (spawn execution + per-wait result,
   // close folded in) so live matches the history reconstruction. No-op when the
   // message has no collab tool calls. See collab-collapse.ts.
@@ -1480,10 +1467,9 @@ export function buildStreamingTurnsFromLiveMessage(
         // card keeps the interleaved order it showed live; once history
         // reloads from disk the parsed `agent_stats.timeline` takes over as
         // the card's timeline source.
-        const transcript =
-          attachAgentTranscripts && isAgent
-            ? agentTranscripts.get(block.info.tool_call_id)
-            : undefined
+        const transcript = isAgent
+          ? agentTranscripts.get(block.info.tool_call_id)
+          : undefined
 
         const agentStats: AgentExecutionStats | undefined =
           isAgent && children.length > 0
@@ -2209,12 +2195,14 @@ function reducer(
       // Agent transcripts ride along on promotion: the settled card keeps the
       // interleaved order it showed live, and the authoritative detail reload
       // that later replaces `localTurns` supplies `agent_stats.timeline`
-      // parsed from the child's own transcript — see the option's doc.
+      // parsed from the child's own transcript (Claude Code, Qoder). The only
+      // live prose comes from Claude Code; elsewhere the transcript is tool
+      // markers alone, which the card renders like stats, so a reload from
+      // an agent without a parsed timeline does not change the card's shape.
       const streamingTurns = sourceLiveMessage
         ? buildStreamingTurnsFromLiveMessage(
             current.conversationId,
-            sourceLiveMessage,
-            { attachAgentTranscripts: true }
+            sourceLiveMessage
           ).turns
         : []
 
