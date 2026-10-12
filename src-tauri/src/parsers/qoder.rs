@@ -8,8 +8,8 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::models::{
-    AgentType, ContentBlock, ConversationDetail, ConversationSummary, MessageRole, TurnUsage,
-    UnifiedMessage,
+    AgentType, ContentBlock, ConversationDetail, ConversationSummary, MessageRole, MessageTurn,
+    TurnRole, TurnUsage, UnifiedMessage,
 };
 use crate::parsers::claude::{
     api_error_text, capture_title_record, extract_assistant_content, extract_usage,
@@ -297,10 +297,11 @@ impl ReportedContext {
 /// by construction.
 ///
 /// Same correction `parsers::codex::codex_usage_counters` applies for the same
-/// reason. Deliberately NOT a `FACT_SCHEMA_VERSION` bump: the only transcripts
-/// that can carry non-zero counters are ones recorded with the launch env this
-/// release also introduces, so there are no stored rows computed the old way to
-/// rebuild.
+/// reason. This is what `FACT_SCHEMA_VERSION` 3 exists for: sessions with real
+/// counters are not only the ones codeg launched with the usage launch env —
+/// a custom/BYO model has always exposed them, and the parser reads every
+/// session under `~/.qoder/projects` — so stored rows need a full rebuild
+/// under the new rule.
 fn qoder_turn_usage(value: &Value) -> Option<TurnUsage> {
     let mut usage = extract_usage(value)?;
     let cached = usage
@@ -776,11 +777,22 @@ fn parse_transcript(bytes: &[u8]) -> Transcript {
                 if content.is_empty() {
                     continue;
                 }
+                // A blank `model` names nothing, so it is dropped here, once,
+                // for every use below: stored, it would overwrite the last valid
+                // model, block the launch-model fallback, and give its bubble
+                // (and turn) an empty name.
                 let entry_model = value
                     .pointer("/message/model")
                     .and_then(Value::as_str)
+                    .filter(|m| !m.trim().is_empty())
                     .map(String::from);
-                if model.is_none() {
+                // Last NON-EMPTY model wins: a mid-session switch has to land
+                // in `summary.model` (the details dialog reads it ahead of the
+                // turns) and in the context-window fallback below. Pinning the
+                // FIRST model here left both on the session's opening model —
+                // a switch to Qwen3.8-Flash still displayed DeepSeek-Flash
+                // next to the new model's 200K window.
+                if entry_model.is_some() {
                     model.clone_from(&entry_model);
                 }
                 let message_id = value
@@ -790,9 +802,10 @@ fn parse_transcript(bytes: &[u8]) -> Transcript {
 
                 // One API response streams as SEVERAL records (thinking,
                 // tool_use, final text) sharing one `message.id`; adjacent
-                // fragments merge into a single bubble. Every one of them
-                // repeats the response's full usage, so the claim below keeps it
-                // on exactly one message — including across the turn boundary a
+                // fragments merge into a single bubble. 1.1.65 repeats the
+                // response's full usage on every one of them, 1.1.67 writes it
+                // on the last one only; either way the claim below keeps it on
+                // exactly one message — including across the turn boundary a
                 // tool result opens, where the trailing fragment lands in a
                 // different bubble than its siblings.
                 let merges_into_pending = message_id.is_some()
@@ -819,9 +832,9 @@ fn parse_transcript(bytes: &[u8]) -> Transcript {
                 // Read off the RAW record rather than the claimed usage: the
                 // claim exists to stop one response's counters being added up
                 // once per fragment, but occupancy is a level, not a sum, and
-                // every fragment repeats the same one. Taking it here keeps the
-                // figure even when the claim handed the usage to an earlier
-                // bubble.
+                // every fragment that carries usage carries the same one. Taking
+                // it here keeps the figure even when the claim handed the usage
+                // to an earlier bubble.
                 if let Some(reported) = extract_reported_context(value) {
                     reported_context = Some(reported);
                 }
@@ -1038,8 +1051,16 @@ fn parse_detail(path: &Path, conversation_id: &str) -> Result<ConversationDetail
     // produced: for a session recorded before `QODER_EXPOSE_TOKEN_USAGE` there
     // is no division to do, and where there is, Qoder's figure is the original
     // and the division is a round-trip through a rounded window.
+    //
+    // Sub-agent spend lands on the TURNS, after the occupancy above was read:
+    // a sub-agent's context is its own and never occupied the parent's window
+    // (claude attributes in the same order). Landing it on turns is also what
+    // keeps the details dialog, its totals and the Token board on ONE number —
+    // the board's per-turn facts come from turn usage.
+    attribute_subagent_usage(&mut turns, path);
+    let session_stats = compute_session_stats(&turns);
     let session_stats = with_reported_context_percent(
-        merge_context_window_stats(compute_session_stats(&turns), used_tokens, max_tokens),
+        merge_context_window_stats(session_stats, used_tokens, max_tokens),
         transcript.reported_context.map(ReportedContext::percent),
     );
 
@@ -1063,6 +1084,145 @@ fn parse_detail(path: &Path, conversation_id: &str) -> Result<ConversationDetail
         session_stats,
         transcript_watermark: Some(transcript_watermark),
     })
+}
+
+/// Fold this session's SUB-AGENT spend into its turns, from the sub-agent
+/// transcripts Qoder writes beside it.
+///
+/// Every delegated run gets `<sessionId>/subagents/agent-<agentId>.jsonl` —
+/// the same layout Claude Code uses (`parsers::claude::attribute_subagent_usage`)
+/// — and it is the unit of truth here for the same reasons: the run's own
+/// counters ride its assistant records (Anthropic FIELD NAMES over Qoder's
+/// OpenAI SEMANTICS, so [`qoder_turn_usage`] splits the cached prefix out),
+/// while the alternative — the run's segment log under
+/// `logs/sessions/<encoded-cwd>/<sessionId>/segments/` — is rotated by Qoder's
+/// 30-day `sessionRetention`, and in some entrypoints its sub-agent turns are
+/// indistinguishable from main-chain ones by `turn_id`.
+///
+/// One API response streams as SEVERAL records sharing one `message.id` —
+/// 1.1.65 repeats the same counters on each, 1.1.67 writes them on the last one
+/// only — so calls are deduped by that id: counted once, exactly as the main
+/// transcript does (`ClaudeRecordAccumulator`).
+///
+/// Every file in the directory is read exactly once, referenced or not
+/// (mirroring claude): a sub-agent that was interrupted, or one launched on a
+/// branch that was later rewound away, still spent its tokens. The MAIN chain
+/// counts only the current branch; sub-agent transcripts do not participate in
+/// that walk, so their spend is counted regardless — a deliberate rule, noted
+/// here rather than derived.
+///
+/// Each call lands on the assistant turn current when THAT call was recorded
+/// (by its own timestamp), not on the run's launching turn: a background
+/// sub-agent keeps working while the parent has moved on, and per-call
+/// placement keeps the turn-level numbers — which the Token board reads —
+/// closer to where the spend actually happened. The board attributes the spend
+/// to the parent turn's model; that limitation is claude's too.
+///
+/// Runs AFTER the context-window occupancy was read: a sub-agent's context is
+/// its own and never occupied the parent's window.
+fn attribute_subagent_usage(turns: &mut [MessageTurn], session_path: &Path) {
+    let dir = session_path.with_extension("").join("subagents");
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+    let mut transcripts: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .collect();
+    // Directory order is filesystem-defined; sort so attribution is identical
+    // on every parse of the same session.
+    transcripts.sort();
+
+    for transcript in transcripts {
+        for (recorded_at, usage) in subagent_call_usage(&transcript) {
+            // The turn that was speaking when this call happened. Falling back
+            // to the last assistant turn keeps the tokens in the session even
+            // when the record carries no usable timestamp.
+            let target = recorded_at
+                .and_then(|ts| {
+                    turns
+                        .iter()
+                        .rposition(|t| matches!(t.role, TurnRole::Assistant) && t.timestamp <= ts)
+                })
+                .or_else(|| {
+                    turns
+                        .iter()
+                        .rposition(|t| matches!(t.role, TurnRole::Assistant))
+                });
+            let Some(turn) = target.and_then(|i| turns.get_mut(i)) else {
+                continue;
+            };
+            turn.usage = Some(match turn.usage.take() {
+                Some(own) => TurnUsage {
+                    input_tokens: own.input_tokens.saturating_add(usage.input_tokens),
+                    output_tokens: own.output_tokens.saturating_add(usage.output_tokens),
+                    cache_creation_input_tokens: own
+                        .cache_creation_input_tokens
+                        .saturating_add(usage.cache_creation_input_tokens),
+                    cache_read_input_tokens: own
+                        .cache_read_input_tokens
+                        .saturating_add(usage.cache_read_input_tokens),
+                },
+                None => usage,
+            });
+        }
+    }
+}
+
+/// One sub-agent transcript's calls: `(recorded at, usage)` per API response,
+/// deduped by `message.id` with the largest counters winning, and a record
+/// without an id counted on its own — the same rule the main transcript
+/// applies (`ClaudeRecordAccumulator::claim_assistant_usage`).
+/// Local rather than the shared `parsers::claude::parse_subagent_tool_calls`:
+/// that one reads usage with `extract_usage` (Anthropic semantics, where the
+/// cached counters are disjoint), while Qoder's counters need
+/// [`qoder_turn_usage`]'s cache split.
+fn subagent_call_usage(path: &Path) -> Vec<(Option<DateTime<Utc>>, TurnUsage)> {
+    let Ok(bytes) = fs::read(path) else {
+        return Vec::new();
+    };
+    let mut per_call: HashMap<String, (Option<DateTime<Utc>>, TurnUsage)> = HashMap::new();
+    for line in bytes.split(|b| *b == b'\n') {
+        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(usage) = qoder_turn_usage(&value) else {
+            continue;
+        };
+        // A record with no `message.id` cannot be grouped with anything, so it
+        // gets a key of its own rather than being dropped — the parent
+        // transcript and claude's sub-agent reader treat the same shape so.
+        let key = value
+            .pointer("/message/id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(String::from)
+            .unwrap_or_else(|| format!("__ungrouped-{}__", per_call.len()));
+        let billable = |u: &TurnUsage| {
+            u.input_tokens
+                .saturating_add(u.output_tokens)
+                .saturating_add(u.cache_creation_input_tokens)
+                .saturating_add(u.cache_read_input_tokens)
+        };
+        match per_call.get_mut(&key) {
+            Some(slot) => {
+                if billable(&usage) > billable(&slot.1) {
+                    slot.1 = usage;
+                }
+                if slot.0.is_none() {
+                    slot.0 = record_timestamp(&value);
+                }
+            }
+            None => {
+                per_call.insert(key, (record_timestamp(&value), usage));
+            }
+        }
+    }
+    per_call.into_values().collect()
 }
 
 #[cfg(test)]
@@ -1153,6 +1313,314 @@ mod tests {
             s.ended_at.as_ref().map(|t| t.to_rfc3339()),
             Some("2026-08-16T15:45:34+00:00".to_string())
         );
+    }
+
+    // A mid-session model switch must reach the summary: the details dialog
+    // reads `summary.model` ahead of the turns, so a summary pinned to the
+    // session's OPENING model contradicted the context gauge (which follows
+    // the last turn's window — Qwen3.8-Flash's 200K next to DeepSeek-Flash).
+    #[test]
+    fn summary_model_follows_a_mid_session_switch() {
+        let tmp = tempfile::tempdir().unwrap();
+        const SWITCHED_ANSWER_LINE: &str = r#"{"type":"assistant","uuid":"b1","timestamp":"2026-08-16T15:46:00.000Z","message":{"id":"chatcmpl-2","type":"message","role":"assistant","model":"qfmodel","stop_reason":"end_turn","content":[{"type":"text","text":"second","citations":null}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}},"parentUuid":"a3","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"cli","version":"1.1.45","gitBranch":"main"}"#;
+        write_session(
+            tmp.path(),
+            "s1",
+            &[
+                RUNTIME_CONFIG,
+                USER_LINE,
+                THINKING_LINE,
+                TOOL_USE_LINE,
+                TOOL_RESULT_LINE,
+                ANSWER_LINE,
+                SWITCHED_ANSWER_LINE,
+            ],
+        );
+
+        let summaries = parser_in(tmp.path()).list_conversations().unwrap();
+        assert_eq!(summaries[0].model.as_deref(), Some("qfmodel"));
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        assert_eq!(detail.summary.model.as_deref(), Some("qfmodel"));
+    }
+
+    // A blank `model` on a later record must not blank the summary (or block
+    // the launch-model fallback): only non-empty strings may overwrite the
+    // last valid one, matching the "Last NON-EMPTY model wins" contract.
+    #[test]
+    fn summary_model_ignores_a_blank_later_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        const BLANK_MODEL_LINE: &str = r#"{"type":"assistant","uuid":"b2","timestamp":"2026-08-16T15:47:00.000Z","message":{"id":"chatcmpl-3","type":"message","role":"assistant","model":"","stop_reason":"end_turn","content":[{"type":"text","text":"third","citations":null}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}},"parentUuid":"a3","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"cli","version":"1.1.45","gitBranch":"main"}"#;
+        write_session(tmp.path(), "s1", &[USER_LINE, ANSWER_LINE, BLANK_MODEL_LINE]);
+
+        let summaries = parser_in(tmp.path()).list_conversations().unwrap();
+        assert_eq!(summaries[0].model.as_deref(), Some("qmodel_38max"));
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        assert_eq!(detail.summary.model.as_deref(), Some("qmodel_38max"));
+        // Nor does it name the turn it opens: that turn names no model (the
+        // Token board then falls back to the session's) rather than "".
+        let blank_turn = detail
+            .turns
+            .iter()
+            .rev()
+            .find(|t| matches!(t.role, crate::models::TurnRole::Assistant))
+            .expect("assistant turn");
+        assert_eq!(blank_turn.model, None);
+    }
+
+    // The same on a later FRAGMENT of one response: the bubble it merges into
+    // keeps the model its earlier fragment named.
+    #[test]
+    fn a_blank_model_on_a_later_fragment_keeps_the_bubbles_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blank_tool_use = TOOL_USE_LINE.replace(r#""model":"qmodel_38max""#, r#""model":"""#);
+        write_session(
+            tmp.path(),
+            "s1",
+            &[USER_LINE, THINKING_LINE, &blank_tool_use],
+        );
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let assistants: Vec<_> = detail
+            .turns
+            .iter()
+            .filter(|t| matches!(t.role, crate::models::TurnRole::Assistant))
+            .collect();
+        assert_eq!(assistants.len(), 1, "the two fragments are one bubble");
+        assert!(
+            assistants[0]
+                .blocks
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { .. })),
+            "the blank-model fragment's tool call is kept, not dropped"
+        );
+        assert_eq!(assistants[0].model.as_deref(), Some("qmodel_38max"));
+    }
+
+    /// Write one sub-agent transcript beside a session, in the layout Qoder
+    /// (and Claude Code) uses: `<sessionId>/subagents/agent-<agentId>.jsonl`.
+    fn write_subagent(tmp: &std::path::Path, session_id: &str, agent_id: &str, lines: &[&str]) {
+        let dir = tmp
+            .join("projects")
+            .join("-private-tmp-probe")
+            .join(session_id)
+            .join("subagents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("agent-{agent_id}.jsonl")),
+            lines.join("\n") + "\n",
+        )
+        .unwrap();
+    }
+
+    /// One sub-agent API response as Qoder writes it: Anthropic field NAMES
+    /// over OpenAI SEMANTICS — `input_tokens` 35,000 of which 34,000 is the
+    /// cached prefix, `output_tokens` 300.
+    const SUB_AGENT_CALL: &str = r#"{"type":"assistant","uuid":"c1","timestamp":"2026-08-16T15:45:35.000Z","isSidechain":true,"agentId":"aExplore-1","parent_tool_use_id":"call_1","message":{"id":"msg-sub-1","type":"message","role":"assistant","model":"auto","stop_reason":"end_turn","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":35000,"cache_creation_input_tokens":0,"cache_read_input_tokens":34000,"output_tokens":300}},"version":"1.1.65"}"#;
+
+    // Sub-agent spend lives in the run's OWN transcript
+    // (`<sessionId>/subagents/agent-<agentId>.jsonl`, the layout claude uses):
+    // one API response streams as several records sharing one `message.id`,
+    // each repeating the same counters in 1.1.65, and Qoder's counters need
+    // the cache split. This pins the whole fold: dedup, split, and turn
+    // placement. (1.1.67 writes them on the last record only: see
+    // `usage_on_the_last_fragment_only_counts_once`.)
+    #[test]
+    fn sub_agent_usage_folds_from_its_transcript_with_cache_split() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_session(tmp.path(), "s1", &[USER_LINE, ANSWER_LINE]);
+        // The same response as Qoder 1.1.65 streams it — several fragments,
+        // each repeating the identical usage block.
+        write_subagent(
+            tmp.path(),
+            "s1",
+            "aExplore-1",
+            &[SUB_AGENT_CALL, SUB_AGENT_CALL],
+        );
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        // The call (15:45:35) lands on the assistant turn current then —
+        // ANSWER_LINE's, at 15:45:34.
+        let turn = detail
+            .turns
+            .iter()
+            .rev()
+            .find(|t| matches!(t.role, crate::models::TurnRole::Assistant))
+            .expect("assistant turn");
+        let usage = turn.usage.clone().expect("turn usage");
+        // 35,000 input of which 34,000 cached → 1,000 fresh in; counted ONCE
+        // despite two records sharing `msg-sub-1`.
+        assert_eq!(usage.input_tokens, 5 + 1_000);
+        assert_eq!(usage.cache_read_input_tokens, 5 + 34_000);
+        assert_eq!(usage.output_tokens, 2 + 300);
+
+        // The details dialog's total is the sum of the turns, sub-agent spend
+        // included — one number for the dialog and the Token board.
+        let stats = detail.session_stats.expect("session stats");
+        assert_eq!(
+            stats.total_tokens,
+            Some(5 + 2 + 5 + 1_000 + 34_000 + 300)
+        );
+        // The board's side of that number: its per-turn facts are built from
+        // turn usage, which is why the fold lands there and not only in the
+        // session total.
+        let facts = crate::commands::token_usage::facts_from_turns(
+            &detail.turns,
+            detail.summary.model.as_deref(),
+        );
+        let board_total: i64 = facts.iter().map(|f| f.total_tokens()).sum();
+        assert_eq!(board_total, 5 + 2 + 5 + 1_000 + 34_000 + 300);
+    }
+
+    // A record with no `message.id` cannot be grouped with any other, so each
+    // one is its own call — counted, not dropped (the parent transcript's rule).
+    #[test]
+    fn sub_agent_records_without_a_message_id_each_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_session(tmp.path(), "s1", &[USER_LINE, ANSWER_LINE]);
+        let no_id = SUB_AGENT_CALL.replace(r#""id":"msg-sub-1","#, "");
+        let empty_id = SUB_AGENT_CALL.replace(r#""id":"msg-sub-1""#, r#""id":"""#);
+        // Two of each shape: neither the missing ids nor the empty ones may
+        // collapse into one call between themselves.
+        write_subagent(
+            tmp.path(),
+            "s1",
+            "aExplore-1",
+            &[&no_id, &no_id, &empty_id, &empty_id],
+        );
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let usage = detail
+            .turns
+            .iter()
+            .rev()
+            .find(|t| matches!(t.role, crate::models::TurnRole::Assistant))
+            .and_then(|t| t.usage.clone())
+            .expect("turn usage");
+        assert_eq!(usage.input_tokens, 5 + 4 * 1_000);
+        assert_eq!(usage.cache_read_input_tokens, 5 + 4 * 34_000);
+        assert_eq!(usage.output_tokens, 2 + 4 * 300);
+    }
+
+    // 1.1.67 writes a response's usage on its LAST fragment only, in the main
+    // transcript and a sub-agent's alike, where 1.1.65 repeated it on every
+    // one. A response whose opening fragment carries nothing must still count,
+    // once, on the bubble its fragments merged into.
+    #[test]
+    fn usage_on_the_last_fragment_only_counts_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let thinking = THINKING_LINE.replace(
+            r#","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":5,"output_tokens":2}"#,
+            "",
+        );
+        assert_ne!(thinking, THINKING_LINE, "fixture must lose its usage");
+        // In 1.1.67 the answer after a tool result is a response of its own.
+        let answer = ANSWER_LINE.replace(r#""id":"chatcmpl-1""#, r#""id":"chatcmpl-2""#);
+        write_session(
+            tmp.path(),
+            "s1",
+            &[
+                USER_LINE,
+                &thinking,
+                TOOL_USE_LINE,
+                TOOL_RESULT_LINE,
+                &answer,
+            ],
+        );
+        let opening = SUB_AGENT_CALL.replace(
+            r#","usage":{"input_tokens":35000,"cache_creation_input_tokens":0,"cache_read_input_tokens":34000,"output_tokens":300}"#,
+            "",
+        );
+        assert_ne!(opening, SUB_AGENT_CALL, "fixture must lose its usage");
+        write_subagent(tmp.path(), "s1", "aExplore-1", &[&opening, SUB_AGENT_CALL]);
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let assistant: Vec<_> = detail
+            .turns
+            .iter()
+            .filter(|t| matches!(t.role, crate::models::TurnRole::Assistant))
+            .collect();
+        assert_eq!(assistant.len(), 2);
+        // The thinking + tool_use bubble keeps the usage its second fragment
+        // brought: input 10 of which 5 cached.
+        let first = assistant[0].usage.clone().expect("first response's usage");
+        assert_eq!(first.input_tokens, 5);
+        assert_eq!(first.cache_read_input_tokens, 5);
+        assert_eq!(first.output_tokens, 2);
+        // The sub-agent call (15:45:35) lands on the answer (15:45:34), once.
+        let second = assistant[1].usage.clone().expect("second response's usage");
+        assert_eq!(second.input_tokens, 5 + 1_000);
+        assert_eq!(second.cache_read_input_tokens, 5 + 34_000);
+        assert_eq!(second.output_tokens, 2 + 300);
+        assert_eq!(
+            detail.session_stats.expect("session stats").total_tokens,
+            Some(2 * (5 + 5 + 2) + 1_000 + 34_000 + 300)
+        );
+    }
+
+    #[test]
+    fn sub_agent_calls_land_on_the_turn_current_when_each_happened() {
+        let tmp = tempfile::tempdir().unwrap();
+        const SWITCHED_ANSWER_LINE: &str = r#"{"type":"assistant","uuid":"b1","timestamp":"2026-08-16T15:46:00.000Z","message":{"id":"chatcmpl-2","type":"message","role":"assistant","model":"qfmodel","stop_reason":"end_turn","content":[{"type":"text","text":"second","citations":null}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}},"parentUuid":"a3","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"cli","version":"1.1.45","gitBranch":"main"}"#;
+        const SECOND_CALL: &str = r#"{"type":"assistant","uuid":"c2","timestamp":"2026-08-16T15:46:30.000Z","isSidechain":true,"agentId":"aExplore-1","parent_tool_use_id":"call_1","message":{"id":"msg-sub-2","type":"message","role":"assistant","model":"auto","stop_reason":"end_turn","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":35000,"cache_creation_input_tokens":0,"cache_read_input_tokens":34000,"output_tokens":300}},"version":"1.1.65"}"#;
+        write_session(
+            tmp.path(),
+            "s1",
+            &[USER_LINE, ANSWER_LINE, SWITCHED_ANSWER_LINE],
+        );
+        // First call right after the first answer; second after the switch.
+        write_subagent(
+            tmp.path(),
+            "s1",
+            "aExplore-1",
+            &[SUB_AGENT_CALL, SECOND_CALL],
+        );
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let assistants: Vec<_> = detail
+            .turns
+            .iter()
+            .filter(|t| matches!(t.role, crate::models::TurnRole::Assistant))
+            .collect();
+        assert_eq!(assistants.len(), 2, "two answers, two turns");
+        let first = assistants[0].usage.clone().expect("first turn usage");
+        let second = assistants[1].usage.clone().expect("second turn usage");
+        // Each call lands on the turn current at ITS OWN timestamp — a
+        // background sub-agent keeps working after the parent moves on.
+        assert_eq!(first.input_tokens, 5 + 1_000);
+        assert_eq!(first.cache_read_input_tokens, 5 + 34_000);
+        assert_eq!(first.output_tokens, 2 + 300);
+        assert_eq!(second.input_tokens, 10 + 1_000);
+        assert_eq!(second.cache_read_input_tokens, 34_000);
+        assert_eq!(second.output_tokens, 2 + 300);
+    }
+
+    #[test]
+    fn sub_agent_usage_does_not_touch_the_context_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_session(
+            tmp.path(),
+            "s1",
+            &[RUNTIME_CONFIG, USER_LINE, ANSWER_LINE],
+        );
+        // Control parse: no `subagents/` directory at all.
+        let baseline = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let baseline_stats = baseline.session_stats.clone().expect("baseline stats");
+        assert_eq!(baseline_stats.total_tokens, Some(5 + 2 + 5));
+
+        write_subagent(tmp.path(), "s1", "aExplore-1", &[SUB_AGENT_CALL]);
+        let with_sub = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let stats = with_sub.session_stats.expect("stats");
+        // A sub-agent's context is its own: occupancy and window are untouched
+        // (the fold runs after they were read) while the totals grow.
+        assert_eq!(
+            stats.context_window_used_tokens,
+            baseline_stats.context_window_used_tokens
+        );
+        assert_eq!(
+            stats.context_window_max_tokens,
+            baseline_stats.context_window_max_tokens
+        );
+        assert!(stats.total_tokens.unwrap() > baseline_stats.total_tokens.unwrap());
     }
 
     #[test]
