@@ -802,9 +802,10 @@ fn parse_transcript(bytes: &[u8]) -> Transcript {
 
                 // One API response streams as SEVERAL records (thinking,
                 // tool_use, final text) sharing one `message.id`; adjacent
-                // fragments merge into a single bubble. Every one of them
-                // repeats the response's full usage, so the claim below keeps it
-                // on exactly one message — including across the turn boundary a
+                // fragments merge into a single bubble. 1.1.65 repeats the
+                // response's full usage on every one of them, 1.1.67 writes it
+                // on the last one only; either way the claim below keeps it on
+                // exactly one message — including across the turn boundary a
                 // tool result opens, where the trailing fragment lands in a
                 // different bubble than its siblings.
                 let merges_into_pending = message_id.is_some()
@@ -831,9 +832,9 @@ fn parse_transcript(bytes: &[u8]) -> Transcript {
                 // Read off the RAW record rather than the claimed usage: the
                 // claim exists to stop one response's counters being added up
                 // once per fragment, but occupancy is a level, not a sum, and
-                // every fragment repeats the same one. Taking it here keeps the
-                // figure even when the claim handed the usage to an earlier
-                // bubble.
+                // every fragment that carries usage carries the same one. Taking
+                // it here keeps the figure even when the claim handed the usage
+                // to an earlier bubble.
                 if let Some(reported) = extract_reported_context(value) {
                     reported_context = Some(reported);
                 }
@@ -1098,9 +1099,10 @@ fn parse_detail(path: &Path, conversation_id: &str) -> Result<ConversationDetail
 /// 30-day `sessionRetention`, and in some entrypoints its sub-agent turns are
 /// indistinguishable from main-chain ones by `turn_id`.
 ///
-/// One API response streams as SEVERAL records sharing one `message.id`, each
-/// repeating the same counters, so calls are deduped by that id — counted once
-/// exactly as the main transcript does (`ClaudeRecordAccumulator`).
+/// One API response streams as SEVERAL records sharing one `message.id` —
+/// 1.1.65 repeats the same counters on each, 1.1.67 writes them on the last one
+/// only — so calls are deduped by that id: counted once, exactly as the main
+/// transcript does (`ClaudeRecordAccumulator`).
 ///
 /// Every file in the directory is read exactly once, referenced or not
 /// (mirroring claude): a sub-agent that was interrupted, or one launched on a
@@ -1418,14 +1420,16 @@ mod tests {
     // Sub-agent spend lives in the run's OWN transcript
     // (`<sessionId>/subagents/agent-<agentId>.jsonl`, the layout claude uses):
     // one API response streams as several records sharing one `message.id`,
-    // each repeating the same counters, and Qoder's counters need the cache
-    // split. This pins the whole fold: dedup, split, and turn placement.
+    // each repeating the same counters in 1.1.65, and Qoder's counters need
+    // the cache split. This pins the whole fold: dedup, split, and turn
+    // placement. (1.1.67 writes them on the last record only: see
+    // `usage_on_the_last_fragment_only_counts_once`.)
     #[test]
     fn sub_agent_usage_folds_from_its_transcript_with_cache_split() {
         let tmp = tempfile::tempdir().unwrap();
         write_session(tmp.path(), "s1", &[USER_LINE, ANSWER_LINE]);
-        // The same response as Qoder streams it — several fragments, each
-        // repeating the identical usage block.
+        // The same response as Qoder 1.1.65 streams it — several fragments,
+        // each repeating the identical usage block.
         write_subagent(
             tmp.path(),
             "s1",
@@ -1495,6 +1499,62 @@ mod tests {
         assert_eq!(usage.input_tokens, 5 + 4 * 1_000);
         assert_eq!(usage.cache_read_input_tokens, 5 + 4 * 34_000);
         assert_eq!(usage.output_tokens, 2 + 4 * 300);
+    }
+
+    // 1.1.67 writes a response's usage on its LAST fragment only, in the main
+    // transcript and a sub-agent's alike, where 1.1.65 repeated it on every
+    // one. A response whose opening fragment carries nothing must still count,
+    // once, on the bubble its fragments merged into.
+    #[test]
+    fn usage_on_the_last_fragment_only_counts_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let thinking = THINKING_LINE.replace(
+            r#","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":5,"output_tokens":2}"#,
+            "",
+        );
+        assert_ne!(thinking, THINKING_LINE, "fixture must lose its usage");
+        // In 1.1.67 the answer after a tool result is a response of its own.
+        let answer = ANSWER_LINE.replace(r#""id":"chatcmpl-1""#, r#""id":"chatcmpl-2""#);
+        write_session(
+            tmp.path(),
+            "s1",
+            &[
+                USER_LINE,
+                &thinking,
+                TOOL_USE_LINE,
+                TOOL_RESULT_LINE,
+                &answer,
+            ],
+        );
+        let opening = SUB_AGENT_CALL.replace(
+            r#","usage":{"input_tokens":35000,"cache_creation_input_tokens":0,"cache_read_input_tokens":34000,"output_tokens":300}"#,
+            "",
+        );
+        assert_ne!(opening, SUB_AGENT_CALL, "fixture must lose its usage");
+        write_subagent(tmp.path(), "s1", "aExplore-1", &[&opening, SUB_AGENT_CALL]);
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let assistant: Vec<_> = detail
+            .turns
+            .iter()
+            .filter(|t| matches!(t.role, crate::models::TurnRole::Assistant))
+            .collect();
+        assert_eq!(assistant.len(), 2);
+        // The thinking + tool_use bubble keeps the usage its second fragment
+        // brought: input 10 of which 5 cached.
+        let first = assistant[0].usage.clone().expect("first response's usage");
+        assert_eq!(first.input_tokens, 5);
+        assert_eq!(first.cache_read_input_tokens, 5);
+        assert_eq!(first.output_tokens, 2);
+        // The sub-agent call (15:45:35) lands on the answer (15:45:34), once.
+        let second = assistant[1].usage.clone().expect("second response's usage");
+        assert_eq!(second.input_tokens, 5 + 1_000);
+        assert_eq!(second.cache_read_input_tokens, 5 + 34_000);
+        assert_eq!(second.output_tokens, 2 + 300);
+        assert_eq!(
+            detail.session_stats.expect("session stats").total_tokens,
+            Some(2 * (5 + 5 + 2) + 1_000 + 34_000 + 300)
+        );
     }
 
     #[test]
