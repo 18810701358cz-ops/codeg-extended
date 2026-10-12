@@ -620,7 +620,9 @@ impl TerminalRuntime {
         // (see `spawn_retrying_exec_busy`): the program *is* runnable, it is
         // just momentarily held open for writing — often by the agent's own
         // brand-new script — so rerouting it through the shell would split a
-        // space-containing path for no reason.
+        // space-containing path for no reason. The fallback shell's own spawn
+        // gets the same retry: the configured shell is an executable like any
+        // other, and a shell script written moments earlier is just as exposed.
         let mut direct = crate::process::tokio_command(&request.command);
         direct.args(&request.args);
         self.configure_command(&mut direct, &request);
@@ -652,12 +654,14 @@ impl TerminalRuntime {
             {
                 let mut shell = shell_wrapped_command(&fallback_shell, &request.command);
                 self.configure_command(&mut shell, &request);
-                shell.spawn().map_err(|err| {
-                    TerminalRuntimeError::Internal(format!(
-                        "failed to spawn terminal command {}: {err}",
-                        request.command
-                    ))
-                })?
+                crate::process::spawn_retrying_exec_busy(|| shell.spawn())
+                    .await
+                    .map_err(|err| {
+                        TerminalRuntimeError::Internal(format!(
+                            "failed to spawn terminal command {}: {err}",
+                            request.command
+                        ))
+                    })?
             }
             Err(err) => {
                 return Err(TerminalRuntimeError::Internal(format!(
@@ -1304,6 +1308,11 @@ mod tests {
 
     /// The shell handle is shared with a live connection, so changing General
     /// Settings after the agent connects affects its next shell command.
+    ///
+    /// The configured shell is a script written just before it runs, so on
+    /// Linux it can hit a spurious `ETXTBSY` when a sibling test forks in that
+    /// window. The fallback spawn's retry keeps this deterministic — see
+    /// `shell_fallback_rides_out_a_transient_text_file_busy`.
     #[tokio::test]
     async fn shell_fallback_uses_the_live_selected_shell() {
         use std::os::unix::fs::PermissionsExt;
@@ -2144,6 +2153,56 @@ mod tests {
         assert!(
             output.contains("ran-after-busy"),
             "transient ETXTBSY was not retried; got:\n{output}"
+        );
+    }
+
+    /// The shell-fallback spawn rides out a transient `ETXTBSY` just like the
+    /// direct spawn. The configured shell is an executable too, and a shell
+    /// script written moments earlier is exposed to the same fork-inherited
+    /// write descriptor — the race that made
+    /// `shell_fallback_uses_the_live_selected_shell` fail on Linux CI.
+    ///
+    /// As above, Linux enforces `ETXTBSY` and macOS does not for script exec.
+    #[tokio::test]
+    async fn shell_fallback_rides_out_a_transient_text_file_busy() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let shell = dir.path().join("busy-shell");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\nprintf '%s\\n' busy-shell-ran\nexec /bin/sh \"$@\"\n",
+        )
+        .expect("write shell");
+        let mut perms = std::fs::metadata(&shell).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&shell, perms).expect("chmod");
+
+        let config = TerminalShellRuntimeConfig::new();
+        let runtime = TerminalRuntime::with_base_env(BTreeMap::new())
+            .with_default_shell_config(config.clone());
+        config.set(Some(shell.to_string_lossy().to_string())).await;
+
+        // Hold a write descriptor on the shell, then release it while the
+        // fallback spawn is still retrying.
+        let writer = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&shell)
+            .expect("hold write handle");
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(writer);
+        });
+
+        let session_id = SessionId::new("busy-shell".to_string());
+        // A whole shell line: the direct exec fails with NotFound, so the
+        // configured shell is the spawn that has to ride out ETXTBSY.
+        let request =
+            CreateTerminalRequest::new(session_id.clone(), "printf 'line-ran\\n'".to_string());
+        let output = run_and_capture(&runtime, &session_id, request).await;
+        assert!(
+            output.contains("busy-shell-ran") && output.contains("line-ran"),
+            "transient ETXTBSY on the fallback shell was not retried; got:\n{output}"
         );
     }
 }
