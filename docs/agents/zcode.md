@@ -1,0 +1,26 @@
+# ZCode
+
+Codeg connects to [official ZCode](https://github.com/zai-org/ZCode) through the community [zcode-acp-server](https://github.com/william0wang/zcode-acp) bridge. The bundled registry pins the bridge to `0.69.2`.
+
+## Setup
+
+1. Install official ZCode and sign in there.
+2. Install Node.js 22 or newer with `node:sqlite` available.
+3. In Codeg Agent Settings, select ZCode and install its ACP adapter. The adapter installation does not install or update official ZCode.
+4. Check the preflight results, then select ZCode in a workspace.
+
+Codeg discovers the official desktop bundle or the `zcode` command on PATH. For a nonstandard installation, set `ZCODE_BIN` to the official JavaScript entry (such as `resources/glm/zcode.cjs`) and `ZCODE_NODE` to a Node executable in the agent environment editor. Paths with spaces are supported; do not put extra shell quotes around values. An invalid explicit override fails instead of selecting another installation. Windows npm `.cmd` launchers are resolved to their JavaScript target.
+
+The bridge reuses ZCode's existing authentication. Codeg does not copy credentials or create legacy ZCode configuration files. Sign-in errors should be resolved in official ZCode; the agent stderr diagnostics show startup failures.
+
+## Sessions and tools
+
+A new session explicitly confirms Build mode before sending its first prompt. A valid saved mode, including Yolo, takes precedence. Existing sessions use the normal restore and preference flow. Model and thought selectors follow ACP configuration updates rather than a hardcoded model list.
+
+Codeg records its own ACP transcripts for ZCode, including messages, thoughts, tools and usage. These transcripts support history and reconnecting to sessions created in Codeg. This integration does not scan ZCode's native SQLite sessions.
+
+Manage stdio MCP servers through Codeg's MCP settings and assign them to ZCode. The configuration is stored in Codeg's data directory and forwarded when creating or restoring a session; it is not written into official ZCode's provider or credential files. When multi-agent delegation is enabled, Codeg injects its per-launch `codeg-mcp` companion using the same path.
+
+## Current scope
+
+The first integration covers ACP conversations, permission requests, cancellation, Codeg transcript history, and stdio MCP. Message-level fork is disabled while the bridge's fork response and checkpoint behavior are incompatible with Codeg's typed flow. Native history import, a ZCode provider/configuration panel, HTTP MCP, attachments, native Goal/queue extensions and remote hub are outside this phase. Runtime validation has been performed on Windows; macOS and Linux discovery paths still need platform testing.

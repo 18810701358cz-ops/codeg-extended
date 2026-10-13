@@ -440,6 +440,15 @@ const AntigravityMonoIcon = memo(function AntigravityMonoIcon({
   )
 })
 
+const ZCodeMonoIcon = memo(function ZCodeMonoIcon({ size = "1em" }: IconProps) {
+  return (
+    <svg height={size} width={size} viewBox="0 0 24 24" style={baseSvgStyle}>
+      <title>ZCode</title>
+      <path d="M5 5h14v3L9 16h10v3H5v-3L15 8H5z" fill="currentColor" />
+    </svg>
+  )
+})
+
 const CursorMonoIcon = memo(function CursorMonoIcon({
   size = "1em",
 }: IconProps) {
@@ -483,6 +492,7 @@ const MONO_ICONS: Partial<Record<AgentType, AnyIcon>> = {
   cursor: CursorMonoIcon,
   qoder: QoderMonoIcon,
   antigravity: AntigravityMonoIcon,
+  zcode: ZCodeMonoIcon,
 }
 
 // Per-agent color override for mono marks, layered on top of the default

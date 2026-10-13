@@ -1680,7 +1680,11 @@
     "customAgentRemoveWithData": "Auch den aufgezeichneten Gesprächsverlauf löschen",
     "customAgentRemoved": "{name} entfernt",
     "customAgentBadge": "Eigen",
-    "customAgentNotLaunchable": "Dieser Agent kann hier nicht gestartet werden: {reason}"
+    "customAgentNotLaunchable": "Dieser Agent kann hier nicht gestartet werden: {reason}",
+    "zcode": {
+      "adapterInfo": "Codeg startet {adapterPackage} als ACP-Brücke. Installiere zuerst ZCode und melde dich an; die vorhandene Laufzeit und Konfiguration werden verwendet.",
+      "runtimeHint": "Installiere zuerst ZCode und melde dich an. Codeg installiert nur die ACP-Brücke. Bei Erkennungsproblemen gib mit ZCODE_BIN den CLI-Einstieg und mit ZCODE_NODE Node.js an. Modelle und Zugangsdaten werden in ZCode verwaltet."
+    }
   },
   "AgentVocabulary": {
     "deepseekModeDefault": "Normal",

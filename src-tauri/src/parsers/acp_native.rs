@@ -2442,3 +2442,95 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+#[cfg(test)]
+mod zcode_history_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn zcode_history_survives_reopen_and_keeps_tools_usage_and_continuations() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let agent = "zcode-acp";
+        let header = acp_transcript::TranscriptHeader::new("zcode", "old", "/workspace", 1000);
+        acp_transcript::record_header_in(root, agent, &header)
+            .await
+            .unwrap();
+        for (kind, payload) in [
+            (
+                EntryKind::Prompt,
+                serde_json::json!([{"type":"text","text":"Read marker"}]),
+            ),
+            (
+                EntryKind::Update,
+                serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Read marker"}}),
+            ),
+            (
+                EntryKind::Update,
+                serde_json::json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"consider"}}),
+            ),
+            (
+                EntryKind::Update,
+                serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"read-1","title":"Read","kind":"read","status":"in_progress","rawInput":{"path":"marker.txt"}}),
+            ),
+            (
+                EntryKind::Update,
+                serde_json::json!({"sessionUpdate":"tool_call_update","toolCallId":"read-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"MARKER"}}]}),
+            ),
+            (
+                EntryKind::Update,
+                serde_json::json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"MARKER"}}),
+            ),
+            (
+                EntryKind::TurnEnd,
+                serde_json::json!({"stopReason":"end_turn","model":"glm-test","usage":{"inputTokens":10,"outputTokens":5}}),
+            ),
+        ] {
+            acp_transcript::record_entry_in(root, agent, "old", kind, payload)
+                .await
+                .unwrap();
+        }
+        let reopened = AcpNativeParser::new_in(AgentType::ZCode, root.to_path_buf());
+        let before = reopened.get_conversation("old").unwrap();
+        assert_eq!(before.summary.agent_type, AgentType::ZCode);
+        assert_eq!(
+            before.turns.len(),
+            2,
+            "echoed prompts must not duplicate user turns"
+        );
+        let serialized = serde_json::to_string(&before.turns).unwrap();
+        assert!(serialized.contains("consider"));
+        assert!(before.turns[1].blocks.iter().any(|block| matches!(
+            block,
+            ContentBlock::ToolUse { tool_use_id, tool_name, .. }
+                if tool_use_id.as_deref() == Some("read-1") && tool_name == "Read"
+        )));
+        assert!(before.turns[1].blocks.iter().any(|block| matches!(
+            block,
+            ContentBlock::ToolResult { tool_use_id, output_preview, is_error, .. }
+                if tool_use_id.as_deref() == Some("read-1")
+                    && !is_error
+                    && output_preview.as_ref().is_some_and(|output| output.contains("MARKER"))
+        )));
+        assert_eq!(before.turns[1].usage.as_ref().unwrap().input_tokens, 10);
+        let continued = acp_transcript::TranscriptHeader::new("zcode", "new", "/workspace", 2000)
+            .continuing("old");
+        acp_transcript::record_header_in(root, agent, &continued)
+            .await
+            .unwrap();
+        acp_transcript::record_entry_in(
+            root,
+            agent,
+            "new",
+            EntryKind::Prompt,
+            serde_json::json!([{"type":"text","text":"Continue"}]),
+        )
+        .await
+        .unwrap();
+        let parser = AcpNativeParser::new_in(AgentType::ZCode, root.to_path_buf());
+        assert_eq!(parser.get_conversation("new").unwrap().turns.len(), 3);
+        let summaries = parser.list_conversations().unwrap();
+        assert_eq!(summaries.len(), 1, "continuation history should list once");
+        assert_eq!(summaries[0].id, "new");
+    }
+}

@@ -2350,3 +2350,38 @@ describe("codex ACP preset disclosures", () => {
     }
   })
 })
+
+describe("ZCode runtime configuration", () => {
+  it("keeps provider credentials in the official runtime", () => {
+    expect(importantFieldsFor("zcode")).toEqual({
+      apiBaseUrl: false,
+      apiKey: false,
+      model: false,
+    })
+    const env =
+      "ZCODE_BIN=C:/My ZCode/zcode.cjs\nZCODE_NODE=C:/My Node/node.exe"
+    expect(patchEnvByImportantKey("zcode", env, "apiKey", "unused")).toBe(env)
+  })
+
+  it("explains that the official CLI is required even when the adapter is installed", () => {
+    const adapter: AdapterInfo = {
+      adapter_package: "zcode-acp-server@0.69.2",
+      adapter_cmd: "zcode-acp-server",
+      adapter_installed: true,
+      native_cmd: "zcode",
+      native_label: "ZCode CLI",
+      native_path: null,
+      native_required: true,
+      shared_config_dir: "~/.zcode",
+      docs_url: "https://github.com/william0wang/zcode-acp",
+    }
+    const check = buildAcpAdapterCheck(adapter)
+    expect(check?.status).toBe("warn")
+    expect(check?.message).toContain("Install and sign in")
+    expect(check?.message).not.toContain("not required")
+    expect(
+      buildAcpAdapterCheck({ ...adapter, native_path: "C:/ZCode/zcode.cjs" })
+        ?.status
+    ).toBe("pass")
+  })
+})

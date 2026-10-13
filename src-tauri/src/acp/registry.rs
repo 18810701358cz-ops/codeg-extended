@@ -227,7 +227,7 @@ pub fn current_platform() -> &'static str {
     }
 }
 
-/// The fifteen built-in agents. Excludes user-registered custom agents — use
+/// The sixteen built-in agents. Excludes user-registered custom agents — use
 /// [`all_acp_agents`] for the live set.
 pub fn builtin_acp_agents() -> Vec<AgentType> {
     vec![
@@ -246,10 +246,11 @@ pub fn builtin_acp_agents() -> Vec<AgentType> {
         AgentType::DeepSeek,
         AgentType::Qoder,
         AgentType::Antigravity,
+        AgentType::ZCode,
     ]
 }
 
-/// Every agent codeg can currently drive: the fifteen built-ins followed by
+/// Every agent codeg can currently drive: the sixteen built-ins followed by
 /// the user's registered custom ACP agents (sorted by id).
 pub fn all_acp_agents() -> Vec<AgentType> {
     let mut agents = builtin_acp_agents();
@@ -274,6 +275,7 @@ pub fn registry_id_for(agent_type: AgentType) -> &'static str {
         AgentType::DeepSeek => "deepseek-acp",
         AgentType::Qoder => "qoder-cli",
         AgentType::Antigravity => "antigravity-acp",
+        AgentType::ZCode => "zcode-acp",
         // A custom agent's registry id IS its identity.
         AgentType::Custom(id) => id,
     }
@@ -296,6 +298,7 @@ pub fn from_registry_id(id: &str) -> Option<AgentType> {
         "deepseek-acp" => Some(AgentType::DeepSeek),
         "qoder-cli" => Some(AgentType::Qoder),
         "antigravity-acp" => Some(AgentType::Antigravity),
+        "zcode-acp" => Some(AgentType::ZCode),
         // Only ids the user has actually registered resolve. An unregistered
         // id must stay `None` so the ACP-registry picker still offers it as
         // "addable" rather than treating it as already supported.
@@ -308,15 +311,16 @@ pub fn from_registry_id(id: &str) -> Option<AgentType> {
 /// The vendor CLI wrapped by a codeg entry that is really a THIRD-PARTY ACP
 /// *adapter*.
 ///
-/// All but two of the built-ins distribute the vendor's own CLI (or, for
+/// All but three of the built-ins distribute the vendor's own CLI (or, for
 /// Antigravity, the vendor's own ACP server), so a user's existing global
 /// install is found by the launch gate as-is. Claude Code and
-/// Codex are the exceptions: neither `claude` nor `codex` speaks ACP, so codeg
+/// Codex wrap their CLIs through ACP adapters: neither `claude` nor `codex` speaks ACP, so codeg
 /// installs a separate adapter package (`claude-agent-acp` / `codex-acp`,
 /// maintained by the Agent Client Protocol org) whose command name has nothing
 /// to do with the vendor CLI's. That mismatch is the single most reported
 /// confusion ("I have claude installed, why does codeg say it isn't?"), so
 /// preflight and diagnostics probe the vendor CLI too and explain the split.
+/// ZCode uses a community adapter which requires the official ZCode runtime.
 #[derive(Debug, Clone, Copy)]
 pub struct AcpAdapterRelation {
     /// The vendor CLI users install themselves, e.g. "claude".
@@ -334,7 +338,7 @@ pub struct AcpAdapterRelation {
 }
 
 /// Adapter relation for an agent, or `None` when codeg's entry IS the vendor's
-/// own CLI (every agent except these two).
+/// own CLI. ZCode also requires a separate community adapter.
 ///
 /// Adding an entry here changes what preflight/diagnostics report — keep the
 /// `acp_adapter_relation_covers_only_wrapper_agents` test in sync.
@@ -355,6 +359,13 @@ pub fn acp_adapter_relation(agent_type: AgentType) -> Option<AcpAdapterRelation>
             shared_config_dir: "~/.codex",
             extra_dirs: &[".local/bin"],
             docs_url: ACP_ADAPTER_DOCS_URL,
+        }),
+        AgentType::ZCode => Some(AcpAdapterRelation {
+            native_cmd: "zcode",
+            native_label: "ZCode CLI",
+            shared_config_dir: "~/.zcode",
+            extra_dirs: &[".local/bin"],
+            docs_url: "https://github.com/william0wang/zcode-acp",
         }),
         _ => None,
     }
@@ -3900,6 +3911,24 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
                 }),
             },
         },
+        AgentType::ZCode => AcpAgentMeta {
+            agent_type,
+            supports_mcp: true,
+            name: "ZCode",
+            description: "Official ZCode runtime via the community ACP bridge",
+            // Independently verified on Windows with ZCode CLI 0.16.9.
+            // The bridge requires an existing official ZCode installation;
+            // zcode::resolve_runtime supplies explicit Node/CLI paths.
+            // Codeg owns history through its ACP transcript in this phase.
+            distribution: AgentDistribution::Npx {
+                version: "0.69.2",
+                package: "zcode-acp-server@0.69.2",
+                cmd: "zcode-acp-server",
+                args: &["server"],
+                env: &[],
+                node_required: Some("22.0.0"),
+            },
+        },
         AgentType::DeepSeek => AcpAgentMeta {
             agent_type,
             supports_mcp: true,
@@ -4740,7 +4769,10 @@ mod tests {
     fn acp_adapter_relation_covers_only_wrapper_agents() {
         for agent_type in all_acp_agents() {
             let relation = acp_adapter_relation(agent_type);
-            let expected = matches!(agent_type, AgentType::ClaudeCode | AgentType::Codex);
+            let expected = matches!(
+                agent_type,
+                AgentType::ClaudeCode | AgentType::Codex | AgentType::ZCode
+            );
             assert_eq!(
                 relation.is_some(),
                 expected,

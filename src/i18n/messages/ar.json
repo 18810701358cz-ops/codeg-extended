@@ -1680,7 +1680,11 @@
     "customAgentRemoveWithData": "حذف سجل المحادثات المسجل أيضًا",
     "customAgentRemoved": "تمت إزالة {name}",
     "customAgentBadge": "مخصص",
-    "customAgentNotLaunchable": "لا يمكن تشغيل هذا الوكيل هنا: {reason}"
+    "customAgentNotLaunchable": "لا يمكن تشغيل هذا الوكيل هنا: {reason}",
+    "zcode": {
+      "adapterInfo": "يشغّل Codeg الحزمة {adapterPackage} كجسر ACP. ثبّت ZCode الرسمي وسجّل الدخول أولاً؛ يستخدم بيئته وإعداداته الحالية.",
+      "runtimeHint": "ثبّت ZCode الرسمي وسجّل الدخول أولاً. يثبّت Codeg جسر ACP فقط. إذا فشل الاكتشاف، حدّد مسار CLI عبر ZCODE_BIN ومسار Node.js عبر ZCODE_NODE. تُدار النماذج وبيانات الاعتماد في ZCode."
+    }
   },
   "AgentVocabulary": {
     "deepseekModeDefault": "عادي",

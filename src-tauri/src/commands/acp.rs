@@ -9163,6 +9163,7 @@ pub(crate) fn skill_storage_spec(agent_type: AgentType) -> Option<SkillStorageSp
         // this function). The dedicated path was normalized to absolute at
         // save time; a non-absolute value (a hand-edited database) is ignored
         // rather than resolved against an arbitrary working directory.
+        AgentType::ZCode => None,
         AgentType::Custom(id) => {
             let decl = crate::acp::custom_registry::skills_decl(id);
             let mut global_dirs = Vec::new();
@@ -10884,6 +10885,9 @@ fn cascade_update_agent_config(
             // METHOD, never a credential, so there is nothing here to
             // reconcile either.
         }
+        AgentType::ZCode => {
+            // Authentication and providers belong to the official ZCode runtime.
+        }
         AgentType::Custom(_) => {
             // Custom agents are deliberately configuration-free: codeg writes
             // no config file for them and they are excluded from the
@@ -10970,15 +10974,35 @@ pub(crate) async fn cascade_update_model_provider(
     Ok(())
 }
 
-#[cfg_attr(feature = "tauri-runtime", tauri::command)]
-pub async fn acp_preflight(
+pub async fn acp_preflight_core(
+    db: &AppDatabase,
     agent_type: AgentType,
     force_refresh: Option<bool>,
 ) -> Result<PreflightResult, AcpError> {
     if force_refresh.unwrap_or(false) {
         preflight::clear_npm_env_cache();
     }
-    Ok(preflight::run_preflight(agent_type).await)
+    let runtime_env = if agent_type == AgentType::ZCode {
+        agent_setting_service::get_by_agent_type(&db.conn, agent_type)
+            .await
+            .map_err(|error| AcpError::protocol(error.to_string()))?
+            .and_then(|setting| setting.env_json)
+            .and_then(|value| serde_json::from_str::<BTreeMap<String, String>>(&value).ok())
+            .unwrap_or_default()
+    } else {
+        BTreeMap::new()
+    };
+    Ok(preflight::run_preflight_with_env(agent_type, &runtime_env).await)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+pub async fn acp_preflight(
+    db: State<'_, AppDatabase>,
+    agent_type: AgentType,
+    force_refresh: Option<bool>,
+) -> Result<PreflightResult, AcpError> {
+    acp_preflight_core(&db, agent_type, force_refresh).await
 }
 
 /// Resolve the full runtime env every ACP spawn should receive — settings

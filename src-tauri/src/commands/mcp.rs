@@ -71,6 +71,8 @@ pub enum McpAppType {
     Qoder,
     /// Serializes as `antigravity`, matching `AgentType::as_wire`.
     Antigravity,
+    #[serde(rename = "zcode")]
+    ZCode,
     /// Serializes as `pi`, matching `AgentType::as_wire`. Scan-only: codeg
     /// reads and round-trips the pi MCP EXTENSION's config, but pi is not an
     /// assignable target and gets no MCP over the ACP wire. See the pi section
@@ -88,7 +90,7 @@ pub enum McpAppType {
 /// server come back on the next refresh. Both used to keep their own hand-typed
 /// copy of this list; one shared constant plus [`tests::all_mcp_apps_is_exhaustive`]
 /// (which fails to compile when a variant is added) is what keeps them honest.
-const ALL_MCP_APPS: [McpAppType; 15] = [
+const ALL_MCP_APPS: [McpAppType; 16] = [
     McpAppType::ClaudeCode,
     McpAppType::Codex,
     McpAppType::Gemini,
@@ -104,6 +106,7 @@ const ALL_MCP_APPS: [McpAppType; 15] = [
     McpAppType::Qoder,
     McpAppType::Antigravity,
     McpAppType::Pi,
+    McpAppType::ZCode,
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -578,6 +581,11 @@ fn normalize_apps(apps: Vec<McpAppType>) -> Vec<McpAppType> {
 /// spec. Write paths preflight-exclude such (app, spec) pairs instead of writing a
 /// misrepresented entry or aborting the whole multi-agent operation. See issue #325.
 fn app_can_host_spec(app: McpAppType, canonical_spec: &Value) -> bool {
+    // ZCode's first integration validates stdio only. Do not offer remote
+    // transports merely because the bridge advertises them.
+    if app == McpAppType::ZCode {
+        return canonical_spec.get("type").and_then(Value::as_str) == Some("stdio");
+    }
     let is_sse = canonical_spec.get("type").and_then(Value::as_str) == Some("sse");
     !(matches!(app, McpAppType::Codex | McpAppType::DeepSeek) && is_sse)
 }
@@ -2457,6 +2465,19 @@ fn remove_cline_server(id: &str) -> Result<bool, AppCommandError> {
 // the pair, exactly as it does for Codex.
 // ---------------------------------------------------------------------------
 
+// ZCode client MCP configuration belongs to Codeg, never to the official
+// ZCode provider/credential documents. The canonical wire-store format is
+// shared with DeepSeek; only the path and delivery agent differ.
+fn zcode_mcp_json_path() -> PathBuf {
+    crate::paths::codeg_acp_transcripts_root()
+        .with_file_name("mcp")
+        .join("zcode.json")
+}
+
+fn read_zcode_servers() -> Result<BTreeMap<String, Value>, AppCommandError> {
+    read_deepseek_servers_at(&zcode_mcp_json_path())
+}
+
 fn deepseek_mcp_json_path() -> PathBuf {
     crate::parsers::deepseek::resolve_dsh_home_dir().join("mcp.json")
 }
@@ -2549,12 +2570,12 @@ fn read_deepseek_servers_at(path: &Path) -> Result<BTreeMap<String, Value>, AppC
     };
 
     for (id, spec) in servers {
-        match canonicalize_spec(spec, "DeepSeek config") {
+        match canonicalize_spec(spec, "client MCP config") {
             Ok(normalized) => {
                 out.insert(id.to_string(), normalized);
             }
             Err(err) => {
-                eprintln!("[MCP] skip invalid DeepSeek MCP entry id={id}: {err}");
+                eprintln!("[MCP] skip invalid client MCP entry id={id}: {err}");
             }
         }
     }
@@ -2572,7 +2593,7 @@ fn upsert_deepseek_server_at(path: &Path, id: &str, spec: &Value) -> Result<(), 
         root = json!({});
     }
 
-    let canonical = canonicalize_spec(spec, "DeepSeek write")?;
+    let canonical = canonicalize_spec(spec, "client MCP write")?;
 
     let obj = root.as_object_mut().ok_or_else(|| {
         mcp_configuration_invalid(format!("invalid JSON root in {}", path.display()))
@@ -3074,7 +3095,7 @@ impl LocalMcpReader {
     }
 }
 
-fn local_mcp_readers() -> [LocalMcpReader; 15] {
+fn local_mcp_readers() -> [LocalMcpReader; 16] {
     [
         LocalMcpReader::new("Claude Code", McpAppType::ClaudeCode, read_claude_servers),
         LocalMcpReader::new("Codex", McpAppType::Codex, read_codex_servers),
@@ -3095,6 +3116,7 @@ fn local_mcp_readers() -> [LocalMcpReader; 15] {
         ),
         LocalMcpReader::new("Qoder", McpAppType::Qoder, read_qoder_servers),
         LocalMcpReader::new("pi", McpAppType::Pi, read_pi_servers),
+        LocalMcpReader::new("ZCode", McpAppType::ZCode, read_zcode_servers),
     ]
 }
 
@@ -3239,6 +3261,7 @@ fn upsert_server_for_app(app: McpAppType, id: &str, spec: &Value) -> Result<(), 
         McpAppType::Qoder => upsert_qoder_server(id, spec),
         McpAppType::Antigravity => upsert_antigravity_server(id, spec),
         McpAppType::Pi => upsert_pi_server(id, spec),
+        McpAppType::ZCode => upsert_deepseek_server_at(&zcode_mcp_json_path(), id, spec),
     }
 }
 
@@ -3268,6 +3291,7 @@ pub fn read_servers_for_agent_type(
         // unlike Kimi/Grok/Cursor, DeepSeek must stay OFF the forward skip
         // list in `connection.rs` or these servers never arrive.
         AgentType::DeepSeek => read_deepseek_servers(),
+        AgentType::ZCode => read_zcode_servers(),
         // Qoder reads MCP servers from its own settings.json `mcpServers`
         // (gemini-schema settings file) at startup — see the Qoder section
         // above for why it rides the forward skip list instead of the wire.
@@ -4343,6 +4367,7 @@ fn remove_server_for_app(app: McpAppType, id: &str) -> Result<bool, AppCommandEr
         McpAppType::Qoder => remove_qoder_server(id),
         McpAppType::Antigravity => remove_antigravity_server(id),
         McpAppType::Pi => remove_pi_server(id),
+        McpAppType::ZCode => remove_deepseek_server_at(&zcode_mcp_json_path(), id),
     }
 }
 
@@ -7178,7 +7203,8 @@ mod tests {
                 | McpAppType::DeepSeek
                 | McpAppType::Qoder
                 | McpAppType::Antigravity
-                | McpAppType::Pi => {}
+                | McpAppType::Pi
+                | McpAppType::ZCode => {}
             }
         }
 
@@ -7233,6 +7259,7 @@ mod tests {
             (McpAppType::Qoder, AgentType::Qoder),
             (McpAppType::Antigravity, AgentType::Antigravity),
             (McpAppType::Pi, AgentType::Pi),
+            (McpAppType::ZCode, AgentType::ZCode),
         ] {
             let wire = serde_json::to_value(app).expect("serialize app type");
             assert_eq!(
@@ -8192,5 +8219,32 @@ mod tests {
             let canonical = canonicalize_spec(&spec, "expected").expect("canonical");
             assert_eq!(back, canonical, "round-trip mismatch for {spec}");
         }
+    }
+}
+
+#[cfg(test)]
+mod zcode_transport_tests {
+    use super::*;
+
+    #[test]
+    fn zcode_targets_only_validated_stdio_servers() {
+        let stdio =
+            canonicalize_spec(&json!({"command": "node", "args": ["tool.mjs"]}), "test").unwrap();
+        let http = canonicalize_spec(
+            &json!({"type": "http", "url": "http://localhost:8080/mcp"}),
+            "test",
+        )
+        .unwrap();
+        let sse = canonicalize_spec(
+            &json!({"type": "sse", "url": "http://localhost:8080/sse"}),
+            "test",
+        )
+        .unwrap();
+        assert!(app_can_host_spec(McpAppType::ZCode, &stdio));
+        assert!(!app_can_host_spec(McpAppType::ZCode, &http));
+        assert!(!app_can_host_spec(McpAppType::ZCode, &sse));
+        // Existing agents retain their remote transport choices.
+        assert!(app_can_host_spec(McpAppType::Codex, &http));
+        assert!(app_can_host_spec(McpAppType::KimiCode, &sse));
     }
 }
