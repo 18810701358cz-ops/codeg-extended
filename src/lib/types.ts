@@ -131,6 +131,21 @@ export interface AgentExecutionStats {
   lines_removed?: number | null
   other_tool_count?: number | null
   tool_calls?: AgentToolCall[]
+  /** The child's thinking/text/tool activity in arrival order, from the same
+   *  transcript pass that produced `tool_calls` (Rust mirror:
+   *  `AgentExecutionStats.timeline`; a `tool_call` entry's `childIndex`
+   *  anchors into `tool_calls` at the same ordinal). Lets the settled card
+   *  replay the child's mixed timeline when the live transcript is gone. */
+  timeline?: AgentTranscriptEntry[]
+  /** What the child's task file filed as its outcome (Qoder): for a
+   *  `status: "completed"` run, its final report, recovered after the parent
+   *  turn died before the async result was delivered (the card's tool_result
+   *  is then an error); other statuses file an error message or a
+   *  placeholder. Rendered ONLY on an errored card whose `status` is
+   *  `completed` — a normally completed async child delivered its result via
+   *  the notification turn, so this field stays invisible there (display
+   *  policy lives in the card, parsers attach it blindly). */
+  recovered_result?: string
   /** The child's own session id, when the sub-agent ran as a standalone session
    *  on disk instead of as chunks folded into the parent (Grok: every
    *  `spawn_subagent` child). Drives the Agent card's "open the sub-agent's
@@ -140,15 +155,27 @@ export interface AgentExecutionStats {
 }
 
 /**
- * One entry of a live subagent transcript (LIVE-only — never persisted, never
- * emitted by the Rust parsers). Entries arrive pre-merged: the reducer/backend
- * split blocks only at kind/attribution boundaries, so consecutive same-kind
- * chunks of one subagent are a single growing entry.
+ * One entry of a subagent transcript. Two data sources share this shape: the
+ * LIVE channel (a running capsule's stream; entries arrive pre-merged — the
+ * reducer/backend split blocks only at kind/attribution boundaries, so
+ * consecutive same-kind chunks of one subagent are a single growing entry)
+ * and history (`AgentExecutionStats.timeline`, parsed from the child's own
+ * JSONL by the Rust parsers — one entry per thinking/text/tool block, in
+ * arrival order).
  */
-export interface AgentTranscriptEntry {
-  type: "text" | "thinking"
-  text: string
-}
+export type AgentTranscriptEntry =
+  | { type: "text" | "thinking"; text: string }
+  | {
+      /**
+       * A marker into the mixed timeline: the child's OWN tool call, keeping
+       * its chronological position among the prose around it. `childIndex` is
+       * the call's ordinal among this parent's children — `agent_stats.
+       * tool_calls` carries no ids, and both lists are appended in the same
+       * arrival pass, so the ordinal is exact.
+       */
+      type: "tool_call"
+      childIndex: number
+    }
 
 /**
  * Image payload shared across `ContentBlock::Image` /
@@ -233,13 +260,14 @@ export type ContentBlock =
        */
       images?: ImageData[] | null
       /**
-       * Frontend-only, LIVE-stream data (same doctrine as the `plan` block:
-       * never persisted, never emitted by the Rust JSONL parsers). The
-       * in-flight transcript of a Claude native subagent — text/thinking
-       * chunks attributed to this Agent tool call via
+       * LIVE-stream data: the in-flight transcript of a native subagent —
+       * a marker per child tool call, plus (Claude Code only) the text/
+       * thinking chunks attributed to this Agent tool call via
        * `_meta.claudeCode.parentToolUseId` (claude-agent-acp ≥0.63) —
-       * rendered inside the live Agent capsule. Detached at settle:
-       * history shows the parsed `agent_stats` shape only.
+       * rendered inside the live Agent capsule. Still attached at settle so
+       * the finished card keeps the interleaved order it showed live; once
+       * history reloads from disk, the parsed `agent_stats.timeline` takes
+       * over as the card's timeline source.
        */
       agent_transcript?: AgentTranscriptEntry[] | null
     }

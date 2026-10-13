@@ -2177,8 +2177,15 @@ impl ClaudeRecordAccumulator {
                                 let subagent_path =
                                     subagent_dir.join(format!("agent-{}.jsonl", agent_id));
                                 if subagent_path.exists() {
-                                    stats.tool_calls =
-                                        parse_subagent_tool_calls(&subagent_path).0;
+                                    let (calls, timeline, _, _, duration_ms) =
+                                        parse_subagent_tool_calls(&subagent_path);
+                                    stats.tool_calls = calls;
+                                    stats.timeline = timeline;
+                                    // The transcript-derived span only fills
+                                    // the gap: a task-reported duration is the
+                                    // more direct measurement.
+                                    stats.total_duration_ms =
+                                        stats.total_duration_ms.or(duration_ms);
                                 }
                             }
                         }
@@ -3212,6 +3219,8 @@ fn extract_agent_execution_stats(tur: &serde_json::Value) -> AgentExecutionStats
             .and_then(|v| v.as_u64())
             .map(|v| v as u32),
         tool_calls: Vec::new(),
+        timeline: Vec::new(),
+        recovered_result: None,
         // Claude's sub-agent lives inside the parent transcript (a sidechain),
         // not as a session of its own.
         child_session_id: None,
@@ -3266,7 +3275,7 @@ fn attribute_subagent_usage(session_path: &Path, turns: &mut [MessageTurn]) {
     transcripts.sort();
 
     for transcript in transcripts {
-        let (_, usage, started_at) = parse_subagent_tool_calls(&transcript);
+        let (_, _, usage, started_at, _) = parse_subagent_tool_calls(&transcript);
         let Some(extra) = usage else { continue };
 
         // The turn that was speaking when the sub-agent began. Falling back to
@@ -3302,19 +3311,62 @@ fn attribute_subagent_usage(session_path: &Path, turns: &mut [MessageTurn]) {
     }
 }
 
-/// Read one sub-agent's transcript: the tool calls it made, what it spent, and
-/// when it started.
+/// Per-entry cap for thinking/text blocks folded into a sub-agent timeline, so
+/// one huge block cannot balloon the stats every detail load carries. Almost
+/// every block is far below it; the ones that reach it are typically the
+/// child's long final report (measured on local Claude Code transcripts: 27 of
+/// 7,715 blocks, the longest ~40K chars), which the card also shows in full as
+/// the Agent call's own result.
+const TIMELINE_ENTRY_MAX_CHARS: usize = 16_384;
+
+/// One parsed sub-agent transcript: the tool calls, the mixed timeline,
+/// the deduped usage, the first record's timestamp, and the
+/// first-to-last-timestamped-record span (`None` without a real interval).
+pub(crate) type SubagentTranscript = (
+    Vec<AgentToolCall>,
+    Vec<AgentTimelineEntry>,
+    Option<TurnUsage>,
+    Option<DateTime<Utc>>,
+    Option<u64>,
+);
+
+/// Read one sub-agent's transcript: the tool calls it made, its mixed
+/// thinking/text/tool timeline, what it spent, when it started, and how long
+/// it ran.
+///
+/// The timeline preserves arrival order — a sub-agent transcript interleaves
+/// `thinking`/`text` blocks with its `tool_use` blocks exactly as the model
+/// emitted them, and that order IS the card's historical activity view. Each
+/// timeline `tool_call` entry anchors into the returned `AgentToolCall` vec by
+/// ordinal (`child_index`), which stays exact because the vec keeps arrival
+/// order: results are joined by id afterwards and never reorder it. `thinking`
+/// is read from the Anthropic field name (`thinking`), `text` from `text`;
+/// unknown block kinds (`redacted_thinking`, …) stay ignored. One API call is
+/// written as several records that PARTITION its content blocks (measured on
+/// real transcripts: no block repeats across the records of one `message.id`),
+/// so per-block extraction needs no dedup — only the usage below does.
 ///
 /// The usage is deduped by `message.id` on the same rule the parent transcript
 /// uses (see [`ClaudeRecordAccumulator::claim_assistant_usage`]) — a sub-agent
 /// transcript has the identical one-line-per-content-block shape. It is
 /// consumed by [`attribute_subagent_usage`]; the tool-call caller ignores it.
-fn parse_subagent_tool_calls(
-    path: &PathBuf,
-) -> (Vec<AgentToolCall>, Option<TurnUsage>, Option<DateTime<Utc>>) {
+///
+/// The duration is the span between the transcript's first and last timestamped
+/// records — the child's real active time, derived from data every record
+/// already carries. It is the fallback source for
+/// `AgentExecutionStats::total_duration_ms` where the task/meta file carries no
+/// duration (qoder's `task-*.json` has none). Records are appended in time
+/// order, so the last parse wins; a transcript with no interval (a single
+/// record, or no timestamps at all) yields `None` rather than a zero span.
+///
+/// Rewind rule, shared by `tool_calls` and the timeline: a sub-agent
+/// transcript left behind by a rewind stays on disk, but the attach passes
+/// only fill Agent calls present in the current branch's turns, so an
+/// abandoned branch's transcript is parsed and then dropped, never rendered.
+pub(crate) fn parse_subagent_tool_calls(path: &PathBuf) -> SubagentTranscript {
     let file = match fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return (Vec::new(), None, None),
+        Err(_) => return (Vec::new(), Vec::new(), None, None, None),
     };
     let reader = BufReader::new(file);
 
@@ -3326,6 +3378,14 @@ fn parse_subagent_tool_calls(
     let mut usage_by_message_id: std::collections::HashMap<String, TurnUsage> =
         std::collections::HashMap::new();
     let mut started_at: Option<DateTime<Utc>> = None;
+    // Last record that carried a usable `timestamp`. Cheap field-presence gate
+    // ahead of the RFC3339 parse keeps the per-line cost at zero for tail
+    // records once `started_at` is already known.
+    let mut last_timestamp: Option<DateTime<Utc>> = None;
+    // The card's mixed timeline in arrival order. `child_index` anchors each
+    // tool_call entry into `calls` — safe to record at push time because the
+    // final `tool_calls` array below keeps `calls`' arrival order untouched.
+    let mut timeline: Vec<AgentTimelineEntry> = Vec::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -3342,8 +3402,13 @@ fn parse_subagent_tool_calls(
 
         let msg_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-        if started_at.is_none() {
-            started_at = parse_timestamp(&value);
+        if value.get("timestamp").is_some() {
+            if let Some(ts) = parse_timestamp(&value) {
+                if started_at.is_none() {
+                    started_at = Some(ts);
+                }
+                last_timestamp = Some(ts);
+            }
         }
 
         if msg_type == "assistant" {
@@ -3376,23 +3441,53 @@ fn parse_subagent_tool_calls(
             {
                 for item in content {
                     let block_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                    if block_type == "tool_use" || block_type == "server_tool_use" {
-                        let id = item
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let name = item
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        let input = item
-                            .get("input")
-                            .map(|v| truncate_str(&tool_input_json(&name, v), 500));
-                        if !id.is_empty() {
-                            calls.push((id, name, input));
+                    match block_type {
+                        "tool_use" | "server_tool_use" => {
+                            let id = item
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let name = item
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let input = item
+                                .get("input")
+                                .map(|v| truncate_str(&tool_input_json(&name, v), 500));
+                            if !id.is_empty() {
+                                calls.push((id, name, input));
+                                timeline.push(AgentTimelineEntry {
+                                    entry_type: "tool_call".to_string(),
+                                    text: None,
+                                    child_index: Some(calls.len() - 1),
+                                });
+                            }
                         }
+                        "thinking" | "text" => {
+                            // The sub-agent's own reasoning and narration,
+                            // interleaved with its tool calls in the
+                            // transcript. Guard-railed per entry so one
+                            // pathologically large block cannot balloon the
+                            // stats payload attached to every ToolResult.
+                            if let Some(text) = item
+                                .get(if block_type == "thinking" {
+                                    "thinking"
+                                } else {
+                                    "text"
+                                })
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                            {
+                                timeline.push(AgentTimelineEntry {
+                                    entry_type: block_type.to_string(),
+                                    text: Some(truncate_str(text, TIMELINE_ENTRY_MAX_CHARS)),
+                                    child_index: None,
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3450,7 +3545,15 @@ fn parse_subagent_tool_calls(
             }
         })
         .collect();
-    (calls, usage, started_at)
+    // A zero span is no span: a single-record transcript has no interval to
+    // report, and claiming 0ms would describe activity that never happened.
+    let duration_ms = match (started_at, last_timestamp) {
+        (Some(start), Some(end)) if end > start => {
+            Some((end - start).num_milliseconds().max(0) as u64)
+        }
+        _ => None,
+    };
+    (calls, timeline, usage, started_at, duration_ms)
 }
 
 /// The header Claude Code writes above a subagent's report inside the raw
@@ -3988,13 +4091,233 @@ mod tests {
             })
         )
         .unwrap();
-        let (calls, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        let (calls, _, _, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
         let input: serde_json::Value =
             serde_json::from_str(calls[0].input_preview.as_deref().unwrap()).unwrap();
         assert_eq!(
             input,
             json!({"file_path": "/w/lib.rs", "old_string": "a", "new_string": "b"})
         );
+    }
+
+    /// One sub-agent record, one content block. The helper keeps the fixture
+    /// lines below shape-identical to what the CLI writes per streaming chunk.
+    fn subagent_record(at: &str, block: serde_json::Value) -> String {
+        json!({
+            "type": "assistant",
+            "timestamp": at,
+            "uuid": "c",
+            "message": {"id": "m1", "role": "assistant", "content": [block]},
+        })
+        .to_string()
+    }
+
+    /// Same record at the helper's default timestamp — the fixtures below that
+    /// don't care about the clock.
+    fn subagent_record_undated(block: serde_json::Value) -> String {
+        subagent_record("2026-08-16T15:45:33.089Z", block)
+    }
+
+    #[test]
+    fn a_subagent_timeline_keeps_the_arrival_order_of_thinking_text_and_tools() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for line in [
+            subagent_record(
+                "2026-08-16T15:45:33.089Z",
+                json!({
+                    "type": "thinking", "thinking": "Need the file first.", "signature": "s"
+                }),
+            ),
+            subagent_record("2026-08-16T15:45:33.189Z", json!({"type": "text", "text": "Checking."})),
+            subagent_record(
+                "2026-08-16T15:45:33.289Z",
+                json!({
+                    "type": "tool_use", "id": "tu1", "name": "Read",
+                    "input": {"file_path": "/a"}
+                }),
+            ),
+            subagent_record(
+                "2026-08-16T15:45:33.389Z",
+                json!({
+                    "type": "thinking", "thinking": "Now the command.", "signature": "s"
+                }),
+            ),
+            subagent_record(
+                "2026-08-16T15:45:33.489Z",
+                json!({
+                    "type": "tool_use", "id": "tu2", "name": "Bash",
+                    "input": {"command": "ls"}
+                }),
+            ),
+            json!({
+                "type": "user",
+                "message": {"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": "tu1", "content": "1\theader"
+                }]},
+            })
+            .to_string(),
+        ] {
+            writeln!(file, "{line}").unwrap();
+        }
+        let (calls, timeline, _, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
+
+        assert_eq!(calls.len(), 2);
+        let kinds: Vec<(&str, Option<usize>, Option<&str>)> = timeline
+            .iter()
+            .map(|e| (e.entry_type.as_str(), e.child_index, e.text.as_deref()))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("thinking", None, Some("Need the file first.")),
+                ("text", None, Some("Checking.")),
+                ("tool_call", Some(0), None),
+                ("thinking", None, Some("Now the command.")),
+                ("tool_call", Some(1), None),
+            ]
+        );
+        // Every tool_call entry anchors the call it sits at in `tool_calls`.
+        for entry in timeline.iter().filter(|e| e.entry_type == "tool_call") {
+            let call = &calls[entry.child_index.unwrap()];
+            assert_eq!(
+                call.tool_name,
+                if entry.child_index == Some(0) { "Read" } else { "Bash" }
+            );
+        }
+        assert_eq!(calls[0].output_preview.as_deref(), Some("1\theader"));
+    }
+
+    #[test]
+    fn a_pathologically_large_thinking_block_is_guard_railed_in_the_timeline() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            subagent_record_undated(json!({
+                "type": "thinking", "thinking": "x".repeat(20_000), "signature": "s"
+            }))
+        )
+        .unwrap();
+        let (_, timeline, _, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert_eq!(timeline.len(), 1);
+        // `truncate_str` appends "..." past the cap.
+        let text = timeline[0].text.as_deref().unwrap();
+        assert_eq!(text.chars().count(), TIMELINE_ENTRY_MAX_CHARS + 3);
+        assert!(text.ends_with("..."));
+    }
+
+    #[test]
+    fn an_empty_subagent_transcript_yields_no_calls_and_no_timeline() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let (calls, timeline, usage, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert!(calls.is_empty());
+        assert!(timeline.is_empty());
+        assert!(usage.is_none());
+    }
+
+    #[test]
+    fn a_subagent_transcripts_first_and_last_timestamps_yield_its_active_span() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for line in [
+            subagent_record(
+                "2026-08-16T15:45:33.000Z",
+                json!({
+                    "type": "tool_use", "id": "tu1", "name": "Read",
+                    "input": {"file_path": "/a"}
+                }),
+            ),
+            subagent_record(
+                "2026-08-16T15:45:35.500Z",
+                json!({"type": "text", "text": "done"}),
+            ),
+        ] {
+            writeln!(file, "{line}").unwrap();
+        }
+        let (_, _, _, _, duration_ms) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert_eq!(duration_ms, Some(2_500));
+    }
+
+    #[test]
+    fn a_single_record_transcript_has_no_span_and_yields_no_duration() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            subagent_record(
+                "2026-08-16T15:45:33.000Z",
+                json!({"type": "text", "text": "one and only"}),
+            )
+        )
+        .unwrap();
+        let (_, _, _, _, duration_ms) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert_eq!(duration_ms, None);
+    }
+
+    #[test]
+    fn a_transcript_without_timestamps_yields_no_duration() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for line in [
+            json!({
+                "type": "assistant",
+                "uuid": "c1",
+                "message": {"id": "m1", "role": "assistant", "content": [
+                    {"type": "text", "text": "no clock here"}
+                ]},
+            })
+            .to_string(),
+            json!({
+                "type": "assistant",
+                "uuid": "c2",
+                "message": {"id": "m1", "role": "assistant", "content": [
+                    {"type": "text", "text": "still none"}
+                ]},
+            })
+            .to_string(),
+        ] {
+            writeln!(file, "{line}").unwrap();
+        }
+        let (_, _, _, _, duration_ms) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert_eq!(duration_ms, None);
+    }
+
+    #[test]
+    fn a_subagent_timeline_reaches_the_history_card_through_the_sidechain_attach() {
+        let child = vec![
+            subagent_record_undated(json!({
+                "type": "thinking", "thinking": "Reading.", "signature": "s"
+            })),
+            subagent_record_undated(json!({
+                "type": "tool_use", "id": "tu1", "name": "Read",
+                "input": {"file_path": "/a"}
+            })),
+            json!({
+                "type": "user",
+                "message": {"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": "tu1", "content": "done"
+                }]},
+            })
+            .to_string(),
+        ];
+        let detail = parse_with_subagents(&session_launching("abc", 1), &[("abc", child)]);
+        let stats = detail
+            .turns
+            .iter()
+            .flat_map(|t| t.blocks.iter())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult { agent_stats, .. } => agent_stats.clone(),
+                _ => None,
+            })
+            .expect("Agent result carries agent_stats");
+        assert_eq!(
+            stats
+                .timeline
+                .iter()
+                .map(|e| e.entry_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thinking", "tool_call"]
+        );
+        assert_eq!(stats.timeline[1].child_index, Some(0));
+        assert_eq!(stats.tool_calls[0].tool_name, "Read");
     }
 
     /// A resume replays the surviving history into the SAME transcript,

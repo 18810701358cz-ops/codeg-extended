@@ -8,8 +8,8 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::models::{
-    AgentType, ContentBlock, ConversationDetail, ConversationSummary, MessageRole, MessageTurn,
-    TurnRole, TurnUsage, UnifiedMessage,
+    AgentExecutionStats, AgentType, ContentBlock, ConversationDetail, ConversationSummary,
+    MessageRole, MessageTurn, TurnRole, TurnUsage, UnifiedMessage,
 };
 use crate::parsers::claude::{
     api_error_text, capture_title_record, extract_assistant_content, extract_usage,
@@ -1031,6 +1031,7 @@ fn parse_detail(path: &Path, conversation_id: &str) -> Result<ConversationDetail
     structurize_read_tool_output(&mut turns);
     resolve_patch_line_numbers(&mut turns, transcript.cwd.as_deref());
     backfill_turn_durations(&mut turns, &[]);
+    attach_subagent_tool_calls(&mut turns, path);
 
     // Qoder's own `token-stats` beats any reconstruction; the Anthropic-shaped
     // fallback is prompt tokens only (`output_tokens` is the reply, which does
@@ -1084,6 +1085,163 @@ fn parse_detail(path: &Path, conversation_id: &str) -> Result<ConversationDetail
         session_stats,
         transcript_watermark: Some(transcript_watermark),
     })
+}
+
+/// Attach each sub-agent's own transcript to the `Agent` tool result that
+/// launched it, as `agent_stats`.
+///
+/// Qoder (1.1.68, same layout as Claude Code) writes one
+/// `subagents/agent-<agentId>.jsonl` per delegated run, an
+/// `agent-<agentId>.meta.json` naming the agent type (`agentType`) and the
+/// launching tool call (`toolUseId`, absent when there is none), and a
+/// `task-<taskId>.json` keyed back by `parentToolUseId`. The task file records
+/// the run's lifecycle — `status` (`running` → `completed` / `failed` /
+/// `cancelled`, or `interrupted` once a later process finds its owner gone)
+/// and `result` (the final report, the error message, or a placeholder) — but
+/// no usage or duration: those ride only on the task notification the run
+/// delivers to the parent. The conversation itself stays the main chain; this
+/// only annotates the Agent card with the sub-agent's PROCESS, mirroring what
+/// `parsers::claude` does for Claude Code's sidechain layout.
+///
+/// The mapping is explicit (`meta.json` → parent tool-call id), never
+/// positional: it survives parallel sub-agents, interleaved streams, and a
+/// session resumed long after the run. Only runs whose tool call is in the
+/// turns being built are parsed — a run launched on a branch since rewound
+/// away has nothing to annotate here.
+fn attach_subagent_tool_calls(turns: &mut [MessageTurn], session_path: &Path) {
+    let dir = session_path.with_extension("").join("subagents");
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+
+    // The tool results in view that still have no stats: the only ids a meta
+    // or task file is worth reading for.
+    let mut pending: HashSet<String> = turns
+        .iter()
+        .flat_map(|turn| turn.blocks.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id: Some(id),
+                agent_stats: None,
+                ..
+            } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+
+    struct TaskInfo {
+        status: Option<String>,
+        // What the task file filed as the run's outcome. For a COMPLETED run
+        // that is the child's final report — reachable here even when the
+        // parent turn died before the async result was delivered. The parser
+        // attaches it whatever the status; the card decides what to show.
+        result: Option<String>,
+    }
+
+    // Directory order is filesystem-defined. Read in name order so that two
+    // files naming the same tool call resolve the same way on every parse
+    // (the first one wins, below and in `tasks`).
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+
+    let mut tasks: HashMap<String, TaskInfo> = HashMap::new();
+    // (parent tool-call id, transcript path, agent type)
+    let mut agents: Vec<(String, PathBuf, Option<String>)> = Vec::new();
+    for path in paths {
+        let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        if name.starts_with("task-") && name.ends_with(".json") {
+            let Ok(bytes) = fs::read(&path) else { continue };
+            let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+                continue;
+            };
+            let Some(parent) = value
+                .get("parentToolUseId")
+                .and_then(Value::as_str)
+                .filter(|s| pending.contains(*s))
+            else {
+                continue;
+            };
+            tasks.entry(parent.to_string()).or_insert_with(|| TaskInfo {
+                status: value
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                result: value
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_string),
+            });
+        } else if name.starts_with("agent-") && name.ends_with(".meta.json") {
+            let Ok(bytes) = fs::read(&path) else { continue };
+            let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+                continue;
+            };
+            let Some(parent) = value
+                .get("toolUseId")
+                .and_then(Value::as_str)
+                .filter(|s| pending.contains(*s))
+            else {
+                continue;
+            };
+            let transcript = path.with_file_name(format!(
+                "{}.jsonl",
+                name.trim_end_matches(".meta.json")
+            ));
+            if transcript.exists() {
+                agents.push((
+                    parent.to_string(),
+                    transcript,
+                    value
+                        .get("agentType")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                ));
+            }
+        }
+    }
+
+    for (parent, transcript, agent_type) in agents {
+        // A second run naming the same tool call: the first (in name order)
+        // already landed, and stats are never overwritten.
+        if !pending.remove(&parent) {
+            continue;
+        }
+        let (calls, timeline, _usage, _started, transcript_duration) =
+            crate::parsers::claude::parse_subagent_tool_calls(&transcript);
+        let info = tasks.remove(&parent);
+        let stats = AgentExecutionStats {
+            agent_type,
+            status: info.as_ref().and_then(|i| i.status.clone()),
+            // Neither the task nor the meta file records a duration; the child
+            // transcript's own first/last-record span stands in.
+            total_duration_ms: transcript_duration,
+            total_tool_use_count: Some(calls.len() as u32),
+            tool_calls: calls,
+            timeline,
+            recovered_result: info.and_then(|i| i.result),
+            ..Default::default()
+        };
+        let target = turns
+            .iter_mut()
+            .flat_map(|turn| turn.blocks.iter_mut())
+            .find_map(|block| match block {
+                ContentBlock::ToolResult {
+                    tool_use_id: Some(id),
+                    agent_stats,
+                    ..
+                } if *id == parent && agent_stats.is_none() => Some(agent_stats),
+                _ => None,
+            });
+        if let Some(slot) = target {
+            *slot = Some(stats);
+        }
+    }
 }
 
 /// Fold this session's SUB-AGENT spend into its turns, from the sub-agent
@@ -1621,6 +1779,293 @@ mod tests {
             baseline_stats.context_window_max_tokens
         );
         assert!(stats.total_tokens.unwrap() > baseline_stats.total_tokens.unwrap());
+    }
+
+    #[test]
+    fn agent_card_stats_carry_the_childs_mixed_timeline_in_arrival_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_use = r#"{"type":"assistant","uuid":"a9","timestamp":"2026-08-16T15:45:33.100Z","message":{"role":"assistant","model":"qmodel","stop_reason":"tool_use","content":[{"type":"tool_use","id":"call_agent1","name":"Agent","input":{"description":"读文件","subagent_type":"Explore"}}]},"parentUuid":"u1","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.67","gitBranch":"main"}"#;
+        let agent_result = r#"{"type":"user","uuid":"u9","timestamp":"2026-08-16T15:45:39.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_agent1","content":"以下是文件前 60 行…"}]},"sourceToolAssistantUUID":"a9","promptId":"s1","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"aExplore-abc123","description":"读文件"},"parentUuid":"a9","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.67","gitBranch":"main"}"#;
+        let active_leaf = r#"{"type":"active-leaf","sessionId":"s1","leafUuid":"u9","explicit":false,"timestamp":1786895139000}"#;
+        let path = write_session(tmp.path(), "s1", &[USER_LINE, agent_use, agent_result, active_leaf]);
+
+        let sub = path.with_extension("").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            sub.join("agent-aExplore-abc123.meta.json"),
+            r#"{"agentType":"Explore","toolUseId":"call_agent1","description":"读文件","invocationName":"Explore"}"#,
+        )
+        .unwrap();
+        // The child thinks, narrates, calls, then reports — the exact shape
+        // Anthropic-form transcripts interleave on disk.
+        let child_thinking = r#"{"type":"assistant","uuid":"c0","timestamp":"2026-08-16T15:45:34.000Z","message":{"id":"cm1","role":"assistant","model":"qmodel","content":[{"type":"thinking","thinking":"Need the notes first.","signature":""}]}}"#;
+        let child_text = r#"{"type":"assistant","uuid":"c0b","timestamp":"2026-08-16T15:45:34.200Z","message":{"id":"cm1","role":"assistant","model":"qmodel","content":[{"type":"text","text":"Reading."}]}}"#;
+        let child_use = r#"{"type":"assistant","uuid":"c1","timestamp":"2026-08-16T15:45:35.000Z","message":{"role":"assistant","model":"qmodel","content":[{"type":"tool_use","id":"call_r1","name":"Read","input":{"file_path":"/private/tmp/probe/NOTES.md"}}]},"isSidechain":true,"sessionId":"s1"}"#;
+        let child_result = r#"{"type":"user","uuid":"c2","timestamp":"2026-08-16T15:45:35.500Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_r1","content":"1\t# NOTES"}]},"isSidechain":true,"sessionId":"s1"}"#;
+        std::fs::write(
+            sub.join("agent-aExplore-abc123.jsonl"),
+            [child_thinking, child_text, child_use, child_result].join("\n") + "\n",
+        )
+        .unwrap();
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let stats = detail
+            .turns
+            .iter()
+            .flat_map(|t| t.blocks.iter())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    agent_stats,
+                    ..
+                } if tool_use_id.as_deref() == Some("call_agent1") => agent_stats.clone(),
+                _ => None,
+            })
+            .expect("Agent result carries agent_stats");
+        assert_eq!(
+            stats
+                .timeline
+                .iter()
+                .map(|e| (e.entry_type.as_str(), e.child_index, e.text.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("thinking", None, Some("Need the notes first.")),
+                ("text", None, Some("Reading.")),
+                ("tool_call", Some(0), None),
+            ]
+        );
+        assert_eq!(stats.tool_calls[0].tool_name, "Read");
+        // No task file here, and Qoder's never records a duration anyway: the
+        // child transcript's own first-to-last record span (34.000 → 35.500).
+        assert_eq!(stats.total_duration_ms, Some(1_500));
+    }
+
+    /// A turn the provider killed mid-flight: the CLI writes an `is_error`
+    /// tool_result for each still-pending Agent call, while the children
+    /// actually completed — their task files carry the full reports. The
+    /// attach ignores the error flag (the FRONTEND decides what to show) and
+    /// lands the stats, the timeline AND the recovered report on the errored
+    /// result.
+    #[test]
+    fn an_errored_agent_result_still_carries_stats_and_the_recovered_result() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_use = r#"{"type":"assistant","uuid":"a9","timestamp":"2026-08-16T15:45:33.100Z","message":{"role":"assistant","model":"qmodel","stop_reason":"tool_use","content":[{"type":"tool_use","id":"call_agent1","name":"Agent","input":{"description":"调研","subagent_type":"Explore"}}]},"parentUuid":"u1","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.67","gitBranch":"main"}"#;
+        let agent_result = r#"{"type":"user","uuid":"u9","timestamp":"2026-08-16T15:45:39.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_agent1","is_error":true,"content":"Error: tool execution produced no result"}]},"sourceToolAssistantUUID":"a9","promptId":"s1","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"aExplore-abc123","description":"调研"},"parentUuid":"a9","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.67","gitBranch":"main"}"#;
+        let active_leaf = r#"{"type":"active-leaf","sessionId":"s1","leafUuid":"u9","explicit":false,"timestamp":1786895139000}"#;
+        let path = write_session(tmp.path(), "s1", &[USER_LINE, agent_use, agent_result, active_leaf]);
+
+        let sub = path.with_extension("").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            sub.join("agent-aExplore-abc123.meta.json"),
+            r#"{"agentType":"Explore","toolUseId":"call_agent1","description":"调研","invocationName":"Explore"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            sub.join("task-t1.json"),
+            // The shape qodercli 1.1.68 writes once the run completes: no
+            // usage or duration (those ride only on the task notification).
+            r#"{"taskId":"t1","sessionId":"s1","executionId":"e1","agentId":"aExplore-abc123","agentType":"Explore","description":"调研","invocationName":"Explore","parentToolUseId":"call_agent1","status":"completed","summary":"Agent \"Explore\" finished","result":"The full research report, thousands of words.","createdAt":1786895133100,"updatedAt":1786895138000,"completedAt":1786895138000}"#,
+        )
+        .unwrap();
+        let child_use = r#"{"type":"assistant","uuid":"c1","timestamp":"2026-08-16T15:45:35.000Z","message":{"role":"assistant","model":"qmodel","content":[{"type":"tool_use","id":"call_r1","name":"Read","input":{"file_path":"/private/tmp/probe/NOTES.md"}}]},"isSidechain":true,"sessionId":"s1"}"#;
+        let child_result = r#"{"type":"user","uuid":"c2","timestamp":"2026-08-16T15:45:35.500Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_r1","content":"1\t# NOTES"}]},"isSidechain":true,"sessionId":"s1"}"#;
+        std::fs::write(
+            sub.join("agent-aExplore-abc123.jsonl"),
+            [child_use, child_result].join("\n") + "\n",
+        )
+        .unwrap();
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let (is_error, stats) = detail
+            .turns
+            .iter()
+            .flat_map(|t| t.blocks.iter())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error,
+                    agent_stats,
+                    ..
+                } if tool_use_id.as_deref() == Some("call_agent1") => {
+                    Some((*is_error, agent_stats.clone()))
+                }
+                _ => None,
+            })
+            .expect("Agent result present");
+        assert!(is_error, "fixture precondition: the result is an error");
+        let stats = stats.expect("errored Agent result still carries stats");
+        assert_eq!(stats.status.as_deref(), Some("completed"));
+        assert_eq!(
+            stats.recovered_result.as_deref(),
+            Some("The full research report, thousands of words.")
+        );
+        assert_eq!(
+            stats
+                .timeline
+                .iter()
+                .map(|e| e.entry_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tool_call"]
+        );
+    }
+
+    #[test]
+    fn a_task_file_without_a_result_field_leaves_recovered_result_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_use = r#"{"type":"assistant","uuid":"a9","timestamp":"2026-08-16T15:45:33.100Z","message":{"role":"assistant","model":"qmodel","stop_reason":"tool_use","content":[{"type":"tool_use","id":"call_agent1","name":"Agent","input":{"description":"调研","subagent_type":"Explore"}}]},"parentUuid":"u1","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.67","gitBranch":"main"}"#;
+        let agent_result = r#"{"type":"user","uuid":"u9","timestamp":"2026-08-16T15:45:39.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_agent1","content":"以下是文件前 60 行…"}]},"sourceToolAssistantUUID":"a9","promptId":"s1","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"aExplore-abc123","description":"调研"},"parentUuid":"a9","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.67","gitBranch":"main"}"#;
+        let active_leaf = r#"{"type":"active-leaf","sessionId":"s1","leafUuid":"u9","explicit":false,"timestamp":1786895139000}"#;
+        let path = write_session(tmp.path(), "s1", &[USER_LINE, agent_use, agent_result, active_leaf]);
+
+        let sub = path.with_extension("").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            sub.join("agent-aExplore-abc123.meta.json"),
+            r#"{"agentType":"Explore","toolUseId":"call_agent1","description":"调研","invocationName":"Explore"}"#,
+        )
+        .unwrap();
+        // A task still `running` — the only state Qoder writes without a
+        // `result` (every terminal transition files one).
+        std::fs::write(
+            sub.join("task-t1.json"),
+            r#"{"taskId":"t1","sessionId":"s1","executionId":"e1","agentId":"aExplore-abc123","agentType":"Explore","description":"调研","invocationName":"Explore","parentToolUseId":"call_agent1","status":"running","createdAt":1786895133100,"updatedAt":1786895133100}"#,
+        )
+        .unwrap();
+        let child_use = r#"{"type":"assistant","uuid":"c1","timestamp":"2026-08-16T15:45:35.000Z","message":{"role":"assistant","model":"qmodel","content":[{"type":"tool_use","id":"call_r1","name":"Read","input":{"file_path":"/private/tmp/probe/NOTES.md"}}]},"isSidechain":true,"sessionId":"s1"}"#;
+        let child_result = r#"{"type":"user","uuid":"c2","timestamp":"2026-08-16T15:45:35.500Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_r1","content":"1\t# NOTES"}]},"isSidechain":true,"sessionId":"s1"}"#;
+        std::fs::write(
+            sub.join("agent-aExplore-abc123.jsonl"),
+            [child_use, child_result].join("\n") + "\n",
+        )
+        .unwrap();
+
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        let stats = detail
+            .turns
+            .iter()
+            .flat_map(|t| t.blocks.iter())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    agent_stats,
+                    ..
+                } if tool_use_id.as_deref() == Some("call_agent1") => agent_stats.clone(),
+                _ => None,
+            })
+            .expect("Agent result carries agent_stats");
+        assert_eq!(stats.status.as_deref(), Some("running"));
+        assert_eq!(stats.recovered_result, None);
+    }
+
+    /// Session `s1` launching one Agent call (`call_agent1`) whose tool_result
+    /// is `agent_result`; returns its (created) `subagents` directory.
+    fn agent_session_with_subagents(root: &Path, agent_result: &str) -> PathBuf {
+        let agent_use = r#"{"type":"assistant","uuid":"a9","timestamp":"2026-08-16T15:45:33.100Z","message":{"role":"assistant","model":"qmodel","stop_reason":"tool_use","content":[{"type":"tool_use","id":"call_agent1","name":"Agent","input":{"description":"调研","subagent_type":"Explore"}}]},"parentUuid":"u1","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.68","gitBranch":"main"}"#;
+        let active_leaf = r#"{"type":"active-leaf","sessionId":"s1","leafUuid":"u9","explicit":false,"timestamp":1786895139000}"#;
+        let path = write_session(
+            root,
+            "s1",
+            &[USER_LINE, agent_use, agent_result, active_leaf],
+        );
+        let sub = path.with_extension("").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+        sub
+    }
+
+    /// One child run under `sub`: its meta file naming `tool_use_id`, and a
+    /// transcript holding a single call of `tool` (and that call's result).
+    fn write_child_run(sub: &Path, agent_id: &str, tool_use_id: &str, tool: &str) {
+        std::fs::write(
+            sub.join(format!("agent-{agent_id}.meta.json")),
+            format!(
+                r#"{{"agentType":"Explore","toolUseId":"{tool_use_id}","description":"调研"}}"#
+            ),
+        )
+        .unwrap();
+        let call = format!(
+            r#"{{"type":"assistant","uuid":"c1","timestamp":"2026-08-16T15:45:35.000Z","message":{{"role":"assistant","model":"qmodel","content":[{{"type":"tool_use","id":"call_{agent_id}","name":"{tool}","input":{{}}}}]}},"isSidechain":true,"sessionId":"s1"}}"#
+        );
+        let result = format!(
+            r#"{{"type":"user","uuid":"c2","timestamp":"2026-08-16T15:45:36.000Z","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"call_{agent_id}","content":"ok"}}]}},"isSidechain":true,"sessionId":"s1"}}"#
+        );
+        std::fs::write(
+            sub.join(format!("agent-{agent_id}.jsonl")),
+            format!("{call}\n{result}\n"),
+        )
+        .unwrap();
+    }
+
+    fn agent_stats_of(tmp: &Path, tool_use_id: &str) -> Option<AgentExecutionStats> {
+        parser_in(tmp)
+            .get_conversation("s1")
+            .unwrap()
+            .turns
+            .iter()
+            .flat_map(|t| t.blocks.iter())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id: Some(id),
+                    agent_stats,
+                    ..
+                } if id == tool_use_id => Some(agent_stats.clone()),
+                _ => None,
+            })
+            .expect("the Agent result is in the turns")
+    }
+
+    /// A dead process's `running` task is rewritten to `interrupted` with a
+    /// placeholder `result` (qodercli 1.1.68). The parser stays dumb and lands
+    /// both; the status is what lets the card refuse to present the
+    /// placeholder as the child's report.
+    #[test]
+    fn an_interrupted_tasks_placeholder_result_rides_along_with_its_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let errored = r#"{"type":"user","uuid":"u9","timestamp":"2026-08-16T15:45:39.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_agent1","is_error":true,"content":"Error: tool execution produced no result"}]},"sourceToolAssistantUUID":"a9","promptId":"s1","parentUuid":"a9","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.68","gitBranch":"main"}"#;
+        let sub = agent_session_with_subagents(tmp.path(), errored);
+        write_child_run(&sub, "aExplore-abc123", "call_agent1", "Read");
+        std::fs::write(
+            sub.join("task-t1.json"),
+            r#"{"taskId":"t1","agentId":"aExplore-abc123","parentToolUseId":"call_agent1","status":"interrupted","summary":"Agent task \"调研\" stopped before it could finish.","result":"The process that owned this subagent task is no longer running.","createdAt":1786895133100,"updatedAt":1786895200000,"completedAt":1786895200000}"#,
+        )
+        .unwrap();
+
+        let stats = agent_stats_of(tmp.path(), "call_agent1").expect("stats attached");
+        assert_eq!(stats.status.as_deref(), Some("interrupted"));
+        assert_eq!(
+            stats.recovered_result.as_deref(),
+            Some("The process that owned this subagent task is no longer running.")
+        );
+    }
+
+    /// Runs naming the same tool call resolve the same way on every parse —
+    /// the first in file-name order — whatever order the directory lists them
+    /// in; a run naming a tool call that is not in the turns is skipped.
+    #[test]
+    fn the_first_run_in_name_order_wins_a_shared_tool_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = r#"{"type":"user","uuid":"u9","timestamp":"2026-08-16T15:45:39.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_agent1","content":"report"}]},"sourceToolAssistantUUID":"a9","promptId":"s1","parentUuid":"a9","isSidechain":false,"cwd":"/private/tmp/probe","sessionId":"s1","userType":"external","entrypoint":"acp","version":"1.1.68","gitBranch":"main"}"#;
+        let sub = agent_session_with_subagents(tmp.path(), result);
+        // Twelve rivals, each calling a tool named after its run, created out
+        // of name order with the winner neither first nor last: a listing in
+        // creation order (or its reverse) never agrees with name order, and a
+        // hash-ordered one only by a one-in-twelve chance.
+        for n in [7, 3, 0, 10, 5, 1, 11, 8, 2, 9, 4, 6] {
+            let run = format!("run-{n:02}");
+            write_child_run(&sub, &run, "call_agent1", &run);
+        }
+        // Sorts ahead of every rival, but its tool call is not in the turns.
+        write_child_run(&sub, "a-elsewhere", "call_rewound_away", "Grep");
+
+        let stats = agent_stats_of(tmp.path(), "call_agent1").expect("stats attached");
+        assert_eq!(
+            stats
+                .tool_calls
+                .iter()
+                .map(|c| c.tool_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run-00"]
+        );
     }
 
     #[test]
