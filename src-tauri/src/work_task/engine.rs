@@ -667,14 +667,22 @@ impl LaunchMode {
 
 /// Text of an agent-reported failure on this event, if it is one.
 ///
-/// ACP `Error`, plus a tool call (or update) whose status is `failed`.
-/// The message is the error string, or the tool's content / raw output —
-/// whichever is non-empty. Anything else is not a turn failure by itself:
-/// a tool that fails and is then recovered still ends in review when the
-/// turn produced text or a diff.
+/// ACP `Error`, a terminal AIR `SessionFailure` (severity `error` — the
+/// shape Codex and Claude use for an upstream 400 that still ends
+/// `end_turn`; severity `warning` is a retry), plus a tool call (or
+/// update) whose status is `failed`. The message is the error string, the
+/// failure title / details, or the tool's content / raw output — whichever
+/// is non-empty. Anything else is not a turn failure by itself: a tool
+/// that fails and is then recovered still ends in review when the turn
+/// produced text or a diff.
 fn reported_agent_error(payload: &AcpEvent) -> Option<String> {
     match payload {
         AcpEvent::Error { message, .. } => first_nonempty([Some(message.as_str())]),
+        AcpEvent::SessionFailure { record }
+            if record.severity == "error" && !record.resolved =>
+        {
+            first_nonempty([Some(record.title.as_str()), record.details.as_deref()])
+        }
         AcpEvent::ToolCall {
             status,
             content,
@@ -702,16 +710,19 @@ fn first_nonempty<'a>(parts: impl IntoIterator<Item = Option<&'a str>>) -> Optio
         .map(str::to_string)
 }
 
-/// Whether the turn's diff matches the prompt-time snapshot (or, when that
-/// snapshot was never taken, whether the settle-time diff is empty).
+/// Whether this turn added no diff the engine can prove.
+///
+/// Unbaselined (unit tests, which never launch) means the settle-time
+/// snapshot is empty or missing. Baselined means the two triples are equal.
+/// A missing side on a baselined turn is an unreadable git snapshot, not
+/// evidence of a new diff, so a recorded error is not dropped (#538).
 fn turn_added_no_diff(signal: Option<&TurnSignal>, after: Option<(i32, i32, i32)>) -> bool {
     let Some(signal) = signal.filter(|signal| signal.baselined) else {
         return after.unwrap_or((0, 0, 0)) == (0, 0, 0);
     };
     match (signal.baseline, after) {
         (Some(before), Some(now)) => before == now,
-        (None, Some(now)) | (Some(now), None) => now == (0, 0, 0),
-        (None, None) => true,
+        _ => true,
     }
 }
 
@@ -1503,7 +1514,8 @@ impl TaskEngine {
 
         // Measured BEFORE the connection is indexed, so a turn that ends
         // the moment the prompt is sent already has something to compare
-        // against. See [`TurnSignal`].
+        // against. See [`TurnSignal`]. Replacing the entry also drops any
+        // error latched before this prompt: the work turn starts clean.
         let baseline = self.snapshot_diff_stats(task_id).await;
         self.turn_signals.lock().await.insert(
             conn_id.clone(),
@@ -2499,15 +2511,25 @@ impl TaskEngine {
     /// through and retires the mark. A connection that never completes another
     /// turn is cleared by `retire_connection` / `forget_connection`.
     async fn claim_compaction_turn(&self, conn_id: &str, seq: u64) -> bool {
-        let mut marks = self.compaction_turns.lock().await;
-        match marks.get(conn_id).copied() {
-            Some(marked) if marked >= seq => true,
-            Some(_) => {
-                marks.remove(conn_id);
-                false
+        let claimed = {
+            let mut marks = self.compaction_turns.lock().await;
+            match marks.get(conn_id).copied() {
+                Some(marked) if marked >= seq => true,
+                Some(_) => {
+                    marks.remove(conn_id);
+                    false
+                }
+                None => false,
             }
-            None => false,
+        };
+        if claimed {
+            // A compaction error can be noted only after launch has indexed
+            // this connection. It is not the work turn's error (#538).
+            if let Some(signal) = self.turn_signals.lock().await.get_mut(conn_id) {
+                signal.error = None;
+            }
         }
+        claimed
     }
 
     /// Drop the in-memory traces of a connection this engine is done with: its
@@ -2678,10 +2700,23 @@ impl TaskEngine {
     // ── event settlement ────────────────────────────────────────────────────
 
     /// Remember an agent-reported failure for this task connection's turn.
-    /// Chat sessions and compaction connections are not in `index`, so their
-    /// errors never accumulate here.
-    async fn note_turn_agent_error(&self, conn_id: &str, message: String) {
+    ///
+    /// Chat sessions are not in `index`, so their errors never accumulate.
+    /// Pre-prompt compaction uses this same connection. Its watermark is set
+    /// before the connection is indexed, and this loop can dequeue the
+    /// compaction's `Error` only afterwards — events at or below that
+    /// watermark are the compaction's, not the work turn's (#538).
+    async fn note_turn_agent_error(&self, conn_id: &str, seq: u64, message: String) {
         if !self.index.lock().await.contains_key(conn_id) {
+            return;
+        }
+        if self
+            .compaction_turns
+            .lock()
+            .await
+            .get(conn_id)
+            .is_some_and(|marked| *marked >= seq)
+        {
             return;
         }
         self.turn_signals
@@ -2694,7 +2729,7 @@ impl TaskEngine {
 
     async fn on_event(self: &Arc<Self>, env: &EventEnvelope) {
         if let Some(message) = reported_agent_error(&env.payload) {
-            self.note_turn_agent_error(&env.connection_id, message)
+            self.note_turn_agent_error(&env.connection_id, env.seq, message)
                 .await;
         }
         match &env.payload {
@@ -9389,6 +9424,473 @@ mod tests {
                 shown.contains("function.arguments must be valid JSON"),
                 "{label}: card must show the upstream error, got {shown:?}"
             );
+        }
+    }
+
+    /// #538: Codex and Claude report an upstream 400 as an AIR
+    /// `SessionFailure` (severity `error`) and then `end_turn`. No
+    /// `AcpEvent::Error` is synthesized for that stop reason. The title is
+    /// the upstream message, and an empty turn must fail with it.
+    #[tokio::test]
+    async fn a_session_failure_then_end_turn_fails_with_the_upstream_message() {
+        const MESSAGE: &str =
+            "Assistant tool call function.arguments must be valid JSON.";
+        let (engine, task_id) = running_task().await;
+        engine
+            .on_event(&env(
+                PARENT_CONN,
+                session_failure("error", MESSAGE, false),
+            ))
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 1, "end_turn"))
+            .await;
+
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Failed);
+        assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
+        let shown = task.last_error.as_deref().unwrap_or_default();
+        assert!(
+            shown.contains("function.arguments must be valid JSON"),
+            "card must show the upstream error, got {shown:?}"
+        );
+    }
+
+    /// A severity-`warning` record is the retry banner, and a resolved
+    /// record is already over. Neither fails an otherwise empty `end_turn`.
+    #[tokio::test]
+    async fn a_non_terminal_session_failure_does_not_fail_an_empty_end_turn() {
+        for (severity, resolved) in [("warning", false), ("error", true)] {
+            let (engine, task_id) = running_task().await;
+            engine
+                .on_event(&env(
+                    PARENT_CONN,
+                    session_failure(severity, "Reconnecting to the model", resolved),
+                ))
+                .await;
+            engine
+                .on_event(&turn_complete_envelope(PARENT_CONN, 1, "end_turn"))
+                .await;
+            let task = work_task_service::get_model(&engine.db.conn, task_id)
+                .await
+                .expect("task row");
+            assert_eq!(
+                task.status,
+                WorkTaskStatus::Review,
+                "{severity} resolved={resolved}"
+            );
+            assert!(task.failure_reason.is_none(), "{severity}");
+            assert!(
+                task.last_error.is_none(),
+                "{severity}: {:?}",
+                task.last_error
+            );
+        }
+    }
+
+    /// #538: pre-prompt compaction runs on the same connection the work turn
+    /// then uses. Its `TurnComplete` is fenced, but a lagging `Error` (or a
+    /// failed compaction tool call) is dequeued only after launch has indexed
+    /// that connection. That error belongs to the compaction, not to an empty
+    /// work `end_turn`.
+    #[tokio::test]
+    async fn a_lagging_compaction_error_does_not_fail_the_work_turn() {
+        let (engine, task_id) = running_task().await;
+        // The launch has baselined the work turn and indexed the connection.
+        // The compaction watermark was set before either of those.
+        engine.turn_signals.lock().await.insert(
+            PARENT_CONN.into(),
+            TurnSignal {
+                error: None,
+                baselined: true,
+                baseline: Some((0, 0, 0)),
+            },
+        );
+        engine.mark_compaction_turn(PARENT_CONN, 4).await;
+
+        engine
+            .on_event(&EventEnvelope {
+                seq: 3,
+                connection_id: PARENT_CONN.into(),
+                payload: AcpEvent::Error {
+                    message: "Context compaction failed: model overloaded".into(),
+                    agent_type: "codex".into(),
+                    code: Some("compaction_failed".into()),
+                    details: None,
+                    terminal: false,
+                },
+            })
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 4, "end_turn"))
+            .await;
+        assert_eq!(
+            status_of(&engine, task_id).await,
+            WorkTaskStatus::Running,
+            "the compaction completion must not settle the work turn"
+        );
+
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 8, "end_turn"))
+            .await;
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Review);
+        assert!(task.failure_reason.is_none(), "{:?}", task.failure_reason);
+        assert!(
+            task.last_error.is_none(),
+            "compaction error must not become last_error, got {:?}",
+            task.last_error
+        );
+    }
+
+    /// An error that arrives after the compaction fence is the work turn's
+    /// own, and an empty `end_turn` still fails with that message.
+    #[tokio::test]
+    async fn a_work_turn_error_after_compaction_still_fails_the_task() {
+        const MESSAGE: &str =
+            "Assistant tool call function.arguments must be valid JSON.";
+        let (engine, task_id) = running_task().await;
+        engine.turn_signals.lock().await.insert(
+            PARENT_CONN.into(),
+            TurnSignal {
+                error: None,
+                baselined: true,
+                baseline: Some((0, 0, 0)),
+            },
+        );
+        engine.mark_compaction_turn(PARENT_CONN, 4).await;
+        engine
+            .on_event(&EventEnvelope {
+                seq: 3,
+                connection_id: PARENT_CONN.into(),
+                payload: AcpEvent::Error {
+                    message: "Context compaction failed: model overloaded".into(),
+                    agent_type: "codex".into(),
+                    code: Some("compaction_failed".into()),
+                    details: None,
+                    terminal: false,
+                },
+            })
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 4, "end_turn"))
+            .await;
+
+        // Above the compaction watermark, so this is the work turn's failure.
+        engine
+            .on_event(&EventEnvelope {
+                seq: 7,
+                connection_id: PARENT_CONN.into(),
+                payload: session_failure("error", MESSAGE, false),
+            })
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 8, "end_turn"))
+            .await;
+
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Failed);
+        assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
+        let shown = task.last_error.as_deref().unwrap_or_default();
+        assert!(
+            shown.contains("function.arguments must be valid JSON"),
+            "got {shown:?}"
+        );
+        assert!(
+            !shown.contains("Context compaction failed"),
+            "got {shown:?}"
+        );
+    }
+
+    /// #538: a baselined turn whose settle-time snapshot cannot be read (no
+    /// worktree, git failed) must not treat that as "a diff was added" and
+    /// drop the recorded error.
+    #[tokio::test]
+    async fn recorded_agent_error_survives_a_missing_settle_snapshot() {
+        const MESSAGE: &str =
+            "Assistant tool call function.arguments must be valid JSON.";
+        let (engine, task_id) = running_task().await;
+        assert!(
+            engine.snapshot_diff_stats(task_id).await.is_none(),
+            "this task has no worktree, so settle cannot read a diff"
+        );
+        engine.turn_signals.lock().await.insert(
+            PARENT_CONN.into(),
+            TurnSignal {
+                error: None,
+                baselined: true,
+                baseline: Some((3, 10, 1)),
+            },
+        );
+        engine
+            .on_event(&env(PARENT_CONN, session_failure("error", MESSAGE, false)))
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 2, "end_turn"))
+            .await;
+
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Failed);
+        assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
+        let shown = task.last_error.as_deref().unwrap_or_default();
+        assert!(
+            shown.contains("function.arguments must be valid JSON"),
+            "got {shown:?}"
+        );
+    }
+
+    /// The other unreadable side: the prompt-time snapshot is missing and the
+    /// settle-time snapshot is a real non-zero diff. Still not proof this
+    /// turn added that diff, so the recorded error is kept.
+    #[tokio::test]
+    async fn recorded_agent_error_survives_a_missing_prompt_snapshot() {
+        const MESSAGE: &str =
+            "Assistant tool call function.arguments must be valid JSON.";
+        let (engine, task_id) = running_task().await;
+        let repo = tiny_repo().await;
+        attach_worktree(&engine, task_id, &repo).await;
+        std::fs::write(repo.path.join("b.txt"), "two\n").expect("dirty");
+        let after = engine.snapshot_diff_stats(task_id).await;
+        assert!(
+            after.is_some_and(|stats| stats != (0, 0, 0)),
+            "settle must see a non-zero diff, got {after:?}"
+        );
+        engine.turn_signals.lock().await.insert(
+            PARENT_CONN.into(),
+            TurnSignal {
+                error: None,
+                baselined: true,
+                baseline: None,
+            },
+        );
+        engine
+            .on_event(&env(PARENT_CONN, session_failure("error", MESSAGE, false)))
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 2, "end_turn"))
+            .await;
+
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Failed);
+        assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
+        let shown = task.last_error.as_deref().unwrap_or_default();
+        assert!(
+            shown.contains("function.arguments must be valid JSON"),
+            "got {shown:?}"
+        );
+    }
+
+    struct TinyRepo {
+        _dir: tempfile::TempDir,
+        path: std::path::PathBuf,
+        sha: String,
+    }
+
+    async fn tiny_repo() -> TinyRepo {
+        let dir = tempfile::tempdir().expect("tempdir");
+        git_run(dir.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").expect("write");
+        git_run(dir.path(), &["add", "-A"]);
+        git_run(dir.path(), &["commit", "-q", "-m", "base"]);
+        let sha = task_git::rev_parse(dir.path().to_str().expect("utf8"), "HEAD")
+            .await
+            .expect("sha");
+        TinyRepo {
+            path: dir.path().to_path_buf(),
+            sha,
+            _dir: dir,
+        }
+    }
+
+    async fn attach_worktree(engine: &TaskEngine, task_id: i32, repo: &TinyRepo) {
+        let wt_id = crate::db::test_helpers::seed_folder(
+            &engine.db,
+            repo.path.to_str().expect("utf8"),
+        )
+        .await;
+        let mut update: crate::db::entities::work_task::ActiveModel =
+            work_task_service::get_model(&engine.db.conn, task_id)
+                .await
+                .expect("task")
+                .into();
+        update.worktree_folder_id = sea_orm::Set(Some(wt_id));
+        update.base_sha = sea_orm::Set(Some(repo.sha.clone()));
+        sea_orm::ActiveModelTrait::update(update, &engine.db.conn)
+            .await
+            .expect("attach worktree");
+    }
+
+    const UPSTREAM_400: &str =
+        "Assistant tool call function.arguments must be valid JSON.";
+
+    async fn fail_turn_with_upstream_error(engine: &Arc<TaskEngine>) {
+        engine
+            .on_event(&env(
+                PARENT_CONN,
+                session_failure("error", UPSTREAM_400, false),
+            ))
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 2, "end_turn"))
+            .await;
+    }
+
+    /// A baselined turn whose diff did not change still fails with the
+    /// recorded error. A turn that added a diff still reviews.
+    #[tokio::test]
+    async fn a_baselined_diff_stat_decides_whether_an_agent_error_fails() {
+        // Equal snapshots: nothing new this turn.
+        {
+            let (engine, task_id) = running_task().await;
+            let repo = tiny_repo().await;
+            attach_worktree(&engine, task_id, &repo).await;
+            let stats = engine.snapshot_diff_stats(task_id).await;
+            assert_eq!(stats, Some((0, 0, 0)), "clean worktree, got {stats:?}");
+            engine.turn_signals.lock().await.insert(
+                PARENT_CONN.into(),
+                TurnSignal {
+                    error: None,
+                    baselined: true,
+                    baseline: stats,
+                },
+            );
+            fail_turn_with_upstream_error(&engine).await;
+            let task = work_task_service::get_model(&engine.db.conn, task_id)
+                .await
+                .expect("task row");
+            assert_eq!(task.status, WorkTaskStatus::Failed);
+            assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
+            assert!(
+                task.last_error
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("function.arguments must be valid JSON")
+            );
+        }
+
+        // Changed snapshot: the turn produced a diff, so the error does not
+        // replace review.
+        {
+            let (engine, task_id) = running_task().await;
+            let repo = tiny_repo().await;
+            attach_worktree(&engine, task_id, &repo).await;
+            std::fs::write(repo.path.join("b.txt"), "two\n").expect("dirty");
+            let stats = engine.snapshot_diff_stats(task_id).await;
+            assert!(
+                stats.is_some_and(|s| s != (0, 0, 0)),
+                "got {stats:?}"
+            );
+            engine.turn_signals.lock().await.insert(
+                PARENT_CONN.into(),
+                TurnSignal {
+                    error: None,
+                    baselined: true,
+                    baseline: Some((0, 0, 0)),
+                },
+            );
+            fail_turn_with_upstream_error(&engine).await;
+            let task = work_task_service::get_model(&engine.db.conn, task_id)
+                .await
+                .expect("task row");
+            assert_eq!(task.status, WorkTaskStatus::Review);
+            assert!(task.failure_reason.is_none());
+            assert!(task.last_error.is_none(), "{:?}", task.last_error);
+            assert!(
+                task.files_changed.unwrap_or(0) > 0,
+                "the new diff must be what kept this in review, got {:?}",
+                task.files_changed
+            );
+        }
+    }
+
+    /// Assistant text is the existing summary. Beside a recorded error it
+    /// still settles to review with that text.
+    #[tokio::test]
+    async fn assistant_text_beside_an_agent_error_still_reviews() {
+        let (engine, task_id) = running_task().await;
+        let _rx = engine
+            .manager
+            .insert_test_connection_live(
+                PARENT_CONN,
+                AgentType::ClaudeCode,
+                None,
+                EventEmitter::Noop,
+            )
+            .await;
+        let state = engine
+            .manager
+            .get_state(PARENT_CONN)
+            .await
+            .expect("state");
+        state.write().await.last_assistant_text = Some("landed the fix".into());
+        engine.turn_signals.lock().await.insert(
+            PARENT_CONN.into(),
+            TurnSignal {
+                error: None,
+                baselined: true,
+                baseline: Some((0, 0, 0)),
+            },
+        );
+        fail_turn_with_upstream_error(&engine).await;
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Review);
+        assert_eq!(task.result_summary.as_deref(), Some("landed the fix"));
+        assert!(task.failure_reason.is_none());
+        assert!(task.last_error.is_none(), "{:?}", task.last_error);
+    }
+
+    /// A blocked verdict is decided before the empty-error branch.
+    #[tokio::test]
+    async fn a_blocked_verdict_beside_an_agent_error_stays_verdict_blocked() {
+        let (engine, task_id) = running_task().await;
+        let run_seq = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row")
+            .run_seq;
+        assert!(
+            work_task_service::set_verdict(
+                &engine.db.conn,
+                task_id,
+                run_seq,
+                "blocked",
+                Some("gave up"),
+            )
+            .await
+            .expect("set verdict")
+        );
+        fail_turn_with_upstream_error(&engine).await;
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Failed);
+        assert_eq!(task.failure_reason.as_deref(), Some("verdict_blocked"));
+        assert_eq!(task.last_error.as_deref(), Some("gave up"));
+    }
+
+    fn session_failure(severity: &str, title: &str, resolved: bool) -> AcpEvent {
+        AcpEvent::SessionFailure {
+            record: crate::acp::types::SessionFailureRecord {
+                id: "sf-400".into(),
+                revision: 1,
+                category: "request".into(),
+                severity: severity.into(),
+                title: title.into(),
+                details: None,
+                actions: Vec::new(),
+                resolved,
+            },
         }
     }
 
