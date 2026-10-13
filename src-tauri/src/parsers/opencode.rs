@@ -690,6 +690,8 @@ impl OpenCodeParser {
                             lines_removed: None,
                             other_tool_count: None,
                             tool_calls,
+                            timeline: Vec::new(),
+                            recovered_result: None,
                             // OpenCode's sub-agent transcript is already folded
                             // into this stats block; there is no separate
                             // session for the card to open.
@@ -2368,6 +2370,8 @@ fn v2_agent_blocks(
                 lines_removed: None,
                 other_tool_count: None,
                 tool_calls,
+                timeline: Vec::new(),
+                recovered_result: None,
                 // As for a 1.x `task`, the child's transcript is folded into
                 // this block rather than opened as a session of its own.
                 child_session_id: None,

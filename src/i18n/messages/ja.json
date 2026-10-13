@@ -3593,6 +3593,9 @@
         "agentEffortLabel": "思考の強度",
         "agentRunning": "実行中...",
         "agentLiveTranscript": "ライブアクティビティ",
+        "agentProcessCount": "サブエージェントのアクティビティ · {count} ステップ",
+        "agentProcessDuration": "サブエージェントのアクティビティ · {duration}",
+        "agentRecoveredNote": "サブエージェントは実際には完了しています。ターン中断のため結果はメインセッションに届きませんでした：",
         "agentProgressTools": "{count} 件のツール呼び出し",
         "agentProgressTurns": "{count} ターン",
         "agentProgressContext": "コンテキスト {pct}%",
@@ -6381,7 +6384,10 @@
     "emptyHint": "codeg は各エージェント自身のセッション記録から直接トークン数を読み取ります。更新すると、このマシンにある記録を集計します。",
     "emptyAction": "セッションを集計",
     "loadFailed": "使用量を読み込めませんでした",
-    "truncatedNotice": "期間が非常に長いため、表示中の数値は直近の一部のみを対象としています。"
+    "truncatedNotice": "期間が非常に長いため、表示中の数値は直近の一部のみを対象としています。",
+    "apiListEstimate": "≈ {amount} APIリスト",
+    "apiListEstimatePartial": "≈ {amount} APIリスト · トークンの {percent}%",
+    "apiListEstimateHint": "models.dev の公開 API 基本リスト料金です。キャッシュの読み書きを含み、長いコンテキストや推論の割増料金は含みません。サブスクリプションの課金とは異なります。"
   },
   "Forge": {
     "title": "リポジトリパネル",

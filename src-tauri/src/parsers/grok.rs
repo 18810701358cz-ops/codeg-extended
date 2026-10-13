@@ -475,6 +475,8 @@ impl GrokParser {
             lines_removed: None,
             other_tool_count: None,
             tool_calls,
+            timeline: Vec::new(),
+            recovered_result: None,
             // Grok runs every sub-agent as a full session of its own, so the
             // card can offer to open the child's transcript. Only hand over an
             // id that passed the path-traversal guard — it is used to look up a

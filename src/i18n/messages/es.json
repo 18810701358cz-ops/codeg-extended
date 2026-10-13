@@ -3593,6 +3593,9 @@
         "agentEffortLabel": "Esfuerzo",
         "agentRunning": "Ejecutando...",
         "agentLiveTranscript": "Actividad en vivo",
+        "agentProcessCount": "{count, plural, one {Actividad del subagente · # paso} other {Actividad del subagente · # pasos}}",
+        "agentProcessDuration": "Actividad del subagente · {duration}",
+        "agentRecoveredNote": "El subagente realmente terminó; su resultado nunca se entregó porque el turno se abortó:",
         "agentProgressTools": "{count} llamadas a herramientas",
         "agentProgressTurns": "{count} turnos",
         "agentProgressContext": "contexto {pct}%",
@@ -6381,7 +6384,10 @@
     "emptyHint": "Codeg lee los tokens directamente de la transcripción de cada agente. Actualiza para contabilizar lo que ya hay en esta máquina.",
     "emptyAction": "Contabilizar mis sesiones",
     "loadFailed": "No se pudo cargar el uso",
-    "truncatedNotice": "Este periodo es muy amplio: las cifras cubren solo su tramo más reciente."
+    "truncatedNotice": "Este periodo es muy amplio: las cifras cubren solo su tramo más reciente.",
+    "apiListEstimate": "≈ {amount} tarifa API",
+    "apiListEstimatePartial": "≈ {amount} tarifa API · {percent}% de tokens",
+    "apiListEstimateHint": "Tarifas base públicas de API de models.dev, con lecturas y escrituras de caché pero sin recargos por contexto largo ni por razonamiento. Los planes de suscripción facturan distinto."
   },
   "Forge": {
     "title": "Panel del repositorio",

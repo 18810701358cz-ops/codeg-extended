@@ -3593,6 +3593,9 @@
         "agentEffortLabel": "مستوى التفكير",
         "agentRunning": "قيد التشغيل...",
         "agentLiveTranscript": "النشاط المباشر",
+        "agentProcessCount": "{count, plural, zero {نشاط الوكيل الفرعي · صفر خطوة} one {نشاط الوكيل الفرعي · خطوة واحدة} two {نشاط الوكيل الفرعي · خطوتان} few {نشاط الوكيل الفرعي · # خطوات} many {نشاط الوكيل الفرعي · # خطوة} other {نشاط الوكيل الفرعي · # خطوة}}",
+        "agentProcessDuration": "نشاط الوكيل الفرعي · {duration}",
+        "agentRecoveredNote": "أتمّ الوكيل الفرعي عمله فعلاً؛ لكن نتيجته لم تُسلَّم قط لأن الجولة أُجهضت:",
         "agentProgressTools": "{count} استدعاءات أدوات",
         "agentProgressTurns": "{count} جولات",
         "agentProgressContext": "السياق {pct}%",
@@ -6381,7 +6384,10 @@
     "emptyHint": "يقرأ codeg أعداد الرموز مباشرة من سجل كل وكيل. حدّث لتُحسب الجلسات الموجودة على هذا الجهاز.",
     "emptyAction": "احسب جلساتي",
     "loadFailed": "تعذّر تحميل بيانات الاستهلاك",
-    "truncatedNotice": "هذا النطاق واسع جدًا — الأرقام تغطي أحدث جزء منه فقط."
+    "truncatedNotice": "هذا النطاق واسع جدًا — الأرقام تغطي أحدث جزء منه فقط.",
+    "apiListEstimate": "≈ {amount} قائمة API",
+    "apiListEstimatePartial": "≈ {amount} قائمة API · {percent}٪ من الرموز",
+    "apiListEstimateHint": "أسعار قائمة API الأساسية العامة من models.dev، وتشمل قراءة وكتابة الذاكرة المؤقتة دون رسوم السياق الطويل أو الاستدلال الإضافية. خطط الاشتراك تُحاسب بشكل مختلف."
   },
   "Forge": {
     "title": "لوحة المستودع",
