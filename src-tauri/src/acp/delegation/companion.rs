@@ -34,9 +34,8 @@
 //!    notification finds nothing and is silently ignored.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -360,8 +359,8 @@ pub struct InflightEntry {
 #[derive(Default)]
 pub struct InflightCalls {
     inner: Mutex<HashMap<String, InflightEntry>>,
-    /// Consecutive empty `check_user_feedback` deliveries for this process.
-    /// One companion serves one agent, so this is the loop the model is in.
+    /// Back-to-back empty `check_user_feedback` deliveries. One companion
+    /// serves one agent connection, so this is the loop that agent is in.
     feedback_poll: FeedbackPollGuard,
 }
 
@@ -390,11 +389,15 @@ impl InflightCalls {
     }
 
     /// Render one delivered `check_user_feedback` outcome, counting it toward
-    /// the consecutive-empty streak. A later call on the same `InflightCalls`
-    /// sees the updated streak. Notes reset it.
+    /// the back-to-back empty streak. A later call on the same `InflightCalls`
+    /// sees the updated streak. Notes reset it, and so does a quiet gap longer
+    /// than [`FEEDBACK_POLL_WINDOW`].
     fn render_observed_feedback(&self, outcome: &Value) -> Value {
         let count = outcome.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-        render_feedback_result_with_streak(outcome, self.feedback_poll.observe(count))
+        render_feedback_result_with_streak(
+            outcome,
+            self.feedback_poll.observe(count, Instant::now()),
+        )
     }
 }
 
@@ -1491,25 +1494,70 @@ fn render_batch_report(tasks: &[Value]) -> Value {
 /// that ignores that sentence.
 const FEEDBACK_EMPTY_STREAK_STOP: u32 = 3;
 
-/// Process-local counter of consecutive empty feedback pulls. A delivery that
-/// carries notes resets it. Each agent launch is its own `codeg-mcp`, so the
-/// counter does not cross agents.
+/// Longest gap between two empty `check_user_feedback` deliveries that still
+/// counts them as back-to-back.
+///
+/// The companion lives for the whole agent connection, across many turns, and
+/// notes are rare, so a streak that only notes could reset would sooner or
+/// later tell every checkpoint check of the session that it had been polling
+/// "N times in a row". The loop this guard is for (issue #861) is a model
+/// re-calling the tool with nothing in between, one inference per iteration:
+/// seconds, or tens of seconds for a slow reasoning model. A checkpoint check
+/// usually comes after longer work than that.
+///
+/// This is a timing heuristic. The companion sees only its own tools, not the
+/// agent's other work or its turns, so it cannot tell "nothing in between"
+/// from "quick work in between", and it errs in two known directions. A loop
+/// slower than one call per window never reaches the stronger wording, though
+/// each of its results still carries the "not until the next checkpoint" hint.
+/// An agent that keeps checking more than once per window gets the stronger
+/// wording for as long as it keeps that pace, across a quick turn boundary
+/// too. The window errs long because a missed loop keeps burning tokens, while
+/// a false escalation only adds a nudge to a model that is checking more than
+/// once a minute.
+const FEEDBACK_POLL_WINDOW: Duration = Duration::from_secs(60);
+
+/// Process-local count of back-to-back empty feedback pulls. A delivery that
+/// carries notes resets it, and an empty pull more than [`FEEDBACK_POLL_WINDOW`]
+/// after the previous empty one starts a new run. Each agent launch is its own
+/// `codeg-mcp`, so the count does not cross agents.
 #[derive(Default)]
 struct FeedbackPollGuard {
-    empty_streak: AtomicU32,
+    state: std::sync::Mutex<FeedbackPollState>,
+}
+
+#[derive(Default)]
+struct FeedbackPollState {
+    /// Empty deliveries in the current run, including the latest one.
+    empty_streak: u32,
+    /// When the latest empty delivery of the current run was rendered.
+    last_empty_at: Option<Instant>,
 }
 
 impl FeedbackPollGuard {
-    /// `Some(n)` is the empty streak including this call (1, 2, 3, …).
-    /// `None` means this delivery carried notes and the streak is now 0.
-    fn observe(&self, count: u64) -> Option<u32> {
-        if count == 0 {
-            let prev = self.empty_streak.fetch_add(1, Ordering::Relaxed);
-            Some(prev.saturating_add(1))
-        } else {
-            self.empty_streak.store(0, Ordering::Relaxed);
-            None
+    /// `Some(n)` is the back-to-back empty streak including this call (1, 2,
+    /// 3, …). `None` means this delivery carried notes and the streak is now 0.
+    fn observe(&self, count: u64, now: Instant) -> Option<u32> {
+        // Nothing below can panic, but a poisoned lock must not take the
+        // companion down with it: the state is two plain fields.
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if count > 0 {
+            *state = FeedbackPollState::default();
+            return None;
         }
+        let back_to_back = state
+            .last_empty_at
+            .is_some_and(|prev| now.saturating_duration_since(prev) <= FEEDBACK_POLL_WINDOW);
+        state.empty_streak = if back_to_back {
+            state.empty_streak.saturating_add(1)
+        } else {
+            1
+        };
+        state.last_empty_at = Some(now);
+        Some(state.empty_streak)
     }
 }
 
@@ -5501,11 +5549,52 @@ mod tests {
     #[test]
     fn feedback_poll_guard_counts_consecutive_empties_and_resets_on_notes() {
         let guard = FeedbackPollGuard::default();
-        assert_eq!(guard.observe(0), Some(1));
-        assert_eq!(guard.observe(0), Some(2));
-        assert_eq!(guard.observe(0), Some(3));
-        assert_eq!(guard.observe(1), None);
-        assert_eq!(guard.observe(0), Some(1));
+        let t0 = Instant::now();
+        let at = |secs| t0 + Duration::from_secs(secs);
+        assert_eq!(guard.observe(0, at(0)), Some(1));
+        assert_eq!(guard.observe(0, at(5)), Some(2));
+        assert_eq!(guard.observe(0, at(10)), Some(3));
+        assert_eq!(guard.observe(1, at(15)), None);
+        assert_eq!(guard.observe(0, at(20)), Some(1));
+    }
+
+    /// The companion outlives turns, so checks separated by real work must not
+    /// add up. A well-behaved agent that checks once every few minutes for the
+    /// whole session stays on the soft wording; the PR's first cut, which only
+    /// notes could reset, told it "N times in a row, stop polling" from the
+    /// third check on.
+    #[test]
+    fn feedback_poll_guard_restarts_the_streak_after_a_quiet_gap() {
+        let guard = FeedbackPollGuard::default();
+        let t0 = Instant::now();
+        let window = FEEDBACK_POLL_WINDOW.as_secs();
+        for i in 0..10 {
+            assert_eq!(
+                guard.observe(0, t0 + Duration::from_secs(i * (window + 1))),
+                Some(1),
+                "check {i} came after a quiet gap and must start a new run"
+            );
+        }
+
+        // A gap of exactly the window still counts as back-to-back; one second
+        // more starts over.
+        let guard = FeedbackPollGuard::default();
+        assert_eq!(guard.observe(0, t0), Some(1));
+        assert_eq!(guard.observe(0, t0 + FEEDBACK_POLL_WINDOW), Some(2));
+        let restart = t0 + FEEDBACK_POLL_WINDOW * 2 + Duration::from_secs(1);
+        assert_eq!(guard.observe(0, restart), Some(1));
+        assert_eq!(guard.observe(0, restart + Duration::from_secs(3)), Some(2));
+        assert_eq!(guard.observe(0, restart + Duration::from_secs(6)), Some(3));
+    }
+
+    /// Parallel calls can take the lock out of `now` order. An instant earlier
+    /// than the stored one counts as back-to-back instead of panicking.
+    #[test]
+    fn feedback_poll_guard_tolerates_out_of_order_instants() {
+        let guard = FeedbackPollGuard::default();
+        let t0 = Instant::now();
+        assert_eq!(guard.observe(0, t0 + Duration::from_secs(5)), Some(1));
+        assert_eq!(guard.observe(0, t0), Some(2));
     }
 
     /// The companion shares one guard across calls on the same `InflightCalls`.
