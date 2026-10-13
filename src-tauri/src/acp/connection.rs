@@ -34638,7 +34638,7 @@ mod zcode_mode_tests {
 
     #[test]
     fn zcode_records_history_without_enabling_native_parser_agents() {
-        assert_eq!(transcript_dir_for(AgentType::ZCode), Some("zcode-acp"));
+        assert_eq!(transcript_dir_for(AgentType::ZCode), Some("codeg-zcode-acp"));
         assert_eq!(transcript_dir_for(AgentType::ClaudeCode), None);
         assert_eq!(transcript_dir_for(AgentType::DeepSeek), None);
         assert!(transcript_dir_for(AgentType::custom("example").unwrap()).is_some());

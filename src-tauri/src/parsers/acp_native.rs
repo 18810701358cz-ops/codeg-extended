@@ -2451,7 +2451,7 @@ mod zcode_history_tests {
     async fn zcode_history_survives_reopen_and_keeps_tools_usage_and_continuations() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let agent = "zcode-acp";
+        let agent = crate::acp::registry::registry_id_for(AgentType::ZCode);
         let header = acp_transcript::TranscriptHeader::new("zcode", "old", "/workspace", 1000);
         acp_transcript::record_header_in(root, agent, &header)
             .await
@@ -2532,5 +2532,85 @@ mod zcode_history_tests {
         let summaries = parser.list_conversations().unwrap();
         assert_eq!(summaries.len(), 1, "continuation history should list once");
         assert_eq!(summaries[0].id, "new");
+    }
+}
+
+#[cfg(test)]
+mod zcode_legacy_history_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn zcode_legacy_histories_and_builtin_history_stay_separate_for_identical_session_ids() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let cases = [
+            (AgentType::custom("zcode").unwrap(), "zcode", "LEGACY_ZCODE"),
+            (
+                AgentType::custom("zcode-acp").unwrap(),
+                "zcode-acp",
+                "LEGACY_ACP",
+            ),
+            (
+                AgentType::ZCode,
+                crate::acp::registry::registry_id_for(AgentType::ZCode),
+                "BUILTIN_ZCODE",
+            ),
+        ];
+        for (agent, dir, marker) in cases {
+            for (sid, previous) in [("previous", None), ("same-id", Some("previous"))] {
+                let mut header = acp_transcript::TranscriptHeader::new(
+                    &agent.as_wire(),
+                    sid,
+                    "/workspace",
+                    1000,
+                );
+                if let Some(previous) = previous {
+                    header = header.continuing(previous);
+                }
+                acp_transcript::record_header_in(root, dir, &header)
+                    .await
+                    .unwrap();
+                acp_transcript::record_entry_in(
+                    root,
+                    dir,
+                    sid,
+                    EntryKind::Prompt,
+                    serde_json::json!([{"type":"text","text":format!("{marker}:{sid}")}]),
+                )
+                .await
+                .unwrap();
+                acp_transcript::record_entry_in(
+                    root,
+                    dir,
+                    sid,
+                    EntryKind::TurnEnd,
+                    serde_json::json!({"stopReason":"end_turn"}),
+                )
+                .await
+                .unwrap();
+            }
+        }
+        for (agent, _, marker) in cases {
+            let parser = AcpNativeParser::new_in(agent, root.to_path_buf());
+            let listed = parser.list_conversations().unwrap();
+            assert_eq!(listed.len(), 1, "only the continuation head is listed");
+            assert_eq!(listed[0].id, "same-id");
+            assert_eq!(listed[0].agent_type, agent);
+            let detail = parser.get_conversation("same-id").unwrap();
+            let turns = serde_json::to_string(&detail.turns).unwrap();
+            assert!(turns.contains(&format!("{marker}:previous")));
+            assert!(turns.contains(&format!("{marker}:same-id")));
+            for (_, _, other) in cases {
+                if other != marker {
+                    assert!(
+                        !turns.contains(other),
+                        "{agent} must not read {other}'s history"
+                    );
+                }
+            }
+            let old = parser.get_conversation("previous").unwrap();
+            assert_eq!(old.summary.agent_type, agent);
+            assert_eq!(old.turns.len(), 1, "old external IDs remain readable");
+        }
     }
 }

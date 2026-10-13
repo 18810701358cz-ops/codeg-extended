@@ -275,7 +275,8 @@ pub fn registry_id_for(agent_type: AgentType) -> &'static str {
         AgentType::DeepSeek => "deepseek-acp",
         AgentType::Qoder => "qoder-cli",
         AgentType::Antigravity => "antigravity-acp",
-        AgentType::ZCode => "zcode-acp",
+        // Keep the pre-integration custom:zcode-acp registry and history distinct.
+        AgentType::ZCode => "codeg-zcode-acp",
         // A custom agent's registry id IS its identity.
         AgentType::Custom(id) => id,
     }
@@ -298,7 +299,7 @@ pub fn from_registry_id(id: &str) -> Option<AgentType> {
         "deepseek-acp" => Some(AgentType::DeepSeek),
         "qoder-cli" => Some(AgentType::Qoder),
         "antigravity-acp" => Some(AgentType::Antigravity),
-        "zcode-acp" => Some(AgentType::ZCode),
+        "codeg-zcode-acp" => Some(AgentType::ZCode),
         // Only ids the user has actually registered resolve. An unregistered
         // id must stay `None` so the ACP-registry picker still offers it as
         // "addable" rather than treating it as already supported.

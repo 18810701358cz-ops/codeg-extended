@@ -17,7 +17,7 @@ The bridge reuses ZCode's existing authentication. Codeg does not copy credentia
 
 A new session explicitly confirms Build mode before sending its first prompt. A valid saved mode, including Yolo, takes precedence. Existing sessions use the normal restore and preference flow. Model and thought selectors follow ACP configuration updates rather than a hardcoded model list.
 
-Codeg records its own ACP transcripts for ZCode, including messages, thoughts, tools and usage. These transcripts support history and reconnecting to sessions created in Codeg. This integration does not scan ZCode's native SQLite sessions.
+Codeg records its own ACP transcripts for ZCode, including messages, thoughts, tools and usage. These transcripts support history and reconnecting to sessions created in Codeg. Existing custom ZCode entries keep their registration, launch configuration and history; the built-in option records its history separately. This integration does not scan ZCode's native SQLite sessions.
 
 Manage stdio MCP servers through Codeg's MCP settings and assign them to ZCode. The configuration is stored in Codeg's data directory and forwarded when creating or restoring a session; it is not written into official ZCode's provider or credential files. When multi-agent delegation is enabled, Codeg injects its per-launch `codeg-mcp` companion using the same path.
 

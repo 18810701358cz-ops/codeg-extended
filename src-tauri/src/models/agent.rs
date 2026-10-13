@@ -155,7 +155,8 @@ impl AgentType {
 /// conservative slug so it can never escape a directory, collide with the
 /// wire-form separator, or shadow a built-in name.
 /// ZCode keeps its formerly valid custom ids for persisted registrations:
-/// its builtin registry id is zcode-acp, and prefixed wire names are distinct.
+/// its builtin registry id is codeg-zcode-acp, keeping registration, launch
+/// caches and ACP transcript directories distinct from the old custom ids.
 pub fn is_valid_custom_agent_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64

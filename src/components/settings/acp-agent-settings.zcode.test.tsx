@@ -25,7 +25,7 @@ describe("ZCode settings panel", () => {
     const agent: AcpAgentInfo = {
       agent_type: "zcode",
       name: "ZCode",
-      registry_id: "zcode-acp",
+      registry_id: "codeg-zcode-acp",
       registry_version: "0.69.2",
       installed_version: "0.69.2",
       description: "Official ZCode runtime via the community ACP bridge",
