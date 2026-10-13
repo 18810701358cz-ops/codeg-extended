@@ -81,9 +81,10 @@ const ASSET_REFERENCE = /\/_next\/static\/[^"'\\\s<>)]+/g
 self.addEventListener("install", (event) => {
   // The page that registers this worker loaded everything before the worker
   // existed, so nothing of this release is cached yet. The install succeeds
-  // only once the boot documents and the build files they name are stored;
-  // otherwise the current worker, if any, stays and the next page load
-  // registers again. Then swap in at once — waiting would only delay that.
+  // only once the boot documents and every build file they name that the
+  // server has are stored; otherwise the current worker, if any, stays and
+  // the next page load registers again. Then swap in at once — waiting
+  // would only delay that.
   event.waitUntil(seedRelease())
   self.skipWaiting()
 })
@@ -134,6 +135,14 @@ self.addEventListener("fetch", (event) => {
 })
 
 async function seedRelease() {
+  // New bytes under the active worker's own URL come from the browser's
+  // update check after the server moved to another release: the static
+  // handler ignores the ?v= query. Installing them would share the active
+  // worker's caches, and wipe them if this install then failed. Refuse;
+  // the next page from the server registers its own release's URL.
+  if (self.registration.active?.scriptURL === self.location.href) {
+    throw new Error("superseded: the page will register its own release")
+  }
   // Start this release's caches empty: what an earlier activation of the
   // same version left (a rollback, a stale page registering it again) may
   // hold fixed-name files from whatever the server served back then.
@@ -147,11 +156,18 @@ async function seedRelease() {
     const html = await response.clone().text()
     for (const match of html.matchAll(ASSET_REFERENCE)) referenced.add(match[0])
   }
-  // A failed fetch fails the install, to be retried. An answer that isn't
-  // the file (the static handler's index.html fallback, a 404) means there
-  // is nothing to store, and must not block every future install.
+  // A failed fetch or a 5xx fails the install, to be retried. An answer
+  // that the file isn't there (the static handler's index.html fallback, a
+  // 404) means there is nothing to store, and must not block every future
+  // install.
   const assets = await Promise.all(
-    [...referenced].map(async (path) => [path, await fetch(path)])
+    [...referenced].map(async (path) => {
+      const response = await fetch(path)
+      if (response.status >= 500) {
+        throw new Error(`cannot seed ${path}: HTTP ${response.status}`)
+      }
+      return [path, response]
+    })
   )
   try {
     const shell = await caches.open(SHELL_CACHE)

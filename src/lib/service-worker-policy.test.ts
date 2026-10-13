@@ -45,6 +45,8 @@ class FakeCacheStorage {
   readonly stores = new Map<string, FakeCache>()
   failOpen = false
   failWrites = false
+  /** Fails only the writes whose absolute URL matches. */
+  failWritesFor: ((href: string) => boolean) | null = null
   writeGate: Promise<void> = Promise.resolve()
 
   constructor(private readonly base: string) {}
@@ -81,6 +83,12 @@ class FakeCacheStorage {
     return undefined
   }
 
+  /** The stored body for a path, or undefined when absent. */
+  async body(name: string, key: CacheKey): Promise<string | undefined> {
+    const hit = await this.stores.get(name)?.match(key)
+    return hit?.text()
+  }
+
   /** Paths stored in one cache, for assertions. */
   paths(name: string): string[] {
     const cache = this.stores.get(name)
@@ -111,10 +119,11 @@ class FakeCache {
     // or fails, so a caller that awaits put() waits for the whole body.
     const body = await response.arrayBuffer()
     await this.storage.writeGate
-    if (this.storage.failWrites) {
+    const href = this.storage.keyOf(key)
+    if (this.storage.failWrites || this.storage.failWritesFor?.(href)) {
       throw new DOMException("quota exceeded", "QuotaExceededError")
     }
-    this.entries.set(this.storage.keyOf(key), {
+    this.entries.set(href, {
       status: response.status,
       headers: [...response.headers],
       body,
@@ -138,7 +147,9 @@ interface Worker {
 function loadWorker(
   network: Network,
   version: string | null = "1.2.3",
-  sharedStorage?: FakeCacheStorage
+  sharedStorage?: FakeCacheStorage,
+  /** Script URL of the worker already active on the registration. */
+  activeScriptUrl: string | null = null
 ) {
   const scriptUrl =
     version === null ? `${ORIGIN}/sw.js` : `${ORIGIN}/sw.js?v=${version}`
@@ -152,6 +163,9 @@ function loadWorker(
     },
     skipWaiting,
     clients: { claim },
+    registration: {
+      active: activeScriptUrl ? { scriptURL: activeScriptUrl } : null,
+    },
   }
   // Workers of different releases on one origin share its Cache Storage.
   const storage = sharedStorage ?? new FakeCacheStorage(scriptUrl)
@@ -358,6 +372,9 @@ describe("install", () => {
       "/_next/static/chunks/b.css",
       "/_next/static/chunks/c.js",
     ])
+    for (const p of worker.storage.paths(ASSETS)) {
+      expect(await worker.storage.body(ASSETS, p)).toBe(`asset:${p}`)
+    }
   })
 
   it.each([
@@ -397,6 +414,67 @@ describe("install", () => {
     await leftover.put(subresource("/vs/loader.js"), script("stale loader"))
     await install(worker)
     expect(worker.storage.paths(ASSETS)).toEqual([])
+  })
+
+  it("fails the install, leaving nothing behind, when a named file can't be stored", async () => {
+    const worker = loadWorker(async (input) => {
+      const p = pathOf(input)
+      if (p === "/login") {
+        return html('<script src="/_next/static/chunks/a.js"></script>')
+      }
+      if (BOOT_DOCUMENTS.includes(p)) return html(`doc:${p}`)
+      return script(`asset:${p}`)
+    })
+    worker.storage.failWritesFor = (href) => href.includes("/_next/static/")
+    await expect(install(worker)).rejects.toThrow()
+    expect(await worker.storage.keys()).toEqual([])
+  })
+
+  it.each([500, 503])(
+    "fails the install when a named file answers %i, to retry later",
+    async (status) => {
+      const worker = loadWorker(async (input) => {
+        const p = pathOf(input)
+        if (p === "/workspace") {
+          return html('<script src="/_next/static/chunks/a.js"></script>')
+        }
+        if (BOOT_DOCUMENTS.includes(p)) return html(`doc:${p}`)
+        return plain(status)
+      })
+      await expect(install(worker)).rejects.toThrow()
+      expect(await worker.storage.keys()).toEqual([])
+    }
+  )
+
+  it("refuses new bytes under the active worker's own URL, keeping its caches", async () => {
+    // The browser's update check re-fetches /sw.js?v=1.2.3; a server on a
+    // newer release answers with its own script. Installing that would
+    // share — and on failure wipe — the active worker's caches.
+    const storage = new FakeCacheStorage(`${ORIGIN}/sw.js`)
+    const active = await storage.open(SHELL)
+    await active.put("/workspace", html("active workspace"))
+    const worker = loadWorker(
+      bootNetwork,
+      "1.2.3",
+      storage,
+      `${ORIGIN}/sw.js?v=1.2.3`
+    )
+    await expect(install(worker)).rejects.toThrow("superseded")
+    expect(worker.fetch).not.toHaveBeenCalled()
+    expect(await storage.body(SHELL, "/workspace")).toBe("active workspace")
+  })
+
+  it("installs over a worker of another release", async () => {
+    const worker = loadWorker(
+      bootNetwork,
+      "1.2.3",
+      undefined,
+      `${ORIGIN}/sw.js?v=1.2.2`
+    )
+    await install(worker)
+    expect(worker.storage.paths(SHELL).sort()).toEqual(
+      [...BOOT_DOCUMENTS].sort()
+    )
   })
 
   it("fails the install when the documents cannot be stored", async () => {
@@ -757,6 +835,9 @@ describe("cache-first assets", () => {
     expect(worker.storage.paths(ASSETS)).toEqual([
       "/_next/static/chunks/old.js",
     ])
+    expect(
+      await worker.storage.body(ASSETS, "/_next/static/chunks/old.js")
+    ).toBe("old chunk")
   })
 
   it("never takes a hashed URL from a document cache", async () => {
