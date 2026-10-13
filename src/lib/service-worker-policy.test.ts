@@ -135,7 +135,11 @@ interface Worker {
   handlers: Map<string, (event: unknown) => void>
 }
 
-function loadWorker(network: Network, version: string | null = "1.2.3") {
+function loadWorker(
+  network: Network,
+  version: string | null = "1.2.3",
+  sharedStorage?: FakeCacheStorage
+) {
   const scriptUrl =
     version === null ? `${ORIGIN}/sw.js` : `${ORIGIN}/sw.js?v=${version}`
   const handlers = new Map<string, (event: unknown) => void>()
@@ -149,7 +153,8 @@ function loadWorker(network: Network, version: string | null = "1.2.3") {
     skipWaiting,
     clients: { claim },
   }
-  const storage = new FakeCacheStorage(scriptUrl)
+  // Workers of different releases on one origin share its Cache Storage.
+  const storage = sharedStorage ?? new FakeCacheStorage(scriptUrl)
   const fetch = vi.fn<Network>(network)
   new Function("self", "caches", "fetch", SW_SOURCE)(self, storage, fetch)
   const worker: Worker = { storage, fetch, skipWaiting, claim, handlers }
@@ -208,9 +213,12 @@ function subresource(pathAndQuery: string, origin = ORIGIN): FakeRequest {
   return { method: "GET", url: `${origin}${pathAndQuery}`, mode: "no-cors" }
 }
 
+// Configurable, so a helper's override can be overridden again: redefining
+// a non-configurable property throws, and inside a network stub that throw
+// would turn the intended response into a failed fetch.
 function withProps(response: Response, props: Record<string, unknown>) {
   for (const [key, value] of Object.entries(props)) {
-    Object.defineProperty(response, key, { value })
+    Object.defineProperty(response, key, { value, configurable: true })
   }
   return response
 }
@@ -331,10 +339,73 @@ describe("install", () => {
     expect(worker.storage.paths(SHELL)).toEqual([])
   })
 
+  it("stores the build files the boot documents name", async () => {
+    const worker = loadWorker(async (input) => {
+      const p = pathOf(input)
+      if (p === "/workspace") {
+        return html(
+          '<script src="/_next/static/chunks/a.js" async></script>' +
+            '<link rel="stylesheet" href="/_next/static/chunks/b.css"/>' +
+            '<script>self.__next_f.push([1,"I[\\"/_next/static/chunks/c.js\\"]"])</script>'
+        )
+      }
+      if (BOOT_DOCUMENTS.includes(p)) return html(`doc:${p}`)
+      return script(`asset:${p}`)
+    })
+    await install(worker)
+    expect(worker.storage.paths(ASSETS).sort()).toEqual([
+      "/_next/static/chunks/a.js",
+      "/_next/static/chunks/b.css",
+      "/_next/static/chunks/c.js",
+    ])
+  })
+
+  it.each([
+    ["the static handler's index.html fallback", () => html("index")],
+    ["a 404", () => plain(404)],
+  ])("skips a named file answered with %s", async (_, answer) => {
+    const worker = loadWorker(async (input) => {
+      const p = pathOf(input)
+      if (p === "/login")
+        return html('<script src="/_next/static/chunks/gone.js">')
+      if (BOOT_DOCUMENTS.includes(p)) return html(`doc:${p}`)
+      return answer()
+    })
+    await install(worker)
+    expect(worker.storage.paths(SHELL)).toContain("/login")
+    expect(worker.storage.paths(ASSETS)).toEqual([])
+  })
+
+  it("fails the install, leaving nothing behind, when a named file can't be fetched", async () => {
+    const worker = loadWorker(async (input) => {
+      const p = pathOf(input)
+      if (p === "/login")
+        return html('<script src="/_next/static/chunks/a.js">')
+      if (BOOT_DOCUMENTS.includes(p)) return html(`doc:${p}`)
+      throw new TypeError("Failed to fetch")
+    })
+    await expect(install(worker)).rejects.toThrow()
+    expect(await worker.storage.keys()).toEqual([])
+  })
+
+  it("starts this release's caches empty", async () => {
+    // A cache of the same name can survive from an earlier activation of
+    // this version, holding whatever the server served under fixed names
+    // back then.
+    const worker = loadWorker(bootNetwork)
+    const leftover = await worker.storage.open(ASSETS)
+    await leftover.put(subresource("/vs/loader.js"), script("stale loader"))
+    await install(worker)
+    expect(worker.storage.paths(ASSETS)).toEqual([])
+  })
+
   it("fails the install when the documents cannot be stored", async () => {
     const worker = loadWorker(bootNetwork)
     worker.storage.failWrites = true
     await expect(install(worker)).rejects.toThrow()
+    // A half-stored release would pass for the previous one at the next
+    // activation, so its caches go too.
+    expect(await worker.storage.keys()).toEqual([])
   })
 })
 
@@ -342,13 +413,43 @@ describe("cache names follow the release", () => {
   it("names caches after the script URL's version", async () => {
     const worker = loadWorker(bootNetwork, "2.0.0")
     await install(worker)
-    expect(await worker.storage.keys()).toEqual(["codeg-shell-v1-2.0.0"])
+    expect((await worker.storage.keys()).sort()).toEqual([
+      "codeg-assets-v1-2.0.0",
+      "codeg-shell-v1-2.0.0",
+    ])
   })
 
   it("still works when registered without a version", async () => {
     const worker = loadWorker(bootNetwork, null)
     await install(worker)
-    expect(await worker.storage.keys()).toEqual(["codeg-shell-v1-unversioned"])
+    expect((await worker.storage.keys()).sort()).toEqual([
+      "codeg-assets-v1-unversioned",
+      "codeg-shell-v1-unversioned",
+    ])
+  })
+
+  it("keeps no cache from another policy", async () => {
+    const worker = loadWorker(bootNetwork)
+    await worker.storage.open("codeg-assets-v0-1.2.2")
+    await worker.storage.open("codeg-shell-v0-1.2.2")
+    await activate(worker)
+    expect(await worker.storage.keys()).toEqual([])
+  })
+
+  it("keeps the release it replaces across a rollback and a further update", async () => {
+    // A → B → A (rollback) → C: C replaces A, so A's assets are the ones
+    // its still-open pages may need, not B's.
+    const storage = new FakeCacheStorage(`${ORIGIN}/sw.js`)
+    for (const version of ["A", "B", "A", "C"]) {
+      const worker = loadWorker(bootNetwork, version, storage)
+      await install(worker)
+      await activate(worker)
+    }
+    expect((await storage.keys()).sort()).toEqual([
+      "codeg-assets-v1-A",
+      "codeg-assets-v1-C",
+      "codeg-shell-v1-C",
+    ])
   })
 
   it("keeps the previous release's assets, drops older codeg caches, and claims open pages", async () => {
@@ -415,6 +516,21 @@ describe("navigations", () => {
     expect(worker.storage.paths(SHELL)).not.toContain(
       "/settings?tab=appearance"
     )
+  })
+
+  it("answers online with the network's document even when the route is cached", async () => {
+    // /workspace was seeded at install; a deploy since then must still win.
+    const worker = await installedWorker(async () => html("new workspace"))
+    const { response, settled } = dispatchFetch(
+      worker,
+      navigation("/workspace")
+    )
+    expect(await bodyOf(response)).toBe("new workspace")
+    await settled()
+    worker.fetch.mockImplementation(offline)
+    expect(
+      await bodyOf(dispatchFetch(worker, navigation("/workspace")).response)
+    ).toBe("new workspace")
   })
 
   it("does not store a successful answer that is not HTML", async () => {
@@ -505,7 +621,33 @@ describe("navigations", () => {
     expect(worker.storage.paths(SHELL)).not.toContain("/settings")
   })
 
-  it("answers before the copy is stored, so the document streams", async () => {
+  it("answers while the network body is still arriving", async () => {
+    let finish!: () => void
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("<!doctype html>"))
+        finish = () => controller.close()
+      },
+    })
+    const streaming = withProps(
+      new Response(body, { headers: { "content-type": "text/html" } }),
+      { type: "basic" }
+    )
+    const worker = await installedWorker(async () => streaming)
+    const { response, settled } = dispatchFetch(worker, navigation("/settings"))
+    let answered = false
+    void response!.then(() => (answered = true))
+    // Every step before the answer is a microtask; a macrotask later it
+    // must be out, with the body still open.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(answered).toBe(true)
+    finish()
+    expect(await bodyOf(response)).toBe("<!doctype html>")
+    await settled()
+    expect(worker.storage.paths(SHELL)).toContain("/settings")
+  })
+
+  it("answers before the copy is stored", async () => {
     const worker = await installedWorker(async () => html("fresh"))
     let release!: () => void
     worker.storage.writeGate = new Promise((resolve) => (release = resolve))
@@ -557,14 +699,30 @@ describe("cache-first assets", () => {
   })
 
   it.each([
-    ["an opaque response", () => withProps(script(), { type: "opaque" })],
+    [
+      "a cross-origin answer reached through a redirect",
+      () => withProps(script(), { type: "cors", redirected: true }),
+    ],
+    [
+      "an opaque response",
+      () =>
+        withProps(new Response(null, { status: 200 }), {
+          type: "opaque",
+          status: 0,
+          ok: false,
+        }),
+    ],
     ["a 404", () => plain(404)],
   ])("never stores %s", async (_, answer) => {
-    const worker = loadWorker(async () => answer())
-    await dispatchFetch(
+    const reply = answer()
+    const worker = loadWorker(async () => reply)
+    const { response, settled } = dispatchFetch(
       worker,
       subresource("/_next/static/chunks/a.js")
-    ).settled()
+    )
+    // The page still gets the network's answer; it just isn't kept.
+    expect(await response).toBe(reply)
+    await settled()
     expect(worker.storage.paths(ASSETS)).toEqual([])
   })
 
@@ -583,6 +741,35 @@ describe("cache-first assets", () => {
     )
     expect(await bodyOf(response)).toBe("old chunk")
     expect(worker.fetch).not.toHaveBeenCalled()
+  })
+
+  it("copies a previous release's chunk into this release's cache", async () => {
+    const worker = loadWorker(offline)
+    const previous = await worker.storage.open("codeg-assets-v1-1.2.2")
+    await previous.put(
+      subresource("/_next/static/chunks/old.js"),
+      script("old chunk")
+    )
+    await dispatchFetch(
+      worker,
+      subresource("/_next/static/chunks/old.js")
+    ).settled()
+    expect(worker.storage.paths(ASSETS)).toEqual([
+      "/_next/static/chunks/old.js",
+    ])
+  })
+
+  it("never takes a hashed URL from a document cache", async () => {
+    // Navigating to a chunk URL the server no longer has stores its
+    // index.html fallback as a document; a script request must not get it.
+    const worker = loadWorker(async () => script("real chunk"))
+    const shell = await worker.storage.open("codeg-shell-v1-1.2.2")
+    await shell.put(subresource("/_next/static/chunks/x.js"), html("index"))
+    const { response } = dispatchFetch(
+      worker,
+      subresource("/_next/static/chunks/x.js")
+    )
+    expect(await bodyOf(response)).toBe("real chunk")
   })
 
   it("never serves a fixed-name file from another release, and revalidates it", async () => {

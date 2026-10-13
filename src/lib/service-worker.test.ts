@@ -124,9 +124,10 @@ describe("registerAppServiceWorker", () => {
     const register = vi.fn(async () => ({}))
     mockRegistration(register)
     await expect(registerAppServiceWorker()).resolves.toBe(true)
-    expect(register).toHaveBeenCalledWith("/sw.js?v=0.36.0", {
-      scope: SERVICE_WORKER_SCOPE,
-    })
+    // The literal on purpose: a narrower scope would leave /, /login and
+    // the build assets uncontrolled.
+    expect(register).toHaveBeenCalledWith("/sw.js?v=0.36.0", { scope: "/" })
+    expect(SERVICE_WORKER_SCOPE).toBe("/")
   })
 
   it("swallows a rejected registration", async () => {
@@ -159,15 +160,23 @@ describe("registerAppServiceWorker", () => {
     )
     const fetchMock = vi.fn(async () => new Response("ok"))
     vi.stubGlobal("fetch", fetchMock)
-    stubLoadedResources([`${window.location.origin}/_next/static/chunks/a.js`])
+    const origin = window.location.origin
+    stubLoadedResources([
+      `${origin}/_next/static/chunks/a.js`,
+      `${origin}/api/health`,
+      `${origin}/_next/static/chunks/b.css`,
+      `${origin}/vs/loader.js`,
+    ])
 
     await registerAppServiceWorker()
     expect(listeners).toHaveLength(1)
     expect(fetchMock).not.toHaveBeenCalled()
     listeners[0]()
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${window.location.origin}/_next/static/chunks/a.js`
-    )
+    expect(fetchMock.mock.calls).toEqual([
+      [`${origin}/_next/static/chunks/a.js`],
+      [`${origin}/_next/static/chunks/b.css`],
+      [`${origin}/vs/loader.js`],
+    ])
   })
 })
 

@@ -102,8 +102,9 @@ export function loadedCacheableAssets(): string[] {
  * worker at all, and after an update it went into the previous release's
  * cache, which the next release deletes. An offline reload later in this
  * session would then find the shell document but not the scripts it boots
- * with. Asking for the same files again — through the new worker, mostly
- * answered by the HTTP cache — lets it store them.
+ * with. Asking for the same files again, through the new worker this time,
+ * lets it store them — answered from the HTTP cache or the previous
+ * release's cache, rarely from the network.
  */
 function recacheLoadedAssets(): void {
   for (const url of loadedCacheableAssets()) {

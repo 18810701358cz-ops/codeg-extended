@@ -29,15 +29,16 @@
  *     without failing the response it was copying.
  *
  * Versions: the page registers this script as /sw.js?v=<app version>, so
- * each release installs a new worker whose caches are named after it, and
- * activate() drops the older codeg caches, keeping only the previous
- * release's assets for pages still running it. That is what bounds Cache
- * Storage — it never expires entries on its own, so hashed build output
- * would otherwise pile up release after release — and what keeps the files
- * without a content hash (Monaco's loader and editor entry points under
- * /vs, the icons, the manifest) from being served stale after an update.
- * Builds that keep the version keep their caches. Bump POLICY when a change
- * to the rules below must not inherit entries from the same release.
+ * each release installs a new worker whose caches are named after it and
+ * start empty, and activate() drops the older codeg caches, keeping only
+ * the previous release's assets for pages still running it. That is what
+ * bounds Cache Storage — it never expires entries on its own, so hashed
+ * build output would otherwise pile up release after release — and what
+ * keeps the files without a content hash (Monaco's loader and editor entry
+ * points under /vs, the icons, the manifest) from being served stale after
+ * an update. Builds that keep the version keep their caches. Bump POLICY
+ * when older caches must not be reused at all: the next activation then
+ * keeps none of them.
  *
  * Retiring this worker takes a replacement, not a deletion: the static
  * handler answers a missing /sw.js with index.html as text/html, the
@@ -48,7 +49,8 @@
 const POLICY = "v1"
 const BUILD = new URL(self.location.href).searchParams.get("v") || "unversioned"
 const VERSION = `${POLICY}-${BUILD}`
-const ASSETS_CACHE = `codeg-assets-${VERSION}`
+const ASSETS_PREFIX = `codeg-assets-${POLICY}-`
+const ASSETS_CACHE = `${ASSETS_PREFIX}${BUILD}`
 const SHELL_CACHE = `codeg-shell-${VERSION}`
 const SHELL_PATH = "/index.html"
 
@@ -71,12 +73,18 @@ const CACHEABLE_PREFIXES = ["/_next/static/", "/vs/", "/icon", "/manifest.json"]
 // keep their names from one release to the next.
 const IMMUTABLE_PREFIX = "/_next/static/"
 
+// Build files a document names by URL: its script and stylesheet tags and
+// the chunk list in its inline RSC payload, where quotes are escaped —
+// hence the backslash among the characters that end a match.
+const ASSET_REFERENCE = /\/_next\/static\/[^"'\\\s<>)]+/g
+
 self.addEventListener("install", (event) => {
-  // The page that registers this worker loaded its own document before any
-  // worker existed, so no navigation handler has stored a shell yet: seed
-  // them all or fail the install (the next page load registers again).
-  // Then swap in immediately — a waiting worker would only delay that.
-  event.waitUntil(seedBootDocuments())
+  // The page that registers this worker loaded everything before the worker
+  // existed, so nothing of this release is cached yet. The install succeeds
+  // only once the boot documents and the build files they name are stored;
+  // otherwise the current worker, if any, stays and the next page load
+  // registers again. Then swap in at once — waiting would only delay that.
+  event.waitUntil(seedRelease())
   self.skipWaiting()
 })
 
@@ -89,12 +97,14 @@ self.addEventListener("activate", (event) => {
           name !== ASSETS_CACHE &&
           name !== SHELL_CACHE
       )
-      // Keep one older asset cache — the newest, i.e. the release this one
-      // replaces (keys() lists caches in creation order). Pages still
-      // running that release go on lazy-loading its hashed chunks from it
-      // after the server has dropped them; the next release deletes it.
+      // Keep one older asset cache: the newest of this policy, which is the
+      // release this one replaces — keys() lists caches in creation order,
+      // and only a successful install leaves its caches behind, created
+      // afresh. Pages still running that release go on lazy-loading its
+      // hashed chunks from it after the server has dropped them; the next
+      // release deletes it.
       const previousAssets = older
-        .filter((name) => name.startsWith("codeg-assets-"))
+        .filter((name) => name.startsWith(ASSETS_PREFIX))
         .pop()
       await Promise.all(
         older
@@ -123,21 +133,54 @@ self.addEventListener("fetch", (event) => {
   }
 })
 
-async function seedBootDocuments() {
-  const documents = await Promise.all(
-    BOOT_DOCUMENTS.map(async (path) => {
-      const response = await fetch(path, { cache: "reload" })
-      // A redirect here is an auth proxy's login page, not the app.
-      if (!response.ok || response.redirected || !isHtml(response)) {
-        throw new Error(`cannot seed ${path}: HTTP ${response.status}`)
-      }
-      return [path, response]
-    })
+async function seedRelease() {
+  // Start this release's caches empty: what an earlier activation of the
+  // same version left (a rollback, a stale page registering it again) may
+  // hold fixed-name files from whatever the server served back then.
+  await dropReleaseCaches()
+  const documents = await Promise.all(BOOT_DOCUMENTS.map(fetchBootDocument))
+  // A document alone doesn't boot offline: the scripts it names must be
+  // stored with it, or an update installed from another tab would replace
+  // a working offline workspace with one whose new chunks never loaded.
+  const referenced = new Set()
+  for (const [, response] of documents) {
+    const html = await response.clone().text()
+    for (const match of html.matchAll(ASSET_REFERENCE)) referenced.add(match[0])
+  }
+  // A failed fetch fails the install, to be retried. An answer that isn't
+  // the file (the static handler's index.html fallback, a 404) means there
+  // is nothing to store, and must not block every future install.
+  const assets = await Promise.all(
+    [...referenced].map(async (path) => [path, await fetch(path)])
   )
-  const cache = await caches.open(SHELL_CACHE)
-  await Promise.all(
-    documents.map(([path, response]) => cache.put(path, response))
-  )
+  try {
+    const shell = await caches.open(SHELL_CACHE)
+    const assetCache = await caches.open(ASSETS_CACHE)
+    await Promise.all([
+      ...documents.map(([path, response]) => shell.put(path, response)),
+      ...assets
+        .filter(([, response]) => isStorableAsset(response))
+        .map(([path, response]) => assetCache.put(path, response)),
+    ])
+  } catch (error) {
+    // Leave nothing behind: activate() takes the newest asset cache for the
+    // previous release, so a half-stored failed install must not be one.
+    await dropReleaseCaches().catch(() => {})
+    throw error
+  }
+}
+
+async function fetchBootDocument(path) {
+  const response = await fetch(path, { cache: "reload" })
+  // A redirect here is an auth proxy's login page, not the app.
+  if (!response.ok || response.redirected || !isHtml(response)) {
+    throw new Error(`cannot seed ${path}: HTTP ${response.status}`)
+  }
+  return [path, response]
+}
+
+function dropReleaseCaches() {
+  return Promise.all([caches.delete(SHELL_CACHE), caches.delete(ASSETS_CACHE)])
 }
 
 async function navigateNetworkFirst(event, path) {
@@ -173,9 +216,13 @@ async function cacheFirst(event, path) {
   // server: the HTTP cache may still hold the previous release's copy as
   // heuristically fresh (the static handler sends no Cache-Control), and
   // storing that would pin it here until the next release.
-  const cached =
-    (await cacheMatch(ASSETS_CACHE, request)) ||
-    (immutable ? await anyCacheMatch(request) : undefined)
+  let cached = await cacheMatch(ASSETS_CACHE, request)
+  if (!cached && immutable) {
+    cached = await previousReleaseMatch(request)
+    // Copy it over, so this release's cache holds what its pages use and
+    // the next release's cleanup can't take it away.
+    if (cached) putInBackground(event, ASSETS_CACHE, request, cached.clone())
+  }
   if (cached) return cached
   const response = await (immutable
     ? fetch(request)
@@ -186,10 +233,14 @@ async function cacheFirst(event, path) {
   // page. Caching that HTML under a script URL would keep breaking the app
   // across a rollback, so a response that is not what its URL claims never
   // enters the cache.
-  if (response.ok && response.type === "basic" && !isHtml(response)) {
+  if (isStorableAsset(response)) {
     putInBackground(event, ASSETS_CACHE, request, response.clone())
   }
   return response
+}
+
+function isStorableAsset(response) {
+  return response.ok && response.type === "basic" && !isHtml(response)
 }
 
 async function cacheMatch(cacheName, key) {
@@ -201,12 +252,20 @@ async function cacheMatch(cacheName, key) {
   }
 }
 
-async function anyCacheMatch(key) {
+// Other releases' asset caches only: the shell cache keys documents by
+// path, and a navigation to a hashed URL the server no longer has would
+// have stored its index.html fallback there.
+async function previousReleaseMatch(key) {
   try {
-    return await caches.match(key)
+    for (const name of await caches.keys()) {
+      if (!name.startsWith(ASSETS_PREFIX) || name === ASSETS_CACHE) continue
+      const hit = await (await caches.open(name)).match(key)
+      if (hit) return hit
+    }
   } catch {
-    return undefined
+    // Unreadable storage is a miss.
   }
+  return undefined
 }
 
 // Copies a response into a cache without holding it back: the caller
