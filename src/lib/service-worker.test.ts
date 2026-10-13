@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@/lib/transport", () => ({
@@ -6,10 +8,12 @@ vi.mock("@/lib/transport", () => ({
 
 import { isDesktop } from "@/lib/transport"
 import {
+  CACHEABLE_PREFIXES,
   SERVICE_WORKER_SCOPE,
-  SERVICE_WORKER_URL,
+  loadedCacheableAssets,
   registerAppServiceWorker,
   serviceWorkerEligible,
+  serviceWorkerUrl,
 } from "./service-worker"
 
 /**
@@ -32,11 +36,21 @@ function setServiceWorkerApi(value: ServiceWorkerRegistration | undefined) {
   }
 }
 
-function mockRegistration(register: () => Promise<unknown>) {
+function mockRegistration(
+  register: () => Promise<unknown>,
+  addEventListener: (type: string, listener: () => void) => void = () => {}
+) {
   setServiceWorkerApi({
     register,
+    addEventListener,
   } as unknown as ServiceWorkerRegistration)
   return register
+}
+
+function stubLoadedResources(names: string[]) {
+  vi.spyOn(performance, "getEntriesByType").mockReturnValue(
+    names.map((name) => ({ name }) as PerformanceEntry)
+  )
 }
 
 let originalSecureContext: boolean
@@ -51,6 +65,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   vi.unstubAllEnvs()
   window.isSecureContext = originalSecureContext
   setServiceWorkerApi(originalApi as ServiceWorkerRegistration | undefined)
@@ -86,12 +102,29 @@ describe("serviceWorkerEligible", () => {
   })
 })
 
+describe("serviceWorkerUrl", () => {
+  it("carries the app version so each release installs a fresh worker", () => {
+    expect(serviceWorkerUrl("0.36.0")).toBe("/sw.js?v=0.36.0")
+    expect(serviceWorkerUrl("1.0.0-rc.1+b2")).toBe("/sw.js?v=1.0.0-rc.1%2Bb2")
+  })
+
+  it("falls back to the bare script without a version", () => {
+    expect(serviceWorkerUrl("")).toBe("/sw.js")
+  })
+
+  it("reads the version next.config.ts inlines at build", () => {
+    vi.stubEnv("CODEG_APP_VERSION", "9.8.7")
+    expect(serviceWorkerUrl()).toBe("/sw.js?v=9.8.7")
+  })
+})
+
 describe("registerAppServiceWorker", () => {
-  it("registers at the root scope and reports success", async () => {
+  it("registers the versioned script at the root scope and reports success", async () => {
+    vi.stubEnv("CODEG_APP_VERSION", "0.36.0")
     const register = vi.fn(async () => ({}))
     mockRegistration(register)
     await expect(registerAppServiceWorker()).resolves.toBe(true)
-    expect(register).toHaveBeenCalledWith(SERVICE_WORKER_URL, {
+    expect(register).toHaveBeenCalledWith("/sw.js?v=0.36.0", {
       scope: SERVICE_WORKER_SCOPE,
     })
   })
@@ -106,8 +139,70 @@ describe("registerAppServiceWorker", () => {
   it("never touches the API when ineligible", async () => {
     window.isSecureContext = false
     const register = vi.fn(async () => ({}))
-    mockRegistration(register)
+    const addEventListener = vi.fn()
+    mockRegistration(register, addEventListener)
     await expect(registerAppServiceWorker()).resolves.toBe(false)
     expect(register).not.toHaveBeenCalled()
+    expect(addEventListener).not.toHaveBeenCalled()
+  })
+
+  it("re-requests what the page loaded once a worker takes control", async () => {
+    // Before control those loads went around the worker's cache; asking
+    // again routes them through it, so an offline reload in this session
+    // finds the scripts the shell boots with.
+    const listeners: Array<() => void> = []
+    mockRegistration(
+      vi.fn(async () => ({})),
+      (type, listener) => {
+        if (type === "controllerchange") listeners.push(listener)
+      }
+    )
+    const fetchMock = vi.fn(async () => new Response("ok"))
+    vi.stubGlobal("fetch", fetchMock)
+    stubLoadedResources([`${window.location.origin}/_next/static/chunks/a.js`])
+
+    await registerAppServiceWorker()
+    expect(listeners).toHaveLength(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+    listeners[0]()
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${window.location.origin}/_next/static/chunks/a.js`
+    )
+  })
+})
+
+describe("loadedCacheableAssets", () => {
+  it("lists same-origin files under the cached prefixes, once each", () => {
+    const origin = window.location.origin
+    stubLoadedResources([
+      `${origin}/_next/static/chunks/a.js`,
+      `${origin}/_next/static/media/inter.woff2`,
+      `${origin}/_next/static/chunks/a.js`,
+      `${origin}/vs/loader.js`,
+      `${origin}/icon-32x32.png`,
+      `${origin}/manifest.json`,
+      `${origin}/api/health`,
+      `${origin}/workspace.txt?_rsc=abc`,
+      "https://cdn.example/_next/static/chunks/b.js",
+      "data:image/png;base64,AAAA",
+    ])
+    expect(loadedCacheableAssets()).toEqual([
+      `${origin}/_next/static/chunks/a.js`,
+      `${origin}/_next/static/media/inter.woff2`,
+      `${origin}/vs/loader.js`,
+      `${origin}/icon-32x32.png`,
+      `${origin}/manifest.json`,
+    ])
+  })
+
+  it("mirrors the worker's own list of cacheable prefixes", () => {
+    const worker = readFileSync(
+      path.resolve(__dirname, "../../public/sw.js"),
+      "utf8"
+    )
+    const declared = worker.match(/const CACHEABLE_PREFIXES = \[([^\]]*)\]/)
+    expect(declared).not.toBeNull()
+    const prefixes = [...declared![1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+    expect(prefixes).toEqual(CACHEABLE_PREFIXES)
   })
 })
