@@ -156,10 +156,10 @@ async function seedRelease() {
     const html = await response.clone().text()
     for (const match of html.matchAll(ASSET_REFERENCE)) referenced.add(match[0])
   }
-  // A failed fetch or a 5xx fails the install, to be retried. An answer
-  // that the file isn't there (the static handler's index.html fallback, a
-  // 404) means there is nothing to store, and must not block every future
-  // install.
+  // A failed fetch or a 5xx fails the install, to be retried. Any other
+  // answer that isn't the file (the static handler's index.html fallback,
+  // a 404) means there is nothing to store, and must not block every
+  // future install.
   const assets = await Promise.all(
     [...referenced].map(async (path) => {
       const response = await fetch(path)

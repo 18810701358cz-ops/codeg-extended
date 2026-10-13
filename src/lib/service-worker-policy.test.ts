@@ -451,8 +451,10 @@ describe("install", () => {
     // newer release answers with its own script. Installing that would
     // share — and on failure wipe — the active worker's caches.
     const storage = new FakeCacheStorage(`${ORIGIN}/sw.js`)
-    const active = await storage.open(SHELL)
-    await active.put("/workspace", html("active workspace"))
+    const activeShell = await storage.open(SHELL)
+    await activeShell.put("/workspace", html("active workspace"))
+    const activeAssets = await storage.open(ASSETS)
+    await activeAssets.put("/_next/static/chunks/a.js", script("active chunk"))
     const worker = loadWorker(
       bootNetwork,
       "1.2.3",
@@ -462,6 +464,9 @@ describe("install", () => {
     await expect(install(worker)).rejects.toThrow("superseded")
     expect(worker.fetch).not.toHaveBeenCalled()
     expect(await storage.body(SHELL, "/workspace")).toBe("active workspace")
+    expect(await storage.body(ASSETS, "/_next/static/chunks/a.js")).toBe(
+      "active chunk"
+    )
   })
 
   it("installs over a worker of another release", async () => {
