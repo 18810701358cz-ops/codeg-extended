@@ -14337,16 +14337,8 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_version_script(dir: &std::path::Path, name: &str, banner: &str) -> PathBuf {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-
         let bin = dir.join(name);
-        {
-            let mut f = std::fs::File::create(&bin).expect("create script");
-            f.write_all(format!("#!/bin/sh\necho \"{banner}\"\n").as_bytes())
-                .expect("write script");
-        }
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        crate::process::write_test_script(&bin, &format!("#!/bin/sh\necho \"{banner}\"\n"));
         bin
     }
 
@@ -16397,10 +16389,8 @@ base_url = \"https://example.test/v1\"
 
     #[cfg(unix)]
     fn fake_pi(dir: &Path, name: &str, body: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let script = dir.join(name);
-        fs::write(&script, format!("#!/bin/sh\n{body}")).unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::process::write_test_script(&script, &format!("#!/bin/sh\n{body}"));
         script
     }
 

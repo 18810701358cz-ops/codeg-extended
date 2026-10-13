@@ -3761,6 +3761,8 @@
       "messageNav": {
         "title": "メッセージナビ",
         "collapse": "メッセージナビを閉じる",
+        "loadingEarlier": "以前のメッセージを読み込み中…",
+        "loadEarlier": "以前のメッセージを読み込む",
         "collapsedSummary": "メッセージ {count}",
         "fileCount": "{count, plural, one {# 個のファイル} other {# 個のファイル}}",
         "remove": "削除",

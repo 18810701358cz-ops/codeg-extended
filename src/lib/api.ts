@@ -56,6 +56,7 @@ import type {
   WorkTaskTemplate,
   ConversationSummary,
   ConversationDetail,
+  ConversationOutline,
   ConversationTurnsPage,
   DbConversationDetail,
   FolderInfo,
@@ -2407,6 +2408,17 @@ export async function getFolderConversationTurns(
   })
 }
 
+/** Fetch the message navigator's outline of the history before `beforeIndex`. */
+export async function getFolderConversationOutline(
+  conversationId: number,
+  beforeIndex: number
+): Promise<ConversationOutline> {
+  return getTransport().call("get_folder_conversation_outline", {
+    conversationId,
+    beforeIndex,
+  })
+}
+
 export async function removeFolderFromHistory(path: string): Promise<void> {
   return getTransport().call("remove_folder_from_history", { path })
 }
@@ -4085,7 +4097,8 @@ export const UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 
 // `btoa` only accepts a binary string, and `String.fromCharCode(...bytes)`
 // hits the call-stack limit somewhere around a few hundred KB. Chunk the
-// buffer so a 2 MB upload encodes without blowing the stack.
+// buffer so an upload at the full `UPLOAD_MAX_BYTES` encodes without
+// blowing the stack.
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf)
   let binary = ""

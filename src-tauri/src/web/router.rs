@@ -217,6 +217,10 @@ pub fn build_router(
             post(handlers::conversations::get_folder_conversation_turns),
         )
         .route(
+            "/get_folder_conversation_outline",
+            post(handlers::conversations::get_folder_conversation_outline),
+        )
+        .route(
             "/list_opened_tabs",
             post(handlers::conversations::list_opened_tabs),
         )

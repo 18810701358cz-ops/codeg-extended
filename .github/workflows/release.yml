@@ -1004,6 +1004,11 @@ jobs:
           file: Dockerfile.ci
           platforms: linux/amd64,linux/arm64
           push: true
+          # The source label is how ghcr.io ties the package to this
+          # repository: the package page links back here and the package
+          # inherits the repository's access permissions.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
             ${{ secrets.DOCKERHUB_USERNAME }}/codeg:${{ steps.version.outputs.version }}

@@ -317,7 +317,7 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg-server\web"; codeg-server
 **Docker** — الخادم نفسه، داخل حاوية واحدة:
 
 ```bash
-docker run -d -p 3080:3080 -v codeg-data:/data ghcr.io/xintaofei/codeg:latest
+docker run -d -p 3080:3080 -v codeg-data:/data ghcr.io/spacering-net/codeg:latest
 ```
 
 **الهاتف واللوحي** — ثبّت [تطبيق iOS](https://apps.apple.com/app/codeg-client/id6785199071) أو [حزمة Android APK](https://github.com/xintaofei/codeg-android/releases/latest)، ثم وجّهه إلى **خدمة الويب** في تطبيق سطح المكتب أو إلى خادم `codeg-server` الخاص بك: العنوان والرمز، وانتهى الأمر. خطوات الاقتران في [التطبيقات المحمولة](https://docs.codeg.app/getting-started/installation#mobile-apps).
