@@ -855,4 +855,38 @@ describe("SubAgentSessionDialog", () => {
       expect.objectContaining({ reason: "close-press" })
     )
   })
+
+  it("closes on a browser back instead of letting it leave the page", async () => {
+    // Start on an unmarked entry: earlier cases leave the drawer's entries
+    // behind, and the open below would take a marked one over.
+    window.history.replaceState(null, "")
+    const onOpenChange = vi.fn()
+    renderWithIntl(
+      <SubAgentSessionDialog
+        open
+        onOpenChange={onOpenChange}
+        childConversationId={99}
+        childConnectionId="c1"
+        agentType="codex"
+      />
+    )
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        // Bounded: without an entry of its own the back has nowhere to go
+        // and no popstate ever arrives.
+        const timer = setTimeout(resolve, 500)
+        window.addEventListener(
+          "popstate",
+          () => {
+            clearTimeout(timer)
+            resolve()
+          },
+          { once: true }
+        )
+        window.history.back()
+      })
+    })
+    expect(onOpenChange).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
 })
