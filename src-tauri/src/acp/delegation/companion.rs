@@ -5688,6 +5688,21 @@ mod tests {
         assert_eq!(guard.observe(0, restart + Duration::from_secs(6)), Some(3));
     }
 
+    /// The window bounds each gap, not the whole run: a loop that calls every
+    /// 40 seconds keeps escalating long after its first call is a window old.
+    #[test]
+    fn feedback_poll_guard_measures_each_gap_not_the_whole_run() {
+        let guard = FeedbackPollGuard::default();
+        let t0 = Instant::now();
+        for (i, secs) in [0, 40, 80, 120, 160].into_iter().enumerate() {
+            assert_eq!(
+                guard.observe(0, t0 + Duration::from_secs(secs)),
+                Some(i as u32 + 1),
+                "empty check at {secs}s is 40s after the previous one"
+            );
+        }
+    }
+
     /// Parallel calls can take the lock out of `now` order. An instant earlier
     /// than the stored one counts as back-to-back instead of panicking.
     #[test]
