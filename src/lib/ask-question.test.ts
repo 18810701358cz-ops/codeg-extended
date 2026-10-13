@@ -798,6 +798,54 @@ describe("parseAskQuestionOutcome", () => {
       answers: [],
     })
   })
+
+  // codeg-mcp mirrors its "do not ask again to confirm" instruction into the
+  // structured envelope as `hint` (issue #861) and appends it to the text.
+  // Neither may change what the card reads.
+  const PROCEED_INSTRUCTION =
+    "Proceed with your task using these answers now. Do not call " +
+    "ask_user_question again to confirm that you should proceed."
+
+  it("ignores the companion's hint key on the structured envelope", () => {
+    const output = JSON.stringify({
+      answers: [
+        { header: "Go", question: "Start?", selected: ["Start (Recommended)"] },
+      ],
+      declined: false,
+      hint: PROCEED_INSTRUCTION,
+    })
+    expect(parseAskQuestionOutcome(output)).toEqual({
+      declined: false,
+      answers: [
+        { header: "Go", question: "Start?", selected: ["Start (Recommended)"] },
+      ],
+    })
+  })
+
+  it("does not read the trailing proceed instruction as another answer", () => {
+    const output =
+      "The user answered your question(s):\n" +
+      "1. [Go] Start?\n" +
+      "   → Start (Recommended)\n" +
+      `${PROCEED_INSTRUCTION}\n`
+    expect(parseAskQuestionOutcome(output)).toEqual({
+      declined: false,
+      answers: [
+        { header: "Go", question: "Start?", selected: ["Start (Recommended)"] },
+      ],
+    })
+  })
+
+  it("still detects a dismissal that ends with the confirm-again warning", () => {
+    const output =
+      "The user dismissed the question(s) without choosing an answer. " +
+      "Proceed using your best judgment and reasonable defaults. Do not call " +
+      "ask_user_question again to confirm that you should proceed."
+    expect(parseAskQuestionOutcome(output)).toEqual({
+      declined: true,
+      answers: [],
+    })
+  })
 })
 
 describe("matchSelections", () => {
