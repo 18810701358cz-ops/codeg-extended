@@ -4706,16 +4706,20 @@ fn claude_raw_sdk_session_meta(
 ///   process, where the agent's own OS sandbox and permission rules already
 ///   apply (#436). Withholding one without the other buys nothing: the agent
 ///   just reaches the same file through the channel it kept.
-/// - Codex only: form elicitation, so codex's native Plan-mode
-///   `request_user_input` is delivered as `elicitation/create` (handled by
-///   `handle_elicitation_request`) instead of being silently answered `{}`.
+/// - Codex, DeepSeek and Qoder only: form elicitation, so their native
+///   questions (codex's Plan-mode `request_user_input`, DeepSeek's
+///   `ask_user_question` and plan review, Qoder's `AskUserQuestion`) are
+///   delivered as `elicitation/create` (handled by
+///   `handle_elicitation_request`). Without it codex silently answers `{}`,
+///   DeepSeek falls back to permission buttons, and Qoder withholds the tool
+///   from the model.
 ///   NOTE this reroutes codex's WHOLE form-elicitation surface — MCP
 ///   tool-call approvals and MCP-server forms included — so the handler must
 ///   cover every shape (`classify_elicitation`). URL elicitation is
 ///   deliberately NOT advertised: codex-acp then falls back to
 ///   `session/request_permission`, which codeg already handles. Scoped to
-///   Codex to keep the blast radius off other agents (e.g. Claude's native
-///   AskUserQuestion, which would otherwise un-gate and duplicate the
+///   these agents to keep the blast radius off the others (e.g. Claude's
+///   native AskUserQuestion, which would otherwise un-gate and duplicate the
 ///   codeg-mcp ask tool).
 /// - Claude Code only: `_meta["subagent-transcript"] = true` — opt into
 ///   claude-agent-acp ≥0.63's subagent transcript forwarding (#881, SDK
@@ -4752,13 +4756,26 @@ fn build_client_capabilities(
     }
     // Form elicitation is advertised only to agents that are KNOWN to send
     // spec-conformant `elicitation/create` forms `classify_elicitation` can
-    // bridge: codex-acp (Plan-mode `request_user_input`, MCP forms/approvals)
-    // and deepseek-acp (its `ask_user_question` + plan-review both build
-    // standard oneOf/anyOf forms, and decode a free-text answer that is not in
-    // the option set as a custom answer — the card's "Other" input round-trips
-    // cleanly). Agents without the bit fall back to their own
-    // `request_permission` button path.
-    if matches!(agent_type, AgentType::Codex | AgentType::DeepSeek) {
+    // bridge: codex-acp (Plan-mode `request_user_input`, MCP forms/approvals),
+    // deepseek-acp (its `ask_user_question` + plan-review both build standard
+    // oneOf/anyOf forms, and decode a free-text answer that is not in the
+    // option set as a custom answer — the card's "Other" input round-trips
+    // cleanly), and qodercli (its native `AskUserQuestion` is the one thing it
+    // sends as a form: the question plus each option's `label: description`
+    // in `description`, the header in `title`, `oneOf` / `items.anyOf`
+    // choices, the scope flattened as top-level `sessionId` / `toolCallId`;
+    // it copies whatever value comes back into the answer, so the card's
+    // "Other" input reaches the model as the user's own text. Without the bit
+    // it denies `AskUserQuestion` for the session, so the model never gets the
+    // tool. Verified on the real 1.1.67 wire, MCP tool-call approvals staying
+    // on `session/request_permission`; the same form and answer handling ship
+    // in every release from 1.1.23 through 1.1.69, which matters because codeg
+    // launches a `qoder` found on PATH ahead of the pinned package). Agents
+    // without the bit fall back to their own `request_permission` button path.
+    if matches!(
+        agent_type,
+        AgentType::Codex | AgentType::DeepSeek | AgentType::Qoder
+    ) {
         client_capabilities = client_capabilities
             .elicitation(ElicitationCapabilities::new().form(ElicitationFormCapabilities::new()));
     }
@@ -7970,7 +7987,7 @@ async fn handle_elicitation_request(
     let raw = req.0;
     // Who is on the other end, from the CONNECTION rather than from the frame.
     // This handler is registered for every agent and codeg advertises
-    // `elicitation.form` to DeepSeek as well as Codex, so the parser must be
+    // `elicitation.form` to DeepSeek and Qoder as well as Codex, so the parser must be
     // told the peer's identity instead of inferring it from `_meta.codex` —
     // `_meta` is an open namespace and another speaker (or an MCP server behind
     // it) may use the same keys for something else entirely. For a codex peer
@@ -7978,13 +7995,21 @@ async fn handle_elicitation_request(
     // pinned at initialize: it settles which of a codex question's
     // `title`/`description` holds the question, which 1.12.0 swapped and the
     // wire cannot disambiguate.
-    let peer = {
+    let (peer, synthesizes_answer_card) = {
         let s = state.read().await;
-        if s.agent_type == AgentType::Codex {
+        let peer = if s.agent_type == AgentType::Codex {
             crate::acp::question::ElicitationPeer::Codex(s.codex_user_input_shape)
         } else {
             crate::acp::question::ElicitationPeer::Other
-        }
+        };
+        // Qoder announces its AskUserQuestion as a stream `tool_call` under
+        // the very id this form is scoped to, and completes that call with the
+        // answers itself — so the card codeg synthesizes below for an ask that
+        // never reaches the stream would only replace that call's input with
+        // this form's flattened copy, and then be overwritten by Qoder's own
+        // completion. That completion is what renders the answers (see
+        // `qoder_ask_live_output`).
+        (peer, s.agent_type != AgentType::Qoder)
     };
     // Everything codex-acp can send once `elicitation.form` is advertised
     // resolves to a plan here — an unhandled shape would silently reject the
@@ -8126,7 +8151,13 @@ async fn handle_elicitation_request(
                         // emit. Keyed by the elicitation's tool_call_id so this is
                         // the single card for the ask and the reloaded history card
                         // (`codex.rs`, same id) replaces rather than duplicates it.
-                        if let Some(tool_call_id) = questions.tool_call_id.clone() {
+                        // Not for an agent that streams the ask itself (Qoder; see
+                        // `synthesizes_answer_card`).
+                        if let Some(tool_call_id) = questions
+                            .tool_call_id
+                            .clone()
+                            .filter(|_| synthesizes_answer_card)
+                        {
                             emit_with_state(
                                 &card_state,
                                 &card_emitter,
@@ -8153,7 +8184,25 @@ async fn handle_elicitation_request(
                             )
                             .await;
                         }
-                        crate::acp::question::build_elicitation_response(&questions, &outcome)
+                        let response =
+                            crate::acp::question::build_elicitation_response(&questions, &outcome);
+                        // What the user actually picked, for the completion Qoder
+                        // streams for this call to show (it flattens the answers).
+                        // Recorded BEFORE the reply unblocks Qoder, so it is in
+                        // place when that completion arrives.
+                        if let Some(tool_call_id) = questions
+                            .tool_call_id
+                            .as_deref()
+                            .filter(|_| !synthesizes_answer_card)
+                        {
+                            record_qoder_ask_reply(
+                                &card_state,
+                                tool_call_id,
+                                serde_json::to_value(&response).unwrap_or_default(),
+                            )
+                            .await;
+                        }
+                        response
                     }
                     // Sender dropped: canceled or the connection tore down.
                     // Decline so codex proceeds with its own judgment.
@@ -11295,6 +11344,8 @@ async fn run_conversation_loop(
                 // follows it on the wire; one still waiting here belongs to a
                 // call the canceled turn never completed.
                 cb_state.claude_viewed_results.clear();
+                // Same for a Qoder ask the canceled turn never completed.
+                cb_state.qoder_ask_questions.clear();
                 // A codex web search whose request never reported (canceled
                 // mid-request) must not set aside this turn's first report.
                 // `/goal` continuation turns run on the idle loop and announce
@@ -15175,6 +15226,15 @@ struct CodeBuddyLiveState {
     /// dropped so the card doesn't double-render; tracked by id because a later
     /// status-only update may drop the `x.ai/tool` meta that first identified it.
     grok_ask_tool_ids: HashSet<String>,
+    /// Qoder `AskUserQuestion` calls in flight → the questions they were opened
+    /// with. Qoder names the tool only on the opening `tool_call`
+    /// (`_meta.qoder.toolName`), and its completion carries the answers only as
+    /// the sentence handed to the model; these questions are what both the
+    /// reply codeg sent (keyed `q<n>`) and that sentence are read against (see
+    /// `qoder_ask_live_output`). Dropped at a final status, and cleared at turn
+    /// start: an ask blocks its turn, so a canceled turn's entry is never
+    /// completed.
+    qoder_ask_questions: HashMap<String, Vec<crate::parsers::qoder::QoderAskQuestion>>,
     /// Codex sub-agent thread id → the launch capsule that spawned it, paired
     /// with the `rawInput` that capsule was announced with.
     ///
@@ -15418,6 +15478,100 @@ fn grok_meta_marks_ask_user(
             .and_then(|t| t.get("kind"))
             .and_then(|k| k.as_str())
             == Some("ask_user")
+}
+
+/// The questions of the Qoder `AskUserQuestion` call this opening `tool_call`
+/// announces, or `None` when it announces anything else. Qoder states the
+/// tool's name only here (`_meta.qoder.toolName`); the questions may be empty
+/// if `rawInput` has not arrived yet, and a later frame that carries it fills
+/// them in.
+fn qoder_ask_opened(
+    agent_type: AgentType,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+    raw_input: Option<&serde_json::Value>,
+) -> Option<Vec<crate::parsers::qoder::QoderAskQuestion>> {
+    let names_ask = agent_type == AgentType::Qoder
+        && meta
+            .and_then(|m| m.get("qoder"))
+            .and_then(|q| q.get("toolName"))
+            .and_then(serde_json::Value::as_str)
+            == Some(crate::parsers::qoder::QODER_ASK_USER_QUESTION_TOOL);
+    names_ask.then(|| {
+        crate::parsers::qoder::QoderAskQuestion::list_from(
+            raw_input.and_then(|input| input.get("questions")),
+        )
+        .unwrap_or_default()
+    })
+}
+
+/// The `raw_output` a Qoder `AskUserQuestion` frame should carry: its answers,
+/// as the envelope the question card reads, when the frame is the answered
+/// result. `None` leaves the frame's own output alone (not an ask, a
+/// rejection, anything that is not an answered shape).
+///
+/// Qoder answers the ask over `elicitation/create` but announces and completes
+/// it as its own tool call, and nothing it streams for that call is something
+/// the card can read:
+///
+/// - a live call's completion carries the sentence handed to the model — in
+///   `rawOutput`, and again as `content`. When codeg answered the form itself,
+///   `reply` is what it sent (`SessionState::qoder_ask_replies`), which is
+///   exact and wins; otherwise the sentence is read back against the questions
+///   the call opened with (`parsers::qoder::qoder_ask_envelope_from_result_text`);
+/// - a `session/load` replay sends the call once, already completed, with the
+///   recorded `{questions, answers}` object as `rawOutput`, read the way the
+///   history parser reads the transcript's copy of that object
+///   (`parsers::qoder::qoder_ask_envelope_from_recorded`).
+///
+/// Without this, a question the user just answered shows nothing selected.
+fn qoder_ask_live_output(
+    questions: Option<&Vec<crate::parsers::qoder::QoderAskQuestion>>,
+    reply: Option<&serde_json::Map<String, serde_json::Value>>,
+    raw_output: &Option<serde_json::Value>,
+    content: Option<&str>,
+) -> Option<String> {
+    let questions = questions?;
+    if let Some(answers) = reply
+        .and_then(|reply| crate::parsers::qoder::qoder_ask_envelope_from_reply(questions, reply))
+    {
+        return Some(answers);
+    }
+    match raw_output {
+        Some(recorded @ serde_json::Value::Object(_)) => {
+            crate::parsers::qoder::qoder_ask_envelope_from_recorded(recorded)
+        }
+        raw_output => {
+            let text = raw_output
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .or(content)?;
+            crate::parsers::qoder::qoder_ask_envelope_from_result_text(questions, text)
+        }
+    }
+}
+
+/// Keep the reply codeg sends back for a Qoder `AskUserQuestion` call, for the
+/// call's own completion to render (see `SessionState::qoder_ask_replies`).
+/// Only an accepted reply carries answers; anything else keeps nothing.
+async fn record_qoder_ask_reply(
+    state: &Arc<RwLock<SessionState>>,
+    tool_call_id: &str,
+    reply: serde_json::Value,
+) {
+    let serde_json::Value::Object(mut reply) = reply else {
+        return;
+    };
+    if reply.get("action").and_then(serde_json::Value::as_str) != Some("accept") {
+        return;
+    }
+    let Some(serde_json::Value::Object(content)) = reply.remove("content") else {
+        return;
+    };
+    state
+        .write()
+        .await
+        .qoder_ask_replies
+        .insert(tool_call_id.to_string(), content);
 }
 
 /// Resolve a tool call's title, honoring an authoritative rewrite recorded for
@@ -17342,6 +17496,10 @@ async fn emit_conversation_update(
                 cb_state.grok_ask_tool_ids.insert(tool_call_id);
                 return;
             }
+            // Qoder names an AskUserQuestion call only on this frame; its
+            // questions are what the frame carrying the answers is read against
+            // (see `qoder_ask_live_output`).
+            let qoder_ask = qoder_ask_opened(agent_type, tc.meta.as_ref(), tc.raw_input.as_ref());
             // CodeBuddy double-wraps a deferred MCP result as a `{type,text}`
             // content part; peel it (in both the content and raw_output channels)
             // so the dedicated delegation cards parse it instead of showing raw JSON.
@@ -17451,6 +17609,12 @@ async fn emit_conversation_update(
                 // around the SAME text `content` already carries; shipping it
                 // shadows the clean text (see opencode_live_tool_output).
                 opencode_live_tool_output(&content, &tc.raw_output)
+            } else if let Some(answers) =
+                qoder_ask_live_output(qoder_ask.as_ref(), None, &tc.raw_output, content.as_deref())
+            {
+                // A Qoder ask that opens already answered (a `session/load`
+                // replay) hands the card its answers, as its completion would.
+                Some(answers)
             } else {
                 json_value_to_text(&tc.raw_output)
                     .map(|text| unwrap_codebuddy_deferred_output(agent_type, &text).unwrap_or(text))
@@ -17478,6 +17642,24 @@ async fn emit_conversation_update(
             let meta_marks_background = codebuddy_meta_marks_background(agent_type, tc.meta.as_ref());
             let grok_spawn = grok_meta_marks_spawn_subagent(agent_type, tc.meta.as_ref());
             let status = format!("{:?}", tc.status).to_lowercase();
+            // Kept until the frame that carries the answers; an id this frame
+            // reopens as anything else (or as an ask already settled) has none
+            // still to come.
+            match qoder_ask {
+                Some(questions)
+                    if !matches!(
+                        status.as_str(),
+                        "completed" | "failed" | "cancelled" | "error"
+                    ) =>
+                {
+                    cb_state
+                        .qoder_ask_questions
+                        .insert(tool_call_id.clone(), questions);
+                }
+                _ => {
+                    cb_state.qoder_ask_questions.remove(&tool_call_id);
+                }
+            }
             // OpenCode's only authoritative statement of WHICH tool this is
             // arrives on this opening frame's title (see fn doc).
             let meta = stamp_opencode_tool_name(
@@ -17653,6 +17835,31 @@ async fn emit_conversation_update(
             } else {
                 None
             };
+            // The reply codeg sent for a Qoder ask is taken by the update that
+            // settles the call, and shown only if that update completes it.
+            let qoder_ask_reply = match &tcu.fields.status {
+                Some(status) if cb_state.qoder_ask_questions.contains_key(&tool_call_id) => {
+                    let status = format!("{status:?}").to_lowercase();
+                    if matches!(status.as_str(), "completed" | "failed") {
+                        let reply = state.write().await.qoder_ask_replies.remove(&tool_call_id);
+                        reply.filter(|_| status == "completed")
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            // A Qoder ask whose questions arrive after its opening frame.
+            if let Some(known) = cb_state.qoder_ask_questions.get_mut(&tool_call_id) {
+                if let Some(questions) = crate::parsers::qoder::QoderAskQuestion::list_from(
+                    tcu.fields
+                        .raw_input
+                        .as_ref()
+                        .and_then(|input| input.get("questions")),
+                ) {
+                    *known = questions;
+                }
+            }
             // Symmetric with the ToolCall arm. `terminal_info` only ever rides the
             // OPENING frame, so the id set is what identifies these updates; the
             // meta check is a cheap guard for a wire that ever reorders them.
@@ -17789,6 +17996,15 @@ async fn emit_conversation_update(
                 // OpenCode delivers every result on the completion update (see
                 // opencode_live_tool_output).
                 opencode_live_tool_output(&content, &tcu.fields.raw_output)
+            } else if let Some(answers) = qoder_ask_live_output(
+                cb_state.qoder_ask_questions.get(&tool_call_id),
+                qoder_ask_reply.as_ref(),
+                &tcu.fields.raw_output,
+                content.as_deref(),
+            ) {
+                // Symmetric with the ToolCall arm — and the arm that matters:
+                // a Qoder ask is answered on its completion update.
+                Some(answers)
             } else {
                 json_value_to_text(&tcu.fields.raw_output)
                     .or(viewed_result)
@@ -17847,6 +18063,7 @@ async fn emit_conversation_update(
                 Some("completed" | "failed" | "cancelled" | "error")
             ) {
                 cb_state.hosted_terminal_calls.remove(&tool_call_id);
+                cb_state.qoder_ask_questions.remove(&tool_call_id);
             }
             // Symmetric with the ToolCall arm: an update may carry the terminal
             // status (and, on grok, usually re-carries the `x.ai/tool` meta).
@@ -22438,6 +22655,14 @@ mod tests {
         let deepseek = caps_of(AgentType::DeepSeek);
         assert!(deepseek.get("elicitation").is_some());
         assert!(deepseek.get("_meta").is_none());
+
+        // Qoder: form elicitation since qodercli 1.1.67's native
+        // `AskUserQuestion` rides `elicitation/create` (verified on the real
+        // wire; MCP tool-call approvals stay on `session/request_permission`).
+        // No `_meta` gates.
+        let qoder = caps_of(AgentType::Qoder);
+        assert!(qoder.get("elicitation").is_some());
+        assert!(qoder.get("_meta").is_none());
 
         // Cursor: parameterized model picker only (no elicitation / AIR).
         let cursor = caps_of(AgentType::Cursor);
@@ -34331,5 +34556,591 @@ mod tests {
             steers[0]["p"],
             serde_json::json!([{"type": "text", "text": "make it blue"}])
         );
+    }
+
+    /// Answers every question with its first option the moment it is asked.
+    struct AnswersFirstOption;
+
+    #[async_trait::async_trait]
+    impl crate::acp::question::SessionQuestionAccess for AnswersFirstOption {
+        async fn register_question(
+            &self,
+            _parent_connection_id: &str,
+            questions: Vec<crate::acp::question::QuestionSpec>,
+        ) -> Option<crate::acp::question::RegisteredQuestion> {
+            let (tx, rx) = oneshot::channel();
+            let answers = questions
+                .iter()
+                .map(|q| crate::acp::question::QuestionAnsweredItem {
+                    question: q.question.clone(),
+                    header: q.header.clone(),
+                    multi_select: q.multi_select,
+                    selected: q.options.iter().take(1).map(|o| o.label.clone()).collect(),
+                })
+                .collect();
+            let _ = tx.send(crate::acp::question::QuestionOutcome {
+                answers,
+                declined: false,
+            });
+            Some(crate::acp::question::RegisteredQuestion {
+                question_id: "q-1".to_string(),
+                answer_rx: rx,
+            })
+        }
+
+        async fn cancel_question(&self, _parent_connection_id: &str, _question_id: &str) {}
+
+        async fn cancel_questions_by_parent(&self, _parent_connection_id: &str) {}
+    }
+
+    /// Drive one form `elicitation/create` from `agent_type` through
+    /// `handle_elicitation_request`, answered by [`AnswersFirstOption`]: the
+    /// reply the agent got, the events codeg recorded on the way, and the
+    /// session state they were recorded in.
+    async fn answer_form_elicitation(
+        agent_type: AgentType,
+        form: serde_json::Value,
+    ) -> (serde_json::Value, Vec<AcpEvent>, Arc<RwLock<SessionState>>) {
+        use agent_client_protocol::Channel;
+
+        let (client_end, agent_end) = Channel::duplex();
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-test".to_string(),
+            agent_type,
+            None,
+            "win".to_string(),
+            None,
+        )));
+        let ask_config = crate::acp::question::QuestionRuntimeConfig::new();
+        ask_config
+            .set(crate::acp::question::QuestionConfig { enabled: true })
+            .await;
+        let access: Option<(
+            Arc<dyn crate::acp::question::SessionQuestionAccess>,
+            crate::acp::question::QuestionRuntimeConfig,
+        )> = Some((Arc::new(AnswersFirstOption), ask_config));
+
+        let agent = tokio::spawn(Agent.builder().connect_with(
+            agent_end,
+            async move |cx: ConnectionTo<Client>| {
+                cx.send_request_to(Client, CodexElicitationRequest(form))
+                    .block_task()
+                    .await
+            },
+        ));
+        let client = tokio::spawn({
+            let state = Arc::clone(&state);
+            let perms = PendingPermissions::default();
+            Client
+                .builder()
+                .on_receive_request(
+                    async move |req: CodexElicitationRequest,
+                                responder: Responder<serde_json::Value>,
+                                cx: ConnectionTo<Agent>| {
+                        handle_elicitation_request(
+                            &cx,
+                            &access,
+                            &perms,
+                            &state,
+                            &EventEmitter::Noop,
+                            "conn-test",
+                            req,
+                            responder,
+                        )
+                        .await;
+                        Ok(())
+                    },
+                    on_receive_request!(),
+                )
+                .connect_with(client_end, async |_cx: ConnectionTo<Agent>| {
+                    std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                })
+        });
+
+        let reply = tokio::time::timeout(std::time::Duration::from_secs(5), agent)
+            .await
+            .expect("the answered elicitation is replied to")
+            .expect("agent task")
+            .expect("a response, not an error");
+        client.abort();
+        let events = state
+            .read()
+            .await
+            .recent_events_after(0)
+            .map(|events| events.iter().map(|e| e.payload.clone()).collect())
+            .unwrap_or_default();
+        (reply, events, state)
+    }
+
+    /// qodercli 1.1.67's `AskUserQuestion` form, verbatim off the wire.
+    fn qoder_ask_form() -> serde_json::Value {
+        serde_json::json!({
+            "mode": "form",
+            "sessionId": "s1",
+            "toolCallId": "toolu_b857",
+            "message": "Answer Questions",
+            "requestedSchema": {
+                "type": "object",
+                "title": "Answer Questions",
+                "properties": {"q0": {
+                    "type": "string",
+                    "title": "Choice",
+                    "description": "Pick A or B?\nA: Option A.\nB: Option B.",
+                    "oneOf": [{"const": "A", "title": "A"}, {"const": "B", "title": "B"}],
+                }},
+                "required": ["q0"],
+            },
+            "_meta": {"qoder": {"toolName": "AskUserQuestion"}},
+        })
+    }
+
+    /// Qoder streams its ask as a tool call of its own and completes it itself,
+    /// so the answered card codeg synthesizes for codex would only clobber that
+    /// call's input. The answer still goes back, keyed by the form's field —
+    /// and is kept, as sent, for that completion to show.
+    #[tokio::test]
+    async fn a_qoder_ask_is_answered_without_a_synthesized_card() {
+        let (reply, events, state) =
+            answer_form_elicitation(AgentType::Qoder, qoder_ask_form()).await;
+        assert_eq!(
+            state.read().await.qoder_ask_replies.get("toolu_b857"),
+            Some(serde_json::json!({"q0": "A"}).as_object().unwrap())
+        );
+        assert_eq!(reply["action"], "accept", "{reply}");
+        assert_eq!(reply["content"], serde_json::json!({"q0": "A"}), "{reply}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AcpEvent::ToolCall { .. })),
+            "{events:?}"
+        );
+    }
+
+    /// DeepSeek scopes its forms to the session alone, so there is no call to
+    /// key a card to either way; its answer goes back as before.
+    #[tokio::test]
+    async fn a_deepseek_ask_is_answered_without_a_card() {
+        let (reply, events, state) = answer_form_elicitation(
+            AgentType::DeepSeek,
+            serde_json::json!({
+                "mode": "form",
+                "sessionId": "s1",
+                "message": "Pick one?",
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {"q1": {
+                        "type": "string",
+                        "title": "Pick",
+                        "oneOf": [{"const": "A", "title": "A"}, {"const": "B", "title": "B"}],
+                    }},
+                    "required": ["q1"],
+                },
+            }),
+        )
+        .await;
+        assert_eq!(reply["content"], serde_json::json!({"q1": "A"}), "{reply}");
+        assert!(state.read().await.qoder_ask_replies.is_empty());
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AcpEvent::ToolCall { .. })),
+            "{events:?}"
+        );
+    }
+
+    /// codex never streams `request_user_input`, so it keeps the card.
+    #[tokio::test]
+    async fn a_codex_ask_still_gets_its_answered_card() {
+        let (reply, events, state) = answer_form_elicitation(
+            AgentType::Codex,
+            serde_json::json!({
+                "mode": "form",
+                "sessionId": "s1",
+                "toolCallId": "item-1",
+                "message": "Codex needs your input to continue.",
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {"q1": {
+                        "type": "string",
+                        "title": "Which approach?",
+                        "description": "Approach",
+                        "oneOf": [
+                            {"const": "Incremental", "title": "Incremental"},
+                            {"const": "Rewrite", "title": "Rewrite"},
+                        ],
+                    }},
+                    "required": ["q1"],
+                },
+            }),
+        )
+        .await;
+        assert_eq!(reply["action"], "accept", "{reply}");
+        assert!(state.read().await.qoder_ask_replies.is_empty());
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                AcpEvent::ToolCall { tool_call_id, title, .. }
+                    if tool_call_id == "item-1" && title == "request_user_input"
+            )),
+            "{events:?}"
+        );
+    }
+
+    /// The opening `tool_call` qodercli 1.1.67 streams for an `AskUserQuestion`.
+    fn qoder_ask_opening_frame(tool_call_id: &str, meta: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": tool_call_id,
+            "status": "pending",
+            "title": "Ask user",
+            "kind": "other",
+            "content": [{"type": "content", "content": {"type": "text", "text": "{\"questions\": []}"}}],
+            "rawInput": {"questions": [
+                {"question": "Pick A or B?", "header": "Choice", "multiSelect": false,
+                 "options": [{"label": "A", "description": "Option A."}, {"label": "B", "description": "Option B."}]},
+                {"question": "Which extras?", "header": "Extras", "multiSelect": true,
+                 "options": [{"label": "X", "description": "Extra X."}, {"label": "Y", "description": "Extra Y."}]},
+            ]},
+            "_meta": meta,
+        })
+    }
+
+    /// The completion qodercli 1.1.67 streams once the ask settles: the same
+    /// text in `content` and `rawOutput`.
+    fn qoder_ask_completion_frame(
+        tool_call_id: &str,
+        status: &str,
+        text: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": tool_call_id,
+            "status": status,
+            "content": [{"type": "content", "content": {"type": "text", "text": text}}],
+            "rawOutput": text,
+        })
+    }
+
+    const QODER_ASK_ANSWERED: &str = "Your questions have been answered: \"Pick A or B?\"=\"B\", \
+        \"Which extras?\"=\"X, free text\". You can now continue with these answers in mind.";
+
+    /// Over the real 1.1.67 frames, the completion of an answered ask reaches
+    /// the card as the answers — the sentence alone renders nothing selected.
+    #[tokio::test]
+    async fn a_qoder_ask_completion_carries_its_answers() {
+        let mut cache = ToolCallOutputCache::default();
+        let mut cb = CodeBuddyLiveState::default();
+        let qoder_meta = serde_json::json!({"qoder": {"toolName": "AskUserQuestion"}});
+
+        let (_, _, opening_output, _) = pi_emit(
+            AgentType::Qoder,
+            &mut cache,
+            &mut cb,
+            qoder_ask_opening_frame("toolu_b857", qoder_meta),
+        )
+        .await;
+        assert!(opening_output.is_none(), "{opening_output:?}");
+        pi_emit(
+            AgentType::Qoder,
+            &mut cache,
+            &mut cb,
+            serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "toolu_b857",
+                "status": "in_progress",
+            }),
+        )
+        .await;
+        let (_, _, raw_output, _) = pi_emit(
+            AgentType::Qoder,
+            &mut cache,
+            &mut cb,
+            qoder_ask_completion_frame("toolu_b857", "completed", QODER_ASK_ANSWERED),
+        )
+        .await;
+
+        let envelope: serde_json::Value =
+            serde_json::from_str(&raw_output.expect("the answers")).unwrap();
+        assert_eq!(
+            envelope,
+            serde_json::json!({
+                "answers": [
+                    {"header": "Choice", "question": "Pick A or B?", "selected": ["B"]},
+                    {"header": "Extras", "question": "Which extras?", "selected": ["X, free text"]},
+                ],
+                "declined": false,
+            })
+        );
+        assert!(
+            cb.qoder_ask_questions.is_empty(),
+            "settled asks are forgotten"
+        );
+    }
+
+    /// A `session/load` replay sends an answered ask once, already completed,
+    /// with Qoder's recorded `{questions, answers}` object as `rawOutput` (the
+    /// 1.1.67 replay of the session above, verbatim); it reaches the card as
+    /// the same answers the transcript gives.
+    #[tokio::test]
+    async fn a_replayed_qoder_ask_carries_its_recorded_answers() {
+        let mut cache = ToolCallOutputCache::default();
+        let mut cb = CodeBuddyLiveState::default();
+        let mut replayed = qoder_ask_opening_frame(
+            "toolu_b857",
+            serde_json::json!({"qoder": {"toolName": "AskUserQuestion"}}),
+        );
+        replayed["status"] = serde_json::json!("completed");
+        replayed["rawOutput"] = serde_json::json!({
+            "questions": replayed["rawInput"]["questions"].clone(),
+            "answers": {"Pick A or B?": "B", "Which extras?": "X, free text"},
+        });
+
+        let (_, _, raw_output, _) = pi_emit(AgentType::Qoder, &mut cache, &mut cb, replayed).await;
+
+        let envelope: serde_json::Value =
+            serde_json::from_str(&raw_output.expect("the answers")).unwrap();
+        assert_eq!(
+            envelope,
+            serde_json::json!({
+                "answers": [
+                    {"header": "Choice", "question": "Pick A or B?", "selected": ["B"]},
+                    {"header": "Extras", "question": "Which extras?", "selected": ["X, free text"]},
+                ],
+                "declined": false,
+            })
+        );
+        assert!(
+            cb.qoder_ask_questions.is_empty(),
+            "a settled ask is not kept"
+        );
+    }
+
+    /// Drive frames through one session, as a live connection does, and
+    /// return the last tool-call event's `raw_output`.
+    async fn qoder_frames(
+        state: &Arc<RwLock<SessionState>>,
+        cb: &mut CodeBuddyLiveState,
+        frames: Vec<serde_json::Value>,
+    ) -> Option<String> {
+        let mut cache = ToolCallOutputCache::default();
+        for frame in frames {
+            let update: SessionUpdate = serde_json::from_value(frame).unwrap();
+            emit_conversation_update(
+                state,
+                &EventEmitter::Noop,
+                AgentType::Qoder,
+                update,
+                None,
+                &mut cache,
+                cb,
+            )
+            .await;
+        }
+        let guard = state.read().await;
+        guard
+            .recent_events_after(0)
+            .unwrap_or_default()
+            .iter()
+            .rev()
+            .find_map(|e| match &e.payload {
+                AcpEvent::ToolCall { raw_output, .. }
+                | AcpEvent::ToolCallUpdate { raw_output, .. } => Some(raw_output.clone()),
+                _ => None,
+            })
+            .flatten()
+    }
+
+    fn qoder_session() -> Arc<RwLock<SessionState>> {
+        Arc::new(RwLock::new(SessionState::new(
+            "conn-q".to_string(),
+            AgentType::Qoder,
+            None,
+            "win".to_string(),
+            None,
+        )))
+    }
+
+    /// When codeg answered the form, the completion shows what it sent: the
+    /// chosen label and the user's own text apart, which the sentence Qoder
+    /// streams (`"X, free text"`) can no longer tell.
+    #[tokio::test]
+    async fn a_qoder_ask_completion_shows_the_reply_codeg_sent() {
+        let state = qoder_session();
+        let mut cb = CodeBuddyLiveState::default();
+        let opening = qoder_ask_opening_frame(
+            "toolu_b857",
+            serde_json::json!({"qoder": {"toolName": "AskUserQuestion"}}),
+        );
+        qoder_frames(&state, &mut cb, vec![opening]).await;
+        state.write().await.qoder_ask_replies.insert(
+            "toolu_b857".to_string(),
+            serde_json::json!({"q0": "B", "q1": ["X", "free text"]})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+
+        let raw_output = qoder_frames(
+            &state,
+            &mut cb,
+            vec![
+                serde_json::json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "toolu_b857",
+                    "status": "in_progress",
+                }),
+                qoder_ask_completion_frame("toolu_b857", "completed", QODER_ASK_ANSWERED),
+            ],
+        )
+        .await;
+
+        let envelope: serde_json::Value =
+            serde_json::from_str(&raw_output.expect("the answers")).unwrap();
+        assert_eq!(
+            envelope["answers"],
+            serde_json::json!([
+                {"header": "Choice", "question": "Pick A or B?", "selected": ["B"]},
+                {"header": "Extras", "question": "Which extras?", "selected": ["X", "free text"]},
+            ])
+        );
+        assert!(state.read().await.qoder_ask_replies.is_empty(), "taken");
+    }
+
+    /// A reply is shown only by the completion it was sent for: a call that
+    /// fails instead drops it and keeps Qoder's own output, and an update that
+    /// does not settle the call leaves it in place.
+    #[tokio::test]
+    async fn a_qoder_ask_reply_is_shown_only_by_its_completion() {
+        let state = qoder_session();
+        let mut cb = CodeBuddyLiveState::default();
+        let opening = qoder_ask_opening_frame(
+            "toolu_b857",
+            serde_json::json!({"qoder": {"toolName": "AskUserQuestion"}}),
+        );
+        qoder_frames(&state, &mut cb, vec![opening]).await;
+        state.write().await.qoder_ask_replies.insert(
+            "toolu_b857".to_string(),
+            serde_json::json!({"q0": "B"}).as_object().unwrap().clone(),
+        );
+
+        qoder_frames(
+            &state,
+            &mut cb,
+            vec![serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "toolu_b857",
+                "status": "in_progress",
+            })],
+        )
+        .await;
+        assert_eq!(state.read().await.qoder_ask_replies.len(), 1, "still owed");
+
+        let failure = "Error: the question tool failed.";
+        let raw_output = qoder_frames(
+            &state,
+            &mut cb,
+            vec![qoder_ask_completion_frame("toolu_b857", "failed", failure)],
+        )
+        .await;
+        assert_eq!(raw_output.as_deref(), Some(failure));
+        assert!(state.read().await.qoder_ask_replies.is_empty(), "dropped");
+    }
+
+    /// What a reconnect hydrates from — the session's own record of the call —
+    /// agrees with what streamed: Qoder's original questions stay the input,
+    /// and the output is the answers, not the sentence.
+    #[tokio::test]
+    async fn a_qoder_ask_settles_with_its_questions_and_answers() {
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-q".to_string(),
+            AgentType::Qoder,
+            None,
+            "win".to_string(),
+            None,
+        )));
+        let mut cache = ToolCallOutputCache::default();
+        let mut cb = CodeBuddyLiveState::default();
+        let opening = qoder_ask_opening_frame(
+            "toolu_b857",
+            serde_json::json!({"qoder": {"toolName": "AskUserQuestion"}}),
+        );
+        let questions = opening["rawInput"].clone();
+        for frame in [
+            opening,
+            serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "toolu_b857",
+                "status": "in_progress",
+            }),
+            qoder_ask_completion_frame("toolu_b857", "completed", QODER_ASK_ANSWERED),
+        ] {
+            let update: SessionUpdate = serde_json::from_value(frame).unwrap();
+            emit_conversation_update(
+                &state,
+                &EventEmitter::Noop,
+                AgentType::Qoder,
+                update,
+                None,
+                &mut cache,
+                &mut cb,
+            )
+            .await;
+        }
+
+        let guard = state.read().await;
+        let call = guard
+            .active_tool_calls
+            .get("toolu_b857")
+            .expect("the ask is recorded");
+        assert_eq!(call.input.as_ref(), Some(&questions));
+        let Some(crate::acp::session_state::ToolCallOutput::Json { value }) = &call.output else {
+            panic!("the answers are the output: {:?}", call.output);
+        };
+        assert_eq!(value["answers"][0]["selected"], serde_json::json!(["B"]));
+        assert_eq!(value["declined"], false);
+    }
+
+    /// Only an answered Qoder ask is rewritten: a declined one keeps Qoder's
+    /// rejection, and neither another Qoder tool nor another agent carrying the
+    /// same `_meta` is taken for an ask.
+    #[tokio::test]
+    async fn only_an_answered_qoder_ask_is_rewritten() {
+        let rejection = "The user doesn't want to proceed with this tool use. The tool use \
+                         was rejected.";
+        let qoder_meta = serde_json::json!({"qoder": {"toolName": "AskUserQuestion"}});
+        let other_tool = serde_json::json!({"qoder": {"toolName": "Bash"}});
+        for (agent_type, meta, status, text) in [
+            (AgentType::Qoder, qoder_meta.clone(), "failed", rejection),
+            (
+                AgentType::Qoder,
+                other_tool,
+                "completed",
+                QODER_ASK_ANSWERED,
+            ),
+            (
+                AgentType::ClaudeCode,
+                qoder_meta,
+                "completed",
+                QODER_ASK_ANSWERED,
+            ),
+        ] {
+            let mut cache = ToolCallOutputCache::default();
+            let mut cb = CodeBuddyLiveState::default();
+            pi_emit(
+                agent_type,
+                &mut cache,
+                &mut cb,
+                qoder_ask_opening_frame("toolu_1", meta),
+            )
+            .await;
+            let (_, _, raw_output, _) = pi_emit(
+                agent_type,
+                &mut cache,
+                &mut cb,
+                qoder_ask_completion_frame("toolu_1", status, text),
+            )
+            .await;
+            assert_eq!(raw_output.as_deref(), Some(text), "{agent_type:?} {status}");
+        }
     }
 }
