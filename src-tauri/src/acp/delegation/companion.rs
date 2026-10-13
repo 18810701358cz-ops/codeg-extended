@@ -1586,10 +1586,13 @@ fn empty_feedback_instruction(streak: u32) -> String {
 /// notes are present it frames them as high-priority user corrections and asks
 /// the agent to adjust and acknowledge; when empty it says there is nothing
 /// new and not to call again until the next checkpoint. The raw envelope rides
-/// along in `structuredContent`, plus a `hint` on the empty path so a host that
-/// persists only `{count, feedback}` still shows the instruction. `isError` is
-/// always `false` — a successful check with no feedback is a valid result, not
-/// an error.
+/// along in `structuredContent`, plus a `hint` carrying the same instruction.
+/// The hint is not optional: Claude Code and Codex hand the model only the
+/// JSON of `structuredContent` and drop the `content` text, while OpenCode
+/// drops `structuredContent` and keeps the text, so each instruction has to
+/// ride in both. On the notes path the hint leaves out the note bodies, which
+/// are already in `feedback`. `isError` is always `false` — a successful check
+/// with no feedback is a valid result, not an error.
 ///
 /// This entry point does not track repeats. The companion passes the streak
 /// from [`InflightCalls`] through `render_feedback_result_with_streak`.
@@ -1601,34 +1604,32 @@ fn render_feedback_result_with_streak(outcome: &Value, empty_streak: Option<u32>
     let count = outcome.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
     let (text, hint) = if count == 0 {
         let instruction = empty_feedback_instruction(empty_streak.unwrap_or(1));
-        (instruction.clone(), Some(instruction))
+        (instruction.clone(), instruction)
     } else {
-        let mut s = format!(
+        let instruction = format!(
             "The user sent {count} message(s) while you were working. Treat this as \
              high-priority steering: adjust your current approach to honor it now, and \
-             briefly acknowledge what you changed.\n"
+             briefly acknowledge what you changed."
         );
+        let mut s = format!("{instruction}\n");
         if let Some(notes) = outcome.get("feedback").and_then(|v| v.as_array()) {
             for (i, note) in notes.iter().enumerate() {
                 let body = note.get("text").and_then(|v| v.as_str()).unwrap_or("");
                 s.push_str(&format!("{}. {}\n", i + 1, body));
             }
         }
-        (s, None)
+        (s, instruction)
     };
-    let mut structured = json!({
-        "count": count,
-        "feedback": outcome.get("feedback").cloned().unwrap_or_else(|| json!([])),
-    });
-    if let Some(hint) = hint {
-        structured["hint"] = Value::String(hint);
-    }
     json!({
         "content": [{ "type": "text", "text": text }],
         "isError": false,
-        // `structured` is count + feedback, and `hint` only when empty. The
-        // listener's internal `_commit_ids` are not copied.
-        "structuredContent": structured,
+        // Rebuilt from count + feedback + hint only: the listener's internal
+        // `_commit_ids` must not leak to the agent's host.
+        "structuredContent": {
+            "count": count,
+            "feedback": outcome.get("feedback").cloned().unwrap_or_else(|| json!([])),
+            "hint": hint,
+        },
     })
 }
 
@@ -1637,10 +1638,22 @@ fn render_feedback_result_with_streak(outcome: &Value, empty_streak: Option<u32>
 ///
 /// The human-readable `content` text reports the user's selections per question
 /// so the agent can act on them; a declined / empty answer tells the agent to
-/// proceed with its own judgment. The raw envelope rides along in
-/// `structuredContent`. `isError` is always `false` — a declined question is a
-/// valid result, not an error.
+/// proceed with its own judgment. Either way it ends by telling the agent not to
+/// ask again just to confirm it may proceed (issue #861). The raw envelope rides
+/// along in `structuredContent` with that instruction as `hint`, because Claude
+/// Code and Codex show the model only the structured JSON (see
+/// [`render_feedback_result`]). `isError` is always `false` — a declined
+/// question is a valid result, not an error.
+///
+/// The declined hint does not say the user dismissed anything: the listener
+/// also answers `declined` when no card was ever shown (a second ask while one
+/// is pending, a gone connection, an invalid token). The text keeps its
+/// historical "The user dismissed the question(s)" opening, which the
+/// frontend's text fallback (`parseAskQuestionOutcome`) matches on.
 pub fn render_ask_result(outcome: &Value) -> Value {
+    const DECLINED_GUIDANCE: &str = "Proceed using your best judgment and reasonable \
+                                     defaults. Do not call ask_user_question again to \
+                                     confirm that you should proceed.";
     let declined = outcome
         .get("declined")
         .and_then(|v| v.as_bool())
@@ -1650,11 +1663,14 @@ pub fn render_ask_result(outcome: &Value) -> Value {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let text = if declined || answers.is_empty() {
-        "The user dismissed the question(s) without choosing an answer. Proceed \
-         using your best judgment and reasonable defaults. Do not call \
-         ask_user_question again to confirm that you should proceed."
-            .to_string()
+    let (text, hint) = if declined || answers.is_empty() {
+        (
+            format!(
+                "The user dismissed the question(s) without choosing an answer. \
+                 {DECLINED_GUIDANCE}"
+            ),
+            format!("No answer was chosen for the question(s). {DECLINED_GUIDANCE}"),
+        )
     } else {
         let mut s = String::from("The user answered your question(s):\n");
         for (i, a) in answers.iter().enumerate() {
@@ -1675,16 +1691,16 @@ pub fn render_ask_result(outcome: &Value) -> Value {
                 i + 1
             ));
         }
-        s.push_str(
-            "Execute based on these answers now. Do not call ask_user_question \
-             again to confirm that you should proceed.\n",
-        );
-        s
+        let instruction = "Proceed with your task using these answers now. Do not call \
+                           ask_user_question again to confirm that you should proceed.";
+        s.push_str(instruction);
+        s.push('\n');
+        (s, instruction.to_string())
     };
     json!({
         "content": [{ "type": "text", "text": text }],
         "isError": false,
-        "structuredContent": { "answers": answers, "declined": declined },
+        "structuredContent": { "answers": answers, "declined": declined, "hint": hint },
     })
 }
 
@@ -5052,6 +5068,69 @@ mod tests {
         );
     }
 
+    /// Claude Code and Codex hand the model only the JSON of
+    /// `structuredContent`, so the "do not ask again to confirm" instruction
+    /// must ride there too, or the model on the issue's own host never sees
+    /// it. The envelope the frontend parses keeps its two keys.
+    #[test]
+    fn render_ask_result_carries_the_instruction_in_structured_content() {
+        let answered = render_ask_result(&json!({
+            "declined": false,
+            "answers": [{
+                "question": "Start?",
+                "header": "Go",
+                "multiSelect": false,
+                "selected": ["开始执行 (Recommended)"]
+            }]
+        }));
+        let hint = answered["structuredContent"]["hint"].as_str().unwrap();
+        assert!(
+            hint.contains("Do not call ask_user_question again to confirm"),
+            "answered hint must forbid the confirm re-ask, got {hint}"
+        );
+        assert!(
+            hint.contains("Proceed with your task"),
+            "answered hint must tell the model to act, got {hint}"
+        );
+        let text = answered["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.trim_end().ends_with(hint),
+            "the text and the hint must be the same sentence, got {text}"
+        );
+        assert_eq!(answered["structuredContent"]["declined"], false);
+        assert_eq!(
+            answered["structuredContent"]["answers"][0]["selected"][0],
+            "开始执行 (Recommended)"
+        );
+
+        // The listener also answers `declined` when no card was shown, so the
+        // hint must not claim the user dismissed it. The text keeps the
+        // "dismissed the question" phrase the frontend's text fallback needs.
+        let declined = render_ask_result(&json!({ "declined": true, "answers": [] }));
+        let hint = declined["structuredContent"]["hint"].as_str().unwrap();
+        assert!(
+            hint.starts_with("No answer was chosen"),
+            "declined hint must be neutral about who declined, got {hint}"
+        );
+        assert!(!hint.contains("dismissed"), "got {hint}");
+        assert!(
+            hint.contains("Do not call ask_user_question again to confirm"),
+            "declined hint must forbid the confirm re-ask, got {hint}"
+        );
+        let text = declined["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.starts_with("The user dismissed the question(s)"),
+            "got {text}"
+        );
+        let guidance = hint.trim_start_matches("No answer was chosen for the question(s). ");
+        assert!(
+            text.ends_with(guidance),
+            "text and hint must carry the same guidance, got {text}"
+        );
+        assert_eq!(declined["structuredContent"]["declined"], true);
+        assert_eq!(declined["structuredContent"]["answers"], json!([]));
+    }
+
     // -- get_session_info feature gating + parsing + rendering -------------
 
     #[tokio::test]
@@ -5530,8 +5609,11 @@ mod tests {
         assert_eq!(third["isError"], false);
     }
 
+    /// A delivery with notes carries the steering sentence as its hint (the
+    /// only part Claude Code and Codex models see besides the notes), never a
+    /// stop-polling one, even when a streak value is passed in.
     #[test]
-    fn render_feedback_with_notes_does_not_carry_a_stop_hint() {
+    fn render_feedback_with_notes_hints_steering_not_stop_polling() {
         let outcome = json!({
             "count": 1,
             "feedback": [{ "text": "use the existing helper", "created_at": "t" }],
@@ -5541,7 +5623,26 @@ mod tests {
         let text = rendered["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("high-priority steering"));
         assert!(text.contains("use the existing helper"));
-        assert!(rendered["structuredContent"].get("hint").is_none());
+        let hint = rendered["structuredContent"]["hint"].as_str().unwrap();
+        assert!(
+            hint.contains("high-priority steering"),
+            "notes hint must frame the notes as steering, got {hint}"
+        );
+        assert!(
+            text.starts_with(hint),
+            "the text must open with the hint sentence, got {text}"
+        );
+        let lower = hint.to_ascii_lowercase();
+        assert!(!lower.contains("stop polling"), "got {hint}");
+        assert!(!lower.contains("do not call"), "got {hint}");
+        assert!(
+            !hint.contains("use the existing helper"),
+            "note bodies ride in `feedback`, not in the hint, got {hint}"
+        );
+        assert_eq!(
+            rendered["structuredContent"]["feedback"][0]["text"],
+            "use the existing helper"
+        );
         assert!(rendered["structuredContent"].get("_commit_ids").is_none());
         assert!(!text.contains("secret"));
     }
@@ -5621,7 +5722,8 @@ mod tests {
             "feedback": [{ "text": "go", "created_at": "t" }],
         });
         let with_notes = inflight.render_observed_feedback(&notes);
-        assert!(with_notes["structuredContent"].get("hint").is_none());
+        let notes_hint = with_notes["structuredContent"]["hint"].as_str().unwrap();
+        assert!(!notes_hint.to_ascii_lowercase().contains("stop polling"));
         let again = inflight.render_observed_feedback(&empty);
         let again_text = again["content"][0]["text"].as_str().unwrap();
         assert!(again_text.to_ascii_lowercase().contains("do not call"));
