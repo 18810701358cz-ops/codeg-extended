@@ -37,6 +37,10 @@ import {
   type SessionConfigOptionInfo,
 } from "@/lib/types"
 import { getAgentLabel, isCustomAgentType } from "@/lib/custom-agents"
+import {
+  modelListGroups,
+  type ModelOptionGroup,
+} from "@/lib/model-config-groups"
 import { describeAgentOptions } from "@/lib/api"
 import { useAcpAgents } from "@/hooks/use-acp-agents"
 import { useAgentVocabulary } from "@/hooks/use-agent-vocabulary"
@@ -455,13 +459,29 @@ function ConfigOptionRow({
   const t = useTranslations("AcpAgentSettings.multiAgent")
   if (option.kind.type !== "select") return null
 
-  const allOptions =
-    option.kind.groups.length > 0
-      ? option.kind.groups.flatMap((g) => g.options)
-      : option.kind.options
+  // Same grouping the composer's model picker uses (`modelListGroups`):
+  // values carrying a `provider/` prefix group under their provider, with
+  // the shared provider prefix stripped from each row. Some agents serve
+  // ids as `provider/model` (two providers can offer the SAME model id), so
+  // a flat list of bare model names is ambiguous — here the provider becomes
+  // a group header and the rows stay clean. Non-model options keep their
+  // server groups, else render flat — behavior unchanged for them.
+  const groups: ModelOptionGroup[] = modelListGroups(option)
   const agentDefault = option.kind.current_value
+  // The hint names the agent's own default with its FULL id — the channel
+  // is the disambiguating part and a header can't provide it here. (The
+  // backend always ships the flat `options` too, so this lookup covers
+  // both grouped and ungrouped shapes.)
   const agentDefaultLabel =
-    allOptions.find((o) => o.value === agentDefault)?.name ?? agentDefault
+    option.kind.options.find((o) => o.value === agentDefault)?.name ??
+    agentDefault
+  // The sentinel/trigger resolve against the RENDERED rows so the selected
+  // model shows its prefix-stripped name (its provider is implied by the
+  // group it sits in), matching the composer's selector.
+  const agentDefaultRenderedLabel =
+    groups
+      .flatMap((group) => group.options)
+      .find((o) => o.value === agentDefault)?.name ?? agentDefaultLabel
   // When no override exists, the trigger shows the Default sentinel item
   // so the user can tell "I'm inheriting" apart from "I picked the
   // agent's current default explicitly" — the latter would stick to that
@@ -486,27 +506,32 @@ function ConfigOptionRow({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={DEFAULT_SENTINEL}>
-            {t("defaultOptionLabel", { value: agentDefaultLabel })}
+            {t("defaultOptionLabel", { value: agentDefaultRenderedLabel })}
           </SelectItem>
-          {option.kind.groups.length > 0
-            ? option.kind.groups.map((group) => (
-                <SelectGroup key={group.group}>
-                  <SelectLabel>{group.name}</SelectLabel>
-                  {group.options.map((item) => (
-                    <SelectItem
-                      key={`${group.group}-${item.value}`}
-                      value={item.value}
-                    >
-                      {item.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              ))
-            : option.kind.options.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
+          {groups.map((group) =>
+            group.name === null ? (
+              group.options.map((item) => (
+                <SelectItem
+                  key={`${group.key}-${item.value}`}
+                  value={item.value}
+                >
                   {item.name}
                 </SelectItem>
-              ))}
+              ))
+            ) : (
+              <SelectGroup key={group.key}>
+                <SelectLabel>{group.name}</SelectLabel>
+                {group.options.map((item) => (
+                  <SelectItem
+                    key={`${group.key}-${item.value}`}
+                    value={item.value}
+                  >
+                    {item.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )
+          )}
         </SelectContent>
       </Select>
     </div>

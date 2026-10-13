@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { NextIntlClientProvider } from "next-intl"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -157,5 +158,69 @@ describe("DelegationAgentDefaultsPanel probes", () => {
       screen.getByText(`Agent default: ${claudeModel} effort`)
     ).toBeInTheDocument()
     expect(screen.queryByText("Agent default: codex effort")).toBeNull()
+  })
+
+  /** Values carrying a `provider/` prefix must read like the composer's
+   *  picker: the provider becomes the group header and the rows keep the bare
+   *  model name — two providers offering the SAME model id are otherwise
+   *  indistinguishable in a flat list. */
+  it("groups a prefixed model option by provider and strips the prefix", async () => {
+    // Real timers: this test opens the Radix Select with userEvent.
+    vi.useRealTimers()
+    const tag = unique()
+    const chanA = `Channel A ${tag}`
+    const chanB = `Channel B ${tag}`
+    describeAgentOptions.mockResolvedValue({
+      modes: null,
+      config_options: [
+        {
+          id: "model",
+          name: "Model",
+          description: null,
+          category: "model",
+          kind: {
+            type: "select",
+            current_value: `${chanA}/glm-5`,
+            options: [
+              {
+                value: `${chanA}/glm-5`,
+                name: `${chanA}/glm-5`,
+                description: null,
+              },
+              {
+                value: `${chanA}/glm-6`,
+                name: `${chanA}/glm-6`,
+                description: null,
+              },
+              {
+                value: `${chanB}/glm-5`,
+                name: `${chanB}/glm-5`,
+                description: null,
+              },
+            ],
+            groups: [],
+          },
+        },
+      ],
+      available_commands: [],
+    } satisfies AgentOptionsSnapshot)
+
+    const user = userEvent.setup()
+    render(
+      panel({ claude_code: { config_values: { model: `${chanA}/glm-5` } } })
+    )
+
+    // The hint keeps the full channel-qualified default (the header can't
+    // carry the channel there)…
+    await screen.findByText(`Agent default: ${chanA}/glm-5`)
+
+    // …while the picker groups by channel and strips the prefix from rows.
+    await user.click(screen.getByRole("combobox"))
+    const list = await screen.findByRole("listbox")
+    expect(within(list).getByText(chanA)).toBeInTheDocument()
+    expect(within(list).getByText(chanB)).toBeInTheDocument()
+    expect(within(list).getAllByText("glm-5")).toHaveLength(2)
+    expect(within(list).getByText("glm-6")).toBeInTheDocument()
+    expect(within(list).queryByText(`${chanA}/glm-5`)).toBeNull()
   })
 })
