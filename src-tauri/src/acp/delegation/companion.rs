@@ -5755,7 +5755,11 @@ mod tests {
         use tokio::net::UnixListener;
 
         let dir = tempfile::tempdir_in("/tmp").unwrap();
-        let sock = dir.path().join("fb-empty.sock").to_string_lossy().to_string();
+        let sock = dir
+            .path()
+            .join("fb-empty.sock")
+            .to_string_lossy()
+            .to_string();
         let listener = UnixListener::bind(&sock).unwrap();
         let server = tokio::spawn(async move {
             for _ in 0..3 {
