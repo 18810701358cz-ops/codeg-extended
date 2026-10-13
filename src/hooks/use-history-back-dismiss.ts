@@ -2,22 +2,33 @@
 
 import { useEffect, useRef } from "react"
 
-// Marker key written into `history.state` for entries this hook pushes, so a
-// pop can tell "our layer's entry was popped" from any other history move.
-// A per-push unique id (not a boolean) lets stacked layers decide independently
-// which one the back actually consumed: only layers whose id is no longer the
-// current entry's marker consider themselves popped.
-const MARKER = "codegBackDismissId"
+// Key written into `history.state` for the entries this hook pushes. The value
+// is the entry's DEPTH: its place in the stack of overlay entries, 1 being the
+// first one above the page's own. Every push lands one above the entry it was
+// made from, so depths only grow along the session history, and "is my entry
+// still there?" becomes a comparison: it is gone exactly when the current
+// entry sits lower. A per-push identity cannot answer that — after a back
+// lands on the entry two layers down, every layer except that entry's owner
+// would read "not mine" and close at once.
+//
+// A position also survives a reload, which keeps `history.state` but restarts
+// this module: a counter would hand out ids that stale entries still carry,
+// and a stale twin of a layer's id reads as that layer's own entry.
+const DEPTH_KEY = "codegBackDismissDepth"
 
-let nextId = 1
+// Depths whose entry an open layer holds right now. An entry carrying a depth
+// that is not in here is a leftover nobody owns.
+const heldDepths = new Set<number>()
 
-function currentMarker(): number | null {
-  const state = window.history.state
-  if (state && typeof state === "object" && MARKER in state) {
-    const value = (state as Record<string, unknown>)[MARKER]
-    if (typeof value === "number") return value
+function currentDepth(): number {
+  const state: unknown = window.history.state
+  if (state && typeof state === "object" && DEPTH_KEY in state) {
+    const value = (state as Record<string, unknown>)[DEPTH_KEY]
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      return value
+    }
   }
-  return null
+  return 0
 }
 
 /**
@@ -26,14 +37,32 @@ function currentMarker(): number | null {
  * and unload the page — the mobile-web/PWA case, where back is the habitual
  * "close what's on top" gesture and an empty history exits the app outright.
  *
- * While `active` is true the hook keeps one extra history entry pushed (URL
- * unchanged, only `history.state` carries the marker). A back that pops OUR
- * entry calls `onDismiss`. Closing by any other path (close button, programmatic
- * dismiss) does NOT remove the entry — the next back is then absorbed by the
- * marker check with no visible effect. That absorbed extra back is the accepted
- * cost; the alternative (`history.back()` on un-activation) races a
- * same-commit re-push in React's StrictMode dev double-mount and can mis-close
- * the freshly opened layer.
+ * While `active` is true the layer holds one history entry above the page's
+ * own (URL unchanged, only `history.state` carries the marker). A traversal
+ * that leaves the current entry below the layer's calls `onDismiss`, so layers
+ * opened on top of each other unwind one per back, topmost first.
+ *
+ * Closing by any other path (close button, a tap outside, a programmatic
+ * close) does NOT remove the entry: this hook never calls `history.back()`.
+ * A back issued as one layer closes races the push of a layer opening in the
+ * same commit (React's StrictMode dev double-mount is exactly that pair). And
+ * a push that follows a back is one Chrome holds against the page: after a
+ * back it stops honouring earlier taps for new entries (crbug.com/1248529),
+ * so a layer opened by the same tap that closed another (a file picked in the
+ * sidebar) would get an entry Chrome marks skippable, along with every other
+ * entry of the page, and Android's next back would leave the app.
+ *
+ * So a leftover stays where it is, and the next layer to open while it is the
+ * current entry takes it over instead of pushing another. A run of open/close
+ * cycles therefore costs one entry, which the next back consumes with no
+ * visible effect. Two layers closed together this way (the sidebar over the
+ * file view, then a tap on a conversation) leave two: the top one gets reused,
+ * the one beneath stays until a back consumes it — one silent back per pair.
+ *
+ * A layer that opens with no tap behind it (an agent auto-opening a preview)
+ * still pushes. If the user's last action was a back, Chrome skips that entry
+ * until the next tap, so a back in between leaves the page, as it did before
+ * this hook existed.
  *
  * `onDismiss` is read through a ref, so callers can pass an inline callback.
  */
@@ -42,37 +71,49 @@ export function useHistoryBackDismiss(
   onDismiss: () => void
 ): void {
   const onDismissRef = useRef(onDismiss)
-  onDismissRef.current = onDismiss
-  // Id of the entry this layer currently owns (0 = none). Persists across the
-  // StrictMode remount, so the second mount sees its own marker still on top
-  // and reuses the entry instead of pushing a second one.
-  const entryIdRef = useRef(0)
+  useEffect(() => {
+    onDismissRef.current = onDismiss
+  }, [onDismiss])
 
   useEffect(() => {
     if (!active) return
-    if (entryIdRef.current === 0 || currentMarker() !== entryIdRef.current) {
-      const id = nextId++
-      const prev = window.history.state
+    const top = currentDepth()
+    let depth: number
+    if (top > 0 && !heldDepths.has(top)) {
+      // A leftover on top — this layer's own across a StrictMode remount,
+      // another layer's that closed in the same commit this one opened, or
+      // one an earlier close or a reload left behind. Take it over.
+      depth = top
+    } else {
+      depth = top + 1
+      const prev: unknown = window.history.state
       window.history.pushState(
-        { ...(prev && typeof prev === "object" ? prev : {}), [MARKER]: id },
+        {
+          ...(prev && typeof prev === "object" ? prev : {}),
+          [DEPTH_KEY]: depth,
+        },
         ""
       )
-      entryIdRef.current = id
+    }
+    heldDepths.add(depth)
+    let held = true
+    const release = () => {
+      if (!held) return
+      held = false
+      heldDepths.delete(depth)
     }
     const handlePopState = () => {
-      // Ignore pops while holding no entry: a back that closed a layer stacked
-      // ABOVE this one already reset ours, and must not re-fire onDismiss for
-      // later pops of unrelated history.
-      if (entryIdRef.current === 0) return
-      // The back landed on an entry that is not ours → ours was the one popped.
-      if (currentMarker() !== entryIdRef.current) {
-        entryIdRef.current = 0
-        onDismissRef.current()
-      }
+      if (!held) return
+      // At or above this layer's entry: the traversal went elsewhere — a back
+      // that closed a layer stacked above, or a forward onto an entry above.
+      if (currentDepth() >= depth) return
+      release()
+      onDismissRef.current()
     }
     window.addEventListener("popstate", handlePopState)
     return () => {
       window.removeEventListener("popstate", handlePopState)
+      release()
     }
   }, [active])
 }
