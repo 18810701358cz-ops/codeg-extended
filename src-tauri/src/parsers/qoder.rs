@@ -743,7 +743,7 @@ fn parse_transcript(bytes: &[u8]) -> Transcript {
                     Some(display) => vec![ContentBlock::Text {
                         text: display.clone(),
                     }],
-                    None => extract_user_content(value),
+                    None => with_recorded_ask_answers(value, extract_user_content(value)),
                 };
                 if content.is_empty() {
                     continue;
@@ -927,6 +927,347 @@ fn is_human_prompt(value: &Value) -> bool {
         Some(kind) => kind == "human",
         None => true,
     }
+}
+
+/// A `user` record's content, with an answered `AskUserQuestion` result
+/// carrying the answers Qoder recorded (`toolUseResult`) rather than the
+/// sentence it handed the model (see [`qoder_ask_envelope_from_recorded`]).
+///
+/// Qoder writes one tool result per `user` record, and `toolUseResult` belongs
+/// to it; with any other number of results the pairing is not certain, so the
+/// content is left as it is.
+fn with_recorded_ask_answers(record: &Value, mut content: Vec<ContentBlock>) -> Vec<ContentBlock> {
+    let mut results = content
+        .iter_mut()
+        .filter(|block| matches!(block, ContentBlock::ToolResult { .. }));
+    let (
+        Some(ContentBlock::ToolResult {
+            output_preview,
+            is_error: false,
+            ..
+        }),
+        None,
+    ) = (results.next(), results.next())
+    else {
+        return content;
+    };
+    if let Some(envelope) = record
+        .get("toolUseResult")
+        .and_then(qoder_ask_envelope_from_recorded)
+    {
+        *output_preview = Some(envelope);
+    }
+    content
+}
+
+/// Qoder's native question tool, by the name it records in transcripts and
+/// stamps on its live `tool_call` (`_meta.qoder.toolName`).
+pub(crate) const QODER_ASK_USER_QUESTION_TOOL: &str = "AskUserQuestion";
+
+/// One question of a Qoder `AskUserQuestion` call, as the call's own input
+/// states it: `questions[i]` of the live `tool_call`'s `rawInput`, and of the
+/// `toolUseResult` the transcript records next to the result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QoderAskQuestion {
+    question: String,
+    header: String,
+    multi_select: bool,
+    labels: Vec<String>,
+}
+
+impl QoderAskQuestion {
+    /// The questions of an `AskUserQuestion` input, in order. `None` unless
+    /// every entry carries its `question` text: that text is what Qoder keys
+    /// each answer by, so a list missing one cannot be matched to the answers.
+    pub(crate) fn list_from(questions: Option<&Value>) -> Option<Vec<Self>> {
+        let parsed = questions?
+            .as_array()?
+            .iter()
+            .map(|item| {
+                Some(Self {
+                    question: item.get("question")?.as_str()?.to_string(),
+                    header: item
+                        .get("header")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    multi_select: item
+                        .get("multiSelect")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    labels: item
+                        .get("options")
+                        .and_then(Value::as_array)
+                        .map(|options| {
+                            options
+                                .iter()
+                                .filter_map(|option| option.get("label").and_then(Value::as_str))
+                                .filter(|label| !label.is_empty())
+                                .map(String::from)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        (!parsed.is_empty()).then_some(parsed)
+    }
+
+    /// One RECORDED answer back as the picks the question card partitions
+    /// against the options, claiming no choice the record cannot prove.
+    ///
+    /// A single-select answer is one pick, verbatim: an offered label or the
+    /// user's own text. A multi-select answer reaches Qoder as a list, but
+    /// Qoder keeps it as one string, `values.join(", ")`, with the user's own
+    /// "Other" text in that same list (codeg's card writes it after the chosen
+    /// labels; see `crate::acp::question::build_elicitation_response`). So:
+    ///
+    /// - read exactly one way as offered labels joined by ", " → those labels;
+    /// - not readable as labels at all (the user's own text is in it) → the
+    ///   literal text, one pick, which the card shows as typed text — it
+    ///   cannot equal a label, or it would have read as one;
+    /// - readable several ways (options like "Red", "Green" and "Red, Green")
+    ///   → the literal text if it is no label, and no pick at all if it is
+    ///   one, since the card would show that label as chosen.
+    ///
+    /// A live call codeg answered itself does not need this: it renders the
+    /// reply as sent, before Qoder flattened it (see
+    /// [`qoder_ask_envelope_from_reply`]).
+    fn picks(&self, answer: &str) -> Vec<String> {
+        if answer.is_empty() {
+            return Vec::new();
+        }
+        if !self.multi_select {
+            return vec![answer.to_string()];
+        }
+        match self.label_reading(answer) {
+            LabelReading::Unique(labels) => labels,
+            LabelReading::Unreadable => vec![answer.to_string()],
+            LabelReading::Ambiguous if self.labels.iter().any(|label| label == answer) => {
+                Vec::new()
+            }
+            LabelReading::Ambiguous => vec![answer.to_string()],
+        }
+    }
+
+    /// How `answer` reads as offered labels joined by ", ".
+    ///
+    /// Counted per suffix from the end, capped at two (all [`Self::picks`]
+    /// needs is none, one, or several), so the cost stays linear in the
+    /// answer's length even when labels are joins of one another ("A",
+    /// "A, A") and a long answer could otherwise be split in exponentially
+    /// many ways.
+    fn label_reading(&self, answer: &str) -> LabelReading {
+        let mut labels: Vec<&str> = self.labels.iter().map(String::as_str).collect();
+        labels.sort_unstable();
+        labels.dedup();
+        let end = answer.len();
+        // How many readings `label`, placed at byte `at`, opens: none unless
+        // it ends the answer (one) or is followed by ", " and a suffix that
+        // reads (as many as that suffix does).
+        let through = |readings: &[u8], at: usize, label: &str| -> u8 {
+            if !answer[at..].starts_with(label) {
+                return 0;
+            }
+            let after = at + label.len();
+            if after == end {
+                1
+            } else if answer[after..].starts_with(", ") {
+                readings[after + 2]
+            } else {
+                0
+            }
+        };
+        // `readings[at]`: the readings of `answer[at..]`, 2 meaning "several".
+        let mut readings = vec![0u8; end + 1];
+        for at in (0..end).rev().filter(|&at| answer.is_char_boundary(at)) {
+            readings[at] = labels
+                .iter()
+                .map(|label| through(&readings, at, label))
+                .fold(0u8, |total, count| total.saturating_add(count).min(2));
+        }
+        match readings[0] {
+            0 => LabelReading::Unreadable,
+            1 => {
+                // Exactly one label opens the only reading at each step.
+                let mut picks = Vec::new();
+                let mut at = 0;
+                while let Some(label) = labels
+                    .iter()
+                    .find(|label| through(&readings, at, label) > 0)
+                {
+                    picks.push((*label).to_string());
+                    at += label.len() + 2;
+                    if at > end {
+                        break;
+                    }
+                }
+                LabelReading::Unique(picks)
+            }
+            _ => LabelReading::Ambiguous,
+        }
+    }
+}
+
+/// How a recorded multi-select answer reads as the offered labels; see
+/// [`QoderAskQuestion::picks`].
+enum LabelReading {
+    /// Not as labels at all: the user's own text is in it.
+    Unreadable,
+    /// Exactly one way.
+    Unique(Vec<String>),
+    /// More than one way, so no reading can be trusted.
+    Ambiguous,
+}
+
+/// The answers codeg itself sent back for a Qoder `AskUserQuestion`, as the
+/// envelope the question card reads.
+///
+/// This is the one source that is exact: Qoder's form keys question `n` as
+/// `q<n>` and codeg's reply writes a multi-select's chosen labels and the
+/// user's own text as separate entries, before Qoder flattens them into one
+/// string for everything it records or streams (see [`QoderAskQuestion::picks`]).
+/// `questions` are the call's own, in order, as its opening `tool_call`
+/// carried them.
+pub(crate) fn qoder_ask_envelope_from_reply(
+    questions: &[QoderAskQuestion],
+    reply: &serde_json::Map<String, Value>,
+) -> Option<String> {
+    let answered: Vec<_> = questions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, question)| {
+            let picks: Vec<String> = match reply.get(&format!("q{index}"))? {
+                Value::String(answer) => vec![answer.clone()],
+                Value::Array(values) => values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect(),
+                _ => return None,
+            };
+            let picks: Vec<String> = picks.into_iter().filter(|pick| !pick.is_empty()).collect();
+            (!picks.is_empty()).then_some((question, picks))
+        })
+        .collect();
+    (!answered.is_empty()).then(|| qoder_ask_envelope(answered))
+}
+
+/// The answer envelope codeg's question card reads (`parseAskQuestionOutcome`
+/// in `src/lib/ask-question.ts`): the `{answers: [{header, question, selected}],
+/// declined}` shape codeg-mcp's `ask_user_question` records, and the one the
+/// OpenCode and Grok history parsers rebuild for their own native asks.
+fn qoder_ask_envelope(answered: Vec<(&QoderAskQuestion, Vec<String>)>) -> String {
+    let answers: Vec<Value> = answered
+        .into_iter()
+        .map(|(question, selected)| {
+            serde_json::json!({
+                "header": question.header,
+                "question": question.question,
+                "selected": selected,
+            })
+        })
+        .collect();
+    serde_json::json!({ "answers": answers, "declined": false }).to_string()
+}
+
+/// The answers Qoder recorded for an `AskUserQuestion` call, as the envelope
+/// the question card reads: `{questions, answers: {"<question>": "<answer>"}}`,
+/// one string per answered question (a multi-select flattened to one
+/// `", "`-joined string, which [`QoderAskQuestion::picks`] splits only when
+/// that is unambiguous).
+///
+/// Qoder keeps this object in two places: the transcript record that carries
+/// the call's result (`toolUseResult`), and the `rawOutput` of the single,
+/// already-completed `tool_call` a `session/load` replay sends for the call.
+/// Beside it is only the sentence Qoder hands the model (see
+/// [`qoder_ask_envelope_from_result_text`]), which the card cannot read, so
+/// without this every answered question reloads with nothing selected.
+///
+/// `None` for anything else, including a declined ask, whose recorded result
+/// is only `{isHardFailure}`; and when no question was answered, which leaves
+/// the call's own output in place.
+pub(crate) fn qoder_ask_envelope_from_recorded(recorded: &Value) -> Option<String> {
+    let questions = QoderAskQuestion::list_from(recorded.get("questions"))?;
+    let answers = recorded.get("answers")?.as_object()?;
+    let answered: Vec<_> = questions
+        .iter()
+        .filter_map(|question| {
+            let picks = match answers.get(&question.question)? {
+                Value::String(answer) => question.picks(answer),
+                Value::Array(values) => values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect(),
+                _ => return None,
+            };
+            (!picks.is_empty()).then_some((question, picks))
+        })
+        .collect();
+    (!answered.is_empty()).then(|| qoder_ask_envelope(answered))
+}
+
+/// The start and end of the sentence Qoder's `AskUserQuestion` returns once
+/// questions are answered (deobfuscated from the 1.1.67 bundle; the same
+/// strings ship in every release from 1.1.23 through 1.1.69).
+const QODER_ANSWERED_PREFIX: &str = "Your questions have been answered: ";
+const QODER_ANSWERED_SUFFIX: &str = ". You can now continue with these answers in mind.";
+
+/// The answers in the result text Qoder's completion frame carries for an
+/// `AskUserQuestion` call, read against the questions the call was opened
+/// with, as the envelope the question card reads: the live path's fallback
+/// for a call codeg did not answer itself (when it did, the reply it sent is
+/// exact; see [`qoder_ask_envelope_from_reply`]).
+///
+/// That frame's `rawOutput` and `content` are both the sentence handed to the
+/// model:
+/// `Your questions have been answered: "Q1"="A1", "Q2"="B, C". You can now
+/// continue with these answers in mind.`, one entry per answered question in
+/// question order (`AskUserQuestion.execute`). Knowing the question texts is
+/// what lets each answer be cut out whole: an entry opens with
+/// `"<question>"="` and its answer runs to the next answered question's
+/// `", "<question>"="` or to the closing quote, so quotes or ", " inside a
+/// question or an answer do not split it. The answer text is then the same
+/// string the transcript records, and splits into picks by the same rule
+/// ([`QoderAskQuestion::picks`]).
+///
+/// `None`, leaving the frame's own output in place, for any text that is not
+/// that sentence: a rejection, the "did not answer" sentence, a future
+/// rewording, or entries that do not line up with the questions.
+pub(crate) fn qoder_ask_envelope_from_result_text(
+    questions: &[QoderAskQuestion],
+    text: &str,
+) -> Option<String> {
+    let mut rest = text
+        .trim()
+        .strip_prefix(QODER_ANSWERED_PREFIX)?
+        .strip_suffix(QODER_ANSWERED_SUFFIX)?;
+    let mut answered = Vec::new();
+    for (index, question) in questions.iter().enumerate() {
+        let Some(entry) = rest.strip_prefix(&format!("\"{}\"=\"", question.question)) else {
+            // Unanswered questions have no entry.
+            continue;
+        };
+        let next_entry = questions[index + 1..]
+            .iter()
+            .filter_map(|later| entry.find(&format!("\", \"{}\"=\"", later.question)))
+            .min();
+        let answer = match next_entry {
+            Some(end) => {
+                // Past the `", ` that closes this entry and separates the next.
+                rest = &entry[end + 3..];
+                &entry[..end]
+            }
+            None => {
+                let answer = entry.strip_suffix('"')?;
+                rest = "";
+                answer
+            }
+        };
+        answered.push((question, question.picks(answer)));
+    }
+    (rest.is_empty() && !answered.is_empty()).then(|| qoder_ask_envelope(answered))
 }
 
 impl AgentParser for QoderParser {
@@ -1962,5 +2303,269 @@ mod tests {
         assert_eq!(s.context_window_max_tokens, Some(262_144));
         let percent = s.context_window_usage_percent.expect("percent");
         assert!((percent - (10.0 / 262_144.0) * 100.0).abs() < 1e-9, "{percent}");
+    }
+
+    // An `AskUserQuestion` round captured from a real qodercli 1.1.67 ACP
+    // session (driven over `elicitation/create` with `--fake-responses`; usage,
+    // anchors and paths trimmed): a single-select and a multi-select question,
+    // answered "B" and "X" plus the user's own text.
+    const ASK_PROMPT_LINE: &str = r#"{"type":"user","uuid":"q-u1","timestamp":"2026-10-12T23:56:20.355Z","message":{"role":"user","content":[{"type":"text","text":"Ask me a question."}]},"permissionMode":"default","origin":{"kind":"human"},"promptId":"p1","parentUuid":null,"isSidechain":false,"cwd":"/w","sessionId":"s1","userType":"external","entrypoint":"acp","version":"unknown","gitBranch":"HEAD"}"#;
+    const ASK_TOOL_USE_LINE: &str = r#"{"type":"assistant","uuid":"q-a1","timestamp":"2026-10-12T23:56:20.647Z","message":{"id":"msg_1","type":"message","role":"assistant","model":"auto","stop_reason":"tool_use","stop_sequence":null,"content":[{"type":"tool_use","id":"toolu_b857","name":"AskUserQuestion","input":{"questions":[{"question":"Pick A or B?","header":"Choice","options":[{"label":"A","description":"Option A."},{"label":"B","description":"Option B."}],"multiSelect":false},{"question":"Which extras?","header":"Extras","options":[{"label":"X","description":"Extra X."},{"label":"Y","description":"Extra Y."}],"multiSelect":true}]}}]},"parentUuid":"q-u1","isSidechain":false,"cwd":"/w","sessionId":"s1","userType":"external","entrypoint":"acp","version":"unknown","gitBranch":"HEAD"}"#;
+    const ASK_RESULT_LINE: &str = r#"{"type":"user","uuid":"q-u2","timestamp":"2026-10-12T23:56:20.751Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b857","content":"Your questions have been answered: \"Pick A or B?\"=\"B\", \"Which extras?\"=\"X, free text\". You can now continue with these answers in mind."}]},"sourceToolAssistantUUID":"q-a1","promptId":"p1","toolUseResult":{"questions":[{"question":"Pick A or B?","header":"Choice","options":[{"label":"A","description":"Option A."},{"label":"B","description":"Option B."}],"multiSelect":false},{"question":"Which extras?","header":"Extras","options":[{"label":"X","description":"Extra X."},{"label":"Y","description":"Extra Y."}],"multiSelect":true}],"answers":{"Pick A or B?":"B","Which extras?":"X, free text"}},"parentUuid":"q-a1","isSidechain":false,"cwd":"/w","sessionId":"s1","userType":"external","entrypoint":"acp","version":"unknown","gitBranch":"HEAD"}"#;
+    // The same ask declined: Qoder rejects the call like any denied tool.
+    const ASK_DECLINED_LINE: &str = r#"{"type":"user","uuid":"q-u2","timestamp":"2026-10-12T23:56:20.751Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b857","content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). Do not repeat this call; take a different approach, or if you cannot proceed without it, tell the user what you were trying to do and why you need it.","is_error":true}]},"sourceToolAssistantUUID":"q-a1","promptId":"p1","toolUseResult":{"isHardFailure":false},"toolDenialKind":"user-rejected","parentUuid":"q-a1","isSidechain":false,"cwd":"/w","sessionId":"s1","userType":"external","entrypoint":"acp","version":"unknown","gitBranch":"HEAD"}"#;
+    const ASK_DONE_LINE: &str = r#"{"type":"assistant","uuid":"q-a2","timestamp":"2026-10-12T23:56:20.880Z","message":{"id":"msg_2","type":"message","role":"assistant","model":"auto","stop_reason":"end_turn","stop_sequence":null,"content":[{"type":"text","text":"done","citations":null}]},"parentUuid":"q-u2","isSidechain":false,"cwd":"/w","sessionId":"s1","userType":"external","entrypoint":"acp","version":"unknown","gitBranch":"HEAD"}"#;
+
+    fn ask_result_output(result_line: &str) -> (Option<String>, bool) {
+        let tmp = tempfile::tempdir().unwrap();
+        write_session(
+            tmp.path(),
+            "s1",
+            &[
+                ASK_PROMPT_LINE,
+                ASK_TOOL_USE_LINE,
+                result_line,
+                ASK_DONE_LINE,
+            ],
+        );
+        let detail = parser_in(tmp.path()).get_conversation("s1").unwrap();
+        detail
+            .turns
+            .iter()
+            .flat_map(|turn| turn.blocks.iter())
+            .find_map(|block| match block {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    output_preview,
+                    is_error,
+                    ..
+                } if tool_use_id.as_deref() == Some("toolu_b857") => {
+                    Some((output_preview.clone(), *is_error))
+                }
+                _ => None,
+            })
+            .expect("the ask's result is in the transcript")
+    }
+
+    // The question card cannot read the sentence Qoder hands the model, so an
+    // answered ask has to reload carrying the answers Qoder recorded beside it
+    // — or every question shows nothing selected. "X" plus the user's own text
+    // is one `", "`-joined string by now, and stays the text the agent got.
+    #[test]
+    fn an_answered_ask_reloads_with_its_recorded_answers() {
+        let (output, is_error) = ask_result_output(ASK_RESULT_LINE);
+        assert!(!is_error);
+        let envelope: Value = serde_json::from_str(&output.expect("output")).unwrap();
+        assert_eq!(
+            envelope,
+            serde_json::json!({
+                "answers": [
+                    {"header": "Choice", "question": "Pick A or B?", "selected": ["B"]},
+                    {"header": "Extras", "question": "Which extras?", "selected": ["X, free text"]},
+                ],
+                "declined": false,
+            })
+        );
+    }
+
+    // A declined ask keeps Qoder's own rejection: there are no answers to show.
+    #[test]
+    fn a_declined_ask_keeps_its_rejection() {
+        let (output, is_error) = ask_result_output(ASK_DECLINED_LINE);
+        assert!(is_error);
+        assert!(output
+            .expect("output")
+            .starts_with("The user doesn't want to proceed with this tool use."));
+    }
+
+    fn ask_questions(questions: Value) -> Vec<QoderAskQuestion> {
+        QoderAskQuestion::list_from(Some(&questions)).expect("questions")
+    }
+
+    // A multi-select answer is one `", "`-joined string. It splits back into
+    // picks only when every part is an offered label (a label containing ", "
+    // staying whole); with the user's own text in it, "Blue, teal" could be
+    // Blue plus "teal" or the text "Blue, teal", so it stays the literal text
+    // rather than claim a choice the user may have typed.
+    #[test]
+    fn a_multi_select_answer_splits_only_into_offered_labels() {
+        let questions = ask_questions(serde_json::json!([{
+            "question": "Colors?",
+            "header": "Colors",
+            "multiSelect": true,
+            "options": [{"label": "Red, Green"}, {"label": "Red"}, {"label": "Blue"}],
+        }]));
+        assert_eq!(
+            questions[0].picks("Red, Green, Blue"),
+            ["Red, Green", "Blue"]
+        );
+        assert_eq!(questions[0].picks("Blue, Red"), ["Blue", "Red"]);
+        assert_eq!(
+            questions[0].picks("Red, Green, Blue, teal, maybe"),
+            ["Red, Green, Blue, teal, maybe"]
+        );
+        assert_eq!(questions[0].picks("Bluest"), ["Bluest"]);
+        assert_eq!(questions[0].picks("my own"), ["my own"]);
+        assert!(questions[0].picks("").is_empty());
+
+        // "Red, Green" is both an option and Red plus Green: nothing it shows
+        // as chosen could be trusted, so it claims nothing — and the text,
+        // being an option itself, cannot stand in either.
+        let questions = ask_questions(serde_json::json!([{
+            "question": "Colors?",
+            "multiSelect": true,
+            "options": [{"label": "Red, Green"}, {"label": "Red"}, {"label": "Green"}],
+        }]));
+        assert!(questions[0].picks("Red, Green").is_empty());
+        // Several readings again, but the text is no option: it stays the text.
+        let questions = ask_questions(serde_json::json!([{
+            "question": "Colors?",
+            "multiSelect": true,
+            "options": [{"label": "Red, Green"}, {"label": "Red"}, {"label": "Green"},
+                        {"label": "Blue"}],
+        }]));
+        assert_eq!(questions[0].picks("Red, Green, Blue"), ["Red, Green, Blue"]);
+        assert_eq!(questions[0].picks("Blue, Red"), ["Blue", "Red"]);
+    }
+
+    // Labels that are joins of each other read a long answer in exponentially
+    // many ways; counting readings per suffix keeps that linear, and every
+    // outcome still claims nothing it cannot prove.
+    #[test]
+    fn self_similar_labels_are_read_in_linear_time() {
+        let questions = ask_questions(serde_json::json!([{
+            "question": "Pick?",
+            "multiSelect": true,
+            "options": [{"label": "A"}, {"label": "A, A"}],
+        }]));
+        // Thousands of "A" before the user's own text: unreadable as labels,
+        // so the literal text — after a linear pass, not a combinatorial one.
+        let long = format!("{}custom", "A, ".repeat(5_000));
+        assert_eq!(questions[0].picks(&long), [long.as_str()]);
+        // A, A is the option "A, A" or A twice; the text is an option itself,
+        // so nothing is claimed.
+        assert!(questions[0].picks("A, A").is_empty());
+        // Several readings, and the text is no option: it stays the text.
+        assert_eq!(questions[0].picks("A, A, A"), ["A, A, A"]);
+        assert_eq!(questions[0].picks("A"), ["A"]);
+    }
+
+    // What codeg itself sent back is exact: each question's own entry, chosen
+    // labels and the user's own text kept apart.
+    #[test]
+    fn the_reply_codeg_sent_is_read_as_sent() {
+        let questions = ask_questions(serde_json::json!([
+            {"question": "Pick A or B?", "header": "Choice", "options": [{"label": "A"}, {"label": "B"}]},
+            {"question": "Skipped?", "header": "Skip", "options": [{"label": "No"}]},
+            {"question": "Which extras?", "header": "Extras", "multiSelect": true,
+             "options": [{"label": "X"}, {"label": "Y"}]},
+        ]));
+        let reply = serde_json::json!({"q0": "B", "q2": ["X", "free, text"]});
+        let envelope: Value = serde_json::from_str(
+            &qoder_ask_envelope_from_reply(&questions, reply.as_object().unwrap())
+                .expect("envelope"),
+        )
+        .unwrap();
+        assert_eq!(
+            envelope,
+            serde_json::json!({
+                "answers": [
+                    {"header": "Choice", "question": "Pick A or B?", "selected": ["B"]},
+                    {"header": "Extras", "question": "Which extras?", "selected": ["X", "free, text"]},
+                ],
+                "declined": false,
+            })
+        );
+        assert_eq!(
+            qoder_ask_envelope_from_reply(&questions, &serde_json::Map::new()),
+            None
+        );
+    }
+
+    // A single-select answer is one pick, whatever punctuation it carries.
+    #[test]
+    fn a_single_select_answer_is_never_split() {
+        let questions = ask_questions(serde_json::json!([{
+            "question": "Pick?",
+            "options": [{"label": "A"}, {"label": "B"}],
+        }]));
+        assert_eq!(questions[0].picks("A, B"), ["A, B"]);
+    }
+
+    // The live completion carries only the sentence; read against the known
+    // questions it gives the same envelope the transcript does — quotes and
+    // ", " inside a question or an answer included, unanswered questions left
+    // out.
+    #[test]
+    fn the_answered_sentence_reads_back_against_its_questions() {
+        let questions = ask_questions(serde_json::json!([
+            {"question": "Rename \"foo\"?", "header": "Rename", "options": [{"label": "Yes"}]},
+            {"question": "Skipped?", "header": "Skip", "options": [{"label": "No"}]},
+            {"question": "Which extras?", "header": "Extras", "multiSelect": true,
+             "options": [{"label": "X"}, {"label": "Y"}]},
+            {"question": "Which\nlines?", "header": "Lines", "multiSelect": true,
+             "options": [{"label": "X"}, {"label": "Y"}]},
+        ]));
+        let text = concat!(
+            "Your questions have been answered: ",
+            "\"Rename \"foo\"?\"=\"say \"hi\", then go\", ",
+            "\"Which extras?\"=\"X, Y, free text\", ",
+            "\"Which\nlines?\"=\"Y, X\". ",
+            "You can now continue with these answers in mind.",
+        );
+        let envelope: Value = serde_json::from_str(
+            &qoder_ask_envelope_from_result_text(&questions, text).expect("envelope"),
+        )
+        .unwrap();
+        assert_eq!(
+            envelope,
+            serde_json::json!({
+                "answers": [
+                    {"header": "Rename", "question": "Rename \"foo\"?", "selected": ["say \"hi\", then go"]},
+                    {"header": "Extras", "question": "Which extras?", "selected": ["X, Y, free text"]},
+                    {"header": "Lines", "question": "Which\nlines?", "selected": ["Y", "X"]},
+                ],
+                "declined": false,
+            })
+        );
+
+        // Only a later question answered: the earlier ones have no entry.
+        let text = "Your questions have been answered: \"Which extras?\"=\"Y\". You can now \
+                    continue with these answers in mind.";
+        let envelope: Value = serde_json::from_str(
+            &qoder_ask_envelope_from_result_text(&questions, text).expect("envelope"),
+        )
+        .unwrap();
+        assert_eq!(
+            envelope["answers"],
+            serde_json::json!([{"header": "Extras", "question": "Which extras?", "selected": ["Y"]}])
+        );
+    }
+
+    // Anything but the answered sentence is left as it came.
+    #[test]
+    fn other_result_text_is_not_read_as_answers() {
+        let questions = ask_questions(serde_json::json!([
+            {"question": "Pick A or B?", "options": [{"label": "A"}, {"label": "B"}]},
+        ]));
+        for text in [
+            "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+            "The user did not answer the questions.",
+            // An entry for a question this call never asked.
+            "Your questions have been answered: \"Other?\"=\"A\". You can now continue with \
+             these answers in mind.",
+            "Your questions have been answered: . You can now continue with these answers in \
+             mind.",
+        ] {
+            assert_eq!(
+                qoder_ask_envelope_from_result_text(&questions, text),
+                None,
+                "{text}"
+            );
+        }
+        assert!(
+            QoderAskQuestion::list_from(Some(&serde_json::json!([{"header": "No text"}])))
+                .is_none()
+        );
     }
 }
