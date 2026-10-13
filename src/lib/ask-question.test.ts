@@ -575,16 +575,18 @@ describe("parseAskQuestionOutcome", () => {
       })
     })
 
-    it("keeps a comma-bearing label whole and the typed rest as one answer", () => {
+    it("keeps comma-bearing labels whole and the typed rest as one answer", () => {
+      // Two such labels side by side: read part by part, they would merge
+      // into one typed answer instead.
       const questions = asked({
         question: "Pick any",
-        labels: ["Rewrite, then test", "Incremental"],
+        labels: ["Rewrite, then test", "Ship, then fix", "Incremental"],
         multi: true,
       })
       expect(
         parseAskQuestionOutcome(
           sentence(
-            '"Pick any"="Rewrite, then test, Incremental, my own, idea"'
+            '"Pick any"="Rewrite, then test, Ship, then fix, my own, idea"'
           ),
           questions
         )?.answers
@@ -592,7 +594,27 @@ describe("parseAskQuestionOutcome", () => {
         {
           header: "",
           question: "Pick any",
-          selected: ["Rewrite, then test", "Incremental", "my own, idea"],
+          selected: ["Rewrite, then test", "Ship, then fix", "my own, idea"],
+        },
+      ])
+    })
+
+    it("takes the longest label when one label starts another", () => {
+      const questions = asked({
+        question: "Pick any",
+        labels: ["Alpha", "Alpha, Beta", "Gamma"],
+        multi: true,
+      })
+      expect(
+        parseAskQuestionOutcome(
+          sentence('"Pick any"="Alpha, Beta, Gamma"'),
+          questions
+        )?.answers
+      ).toEqual([
+        {
+          header: "",
+          question: "Pick any",
+          selected: ["Alpha, Beta", "Gamma"],
         },
       ])
     })
