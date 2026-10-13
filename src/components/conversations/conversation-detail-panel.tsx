@@ -2966,6 +2966,10 @@ export function ConversationDetailPanel() {
             tileTabRefs.current.delete(tab.id)
           }
         }}
+        // Tiled, everything below this wrapper is invisible to the row's
+        // scrollbar (a tile clips its content), so TileScrollContainer skips
+        // the layout read its observer would otherwise force per mutation.
+        data-tile-scroll-item=""
         style={canTileG ? { order: indexInGroup } : undefined}
         className={cn(
           canTileG
