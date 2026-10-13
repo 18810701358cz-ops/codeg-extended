@@ -290,6 +290,73 @@ describe("AskQuestionResultCard", () => {
     ).not.toBeChecked()
   })
 
+  it("re-checks each label of a multi-select CLI answer sentence", () => {
+    // The CLI joins a multi-select answer's labels with ", " into one value;
+    // the card must check each label rather than show the joined text as a
+    // typed "Other" answer.
+    const input = JSON.stringify({
+      questions: [
+        {
+          question: "Which features?",
+          header: "Features",
+          multiSelect: true,
+          options: [
+            { label: "Auth", description: "" },
+            { label: "Billing", description: "" },
+            { label: "Search", description: "" },
+          ],
+        },
+      ],
+    })
+    const output =
+      'Your questions have been answered: "Which features?"="Auth, Search". ' +
+      "You can now continue with these answers in mind."
+    renderWithIntl(
+      <AskQuestionResultCard
+        input={input}
+        output={output}
+        state="output-available"
+      />
+    )
+
+    expect(screen.getByText("Auth, Search")).toBeInTheDocument()
+    expand()
+    expect(screen.getByRole("checkbox", { name: "Auth" })).toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Search" })).toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Billing" })).not.toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Other" })).not.toBeChecked()
+  })
+
+  it("matches a CLI answer sentence whose question contains double quotes", () => {
+    const input = JSON.stringify({
+      questions: [
+        {
+          question: 'Name it "codeg"?',
+          header: "Name",
+          multiSelect: false,
+          options: [
+            { label: "Yes", description: "" },
+            { label: "No", description: "" },
+          ],
+        },
+      ],
+    })
+    const output =
+      'Your questions have been answered: "Name it "codeg"?"="Yes". ' +
+      "You can now continue with these answers in mind."
+    renderWithIntl(
+      <AskQuestionResultCard
+        input={input}
+        output={output}
+        state="output-available"
+      />
+    )
+    expand()
+
+    expect(screen.getByRole("radio", { name: "Yes" })).toBeChecked()
+    expect(screen.getByRole("radio", { name: "No" })).not.toBeChecked()
+  })
+
   it("matches grok's header-less questions to their empty-header answers", () => {
     // Grok's native ask carries no `header`; the connection bridge (live) and the
     // history parser both emit header-less questions + answers with `header: ""`.
