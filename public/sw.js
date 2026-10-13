@@ -15,54 +15,90 @@
  *     (WebSockets never enter a fetch handler anyway; this is belt and
  *     braces for anything that looks like one.)
  *   - Same-origin GETs under the cacheable prefixes below are cache-first.
- *     They are content-hashed build output or versioned public assets, so a
- *     cached copy is never stale in a way that matters.
  *   - Navigations are network-first. A successful HTML response is stored
  *     in the shell cache under its path — the query is stripped, because a
  *     reload comes back under whatever query the route launched with and a
- *     cache match is exact. A failed navigation (connection refused, or a
- *     5xx from a server that is mid-restart) is answered with that route's
- *     cached document, falling back to the root app shell — which boots
- *     the app and lets the existing connection guard show its disconnected
- *     state rather than a blank tab.
+ *     cache match is exact. Only a server that can't answer — the fetch
+ *     fails outright, or a proxy in front of a restarting server says 5xx —
+ *     makes the worker answer instead, with that route's cached document or
+ *     else the root app shell. Every other response (a redirect to an auth
+ *     proxy's login page, a 4xx) is the server's real answer and passes
+ *     through untouched.
+ *   - Cache Storage is only ever an optimization: a failed cache read falls
+ *     through to the network, and a failed write (a full quota) is dropped
+ *     without failing the response it was copying.
  *
- * VERSION bounds Cache Storage: bump it when the shell document or this
- * policy changes, and activate() drops every codeg cache from before it.
- * Build output is content-hashed, so an app update simply starts using new
- * keys; orphaned entries age out under the browser's storage quota.
+ * Versions: the page registers this script as /sw.js?v=<app version>, so
+ * each release installs a new worker whose caches are named after it, and
+ * activate() drops the older codeg caches, keeping only the previous
+ * release's assets for pages still running it. That is what bounds Cache
+ * Storage — it never expires entries on its own, so hashed build output
+ * would otherwise pile up release after release — and what keeps the files
+ * without a content hash (Monaco's loader and editor entry points under
+ * /vs, the icons, the manifest) from being served stale after an update.
+ * Builds that keep the version keep their caches. Bump POLICY when a change
+ * to the rules below must not inherit entries from the same release.
+ *
+ * Retiring this worker takes a replacement, not a deletion: the static
+ * handler answers a missing /sw.js with index.html as text/html, the
+ * browser's update check rejects that, and the installed worker keeps
+ * running. Ship a sw.js that deletes the codeg caches and unregisters itself.
  */
 
-const VERSION = "v1"
+const POLICY = "v1"
+const BUILD = new URL(self.location.href).searchParams.get("v") || "unversioned"
+const VERSION = `${POLICY}-${BUILD}`
 const ASSETS_CACHE = `codeg-assets-${VERSION}`
 const SHELL_CACHE = `codeg-shell-${VERSION}`
-const SHELL_URL = new URL("/index.html", self.location.href).href
+const SHELL_PATH = "/index.html"
+
+// Stored at install, before this worker can answer anything. The root shell
+// is what a route without a document of its own falls back to, and the root
+// page redirects to /workspace or /login (src/app/page.tsx). Those two must
+// be cached whenever the shell is: offline, the redirect's client-side
+// fetch fails and Next falls back to a full navigation, which would land
+// back on the shell — a reload loop for as long as the server is away.
+const BOOT_DOCUMENTS = [SHELL_PATH, "/workspace", "/login"]
 
 // Same-origin GETs under these prefixes may be cached: Next's hashed
 // export output, the bundled Monaco under public/vs, and the app's own
 // icons and manifest. Everything else — page HTML routes, /api, /ws — is
-// served live.
+// served live. src/lib/service-worker.ts mirrors this list.
 const CACHEABLE_PREFIXES = ["/_next/static/", "/vs/", "/icon", "/manifest.json"]
 
+// Next names everything under here after its content, so a URL can never
+// change what it serves; Monaco's entry points, the icons and the manifest
+// keep their names from one release to the next.
+const IMMUTABLE_PREFIX = "/_next/static/"
+
 self.addEventListener("install", (event) => {
-  // Seed the offline shell before the worker can take over, and swap in
-  // immediately: until a navigation happens the new worker serving it is
-  // what we want.
-  event.waitUntil(seedShell())
+  // The page that registers this worker loaded its own document before any
+  // worker existed, so no navigation handler has stored a shell yet: seed
+  // them all or fail the install (the next page load registers again).
+  // Then swap in immediately — a waiting worker would only delay that.
+  event.waitUntil(seedBootDocuments())
   self.skipWaiting()
 })
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      const names = await caches.keys()
+      const older = (await caches.keys()).filter(
+        (name) =>
+          name.startsWith("codeg-") &&
+          name !== ASSETS_CACHE &&
+          name !== SHELL_CACHE
+      )
+      // Keep one older asset cache — the newest, i.e. the release this one
+      // replaces (keys() lists caches in creation order). Pages still
+      // running that release go on lazy-loading its hashed chunks from it
+      // after the server has dropped them; the next release deletes it.
+      const previousAssets = older
+        .filter((name) => name.startsWith("codeg-assets-"))
+        .pop()
       await Promise.all(
-        names
-          .filter(
-            (name) =>
-              name.startsWith("codeg-") &&
-              name !== ASSETS_CACHE &&
-              name !== SHELL_CACHE
-          )
+        older
+          .filter((name) => name !== previousAssets)
           .map((name) => caches.delete(name))
       )
       await self.clients.claim()
@@ -79,61 +115,71 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname === "/ws" || url.pathname.startsWith("/ws/")) return
 
   if (request.mode === "navigate") {
-    event.respondWith(navigateNetworkFirst(request))
+    event.respondWith(navigateNetworkFirst(event, url.pathname))
     return
   }
   if (CACHEABLE_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))) {
-    event.respondWith(cacheFirst(request))
+    event.respondWith(cacheFirst(event, url.pathname))
   }
 })
 
-async function seedShell() {
-  // The install fetch, not the install-time navigation, is what guarantees a
-  // shell after a first visit: the page that registers this worker loaded
-  // its own document before the worker could take over, so no navigation
-  // handler ever saw it.
+async function seedBootDocuments() {
+  const documents = await Promise.all(
+    BOOT_DOCUMENTS.map(async (path) => {
+      const response = await fetch(path, { cache: "reload" })
+      // A redirect here is an auth proxy's login page, not the app.
+      if (!response.ok || response.redirected || !isHtml(response)) {
+        throw new Error(`cannot seed ${path}: HTTP ${response.status}`)
+      }
+      return [path, response]
+    })
+  )
   const cache = await caches.open(SHELL_CACHE)
-  try {
-    const response = await fetch(SHELL_URL, { cache: "reload" })
-    if (response.ok) await cache.put(SHELL_URL, response)
-  } catch {
-    // No shell today; the first successful navigation stores it.
-  }
+  await Promise.all(
+    documents.map(([path, response]) => cache.put(path, response))
+  )
 }
 
-async function navigateNetworkFirst(request) {
-  const url = new URL(request.url)
-  const routeKey = new Request(url.pathname, { method: "GET" })
+async function navigateNetworkFirst(event, path) {
   let response
   try {
-    response = await fetch(request)
-  } catch {
-    const cached = await cachedDocument(routeKey)
+    response = await fetch(event.request)
+  } catch (error) {
+    const cached = await cachedDocument(path)
     if (cached) return cached
-    throw new Error("offline")
+    throw error
+  }
+  if (response.status >= 500) {
+    return (await cachedDocument(path)) || response
   }
   if (response.ok && isHtml(response)) {
-    const cache = await caches.open(SHELL_CACHE)
-    await cache.put(routeKey, response.clone())
+    putInBackground(event, SHELL_CACHE, path, response.clone())
   }
-  if (response.ok) return response
-  const cached = await cachedDocument(routeKey)
-  return cached || response
+  return response
 }
 
-async function cachedDocument(routeKey) {
-  return (await caches.match(routeKey)) || (await caches.match(SHELL_URL))
+async function cachedDocument(path) {
+  return (
+    (await cacheMatch(SHELL_CACHE, path)) ||
+    (await cacheMatch(SHELL_CACHE, SHELL_PATH))
+  )
 }
 
-function isHtml(response) {
-  return (response.headers.get("content-type") || "").includes("text/html")
-}
-
-async function cacheFirst(request) {
-  const cache = await caches.open(ASSETS_CACHE)
-  const cached = await cache.match(request)
+async function cacheFirst(event, path) {
+  const request = event.request
+  const immutable = path.startsWith(IMMUTABLE_PREFIX)
+  // A hashed URL serves the same bytes from any release's cache. A fixed
+  // name only counts from this release's, and a miss revalidates with the
+  // server: the HTTP cache may still hold the previous release's copy as
+  // heuristically fresh (the static handler sends no Cache-Control), and
+  // storing that would pin it here until the next release.
+  const cached =
+    (await cacheMatch(ASSETS_CACHE, request)) ||
+    (immutable ? await anyCacheMatch(request) : undefined)
   if (cached) return cached
-  const response = await fetch(request)
+  const response = await (immutable
+    ? fetch(request)
+    : fetch(request, { cache: "no-cache" }))
   // A 200 here is not always the asset: the static handler falls back to
   // index.html for hashed URLs it no longer has (an app update orphans old
   // chunk names), and an auth proxy can answer anything with its login
@@ -141,7 +187,40 @@ async function cacheFirst(request) {
   // across a rollback, so a response that is not what its URL claims never
   // enters the cache.
   if (response.ok && response.type === "basic" && !isHtml(response)) {
-    await cache.put(request, response.clone())
+    putInBackground(event, ASSETS_CACHE, request, response.clone())
   }
   return response
+}
+
+async function cacheMatch(cacheName, key) {
+  try {
+    const cache = await caches.open(cacheName)
+    return await cache.match(key)
+  } catch {
+    return undefined
+  }
+}
+
+async function anyCacheMatch(key) {
+  try {
+    return await caches.match(key)
+  } catch {
+    return undefined
+  }
+}
+
+// Copies a response into a cache without holding it back: the caller
+// returns the original at once (so it streams), and the event stays alive
+// until the copy is stored or dropped.
+function putInBackground(event, cacheName, key, response) {
+  event.waitUntil(
+    caches
+      .open(cacheName)
+      .then((cache) => cache.put(key, response))
+      .catch(() => {})
+  )
+}
+
+function isHtml(response) {
+  return (response.headers.get("content-type") || "").includes("text/html")
 }
