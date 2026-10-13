@@ -66,6 +66,7 @@ import {
 import { RemoteConnectionGate } from "@/contexts/remote-connection-context"
 import { UpdateProvider } from "@/components/providers/update-provider"
 import { useWorkspaceBackground, useZoomLevel } from "@/hooks/use-appearance"
+import { useHistoryBackDismiss } from "@/hooks/use-history-back-dismiss"
 import { FILL_MODE_STYLE } from "@/lib/workspace-background"
 import { TabBar } from "@/components/tabs/tab-bar"
 import { TerminalPanel } from "@/components/terminal/terminal-panel"
@@ -616,11 +617,21 @@ function WorkspaceContent({ children }: { children: React.ReactNode }) {
 
 function MobileWorkspaceContent({ children }: { children: React.ReactNode }) {
   const { mode, activePane } = useWorkspaceView()
+  const { activateConversationPane } = useWorkspaceActions()
   const { isConversations } = useWorkbenchRoute()
   const hasRouteStrip = useHasWorkbenchRouteStrip()
 
   const showConversation =
     mode === "conversation" || activePane === "conversation"
+
+  // The mobile file view is a pane swap, not a route: without a history entry
+  // behind it, a back gesture falls straight through the /workspace navigation
+  // and unloads the whole page (or exits the PWA). One pushed entry lets back
+  // close the file view instead.
+  useHistoryBackDismiss(
+    isConversations && !showConversation,
+    activateConversationPane
+  )
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden">
@@ -686,6 +697,15 @@ function MobileFolderWorkspaceShell({
     toggle: toggleAux,
   } = useAuxPanelContext()
   const { isOpen: terminalOpen, toggle: toggleTerminal } = useTerminalContext()
+
+  // Each of these drawers is a state toggle, not a route: without a history
+  // entry behind them the back gesture falls through and unloads the whole
+  // page. One pushed entry per open drawer lets back close the topmost one
+  // (the entries stack in open order, so drawers open on top of each other
+  // unwind top-down).
+  useHistoryBackDismiss(sidebarRestored && sidebarOpen, toggleSidebar)
+  useHistoryBackDismiss(auxRestored && auxOpen, toggleAux)
+  useHistoryBackDismiss(terminalOpen, toggleTerminal)
 
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
