@@ -42,10 +42,13 @@ use crate::process::tokio_command;
 
 // ─── Tunables ───────────────────────────────────────────────────────────
 
-/// Upper bound on how long we wait for a freshly-spawned watch server to
-/// announce readiness (its `Watch: http://…:<port>` stdout line) before giving up.
-/// Cold officecli starts can take tens of seconds even for an empty document.
-/// Keep the frontend's startOfficeWatch request deadline above this budget.
+/// Upper bound on how long a start may take before giving up: waiting out
+/// another start of the same file, then for the freshly-spawned watch server to
+/// announce readiness (its `Watch: http://…:<port>` stdout line). officecli
+/// renders the whole document before it binds the port and announces it, so a
+/// large file or a slow or busy machine can take tens of seconds; only a start
+/// that never gets there waits this long. Keep the frontend's
+/// `startOfficeWatch` request deadline above this budget.
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 /// Per-attempt TCP connect timeout for the post-announce reachability confirm.
 const READY_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
@@ -278,8 +281,9 @@ fn loose_key(root_path: &str, rel_path: &str) -> Option<String> {
 // ─── Spawn / readiness ──────────────────────────────────────────────────
 
 /// Ask the OS for a free loopback port by binding to `:0` then releasing it.
-/// There's an inherent (microsecond) TOCTOU window before officecli binds it;
-/// the readiness probe catches the rare loss as `PortTimeout`/`StartFailed`.
+/// officecli binds it only after rendering the document, so another process can
+/// take it in between; the readiness check catches that rare loss as
+/// `PortTimeout`/`StartFailed`, since it needs our own child to announce the port.
 fn allocate_free_port() -> Result<u16, WatchError> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|_| WatchError::NoPort)?;
     let port = listener.local_addr().map_err(|_| WatchError::NoPort)?.port();
@@ -388,6 +392,18 @@ pub async fn start_office_watch_core(
     root_path: String,
     path: String,
 ) -> Result<OfficeWatchStarted, WatchError> {
+    start_within(root_path, path, READY_TIMEOUT).await
+}
+
+/// [`start_office_watch_core`], giving up once the whole start has taken
+/// `budget` — waiting for another start of the same file included, so the
+/// caller hears back in time whatever else is starting that file.
+async fn start_within(
+    root_path: String,
+    path: String,
+    budget: Duration,
+) -> Result<OfficeWatchStarted, WatchError> {
+    let deadline = Instant::now() + budget;
     let canonical_target = resolve_office_target(&root_path, &path)?;
     let key = watch_key(&canonical_target);
 
@@ -402,7 +418,11 @@ pub async fn start_office_watch_core(
     // serialization is never broken mid-spawn); the idle sweep prunes entries no
     // task holds (`Arc::strong_count == 1`), bounding the map's growth.
     let spawn_lock = spawn_lock_for(&key);
-    let _guard = spawn_lock.lock().await;
+    let Ok(_guard) = tokio::time::timeout_at(deadline.into(), spawn_lock.lock()).await else {
+        return Err(WatchError::PortTimeout(
+            "another start of this file did not finish in time".to_string(),
+        ));
+    };
     if let Some((port, cap)) = reuse_live(&key) {
         return Ok(OfficeWatchStarted { port, cap });
     }
@@ -426,7 +446,8 @@ pub async fn start_office_watch_core(
         .spawn()
         .map_err(|e| WatchError::StartFailed(e.to_string()))?;
 
-    if let Err(ready_err) = await_ready(port, &mut child, READY_TIMEOUT).await {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if let Err(ready_err) = await_ready(port, &mut child, remaining).await {
         let _ = child.start_kill();
         let stderr = drain_stderr(&mut child).await;
         reap(child);
@@ -887,6 +908,39 @@ mod tests {
         let result = await_ready(port, &mut exited, READY_TIMEOUT).await;
         reap(exited);
         assert!(matches!(result, Err(WatchError::StartFailed(_))));
+    }
+
+    /// A start queued behind another start of the same file answers within its
+    /// own budget. Waiting that start out first and then spending a whole budget
+    /// of its own would outlast the frontend's request deadline.
+    #[tokio::test]
+    async fn a_start_queued_behind_another_answers_within_its_budget() {
+        let dir = std::env::temp_dir().join(format!("codeg-ow-queued-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let docx = dir.join("queued.docx");
+        std::fs::write(&docx, b"x").unwrap();
+        let key = watch_key(&std::fs::canonicalize(&docx).unwrap());
+
+        // Another start of the file holds its spawn lock and never finishes.
+        let spawn_lock = spawn_lock_for(&key);
+        let _other_start = spawn_lock.lock().await;
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            start_within(
+                dir.to_string_lossy().to_string(),
+                "queued.docx".into(),
+                Duration::from_millis(300),
+            ),
+        )
+        .await
+        .expect("the queued start must give up once its budget is spent");
+        assert!(
+            matches!(result, Err(WatchError::PortTimeout(_))),
+            "{result:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
