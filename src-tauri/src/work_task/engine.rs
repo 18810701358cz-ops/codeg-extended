@@ -10123,6 +10123,16 @@ mod tests {
                     thinking,
                 ],
             ),
+            (
+                "a failure the model answered past",
+                vec![
+                    tool_call("ls-1", "read", "failed", Some("No such file")),
+                    AcpEvent::ContentDelta {
+                        text: "That directory is gone; nothing to change.".into(),
+                        parent_tool_use_id: None,
+                    },
+                ],
+            ),
         ];
         for (label, events) in cases {
             let (engine, task_id) = running_task().await;
