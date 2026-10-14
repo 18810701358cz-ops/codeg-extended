@@ -6324,6 +6324,103 @@ describe("connect() is observable while it is still in flight", () => {
   })
 })
 
+describe("a switch that lands while another agent is still connecting", () => {
+  // The composer's agent row stays clickable for the whole `connecting`
+  // window, so a second pick can arrive while the first agent is still
+  // spawning. The user asked for the NEWEST one: `connect()` must park that
+  // request, kill what the abandoned attempt spawned, and never let it reach
+  // the store — otherwise a stale agent claims the tab and the switch the user
+  // watched happen silently reverts.
+  it("kills the abandoned spawn and runs the agent picked last", async () => {
+    await mountProvider()
+    const spawns: Array<() => void> = []
+    h.acpConnect.mockImplementation(
+      (agentType: string) =>
+        new Promise<string>((res) => {
+          spawns.push(() => res(`${agentType}-conn`))
+        })
+    )
+
+    let first: Promise<void> | undefined
+    let second: Promise<void> | undefined
+    await act(async () => {
+      first = h.actions!.connect(TAB, "claude_code", "/tmp/x")
+      await h.actions!.connect(TAB, "codex", "/tmp/x")
+      second = h.actions!.connect(TAB, "gemini", "/tmp/x")
+    })
+
+    // Parked, not racing: exactly one agent is being spawned.
+    expect(h.acpConnect).toHaveBeenCalledTimes(1)
+    expect(h.acpConnect.mock.calls[0]![0]).toBe("claude_code")
+    expect(h.store!.getConnectPending(TAB)?.agentType).toBe("gemini")
+
+    await act(async () => {
+      spawns[0]!()
+      await first
+    })
+    await act(async () => {})
+
+    // The abandoned attempt is torn down and never registered...
+    expect(h.acpDisconnect).toHaveBeenCalledWith("claude_code-conn")
+    expect(h.store!.getConnection(TAB)).toBeUndefined()
+    // ...and the newest request is the one actually connecting now.
+    expect(h.acpConnect).toHaveBeenCalledTimes(2)
+    expect(h.acpConnect.mock.calls[1]![0]).toBe("gemini")
+
+    await act(async () => {
+      spawns[1]!()
+      await second
+    })
+
+    expect(h.store!.getConnection(TAB)?.agentType).toBe("gemini")
+  })
+
+  it("replaces a registered connection before its startup finishes", async () => {
+    await mountProvider()
+    h.acpConnect
+      .mockResolvedValueOnce("starting-claude")
+      .mockResolvedValueOnce("starting-codex")
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x")
+    })
+    // No connected event has arrived from the first agent's handshake.
+    expect(h.store!.getConnection(TAB)?.status).toBe("connecting")
+
+    await act(async () => {
+      await h.actions!.connect(TAB, "codex", "/tmp/x")
+    })
+    expect(h.acpDisconnect).toHaveBeenCalledWith("starting-claude")
+    expect(h.acpConnect).toHaveBeenCalledTimes(2)
+    expect(h.store!.getConnection(TAB)?.agentType).toBe("codex")
+    expect(h.store!.getConnection(TAB)?.status).toBe("connecting")
+  })
+
+  it("does not notify a failed preflight for a choice the user replaced", async () => {
+    await mountProvider()
+    let rejectStatus!: (error: Error) => void
+    h.acpGetAgentStatus.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStatus = reject
+        })
+    )
+    let first: Promise<void> | undefined
+    await act(async () => {
+      first = h.actions!.connect(TAB, "claude_code", "/tmp/x")
+      await h.actions!.connect(TAB, "codex", "/tmp/x")
+    })
+    await act(async () => {
+      rejectStatus(new Error("old agent configuration failed"))
+      await first
+    })
+
+    expect(h.store!.getConnection(TAB)?.agentType).toBe("codex")
+    expect(h.store!.getConnectError(TAB)).toBeUndefined()
+    expect(h.recordAlert).not.toHaveBeenCalled()
+    expect(h.toastError).not.toHaveBeenCalled()
+  })
+})
+
 describe("connect failures land on the surface that asked", () => {
   // A failed connect never produces a store entry, so its reason used to go
   // only to the status-bar alerts — for a saved conversation the ONLY place it

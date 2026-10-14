@@ -799,7 +799,7 @@ export function CanvasConversationSurface({
                 defaultAgentType={agentType}
                 onSelect={onAgentTypeChange}
                 onFallback={onAgentTypeChange}
-                disabled={conn.status === "connecting"}
+                // Draft cards can change agents during connection startup.
               />
             </div>
           )}

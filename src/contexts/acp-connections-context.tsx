@@ -6574,6 +6574,11 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       lastConnectParamsRef.current.set(contextKey, request)
       if (connectingKeysRef.current.has(contextKey)) {
         pendingConnectRequestsRef.current.set(contextKey, request)
+        setConnectPending(contextKey, {
+          agentType,
+          workingDir: workingDir ?? null,
+        })
+        setConnectError(contextKey, null)
         return
       }
       connectingKeysRef.current.add(contextKey)
@@ -6597,6 +6602,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // rejection must not report a failure over whatever it does next.
       const publishConnectError = (info: ConnectErrorInfo) => {
         if (abandonedKeysRef.current.has(contextKey)) return
+        const pendingRequest = pendingConnectRequestsRef.current.get(contextKey)
+        if (pendingRequest && !sameConnectRequest(pendingRequest, request))
+          return
         setConnectError(contextKey, info)
         notifyConnectError(contextKey, info)
       }
