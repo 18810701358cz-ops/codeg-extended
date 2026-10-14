@@ -4558,6 +4558,10 @@ async fn emit_grok_incompatible_agent_switch(
 /// Emit the composer's session config-option selectors. For Grok this reads the
 /// synthesized `x.ai/sessionConfig` (parity path); for every other agent it runs
 /// the standard preference-application + schema-mapping pipeline unchanged.
+///
+/// `session_models` is the establishing answer's raw top-level `models`, `None`
+/// where none was captured; the standard pipeline reads it for
+/// [`session_model_list_offers`].
 #[allow(clippy::too_many_arguments)]
 async fn apply_and_emit_session_config_options(
     cx: &ConnectionTo<Agent>,
@@ -4567,6 +4571,7 @@ async fn apply_and_emit_session_config_options(
     agent_type: AgentType,
     grok_meta: Option<&serde_json::Map<String, serde_json::Value>>,
     grok_model_specs: Option<&HashMap<String, GrokModelSpec>>,
+    session_models: Option<&serde_json::Value>,
     preferred_mode_id: Option<&str>,
     preferred_config_values: &BTreeMap<String, String>,
     initial_config_options: Vec<SessionConfigOption>,
@@ -4616,6 +4621,7 @@ async fn apply_and_emit_session_config_options(
         emitter,
         preferred_mode_id,
         preferred_config_values,
+        session_models,
         initial_config_options,
     )
     .await;
@@ -4778,7 +4784,7 @@ fn build_client_capabilities(
     // it denies `AskUserQuestion` for the session, so the model never gets the
     // tool. Verified on the real 1.1.67 wire, MCP tool-call approvals staying
     // on `session/request_permission`; the same form and answer handling ship
-    // in every release from 1.1.23 through 1.1.69, which matters because codeg
+    // in every release from 1.1.23 through 1.1.71, which matters because codeg
     // launches a `qoder` found on PATH ahead of the pinned package). Agents
     // without the bit fall back to their own `request_permission` button path.
     if matches!(
@@ -5186,8 +5192,9 @@ pub(crate) fn build_resume_session_request(
 /// a plain typed send.
 ///
 /// `models` is `None` when the reply carries none. Other agents can send one too
-/// (codex-acp reports its model state there), but only grok's is ever read:
-/// every caller checks the agent before parsing it.
+/// (codex-acp reports its model state there), but only two readers use it, and
+/// both check the agent first: grok's effort data, and Antigravity's flat model
+/// list (`session_model_list_offers`).
 pub(crate) async fn send_capturing_models<Resp: serde::de::DeserializeOwned>(
     cx: &ConnectionTo<Agent>,
     method: &str,
@@ -6653,7 +6660,7 @@ async fn run_connection(
                         mcp_servers.clone(),
                     );
                     match send_resume_session(&cx, resume_req).await {
-                        Ok((resume_resp, grok_models_raw)) => {
+                        Ok((resume_resp, models_raw)) => {
                             let initial_config_options = resume_resp.config_options.clone();
                             let new_resp = NewSessionResponse::new(SessionId::new(sid.clone()))
                                 .modes(resume_resp.modes)
@@ -6667,7 +6674,7 @@ async fn run_connection(
                             // Opportunistic: grok may include per-model effort data
                             // on resume; absent ⇒ empty specs ⇒ flat fallback.
                             let grok_model_specs = (agent_type == AgentType::Grok)
-                                .then(|| parse_grok_model_specs(grok_models_raw.as_ref()));
+                                .then(|| parse_grok_model_specs(models_raw.as_ref()));
                             let mut session = AgentSession::attach(&cx, new_resp)?;
 
                             // No drain: session/resume does not replay history,
@@ -6693,6 +6700,7 @@ async fn run_connection(
                                 agent_type,
                                 grok_meta.as_ref(),
                                 grok_model_specs.as_ref(),
+                                models_raw.as_ref(),
                                 preferred_mode_id.as_deref(),
                                 &preferred_config_values,
                                 initial_config_options.unwrap_or_default(),
@@ -6963,6 +6971,7 @@ async fn run_connection(
                             // `session/load` is a typed send with no raw `models`
                             // capture, so effort stays on the flat fallback.
                             None,
+                            None,
                             preferred_mode_id.as_deref(),
                             &preferred_config_values,
                             initial_config_options.unwrap_or_default(),
@@ -7109,7 +7118,7 @@ async fn run_connection(
                             )
                             .await;
                         }
-                        let (new_resp, grok_models_raw) = send_new_session_capturing_models(
+                        let (new_resp, models_raw) = send_new_session_capturing_models(
                             &cx,
                             build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
                         )
@@ -7123,7 +7132,7 @@ async fn run_connection(
                             None
                         };
                         let grok_model_specs = (agent_type == AgentType::Grok)
-                            .then(|| parse_grok_model_specs(grok_models_raw.as_ref()));
+                            .then(|| parse_grok_model_specs(models_raw.as_ref()));
                         // Read BEFORE `AgentSession::attach` consumes the response.
                         state.write().await.pi_startup_banner =
                             pi_startup_banner(agent_type, new_resp.meta.as_ref());
@@ -7159,6 +7168,7 @@ async fn run_connection(
                             agent_type,
                             grok_meta.as_ref(),
                             grok_model_specs.as_ref(),
+                            models_raw.as_ref(),
                             preferred_mode_id.as_deref(),
                             &preferred_config_values,
                             initial_config_options.unwrap_or_default(),
@@ -7210,7 +7220,7 @@ async fn run_connection(
                 }
             } else {
                 // Create new session
-                let (new_resp, grok_models_raw) = send_new_session_capturing_models(
+                let (new_resp, models_raw) = send_new_session_capturing_models(
                     &cx,
                     build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
                 )
@@ -7224,7 +7234,7 @@ async fn run_connection(
                     None
                 };
                 let grok_model_specs = (agent_type == AgentType::Grok)
-                    .then(|| parse_grok_model_specs(grok_models_raw.as_ref()));
+                    .then(|| parse_grok_model_specs(models_raw.as_ref()));
                 // Read BEFORE `AgentSession::attach` consumes the response.
                 state.write().await.pi_startup_banner =
                     pi_startup_banner(agent_type, new_resp.meta.as_ref());
@@ -7247,6 +7257,7 @@ async fn run_connection(
                     agent_type,
                     grok_meta.as_ref(),
                     grok_model_specs.as_ref(),
+                    models_raw.as_ref(),
                     preferred_mode_id.as_deref(),
                     &preferred_config_values,
                     initial_config_options.unwrap_or_default(),
@@ -8816,6 +8827,64 @@ fn heal_retired_model_picks(
         .collect()
 }
 
+/// The model ids a session-establishing answer lists in its raw top-level
+/// `models` (`availableModels[].modelId`), the session-model state that predates
+/// config options. Empty when the answer carries no such list; an entry without
+/// a non-empty string id is skipped.
+fn session_model_ids(models: Option<&serde_json::Value>) -> Vec<&str> {
+    models
+        .and_then(|models| models.get("availableModels"))
+        .and_then(serde_json::Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("modelId")?.as_str())
+                .filter(|id| !id.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether a saved model pick the model selector no longer lists is one the
+/// agent still takes: Google Antigravity's, when the same answer's flat model
+/// list ([`session_model_ids`]) names it.
+///
+/// Antigravity 1.4.0 is what makes this reachable. Its `model` selector lists
+/// each model family once (`gemini-3.1-pro`) and offers the thinking-level
+/// variants in a separate `thinking_level` select, where 1.3.0 listed every
+/// variant as a model of its own (`gemini-3.1-pro-high`). Picking a model in
+/// codeg saved its value, so a user who chose one before has a variant id
+/// stored, and [`config_option_rejects_value`] rightly finds it missing from
+/// the selector: every connect would silently land on the default model. The
+/// server still takes the variant. Its `set_config_option` passes a concrete
+/// model id through ("so values a client persisted before grouping still
+/// apply", upstream's `resolve_model_id`) and checks it against the flat
+/// `models` list it keeps for older clients; measured live, 1.4.0 answers
+/// `gemini-3.1-pro-high` with the family `gemini-3.1-pro` at level `high`.
+///
+/// Replayed as saved rather than split into family and level here, because an
+/// id does not always spell its level: 1.4.0's own table maps the sign-in id
+/// `gemini-3.5-flash-low` to the `medium` level. Only the server knows the
+/// mapping.
+///
+/// Deliberately narrow:
+///
+/// * Only Antigravity, the one agent observed keeping a flat list it still
+///   accepts next to a selector that stopped listing those values.
+/// * Only the model selector, and only a value the flat list names exactly. An
+///   answer without that list (`session/load` is a typed send and captures
+///   none) leaves the value screened out as before.
+fn session_model_list_offers(
+    agent_type: AgentType,
+    option: &SessionConfigOption,
+    value: &str,
+    session_models: Option<&serde_json::Value>,
+) -> bool {
+    agent_type == AgentType::Antigravity
+        && is_model_config_option(option)
+        && session_model_ids(session_models).contains(&value)
+}
+
 /// [`config_option_rejects_value`] for the mode channel: whether the session's
 /// OWN mode list proves a saved `preferred_mode_id` cannot be selected, so
 /// `session/set_mode` for it at connect is a guaranteed error.
@@ -8955,6 +9024,9 @@ async fn send_goal_control(
 /// `ModeChanged{preferred}` and converges to the preferred value before
 /// `SelectorsReady` fires. Failures on individual preferences are logged
 /// and skipped so a stale/invalid preference can't block session startup.
+///
+/// `session_models` is the establishing answer's raw top-level `models`, when
+/// one was captured (see [`session_model_list_offers`]).
 #[allow(clippy::too_many_arguments)]
 async fn apply_preferred_session_options(
     cx: &ConnectionTo<Agent>,
@@ -8963,6 +9035,7 @@ async fn apply_preferred_session_options(
     emitter: &EventEmitter,
     preferred_mode_id: Option<&str>,
     preferred_config_values: &BTreeMap<String, String>,
+    session_models: Option<&serde_json::Value>,
     initial_config_options: Vec<SessionConfigOption>,
 ) -> Vec<SessionConfigOption> {
     if let Some(pref_mode) = preferred_mode_id {
@@ -9059,12 +9132,23 @@ async fn apply_preferred_session_options(
         // retired would otherwise fail on EVERY connect for good — see
         // `config_option_rejects_value` for why this is decided here, off the
         // agent's answer, rather than from the agent id or the registry pin.
-        if advertised.is_some_and(|o| config_option_rejects_value(o, value_id.as_str())) {
+        // The one exception is a model the same answer still offers in its
+        // flat list (see `session_model_list_offers`).
+        if let Some(option) =
+            advertised.filter(|o| config_option_rejects_value(o, value_id.as_str()))
+        {
+            if !session_model_list_offers(agent_type, option, value_id, session_models) {
+                tracing::info!(
+                    "[ACP] skipping preferred config '{config_id}'='{value_id}' on connect: \
+                     the agent no longer offers that value"
+                );
+                continue;
+            }
             tracing::info!(
-                "[ACP] skipping preferred config '{config_id}'='{value_id}' on connect: \
-                 the agent no longer offers that value"
+                "[ACP] preferred config '{config_id}'='{value_id}' is no longer a row of \
+                 its selector; replaying it as saved, since the agent's session model \
+                 list still offers it"
             );
-            continue;
         }
         // Encode against what the agent advertised for this id. An id the agent
         // never advertised falls back to the select form — the same value shape
@@ -10180,6 +10264,7 @@ async fn handle_fork_or_exit(
         agent_type,
         grok_meta.as_ref(),
         grok_model_specs.as_ref(),
+        models_raw.as_ref(),
         inherited_mode_id.as_deref(),
         &inherited_config_values,
         initial_config_options.unwrap_or_default(),
@@ -26440,6 +26525,128 @@ mod tests {
         assert!(config_option_rejects_value(&grouped, "openai/gpt-5-mini"));
     }
 
+    /// Antigravity 1.4.0's selectors, as its live `session/new` lists them: one
+    /// row per model family, then the thinking level of the current one.
+    fn antigravity_family_options(model: &str, level: &str) -> Vec<SessionConfigOption> {
+        serde_json::from_value(serde_json::json!([
+            {
+                "type": "select",
+                "id": "model",
+                "name": "Model",
+                "category": "model",
+                "currentValue": model,
+                "options": [
+                    {"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"},
+                    {"value": "gemini-3.5-flash", "name": "Gemini 3.5 Flash"},
+                    {"value": "gemini-3.1-pro", "name": "Gemini 3.1 Pro"},
+                ],
+            },
+            {
+                "type": "select",
+                "id": "thinking_level",
+                "name": "Thinking Level",
+                "category": "thought_level",
+                "currentValue": level,
+                "options": [
+                    {"value": "low", "name": "Low"},
+                    {"value": "medium", "name": "Medium"},
+                    {"value": "high", "name": "High"},
+                ],
+            },
+        ]))
+        .expect("parses")
+    }
+
+    /// The flat `models` the same 1.4.0 answer keeps for older clients: every
+    /// thinking-level variant, the ids 1.3.0's model selector listed.
+    fn antigravity_session_models() -> serde_json::Value {
+        let variants: Vec<serde_json::Value> = [
+            "gemini-3.8-flash-high",
+            "gemini-3.8-flash-low",
+            "gemini-3.5-flash-high",
+            "gemini-3.1-pro-high",
+            "gemini-3.1-pro-low",
+        ]
+        .iter()
+        .map(|id| serde_json::json!({"modelId": id, "name": id}))
+        .collect();
+        serde_json::json!({
+            "currentModelId": "gemini-3.8-flash-high",
+            "availableModels": variants,
+        })
+    }
+
+    #[test]
+    fn session_model_ids_reads_the_flat_list_and_skips_unusable_entries() {
+        let models = serde_json::json!({
+            "availableModels": [
+                {"modelId": "a", "name": "A"},
+                {"name": "no id"},
+                {"modelId": ""},
+                {"modelId": 7},
+                {"modelId": "b"},
+            ]
+        });
+        assert_eq!(session_model_ids(Some(&models)), vec!["a", "b"]);
+        assert!(session_model_ids(None).is_empty());
+        assert!(session_model_ids(Some(&serde_json::json!({}))).is_empty());
+        let not_a_list = serde_json::json!({"availableModels": {"modelId": "a"}});
+        assert!(session_model_ids(Some(&not_a_list)).is_empty());
+    }
+
+    /// A model saved under Antigravity 1.3.0 is a thinking-level variant that
+    /// 1.4.0's selector no longer lists, but the flat list beside it does, and
+    /// the agent maps it onto its family and level itself.
+    #[test]
+    fn only_antigravity_replays_a_model_its_flat_list_still_offers() {
+        let options = antigravity_family_options("gemini-3.8-flash", "high");
+        let (model, level) = (&options[0], &options[1]);
+        let models = antigravity_session_models();
+        let saved = "gemini-3.1-pro-high";
+
+        assert!(config_option_rejects_value(model, saved));
+        assert!(session_model_list_offers(
+            AgentType::Antigravity,
+            model,
+            saved,
+            Some(&models)
+        ));
+        // A value neither list names stays screened out.
+        assert!(!session_model_list_offers(
+            AgentType::Antigravity,
+            model,
+            "gemini-2.5-pro",
+            Some(&models)
+        ));
+        // So does every pick when no flat list was captured (`session/load`).
+        assert!(!session_model_list_offers(
+            AgentType::Antigravity,
+            model,
+            saved,
+            None
+        ));
+        // Only the model selector.
+        assert!(!session_model_list_offers(
+            AgentType::Antigravity,
+            level,
+            saved,
+            Some(&models)
+        ));
+        // Only Antigravity: every other agent keeps the screen.
+        for agent in [
+            AgentType::ClaudeCode,
+            AgentType::Codex,
+            AgentType::OpenCode,
+            AgentType::Grok,
+            AgentType::Custom("antigravity-acp"),
+        ] {
+            assert!(
+                !session_model_list_offers(agent, model, saved, Some(&models)),
+                "{agent:?}"
+            );
+        }
+    }
+
     /// The model selector claude-agent-acp 0.84.0 answers `session/new` with
     /// once codeg advertises `recommendedValue` (no `default` row), in either
     /// Opus spelling its CLI builds: `opus[1m]` (measured live on a gateway
@@ -31702,6 +31909,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     &preferred,
                     initial,
                 )
@@ -31729,6 +31937,166 @@ mod tests {
             Some("opencode/step-5-preview-free")
         );
         assert_eq!(current.get("effort").map(String::as_str), Some("default"));
+    }
+
+    /// One establishment against a fake agent that opens a session with
+    /// Antigravity 1.4.0's selectors and answers any `set_config_option` the
+    /// way 1.4.0 answers the 1.3.0 variant `gemini-3.1-pro-high`: with that
+    /// variant's family and level. Returns the `(configId, value)` pairs the
+    /// agent received and the values the session settled on.
+    async fn establish_with_saved_antigravity_model(
+        agent_type: AgentType,
+        session_models: Option<serde_json::Value>,
+        saved_model: &str,
+    ) -> (Vec<(String, String)>, BTreeMap<String, String>) {
+        use agent_client_protocol::schema::v1::SetSessionConfigOptionResponse;
+
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let agent_received = Arc::clone(&received);
+        let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+        let agent = tokio::spawn(async move {
+            let _ = Agent
+                .builder()
+                .on_receive_request(
+                    async |_req: NewSessionRequest,
+                           responder: Responder<NewSessionResponse>,
+                           _cx: ConnectionTo<Client>| {
+                        responder.respond(
+                            NewSessionResponse::new(SessionId::new("s1")).config_options(
+                                antigravity_family_options("gemini-3.8-flash", "high"),
+                            ),
+                        )
+                    },
+                    on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |req: SetSessionConfigOptionRequest,
+                                responder: Responder<SetSessionConfigOptionResponse>,
+                                _cx: ConnectionTo<Client>| {
+                        let wire = serde_json::to_value(&req).expect("serializes");
+                        agent_received.lock().unwrap().push((
+                            wire["configId"].as_str().unwrap_or_default().to_string(),
+                            wire["value"].as_str().unwrap_or_default().to_string(),
+                        ));
+                        responder.respond(SetSessionConfigOptionResponse::new(
+                            antigravity_family_options("gemini-3.1-pro", "high"),
+                        ))
+                    },
+                    on_receive_request!(),
+                )
+                .connect_with(agent_end, async |_cx: ConnectionTo<Client>| {
+                    std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                })
+                .await;
+        });
+
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-antigravity".to_string(),
+            agent_type,
+            None,
+            "antigravity-replay".to_string(),
+            None,
+        )));
+        let establishment_state = Arc::clone(&state);
+        let preferred = BTreeMap::from([("model".to_string(), saved_model.to_string())]);
+        Client
+            .builder()
+            .connect_with(client_end, async move |cx: ConnectionTo<Agent>| {
+                let raw = cx
+                    .send_request_to(
+                        Agent,
+                        UntypedMessage::new("session/new", NewSessionRequest::new("/tmp"))?,
+                    )
+                    .block_task()
+                    .await?;
+                let response: NewSessionResponse = serde_json::from_value(raw)
+                    .map_err(agent_client_protocol::Error::into_internal_error)?;
+                let initial = response.config_options.clone().unwrap_or_default();
+                let mut session = AgentSession::attach(&cx, response)?;
+                apply_and_emit_session_config_options(
+                    &cx,
+                    &mut session,
+                    &establishment_state,
+                    &EventEmitter::Noop,
+                    agent_type,
+                    None,
+                    None,
+                    session_models.as_ref(),
+                    None,
+                    &preferred,
+                    initial,
+                )
+                .await;
+                Ok(())
+            })
+            .await
+            .expect("the establishment runs");
+        agent.abort();
+
+        let received = received.lock().unwrap().clone();
+        let state = state.read().await;
+        let current =
+            current_config_option_values(state.config_options.as_deref().unwrap_or_default());
+        (received, current)
+    }
+
+    /// The replay end to end, against live-shaped Antigravity 1.4.0 answers: a
+    /// model saved under 1.3.0 reaches the agent exactly as saved, and the
+    /// session settles on the family and level the agent maps it to.
+    #[tokio::test]
+    async fn establishment_replays_a_saved_antigravity_variant_its_flat_list_offers() {
+        let (received, current) = establish_with_saved_antigravity_model(
+            AgentType::Antigravity,
+            Some(antigravity_session_models()),
+            "gemini-3.1-pro-high",
+        )
+        .await;
+        assert_eq!(
+            received,
+            vec![("model".to_string(), "gemini-3.1-pro-high".to_string())]
+        );
+        assert_eq!(
+            current.get("model").map(String::as_str),
+            Some("gemini-3.1-pro")
+        );
+        assert_eq!(
+            current.get("thinking_level").map(String::as_str),
+            Some("high")
+        );
+
+        // Without the flat list (a `session/load` answer captures none), or for
+        // any other agent, the screen holds: nothing is sent, and the session
+        // keeps the agent's own model.
+        for (agent_type, session_models) in [
+            (AgentType::Antigravity, None),
+            (AgentType::OpenCode, Some(antigravity_session_models())),
+        ] {
+            let (received, current) = establish_with_saved_antigravity_model(
+                agent_type,
+                session_models,
+                "gemini-3.1-pro-high",
+            )
+            .await;
+            assert!(received.is_empty(), "{agent_type:?} sent {received:?}");
+            assert_eq!(
+                current.get("model").map(String::as_str),
+                Some("gemini-3.8-flash"),
+                "{agent_type:?}"
+            );
+        }
+
+        // A family picked under 1.4.0 is a row of the selector and replays as
+        // any pick does.
+        let (received, _) = establish_with_saved_antigravity_model(
+            AgentType::Antigravity,
+            Some(antigravity_session_models()),
+            "gemini-3.1-pro",
+        )
+        .await;
+        assert_eq!(
+            received,
+            vec![("model".to_string(), "gemini-3.1-pro".to_string())]
+        );
     }
 
     /// The claude shape: a model select plus the effort option that hangs off it.
