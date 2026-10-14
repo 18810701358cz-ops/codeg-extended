@@ -1700,6 +1700,10 @@ fn content_text(content: &serde_json::Value) -> Option<String> {
 ///   but always STRING content, so it still initiates);
 /// * auto-compaction continuation summaries land MID-turn while the wire is
 ///   still rendering it — never a boundary;
+/// * `turnCompanion` records are written on the running turn's behalf and
+///   continue it, whatever their shape — including the `isMeta` STRING note
+///   the Read tool leaves after an image larger than the display limit
+///   (CLI 2.1.293), which otherwise reads exactly like a cron prompt;
 /// * everything else user-typed/injected (real prompts, `<task-notification>`
 ///   records, cron prompts) initiates.
 ///
@@ -1707,6 +1711,9 @@ fn content_text(content: &serde_json::Value) -> Option<String> {
 /// record, and never initiates: see [`folded_prompt_text`].
 fn turn_initiator_text(value: &serde_json::Value) -> Option<TurnInitiatorText> {
     if value.get("type").and_then(|t| t.as_str()) != Some("user") {
+        return None;
+    }
+    if value.get("turnCompanion").and_then(|v| v.as_bool()) == Some(true) {
         return None;
     }
     let content = value.get("message")?.get("content")?;
@@ -3614,6 +3621,122 @@ mod tests {
         );
     }
 
+    /// Real-shape image-resize note (CLI 2.1.293): the Read tool's result for
+    /// an image larger than the model's display limit is followed by this
+    /// record, written on the running turn's behalf. `isMeta` with STRING
+    /// content — the cron prompt's shape — but marked `turnCompanion` and
+    /// stamped with the running submission's `promptId`.
+    fn image_resize_note(uuid: &str, prompt_id: &str) -> String {
+        format!(
+            r#"{{"type":"user","timestamp":"2026-07-07T03:48:05.000Z","uuid":"{uuid}","promptId":"{prompt_id}","isMeta":true,"turnCompanion":true,"userType":"external","message":{{"role":"user","content":"[Image: original 2880x1800, displayed at 2000x1250. Multiply coordinates by 1.44 to map to original image.]"}}}}"#
+        )
+    }
+
+    /// Reading a large image mid-turn puts that note in the middle of a
+    /// wire-rendered turn. Read as an initiator, it opened an episode, and the
+    /// overlay drew everything the turn wrote after the image a second time,
+    /// under the live copy.
+    #[test]
+    fn an_image_resize_note_mid_turn_stays_foreground() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_session(&dir);
+        write_lines(&path, &[]);
+        let ledger = PromptLedger::shared();
+        let mut ws = WatchState::with_file_for_test("s1", path.clone());
+
+        ledger.record_text("look at the screenshot");
+        // The prompt carries the submission's `promptId` like every record
+        // after it, so the submission window keyed on that id opens here — and
+        // the Read call, the model's first record, closes it before the note.
+        let prompt = r#"{"type":"user","timestamp":"2026-07-07T03:48:00.000Z","uuid":"u1","promptId":"p1","message":{"role":"user","content":[{"type":"text","text":"look at the screenshot"}]}}"#;
+        let read_call = r#"{"type":"assistant","timestamp":"2026-07-07T03:48:04.000Z","uuid":"a-read","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/shot.png"}}]}}"#;
+        let read_result = r#"{"type":"user","timestamp":"2026-07-07T03:48:05.000Z","uuid":"u-read","promptId":"p1","message":{"role":"user","content":[{"tool_use_id":"toolu_read","type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}}"#;
+        write_lines(&path, &[prompt, read_call, read_result]);
+        let event = tick_prompting(&mut ws, &ledger);
+        assert!(event.is_none() || unpack(event.unwrap()).0.is_empty());
+
+        write_lines(
+            &path,
+            &[
+                &image_resize_note("m1", "p1"),
+                &assistant_text("a2", "the header is misaligned"),
+            ],
+        );
+        let event = tick_prompting(&mut ws, &ledger);
+        assert!(
+            event.is_none() || unpack(event.unwrap()).0.is_empty(),
+            "the note continues the wire-rendered turn — nothing after it may surface as overlay"
+        );
+
+        // The cron shape without the companion mark still starts a turn.
+        write_lines(
+            &path,
+            &[
+                &cron_prompt("check the build"),
+                &assistant_text("a3", "checking"),
+            ],
+        );
+        let (turns, ..) = unpack(tick_now(&mut ws, &ledger).expect("turns event"));
+        assert!(
+            !turns.is_empty(),
+            "a cron prompt (isMeta string, no turnCompanion) still surfaces"
+        );
+    }
+
+    /// The other half of the rule: in a turn Claude Code started on its own,
+    /// which only the overlay renders, the note stays with THAT turn. The
+    /// episode is at its rotation threshold when the note lands, so a note
+    /// still read as a turn boundary would re-base the episode right there and
+    /// draw the rest of the reply as a separate card.
+    #[test]
+    fn an_image_resize_note_mid_autonomous_turn_stays_in_its_episode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_session(&dir);
+        write_lines(&path, &[]);
+        let ledger = PromptLedger::shared();
+        let mut ws = WatchState::with_file_for_test("s1", path.clone());
+
+        let mut lines = vec![cron_prompt("check the screenshot")];
+        for i in 0..MAX_EPISODE_MESSAGES {
+            lines.push(assistant_text(&format!("a-{i}"), "chunk"));
+        }
+        lines.push(r#"{"type":"assistant","timestamp":"2026-07-07T03:49:04.000Z","uuid":"a-read","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/shot.png"}}]}}"#.to_string());
+        lines.push(r#"{"type":"user","timestamp":"2026-07-07T03:49:05.000Z","uuid":"u-read","promptId":"p-cron","message":{"role":"user","content":[{"tool_use_id":"toolu_read","type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}}"#.to_string());
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        write_lines(&path, &refs);
+        let (turns, ..) = unpack(tick_now(&mut ws, &ledger).expect("the autonomous turn surfaces"));
+        let episode_of = |id: &str| id.rsplit_once('-').map(|(episode, _)| episode.to_string());
+        let episode = episode_of(&turns[0].id);
+        assert!(episode.is_some(), "overlay turn ids are bg-<base>-<index>");
+
+        write_lines(
+            &path,
+            &[
+                &image_resize_note("m1", "p-cron"),
+                &assistant_text("a-reply", "the header is misaligned"),
+            ],
+        );
+        let (turns, ..) =
+            unpack(tick_now(&mut ws, &ledger).expect("the reply after the note surfaces"));
+        let rendered = serde_json::to_string(&turns).unwrap();
+        assert!(
+            rendered.contains("the header is misaligned"),
+            "what the turn writes after the note still renders in the overlay"
+        );
+        assert!(
+            !rendered.contains("Multiply coordinates"),
+            "the note itself is the model's to read, never drawn: {rendered}"
+        );
+        for turn in &turns {
+            assert_eq!(
+                episode_of(&turn.id),
+                episode,
+                "the note must not re-base the episode: {}",
+                turn.id
+            );
+        }
+    }
+
     #[test]
     fn growing_turn_reemits_with_same_id_and_partial_lines_carry() {
         let dir = tempfile::tempdir().unwrap();
@@ -3931,6 +4054,38 @@ mod tests {
         assert_eq!(
             turn_initiator_text(&cron).as_ref().map(|text| text.as_str()),
             Some("check weather")
+        );
+
+        // `turnCompanion` records continue the running turn whatever their
+        // shape. The Read tool's image-resize note and the query loop's
+        // recovery nudges are all `isMeta` STRING records — the cron prompt's
+        // shape — told apart by the mark alone (texts as CLI 2.1.293 writes
+        // them).
+        for content in [
+            "[Image: original 2880x1800, displayed at 2000x1250. Multiply coordinates by 1.44 to map to original image.]",
+            "Output token limit hit. Resume directly \u{2014} no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces.",
+            "[Your previous response had no visible output. Please continue and produce a user-visible response.]",
+            "Your response above was cut off mid-stream. Resume directly from where it stops \u{2014} no apology, no recap. If none of it survived, answer the request from the start.",
+        ] {
+            let companion = serde_json::json!({
+                "type": "user",
+                "isMeta": true,
+                "turnCompanion": true,
+                "promptId": "p1",
+                "message": {"role": "user", "content": content},
+            });
+            assert!(turn_initiator_text(&companion).is_none(), "{content}");
+        }
+        // Only the mark set to `true` counts.
+        let unmarked = serde_json::json!({
+            "type": "user",
+            "isMeta": true,
+            "turnCompanion": false,
+            "message": {"role": "user", "content": "check weather"},
+        });
+        assert_eq!(
+            turn_initiator_text(&unmarked),
+            Some(TurnInitiatorText::Verbatim("check weather".into()))
         );
 
         // context-continuation summary: never a boundary.
