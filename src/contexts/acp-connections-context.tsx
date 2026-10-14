@@ -3044,6 +3044,10 @@ function connectionsReducer(
  * that map would have to learn about a half-entry. It is a separate, reactive
  * side table read only by `useConnection` (which reports it as `connecting`)
  * and the composer's status chip.
+ *
+ * It names what the surface is waiting FOR: when a newer `connect()` is parked
+ * behind the one in flight (a draft switching agents while it connects), it is
+ * that newest request, which the in-flight call only runs ahead of.
  */
 export interface ConnectPendingInfo {
   agentType: AgentType
@@ -3074,7 +3078,8 @@ export interface ConnectErrorInfo {
 
 interface InternalStore {
   connections: ConnectionsMap
-  /** contextKey → the in-flight `connect()` for it (see ConnectPendingInfo). */
+  /** contextKey → the in-flight `connect()` for it, or the newest request
+   *  parked behind it (see ConnectPendingInfo). */
   connectPending: Map<string, ConnectPendingInfo>
   /** contextKey → why its last `connect()` failed (see ConnectErrorInfo). */
   connectErrors: Map<string, ConnectErrorInfo>
@@ -3087,9 +3092,10 @@ interface InternalStore {
 
 export interface ConnectionStoreApi {
   getConnection(key: string): ConnectionState | undefined
-  /** The in-flight `connect()` for this key, or undefined when none is. The
-   *  returned object is reference-stable for the lifetime of that connect, so
-   *  it is safe as a `useSyncExternalStore` snapshot. */
+  /** The in-flight `connect()` for this key (or the newest request parked
+   *  behind it), or undefined when none is. The returned object is
+   *  reference-stable until the next change, so it is safe as a
+   *  `useSyncExternalStore` snapshot. */
   getConnectPending(key: string): ConnectPendingInfo | undefined
   /** Why the last `connect()` for this key failed, or undefined. Reference-
    *  stable until the next change, like `getConnectPending`. */
@@ -6573,6 +6579,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // `reconnect()` has nothing else to go on.
       lastConnectParamsRef.current.set(contextKey, request)
       if (connectingKeysRef.current.has(contextKey)) {
+        // Parked: the call in flight runs this next, unless a newer request
+        // replaces it first. The surface is waiting on THIS request from now
+        // on, so it is what the pending marker names — a draft that switched
+        // agents mid-connect shows the agent picked last, not the one it left.
         pendingConnectRequestsRef.current.set(contextKey, request)
         setConnectPending(contextKey, {
           agentType,
@@ -6598,8 +6608,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // too.
       setConnectError(contextKey, null)
       // Publish THIS attempt's failure — unless the surface let go of the
-      // attempt meanwhile (`disconnect()` marks it abandoned): a late
-      // rejection must not report a failure over whatever it does next.
+      // attempt meanwhile (`disconnect()` marks it abandoned) or parked a
+      // different request behind it: a late rejection must not report a
+      // failure over whatever it does next.
       const publishConnectError = (info: ConnectErrorInfo) => {
         if (abandonedKeysRef.current.has(contextKey)) return
         const pendingRequest = pendingConnectRequestsRef.current.get(contextKey)
