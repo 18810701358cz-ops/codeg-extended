@@ -54,9 +54,11 @@ async fn quitting_kills_a_watch_that_is_still_starting() {
     let root = docs.path().to_string_lossy().to_string();
     let path = format!("{}:/usr/bin:/bin", bin.path().display());
 
+    let pid_file = bin.path().join("officecli.pid");
+
     temp_env::async_with_vars([("PATH", Some(path))], async {
         let start = tokio::spawn(start_office_watch_core(root, "report.docx".into()));
-        let pid = wait_for_pid(&bin.path().join("officecli.pid")).await;
+        let pid = wait_for_pid(&pid_file).await;
         assert!(is_running(pid));
 
         stop_all_office_watches();
@@ -66,20 +68,10 @@ async fn quitting_kills_a_watch_that_is_still_starting() {
             .expect("the start should answer once its child is killed")
             .unwrap();
         assert!(result.is_err(), "{result:?}");
-        let mut gone = false;
-        for _ in 0..100 {
-            if !is_running(pid) {
-                gone = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        assert!(
-            gone,
-            "quitting left the starting officecli (pid {pid}) running"
-        );
+        assert_gone(pid, "the officecli starting when the app quit").await;
 
         // A start that gets its child going after the quit kills it at once.
+        std::fs::remove_file(&pid_file).unwrap();
         let late = tokio::time::timeout(
             Duration::from_secs(10),
             start_office_watch_core(
@@ -93,6 +85,23 @@ async fn quitting_kills_a_watch_that_is_still_starting() {
             matches!(&late, Err(err) if err.to_string().contains("quitting")),
             "{late:?}"
         );
+        // That child can die before it records itself; if it did, it is gone.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if let Ok(text) = std::fs::read_to_string(&pid_file) {
+            if let Ok(pid) = text.trim().parse() {
+                assert_gone(pid, "the officecli started after the quit").await;
+            }
+        }
     })
     .await;
+}
+
+async fn assert_gone(pid: i32, what: &str) {
+    for _ in 0..100 {
+        if !is_running(pid) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("{what} (pid {pid}) is still running");
 }

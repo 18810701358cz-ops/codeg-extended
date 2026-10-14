@@ -1051,12 +1051,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Park a long-lived child as a start would, with its stdout, which closes
-    /// once the child is gone.
+    /// A start queued behind another start of the same file shares the watch
+    /// that start registered, once it lets go of the file.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_queued_start_shares_the_watch_the_other_start_registered() {
+        let dir = std::env::temp_dir().join(format!("codeg-ow-shared-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let docx = dir.join("shared.docx");
+        std::fs::write(&docx, b"x").unwrap();
+        let key = watch_key(&std::fs::canonicalize(&docx).unwrap());
+
+        // Another start of the file is under way when this one comes in.
+        let spawn_lock = spawn_lock_for(&key);
+        let other_start = spawn_lock.lock().await;
+        let queued = tokio::spawn(start_within(
+            dir.to_string_lossy().to_string(),
+            "shared.docx".into(),
+            Duration::from_secs(10),
+        ));
+        // It holds the file's spawn lock too once it is waiting for it.
+        for _ in 0..200 {
+            if Arc::strong_count(&spawn_lock) > 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(Arc::strong_count(&spawn_lock) > 2, "the start never queued");
+
+        // The other start registers its watch, then lets go.
+        let port = allocate_free_port().unwrap();
+        seed_live_watch(&key, port, "winner-cap", false);
+        drop(other_start);
+
+        // At once: sharing it needs no officecli of its own.
+        let started = tokio::time::timeout(Duration::from_secs(1), queued)
+            .await
+            .expect("the queued start should share the watch without starting officecli")
+            .unwrap()
+            .unwrap();
+        assert_eq!((started.port, started.cap.as_str()), (port, "winner-cap"));
+        assert_eq!(lock_watches().get(&key).unwrap().ref_count, 2);
+
+        if let Some(entry) = lock_watches().remove(&key) {
+            reap(entry.child);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Park a child as a start would, with its stdout, which closes once the
+    /// child is gone. Short-lived, so one a broken claim strands still ends.
     #[cfg(unix)]
     fn park_sleeper() -> (StartingChild, ChildStdout) {
         let mut child = tokio_command("sleep")
-            .arg("600")
+            .arg("30")
             .stdout(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
