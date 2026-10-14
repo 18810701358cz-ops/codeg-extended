@@ -44,7 +44,9 @@ use crate::process::tokio_command;
 
 /// Upper bound on how long we wait for a freshly-spawned watch server to
 /// announce readiness (its `Watch: http://…:<port>` stdout line) before giving up.
-const READY_TIMEOUT: Duration = Duration::from_secs(8);
+/// Cold officecli starts can take tens of seconds even for an empty document.
+/// Keep the frontend's startOfficeWatch request deadline above this budget.
+const READY_TIMEOUT: Duration = Duration::from_secs(60);
 /// Per-attempt TCP connect timeout for the post-announce reachability confirm.
 const READY_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 /// Hard cap on concurrent watch processes — a backstop against a pathological
@@ -85,6 +87,19 @@ pub enum WatchError {
 }
 
 impl WatchError {
+    /// Append child diagnostics to the inner detail, preserving the error code
+    /// and letting Display add the contextual prefix exactly once.
+    fn with_stderr(self, stderr: &str) -> Self {
+        if stderr.is_empty() {
+            return self;
+        }
+        match self {
+            Self::PortTimeout(detail) => Self::PortTimeout(format!("{detail} — {stderr}")),
+            Self::StartFailed(detail) => Self::StartFailed(format!("{detail} — {stderr}")),
+            other => other,
+        }
+    }
+
     /// Stable machine code the frontend switches on to render the right
     /// degraded UI (install guide vs. retry). Carried into `AppCommandError`
     /// via `i18n_params` at the command boundary.
@@ -294,7 +309,7 @@ fn parse_watch_port(line: &str) -> Option<u16> {
 /// (a TCP-accept probe alone can't tell whose listener answered). On success
 /// the stdout reader is handed to a background drain so a chatty watch can't
 /// dead-lock on a full pipe.
-async fn await_ready(port: u16, child: &mut Child) -> Result<(), WatchError> {
+async fn await_ready(port: u16, child: &mut Child, timeout: Duration) -> Result<(), WatchError> {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let stdout = child
@@ -302,7 +317,7 @@ async fn await_ready(port: u16, child: &mut Child) -> Result<(), WatchError> {
         .take()
         .ok_or_else(|| WatchError::StartFailed("no stdout pipe".to_string()))?;
     let mut lines = BufReader::new(stdout).lines();
-    let deadline = Instant::now() + READY_TIMEOUT;
+    let deadline = Instant::now() + timeout;
 
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -411,18 +426,11 @@ pub async fn start_office_watch_core(
         .spawn()
         .map_err(|e| WatchError::StartFailed(e.to_string()))?;
 
-    if let Err(ready_err) = await_ready(port, &mut child).await {
+    if let Err(ready_err) = await_ready(port, &mut child, READY_TIMEOUT).await {
         let _ = child.start_kill();
         let stderr = drain_stderr(&mut child).await;
-        let detail = match (ready_err.to_string(), stderr.as_str()) {
-            (msg, "") => msg,
-            (msg, err) => format!("{msg} — {err}"),
-        };
         reap(child);
-        return Err(match ready_err {
-            WatchError::PortTimeout(_) => WatchError::PortTimeout(detail),
-            _ => WatchError::StartFailed(detail),
-        });
+        return Err(ready_err.with_stderr(&stderr));
     }
 
     // Register. Re-check after the async gap: another task may have won the
@@ -782,6 +790,104 @@ pub async fn office_watch_idle_sweep_task(idle_timeout: Duration, interval: Dura
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_errors_keep_one_prefix_and_child_diagnostics() {
+        for stderr in ["", "renderer failed"] {
+            let timeout =
+                WatchError::PortTimeout("officecli did not announce readiness in time".into())
+                    .with_stderr(stderr);
+            assert_eq!(timeout.code(), "PORT_TIMEOUT");
+            assert_eq!(
+                timeout
+                    .to_string()
+                    .matches("officecli watch did not become ready in time:")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                timeout.to_string().contains("renderer failed"),
+                !stderr.is_empty()
+            );
+
+            let failed =
+                WatchError::StartFailed("officecli exited before announcing readiness".into())
+                    .with_stderr(stderr);
+            assert_eq!(failed.code(), "START_FAILED");
+            assert_eq!(
+                failed
+                    .to_string()
+                    .matches("failed to start officecli watch:")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                failed.to_string().contains("renderer failed"),
+                !stderr.is_empty()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn readiness_child(script: &str, port: u16) -> Child {
+        tokio_command("sh")
+            .args(["-c", script, "watch-fixture", &port.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_accepts_startup_slower_than_eight_seconds() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut child = readiness_child(
+            "sleep 9; printf 'Watch: http://localhost:%s\\n' \"$1\"; exec sleep 600",
+            port,
+        );
+        let result = await_ready(port, &mut child, READY_TIMEOUT).await;
+        reap(child);
+        assert!(
+            result.is_ok(),
+            "slow watch startup should succeed: {result:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_still_requires_the_child_announcement() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut child = readiness_child("exec sleep 600", port);
+        let result = await_ready(port, &mut child, Duration::from_millis(100)).await;
+        reap(child);
+        assert!(matches!(result, Err(WatchError::PortTimeout(_))));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_rejects_wrong_port_and_early_exit() {
+        let port = allocate_free_port().unwrap();
+        let mut wrong_port = readiness_child("printf 'Watch: http://localhost:0\\n'", port);
+        let result = await_ready(port, &mut wrong_port, READY_TIMEOUT).await;
+        reap(wrong_port);
+        assert!(
+            matches!(result, Err(WatchError::PortTimeout(detail)) if detail.contains("expected"))
+        );
+
+        let mut exited = readiness_child("exit 1", port);
+        let result = await_ready(port, &mut exited, READY_TIMEOUT).await;
+        reap(exited);
+        assert!(matches!(result, Err(WatchError::StartFailed(_))));
+    }
 
     #[test]
     fn error_code_mapping_is_stable() {
