@@ -3591,6 +3591,7 @@
         "offset": "الإزاحة: {offset}",
         "limit": "الحد: {limit}",
         "pages": "الصفحات: {pages}",
+        "allowLarge": "تجاوز حد الحجم",
         "mode": "الوضع: {mode}",
         "cell": "الخلية: {cell}",
         "shellSession": "الجلسة {id}",

@@ -3591,6 +3591,7 @@
         "offset": "오프셋: {offset}",
         "limit": "제한: {limit}",
         "pages": "페이지: {pages}",
+        "allowLarge": "크기 제한 초과",
         "mode": "모드: {mode}",
         "cell": "셀: {cell}",
         "shellSession": "세션 {id}",

@@ -3591,6 +3591,7 @@
         "offset": "オフセット: {offset}",
         "limit": "上限: {limit}",
         "pages": "ページ: {pages}",
+        "allowLarge": "サイズ上限超過",
         "mode": "モード: {mode}",
         "cell": "セル: {cell}",
         "shellSession": "セッション {id}",

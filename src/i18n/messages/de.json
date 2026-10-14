@@ -3591,6 +3591,7 @@
         "offset": "Versatz: {offset}",
         "limit": "Grenze: {limit}",
         "pages": "Seiten: {pages}",
+        "allowLarge": "Über dem Größenlimit",
         "mode": "Modus: {mode}",
         "cell": "Zelle: {cell}",
         "shellSession": "Sitzung {id}",

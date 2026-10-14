@@ -4683,7 +4683,7 @@ fn resolve_working_dir(working_dir: Option<&str>) -> PathBuf {
     }
 }
 
-fn claude_raw_sdk_session_meta(
+pub(crate) fn claude_raw_sdk_session_meta(
     agent_type: AgentType,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     if agent_type != AgentType::ClaudeCode {
@@ -4934,6 +4934,16 @@ fn build_client_capabilities(
     // to rebuild the capsule — a parent tool-use id, or the child tool calls
     // arriving with one codeg has seen.
     //
+    // claude-agent-acp 0.90.0 (#1320–#1322, #1328) implements the revised RFD,
+    // and its form would meet that bar: the Agent/Task call stays a tool call
+    // of the session that made it, the child's first `session_message` names
+    // that call's tool-use id, one child keeps one session id across
+    // SendMessage resumes, and a replay restores children under their live ids.
+    // But the adapter serves that form only to a client that declares
+    // `subagents` and is NOT AIR. A client that declares `_meta.jetbrains.air`,
+    // as codeg must for every capability below, keeps the earlier draft above
+    // whichever signal it sends, so for codeg the trade is unchanged.
+    //
     // "recommendedValue" is the last AIR capability, and codeg takes it from
     // BOTH speakers — claude-agent-acp 0.76.0 and codex-acp 1.11.0 each
     // implement it, so the "advertise nothing an agent hasn't built" rule is
@@ -5145,7 +5155,7 @@ fn build_load_session_request(
 /// wire difference is that `ResumeSessionRequest.mcp_servers` is
 /// `skip_serializing_if = Vec::is_empty`, so an empty list is omitted from the
 /// payload rather than emitted as `[]`.
-fn build_resume_session_request(
+pub(crate) fn build_resume_session_request(
     agent_type: AgentType,
     session_id: SessionId,
     cwd: &Path,
@@ -6701,6 +6711,7 @@ async fn run_connection(
                                 terminal_runtime.clone(),
                                 &cwd_string,
                                 supports_fork,
+                                &mcp_servers,
                                 &prompt_ledger,
                                 delegation_injection.as_ref(),
                                 &stderr_tail,
@@ -6970,6 +6981,7 @@ async fn run_connection(
                             terminal_runtime.clone(),
                             &cwd_string,
                             supports_fork,
+                            &mcp_servers,
                             &prompt_ledger,
                             delegation_injection.as_ref(),
                             &stderr_tail,
@@ -7165,6 +7177,7 @@ async fn run_connection(
                             terminal_runtime.clone(),
                             &cwd_string,
                             supports_fork,
+                            &mcp_servers,
                             &prompt_ledger,
                             delegation_injection.as_ref(),
                             &stderr_tail,
@@ -7252,6 +7265,7 @@ async fn run_connection(
                     terminal_runtime.clone(),
                     &cwd_string,
                     supports_fork,
+                    &mcp_servers,
                     &prompt_ledger,
                     delegation_injection.as_ref(),
                     &stderr_tail,
@@ -10050,6 +10064,14 @@ async fn handle_fork_or_exit(
     // for us to drain and discard; the transcript the user sees comes from the
     // disk parser (same reasoning as the reconnect ladder above).
     //
+    // claude-agent-acp 0.90.0 (#1317) fixed its half: the fork itself starts
+    // the forked session and answers with its modes and config options. The
+    // resume is then redundant there, and cheap, because the fork named the
+    // same settings this resume names (`crate::acp::fork::build_fork_request`):
+    // the adapter hands back the session it already runs instead of tearing it
+    // down and starting a second Claude Code process. It stays for 0.73.0
+    // through 0.89.x.
+    //
     // Degradation is deliberate and total: an agent that forks WITHOUT
     // advertising resume, or whose resume fails, falls back to attaching the
     // fork response exactly as before. Neither is worse off than it was before
@@ -10106,7 +10128,8 @@ async fn handle_fork_or_exit(
     }
 
     // Prefer the resume response: it describes the session as the agent holds it
-    // right now, and for claude it is the ONLY source of modes/config options.
+    // right now, and for claude before 0.90.0 it is the ONLY source of
+    // modes/config options.
     let (initial_config_options, new_resp, models_raw) = match resumed {
         Some((resume_resp, resume_models_raw)) => (
             resume_resp.config_options.clone(),
@@ -10185,6 +10208,7 @@ async fn handle_fork_or_exit(
         terminal_runtime.clone(),
         cwd_string,
         true, // fork already succeeded on this process
+        mcp_servers,
         prompt_ledger,
         delegation_injection,
         stderr_tail,
@@ -10978,6 +11002,11 @@ async fn run_conversation_loop(
     terminal_runtime: Arc<TerminalRuntime>,
     cwd: &str,
     supports_fork: bool,
+    // The connection's MCP servers, the list `session/new` / `load` / `resume`
+    // name. Read only by a fork: claude-agent-acp 0.90.0 starts the forked
+    // session itself, so the fork has to name the settings the resume that
+    // follows it sends (see `crate::acp::fork::build_fork_request`).
+    mcp_servers: &[McpServer],
     // Connection-scoped (created once in `run_connection`, shared across fork
     // restarts of this loop): outgoing prompts are fingerprinted here so the
     // transcript watcher can classify their turns as wire-rendered foreground.
@@ -12387,8 +12416,15 @@ async fn run_conversation_loop(
                 // brought; only one landing from now on can be newer than that
                 // handshake (see `SessionState::grok_catalog_broadcast`).
                 state.write().await.grok_catalog_broadcast = None;
-                let result =
-                    crate::acp::fork::fork_session(&cx, &sid, cwd, fork_point.as_ref()).await;
+                let result = crate::acp::fork::fork_session(
+                    &cx,
+                    &sid,
+                    agent_type,
+                    cwd,
+                    mcp_servers,
+                    fork_point.as_ref(),
+                )
+                .await;
                 match result {
                     Ok((fork_response, fork_models_raw)) => {
                         tracing::info!(
@@ -15048,8 +15084,9 @@ fn claude_chunk_parent_tool_use_id(
 }
 
 /// `json_value_to_text` for a tool call's `rawInput`, with Claude Code's
-/// file-tool argument aliases settled first, and Antigravity's MCP input
-/// folded back into its history shape ([`fold_antigravity_mcp_raw_input`]).
+/// tool argument aliases (Write, Edit, Grep, Bash) settled first, and
+/// Antigravity's MCP input folded back into its history shape
+/// ([`fold_antigravity_mcp_raw_input`]).
 ///
 /// claude-agent-acp forwards the model's `tool_use.input` verbatim as
 /// `rawInput`, so a Write the model spelled `{path, file_text}` — which CLI
@@ -28889,6 +28926,50 @@ mod tests {
         );
     }
 
+    /// CLI 2.1.295 takes `command_description` for a Bash call's
+    /// `description` and renames it only on the copy it runs, so the card reads
+    /// the rename off the frame that carries the input. The tool name rides the
+    /// opening frame only (an AIR client's `_meta` ledger supplies it after),
+    /// and the update carries the AIR command title in its stead.
+    #[tokio::test]
+    async fn claude_bash_command_description_reaches_the_card_as_description() {
+        let mut cache = ToolCallOutputCache::default();
+        let mut cb = CodeBuddyLiveState::default();
+        pi_emit(
+            AgentType::ClaudeCode,
+            &mut cache,
+            &mut cb,
+            serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "toolu_b",
+                "title": "Terminal",
+                "kind": "execute",
+                "status": "pending",
+                "_meta": {"claudeCode": {"toolName": "Bash"}},
+            }),
+        )
+        .await;
+        let (_, raw_input, _, _) = pi_emit(
+            AgentType::ClaudeCode,
+            &mut cache,
+            &mut cb,
+            serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "toolu_b",
+                "title": "cargo test",
+                "rawInput": {"command": "cargo test", "command_description": "Run the tests"},
+                "_meta": {"jetbrains": {"air": {"version": 1, "commandTitle": "Run the tests"}}},
+            }),
+        )
+        .await;
+        let input: serde_json::Value =
+            serde_json::from_str(raw_input.as_deref().expect("raw_input")).unwrap();
+        assert_eq!(
+            input,
+            serde_json::json!({"command": "cargo test", "description": "Run the tests"})
+        );
+    }
+
     /// The renames are keyed on the claude tool's NAME: Grep's own `path`
     /// argument is not a Write's `file_path`, and another agent's `_meta` that
     /// happens to use the same key is not claude's.
@@ -32181,6 +32262,7 @@ mod tests {
                             Arc::new(TerminalRuntime::with_base_env(BTreeMap::new())),
                             "/tmp",
                             supports_fork,
+                            &[],
                             &ledger,
                             Some(&injection),
                             &stderr_tail,
@@ -33345,6 +33427,7 @@ mod tests {
                             Arc::new(TerminalRuntime::with_base_env(BTreeMap::new())),
                             "/tmp",
                             false,
+                            &[],
                             &ledger,
                             Some(&injection),
                             &stderr_tail,
@@ -33513,13 +33596,16 @@ mod tests {
 
     /// One fork, the way `run_connection` drives it: `run_conversation_loop`
     /// on `parent` until the fork, then `handle_fork_or_exit` on to the
-    /// session the agent forks to. The agent records every `session/close`.
+    /// session the agent forks to. The agent records every `session/close`,
+    /// and every `session/fork` and `session/resume` as it arrived.
     struct ForkTransition {
         state: Arc<RwLock<SessionState>>,
         cmd_tx: mpsc::Sender<ConnectionCommand>,
         events: tokio::sync::broadcast::Receiver<Arc<crate::acp::types::EventEnvelope>>,
         closes: Arc<std::sync::Mutex<Vec<String>>>,
         close_seen: Arc<tokio::sync::Notify>,
+        forks: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+        resumes: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
         /// The `Unanswered` closes' responders, kept alive so the requests
         /// stay open.
         _unanswered: Arc<
@@ -33533,10 +33619,33 @@ mod tests {
 
     impl ForkTransition {
         async fn start(fork_id: &'static str, supports_close: bool, answer: CloseAnswer) -> Self {
+            Self::start_with(
+                AgentType::Codex,
+                Vec::new(),
+                fork_id,
+                supports_close,
+                answer,
+            )
+            .await
+        }
+
+        /// As [`ForkTransition::start`], for `agent_type` on a connection
+        /// opened with `mcp_servers`.
+        async fn start_with(
+            agent_type: AgentType,
+            mcp_servers: Vec<McpServer>,
+            fork_id: &'static str,
+            supports_close: bool,
+            answer: CloseAnswer,
+        ) -> Self {
             use agent_client_protocol::schema::v1::{
                 CloseSessionResponse, ForkSessionRequest, ForkSessionResponse, PromptResponse,
             };
 
+            let forks = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let resumes = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let agent_forks = Arc::clone(&forks);
+            let agent_resumes = Arc::clone(&resumes);
             let closes = Arc::new(std::sync::Mutex::new(Vec::new()));
             let close_seen = Arc::new(tokio::sync::Notify::new());
             let unanswered = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -33556,17 +33665,33 @@ mod tests {
                         on_receive_request!(),
                     )
                     .on_receive_request(
-                        async move |_req: ForkSessionRequest,
+                        async move |req: ForkSessionRequest,
                                     responder: Responder<ForkSessionResponse>,
                                     _cx: ConnectionTo<Client>| {
-                            responder.respond(ForkSessionResponse::new(SessionId::new(fork_id)))
+                            // The first fork answers `fork_id`, a later one
+                            // `<fork_id>-<n>`, so a fork of a fork moves on.
+                            let n = {
+                                let mut forks = agent_forks.lock().unwrap();
+                                forks.push(serde_json::to_value(&req).expect("serializes"));
+                                forks.len()
+                            };
+                            let id = if n == 1 {
+                                fork_id.to_string()
+                            } else {
+                                format!("{fork_id}-{n}")
+                            };
+                            responder.respond(ForkSessionResponse::new(SessionId::new(id)))
                         },
                         on_receive_request!(),
                     )
                     .on_receive_request(
-                        async |_req: ResumeSessionRequest,
-                               responder: Responder<ResumeSessionResponse>,
-                               _cx: ConnectionTo<Client>| {
+                        async move |req: ResumeSessionRequest,
+                                    responder: Responder<ResumeSessionResponse>,
+                                    _cx: ConnectionTo<Client>| {
+                            agent_resumes
+                                .lock()
+                                .unwrap()
+                                .push(serde_json::to_value(&req).expect("serializes"));
                             responder.respond(ResumeSessionResponse::new())
                         },
                         on_receive_request!(),
@@ -33611,7 +33736,7 @@ mod tests {
 
             let state = Arc::new(RwLock::new(SessionState::new(
                 "conn-fork".to_string(),
-                AgentType::Codex,
+                agent_type,
                 None,
                 "win".to_string(),
                 None,
@@ -33642,12 +33767,13 @@ mod tests {
                             "conn-fork",
                             &EventEmitter::Noop,
                             &loop_state,
-                            AgentType::Codex,
+                            agent_type,
                             &perms,
                             &mut cmd_rx,
                             Arc::clone(&terminals),
                             "/tmp",
                             true,
+                            &mcp_servers,
                             &ledger,
                             None,
                             &stderr_tail,
@@ -33659,7 +33785,7 @@ mod tests {
                             "conn-fork",
                             &EventEmitter::Noop,
                             &loop_state,
-                            AgentType::Codex,
+                            agent_type,
                             &perms,
                             &mut cmd_rx,
                             terminals,
@@ -33667,7 +33793,7 @@ mod tests {
                             "/tmp",
                             true,
                             supports_close,
-                            &[],
+                            &mcp_servers,
                             &ledger,
                             None,
                             &stderr_tail,
@@ -33683,6 +33809,8 @@ mod tests {
                 events,
                 closes,
                 close_seen,
+                forks,
+                resumes,
                 _unanswered: unanswered,
                 client,
                 agent,
@@ -33795,6 +33923,122 @@ mod tests {
         .await;
         assert_eq!(fork.prompt_to_end().await, answered("child"));
         assert_eq!(fork.shutdown().await, vec!["parent".to_string()]);
+    }
+
+    fn fork_test_servers() -> Vec<McpServer> {
+        vec![McpServer::Stdio(McpServerStdio::new(
+            "codeg-mcp",
+            "/bin/codeg-mcp",
+        ))]
+    }
+
+    /// claude-agent-acp 0.90.0 starts the forked session from the fork and
+    /// reuses it on the resume only when both name the same settings, so a
+    /// Claude fork names the connection's MCP servers and `_meta.claudeCode`
+    /// exactly as the resume after it does — threaded through the loop from
+    /// the list the connection was opened with.
+    #[tokio::test]
+    async fn a_claude_fork_and_its_resume_name_the_same_session_settings() {
+        let mut fork = ForkTransition::start_with(
+            AgentType::ClaudeCode,
+            fork_test_servers(),
+            "child",
+            true,
+            CloseAnswer::Closed,
+        )
+        .await;
+        assert_eq!(
+            fork.fork().await,
+            ("child".to_string(), "parent".to_string())
+        );
+        fork.until(
+            "the child's start",
+            |e| matches!(e, AcpEvent::SessionStarted { session_id } if session_id == "child"),
+        )
+        .await;
+        let forks = fork.forks.lock().unwrap().clone();
+        let resumes = fork.resumes.lock().unwrap().clone();
+        assert_eq!((forks.len(), resumes.len()), (1, 1));
+        assert_eq!(resumes[0]["sessionId"], "child");
+        assert_eq!(forks[0]["mcpServers"], resumes[0]["mcpServers"]);
+        assert_eq!(forks[0]["mcpServers"][0]["name"], "codeg-mcp");
+        assert_eq!(forks[0]["_meta"], resumes[0]["_meta"]);
+        assert_eq!(forks[0]["_meta"]["claudeCode"]["emitRawSDKMessages"], true);
+        assert_eq!(fork.shutdown().await, vec!["parent".to_string()]);
+    }
+
+    /// A fork of the forked session runs on the loop `handle_fork_or_exit`
+    /// starts for it, so the connection's servers must reach that loop too.
+    #[tokio::test]
+    async fn a_second_claude_fork_still_names_the_session_settings() {
+        let mut fork = ForkTransition::start_with(
+            AgentType::ClaudeCode,
+            fork_test_servers(),
+            "child",
+            true,
+            CloseAnswer::Closed,
+        )
+        .await;
+        assert_eq!(
+            fork.fork().await,
+            ("child".to_string(), "parent".to_string())
+        );
+        fork.until(
+            "the child's start",
+            |e| matches!(e, AcpEvent::SessionStarted { session_id } if session_id == "child"),
+        )
+        .await;
+        assert_eq!(
+            fork.fork().await,
+            ("child-2".to_string(), "child".to_string())
+        );
+        fork.until(
+            "the second child's start",
+            |e| matches!(e, AcpEvent::SessionStarted { session_id } if session_id == "child-2"),
+        )
+        .await;
+        let forks = fork.forks.lock().unwrap().clone();
+        let resumes = fork.resumes.lock().unwrap().clone();
+        assert_eq!((forks.len(), resumes.len()), (2, 2));
+        assert_eq!(forks[1]["sessionId"], "child");
+        for (fork_request, resume) in forks.iter().zip(&resumes) {
+            assert_eq!(fork_request["mcpServers"][0]["name"], "codeg-mcp");
+            assert_eq!(fork_request["mcpServers"], resume["mcpServers"]);
+            assert_eq!(fork_request["_meta"], resume["_meta"]);
+        }
+        assert_eq!(
+            fork.shutdown().await,
+            vec!["parent".to_string(), "child".to_string()]
+        );
+    }
+
+    /// Every other agent's fork stays bare: the resume that follows mounts the
+    /// servers, and naming them on the fork too would start them twice.
+    #[tokio::test]
+    async fn a_codex_fork_leaves_the_servers_to_its_resume() {
+        let mut fork = ForkTransition::start_with(
+            AgentType::Codex,
+            fork_test_servers(),
+            "child",
+            true,
+            CloseAnswer::Closed,
+        )
+        .await;
+        fork.fork().await;
+        fork.until(
+            "the child's start",
+            |e| matches!(e, AcpEvent::SessionStarted { session_id } if session_id == "child"),
+        )
+        .await;
+        let forks = fork.forks.lock().unwrap().clone();
+        let resumes = fork.resumes.lock().unwrap().clone();
+        assert_eq!(
+            forks,
+            vec![serde_json::json!({"sessionId": "parent", "cwd": "/tmp"})]
+        );
+        assert_eq!(resumes.len(), 1);
+        assert_eq!(resumes[0]["mcpServers"][0]["name"], "codeg-mcp");
+        fork.shutdown().await;
     }
 
     /// An agent that does not advertise `session/close` is never sent one.
@@ -34262,6 +34506,7 @@ mod tests {
                             Arc::new(TerminalRuntime::with_base_env(BTreeMap::new())),
                             "/tmp",
                             false,
+                            &[],
                             &ledger,
                             None,
                             &stderr_tail,

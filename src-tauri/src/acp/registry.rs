@@ -393,7 +393,7 @@ pub const PI_MIN_RUNTIME_VERSION: &str = "0.81.0";
 
 /// The npm package the built-in Claude Code entry runs — and the name the
 /// adapter reports as `agentInfo.name` at `initialize`, which is its
-/// `packageJson.name` (read from the 0.58.1 to 0.89.1 sources). A custom agent
+/// `packageJson.name` (read from the 0.58.1 to 0.90.0 sources). A custom agent
 /// whose running adapter reports exactly this name follows the Claude Code
 /// steering policy (`connection.rs::steering_policy_agent`).
 pub const CLAUDE_AGENT_ACP_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
@@ -2057,9 +2057,96 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // stores a generated one as an `ai-title` record.
             // codeg keeps its first-prompt fallback; showing the SDK's newest
             // prompt instead would be a separate choice.
+            //
+            // 0.90.0 moves the Claude SDK 0.3.293 → 0.3.296, i.e. CLI 2.1.293 →
+            // **2.1.296**. The ACP SDK stays 1.8.0 and `engines.node` stays
+            // ">=22". The published package differs from 0.89.1's in exactly
+            // the files the tag diff touches. 0.90.0's scenario harness, run on
+            // the sources of both tags with codeg's exact `clientCapabilities`,
+            // is byte-identical in all 40 scenarios, `initialize` included
+            // (live, the handshake differs only in the version). The harness has
+            // no cancel and no fork scenario, which is where this release moved;
+            // the probes below ran live against the local fake Anthropic API (no
+            // model call), 0.89.1 and 0.90.0 side by side.
+            //
+            // (rrr) **A fork starts its session** (#1317). The fork now starts
+            // the forked session, a Claude Code process of its own, from the
+            // request's `cwd`, MCP servers and `_meta`, and answers with its
+            // modes and config options, so the client can prompt it at once. A
+            // later `session/resume` returns that session only when it names the
+            // same settings (the adapter's session fingerprint); otherwise it
+            // tears the session down and starts another. codeg's fork named
+            // only the `cwd` while its resume names the connection's servers
+            // and `_meta.claudeCode` too, so, measured live, every fork started
+            // two processes, the resume spending ~240 ms on the restart. The fork
+            // now names exactly what the resume names
+            // (`crate::acp::fork::build_fork_request`): one process, and the
+            // resume answers in 1 ms. 0.73.0 through 0.89.x read neither field
+            // on a fork, so one request serves them all, and there the resume
+            // is still what makes the fork usable.
+            //
+            // (sss) **Cancel** (#1309, #1313, #1327, #1221). A cancelled prompt
+            // settles at its interrupted result instead of waiting out the
+            // follow-up Claude Code queued behind it, and that follow-up (the
+            // summary turn of a background command that finished meanwhile)
+            // now streams after the `cancelled` response rather than inside the
+            // cancelled turn: measured, 0.89.1 sent its text before the
+            // response and 0.90.0 after. Streamed output of prompts the cancel
+            // abandoned is dropped. Before the response, every tool call still
+            // open is closed, where 0.89.1 left them open: a root Bash with
+            // Claude Code's own result (`failed`, the CLI's "The user doesn't
+            // want to proceed with this tool use. …" text and
+            // `nonExecutionKind: "user-rejected"`, as the transcript records
+            // it), a foreground subagent's call with "The turn was cancelled
+            // before this tool call returned a result." None of it needs codeg
+            // code. codeg emits its own `TurnComplete` the moment the user
+            // stops a turn, so the closings and the follow-up arrive out of
+            // turn: the closings stay out of the finished turn
+            // (`outOfTurnToolCalls`), whose cards read as before until the
+            // conversation is reloaded from the transcript, which carries the
+            // same results; the follow-up is a turn Claude Code started on its
+            // own, as when a background command finishes while idle. A
+            // background subagent's calls get no closing on either version
+            // (it may run on through a cancel), and the CLI reports its stop
+            // after the response.
+            //
+            // (ttt) The subagents RFD form (#1320–#1322, #1324, #1328) goes only
+            // to a client that declares `subagents` and is not AIR. An AIR
+            // client keeps the earlier draft whichever signal it sends, so
+            // `build_client_capabilities` still declares neither. #1312 (a
+            // background command's terminal exits when its task ends) applies
+            // to terminal-rendering clients that are not AIR; AIR keeps the
+            // exit at the tool result. #1265 merges `CLAUDE_MODEL_CONFIG` into
+            // `_meta.claudeCode.options.settings`, neither of which codeg sets.
+            // #1266 relabels an API key helper in `_auth/status_update`, which
+            // codeg only logs. An approved ExitPlanMode plan becomes a
+            // `plan_update` only for a client with plan operations, which codeg
+            // does not declare. The rest changes the experimental ACP v2
+            // surface.
+            //
+            // (uuu) **CLI 2.1.294–2.1.296.** The tool list and the
+            // `latest_per_family` catalog (Fable 5.1, Opus 5.5, Sonnet 5.5,
+            // Haiku 5.5, unchanged through 2.1.299) are 2.1.293's, so the
+            // settings panels' model placeholders stand; the probes'
+            // transcripts use the same record and attachment types. What
+            // reaches codeg:
+            //   * Tool inputs (2.1.295, read from the 2.1.296 binary). Bash
+            //     takes `command_description` for `description`, and Grep reads
+            //     grep's `-l` / `-c` as `output_mode` and drops `-r`, repaired
+            //     only on the copy the CLI runs, as with (bb) and (hhh).
+            //     `canonical_file_tool_input` makes the same repairs, and Bash's
+            //     older `timeout_ms` alias with them. Read takes `allow_large`
+            //     to read a text file past the usual size limits; the read card
+            //     shows it as a badge.
+            //   * Assistant records gain `requestedModel`, the model Claude
+            //     Code asked for, beside `message.model`, the one that
+            //     answered. It keeps a `[1m]` suffix (`claude-sonnet-4-6[1m]`),
+            //     but its absence proves nothing, since a gateway session runs
+            //     at 1M without one, so the history gauge keeps assuming 1M and
+            //     labels and pricing keep the answering model.
             distribution: AgentDistribution::Npx {
-                version: "0.89.1",
-                package: "@agentclientprotocol/claude-agent-acp@0.89.1",
+                version: "0.90.0",
+                package: "@agentclientprotocol/claude-agent-acp@0.90.0",
                 cmd: "claude-agent-acp",
                 args: &[],
                 env: &[],
@@ -4587,8 +4674,8 @@ mod tests {
     fn registry_pins_current_acp_agent_versions() {
         assert_npx_version(
             AgentType::ClaudeCode,
-            "0.89.1",
-            "@agentclientprotocol/claude-agent-acp@0.89.1",
+            "0.90.0",
+            "@agentclientprotocol/claude-agent-acp@0.90.0",
             Some("22.0.0"),
         );
         assert_npx_version(

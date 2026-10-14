@@ -3591,6 +3591,7 @@
         "offset": "位移：{offset}",
         "limit": "限制：{limit}",
         "pages": "頁碼：{pages}",
+        "allowLarge": "超出大小限制",
         "mode": "模式：{mode}",
         "cell": "儲存格：{cell}",
         "shellSession": "工作階段 {id}",

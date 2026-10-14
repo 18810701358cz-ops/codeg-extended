@@ -3591,6 +3591,7 @@
         "offset": "Décalage : {offset}",
         "limit": "Limite : {limit}",
         "pages": "Pages : {pages}",
+        "allowLarge": "Au-delà de la limite de taille",
         "mode": "Mode : {mode}",
         "cell": "Cellule : {cell}",
         "shellSession": "Session {id}",
