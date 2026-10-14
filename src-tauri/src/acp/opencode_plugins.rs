@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::parsers::AgentEnv;
 use crate::web::event_bridge::{emit_event, EventEmitter};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -91,16 +92,26 @@ fn opencode_cache_dir() -> Option<PathBuf> {
 }
 
 pub(crate) fn xdg_config_home() -> Option<PathBuf> {
+    xdg_config_home_for_env(&AgentEnv::inherited())
+}
+
+/// [`xdg_config_home`] as the OpenCode launched with `env` resolves it.
+pub(crate) fn xdg_config_home_for_env(env: &AgentEnv) -> Option<PathBuf> {
     // An empty XDG_CONFIG_HOME must fall back to ~/.config, not resolve to a
     // relative "opencode/..." path (matches the XDG_DATA_HOME handling).
-    std::env::var_os("XDG_CONFIG_HOME")
+    env.var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
 }
 
 pub(crate) fn xdg_cache_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_CACHE_HOME")
+    xdg_cache_home_for_env(&AgentEnv::inherited())
+}
+
+/// [`xdg_cache_home`] as the OpenCode launched with `env` resolves it.
+pub(crate) fn xdg_cache_home_for_env(env: &AgentEnv) -> Option<PathBuf> {
+    env.var_os("XDG_CACHE_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))

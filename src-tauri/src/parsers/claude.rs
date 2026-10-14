@@ -8,8 +8,8 @@ use regex::Regex;
 
 use crate::models::*;
 use crate::parsers::{
-    folder_name_from_path, is_safe_subagent_id, title_from_user_text, truncate_str, AgentParser,
-    ParseError,
+    folder_name_from_path, is_safe_subagent_id, title_from_user_text, truncate_str, AgentEnv,
+    AgentParser, ParseError,
 };
 
 /// Regex that matches Claude Code system-injected XML tags and their content.
@@ -1161,8 +1161,14 @@ impl Default for ClaudeParser {
 
 impl ClaudeParser {
     pub fn new() -> Self {
-        let base_dir = resolve_claude_config_dir().join("projects");
-        Self { base_dir }
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Claude launched with `env`.
+    pub fn for_env(env: &AgentEnv) -> Self {
+        Self {
+            base_dir: resolve_claude_projects_dir_for_env(env),
+        }
     }
 
     /// Test-only constructor that lets callers point the parser at a fixture
@@ -1177,18 +1183,15 @@ impl ClaudeParser {
     }
 }
 
-/// Locate `<session_id>.jsonl` under any project directory of the Claude
-/// config dir. Used by the background watcher (`crate::acp::background_watch`)
-/// to arm its transcript tail; mirrors `get_conversation`'s discovery scan
-/// (Claude offers no forward cwd→project-dir encoding, so discovery is by
-/// session-id filename).
-pub(crate) fn find_session_file(session_id: &str) -> Option<PathBuf> {
-    find_session_file_in(&resolve_claude_config_dir().join("projects"), session_id)
-}
-
-/// `find_session_file` against an explicit base dir (test seam). `session_id`
-/// is embedded in a filename, so path-traversal shapes are rejected outright
-/// (`is_safe_subagent_id`: separators, `..`, drive colon, NUL).
+/// Locate `<session_id>.jsonl` under any project directory of `base_dir` —
+/// the `projects` dir of the launch's Claude config dir
+/// ([`resolve_claude_projects_dir_for_env`]). Used by the background watcher
+/// (`crate::acp::background_watch`) to arm its transcript tail; mirrors
+/// `get_conversation`'s discovery scan (Claude offers no forward
+/// cwd→project-dir encoding, so discovery is by session-id filename).
+/// `session_id` is embedded in a filename, so path-traversal shapes are
+/// rejected outright (`is_safe_subagent_id`: separators, `..`, drive colon,
+/// NUL).
 pub(crate) fn find_session_file_in(base_dir: &Path, session_id: &str) -> Option<PathBuf> {
     if session_id.is_empty() || !is_safe_subagent_id(session_id) {
         return None;
@@ -1561,7 +1564,19 @@ impl ClaudeParser {
 }
 
 pub(crate) fn resolve_claude_config_dir() -> PathBuf {
-    resolve_claude_config_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+    resolve_claude_config_dir_for_env(&AgentEnv::inherited())
+}
+
+/// The config dir of the Claude launched with `env`: its `CLAUDE_CONFIG_DIR`,
+/// else `~/.claude`.
+pub(crate) fn resolve_claude_config_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_claude_config_dir_from(env.var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+}
+
+/// Where the Claude launched with `env` keeps its transcripts:
+/// `<config dir>/projects/<encoded cwd>/<session id>.jsonl`.
+pub(crate) fn resolve_claude_projects_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_claude_config_dir_for_env(env).join("projects")
 }
 
 fn resolve_claude_config_dir_from(
@@ -8386,6 +8401,17 @@ mod tests {
                 ("assistant", "Meanwhile, reading the code.".to_string()),
                 ("assistant", "The review is back.".to_string()),
             ]
+        );
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_config_dir_of_the_launch_env() {
+        let env = AgentEnv::with_overrides(&[("CLAUDE_CONFIG_DIR", "/relocated/claude")]);
+        assert_eq!(
+            ClaudeParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/claude").join("projects")
         );
     }
 }

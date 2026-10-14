@@ -1,4 +1,5 @@
 pub mod acp_native;
+mod agent_env;
 pub mod antigravity;
 pub mod claude;
 pub mod cline;
@@ -22,6 +23,8 @@ mod summary_cache;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+
+pub use agent_env::{AgentEnv, AgentEnvs};
 
 /// A root of external agent-CLI transcript data, archived under
 /// `external/<agent>/` by the optional "include conversation content" toggle.
@@ -373,23 +376,33 @@ pub trait AgentParser {
 /// happens to know about it. `codeg-mcp` is injected into every MCP-capable
 /// agent, so the frame lands in each of their native transcripts; a per-parser
 /// fix would silently miss whichever parser was written next.
-pub fn build_agent_parser(agent_type: AgentType) -> Box<dyn AgentParser> {
+///
+/// `env` is the environment this agent is launched with — load it with
+/// `agent_setting_service::load_agent_env`. Each agent keeps its history where
+/// THAT environment points (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, …), and a
+/// relocation set in the agent's settings never reaches codeg's own process,
+/// so a parser handed [`AgentEnv::inherited`] instead reads the default
+/// directory while the agent writes elsewhere (#948).
+pub fn build_agent_parser(agent_type: AgentType, env: &AgentEnv) -> Box<dyn AgentParser> {
     let inner: Box<dyn AgentParser> = match agent_type {
-        AgentType::ClaudeCode => Box::new(claude::ClaudeParser::new()),
-        AgentType::Codex => Box::new(codex::CodexParser::new()),
-        AgentType::OpenCode => Box::new(opencode::OpenCodeParser::new()),
-        AgentType::Gemini => Box::new(gemini::GeminiParser::new()),
+        AgentType::ClaudeCode => Box::new(claude::ClaudeParser::for_env(env)),
+        AgentType::Codex => Box::new(codex::CodexParser::for_env(env)),
+        AgentType::OpenCode => Box::new(opencode::OpenCodeParser::for_env(env)),
+        AgentType::Gemini => Box::new(gemini::GeminiParser::for_env(env)),
+        // This parser reads a fixed `~/.openclaw/agents` and follows no
+        // relocation variable at all — not even codeg's own — so `env` has
+        // nothing to move for it.
         AgentType::OpenClaw => Box::new(openclaw::OpenClawParser::new()),
-        AgentType::Cline => Box::new(cline::ClineParser::new()),
-        AgentType::Hermes => Box::new(hermes::HermesParser::new()),
-        AgentType::CodeBuddy => Box::new(codebuddy::CodeBuddyParser::new()),
-        AgentType::KimiCode => Box::new(kimi_code::KimiCodeParser::new()),
-        AgentType::Pi => Box::new(pi::PiParser::new()),
-        AgentType::Grok => Box::new(grok::GrokParser::new()),
-        AgentType::Cursor => Box::new(cursor::CursorParser::new()),
-        AgentType::DeepSeek => Box::new(deepseek::DeepSeekParser::new()),
-        AgentType::Qoder => Box::new(qoder::QoderParser::new()),
-        AgentType::Antigravity => Box::new(antigravity::AntigravityParser::new()),
+        AgentType::Cline => Box::new(cline::ClineParser::for_env(env)),
+        AgentType::Hermes => Box::new(hermes::HermesParser::for_env(env)),
+        AgentType::CodeBuddy => Box::new(codebuddy::CodeBuddyParser::for_env(env)),
+        AgentType::KimiCode => Box::new(kimi_code::KimiCodeParser::for_env(env)),
+        AgentType::Pi => Box::new(pi::PiParser::for_env(env)),
+        AgentType::Grok => Box::new(grok::GrokParser::for_env(env)),
+        AgentType::Cursor => Box::new(cursor::CursorParser::for_env(env)),
+        AgentType::DeepSeek => Box::new(deepseek::DeepSeekParser::for_env(env)),
+        AgentType::Qoder => Box::new(qoder::QoderParser::for_env(env)),
+        AgentType::Antigravity => Box::new(antigravity::AntigravityParser::for_env(env)),
         // Custom ACP agents have no native store to reverse-engineer; their
         // history is codeg's own ACP transcript.
         AgentType::Custom(_) => Box::new(acp_native::AcpNativeParser::new(agent_type)),

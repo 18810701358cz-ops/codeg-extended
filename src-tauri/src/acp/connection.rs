@@ -2458,6 +2458,14 @@ pub async fn spawn_agent_connection(
     // per-agent `runtime_env`, which does not survive into `run_connection`.
     let host_tools = HostToolsPolicy::from_env(&runtime_env);
 
+    // Where this launch's Claude writes its transcripts, for the background
+    // watcher. Resolved here for the same reason as `fs_policy`: a
+    // `CLAUDE_CONFIG_DIR` in the per-agent env moves them, and only the full
+    // `runtime_env` knows about it.
+    let claude_projects_dir = crate::parsers::claude::resolve_claude_projects_dir_for_env(
+        &crate::parsers::AgentEnv::from_overrides(runtime_env.clone()),
+    );
+
     // Forward only the codeg git credential helper keys into the terminal
     // runtime — not the agent's API tokens or model provider credentials.
     // This makes `git fetch`/`git push` issued through the ACP
@@ -2550,6 +2558,7 @@ pub async fn spawn_agent_connection(
             delegation_injection,
             fs_policy,
             host_tools,
+            claude_projects_dir,
             stderr_tail,
         )
         .await;
@@ -5883,6 +5892,8 @@ async fn run_connection(
     delegation_injection: Option<DelegationInjection>,
     fs_policy: FsAccessPolicy,
     host_tools: HostToolsPolicy,
+    // Where a Claude launch writes its transcripts (see `spawn_if_claude`).
+    claude_projects_dir: PathBuf,
     // Connection-scoped agent stderr buffer, shared with the `with_debug`
     // callback installed by `build_agent`. Read only when a turn ends without
     // agent output, to attach evidence to the synthesized error.
@@ -5988,6 +5999,7 @@ async fn run_connection(
         emitter.clone(),
         cwd_string.clone(),
         Arc::clone(&prompt_ledger),
+        claude_projects_dir,
     );
 
     Client

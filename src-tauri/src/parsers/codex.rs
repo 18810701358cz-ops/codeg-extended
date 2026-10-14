@@ -20,7 +20,7 @@ use crate::parsers::codex_code_mode::{
     Separator, CODEX_SCRIPT_TOOL_NAME,
 };
 use crate::parsers::{
-    codex_desktop_attachments, folder_name_from_path, title_from_user_text, truncate_str,
+    codex_desktop_attachments, folder_name_from_path, title_from_user_text, truncate_str, AgentEnv,
     AgentParser, ParseError,
 };
 
@@ -206,8 +206,15 @@ impl Default for CodexParser {
 
 impl CodexParser {
     pub fn new() -> Self {
-        let base_dir = resolve_codex_home_dir().join("sessions");
-        Self { base_dir }
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Codex launched with `env`. `session_index.jsonl`
+    /// (the thread-name index) is read from the same home.
+    pub fn for_env(env: &AgentEnv) -> Self {
+        Self {
+            base_dir: resolve_codex_home_dir_for_env(env).join("sessions"),
+        }
     }
 
     /// Test-only constructor that lets callers point the parser at a fixture
@@ -846,7 +853,13 @@ impl CodexParser {
 }
 
 pub(crate) fn resolve_codex_home_dir() -> PathBuf {
-    resolve_codex_home_dir_from(std::env::var_os("CODEX_HOME"), dirs::home_dir())
+    resolve_codex_home_dir_for_env(&AgentEnv::inherited())
+}
+
+/// The home of the Codex launched with `env`: its `CODEX_HOME`, else
+/// `~/.codex`.
+pub(crate) fn resolve_codex_home_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_codex_home_dir_from(env.var_os("CODEX_HOME"), dirs::home_dir())
 }
 
 fn resolve_codex_home_dir_from(
@@ -16735,6 +16748,18 @@ mod tests {
         assert_eq!(
             turn_texts(&detail),
             vec![("assistant", Some("still readable".into()))]
+        );
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_home_of_the_launch_env() {
+        let env = crate::parsers::AgentEnv::with_overrides(&[("CODEX_HOME", "/relocated/codex")]);
+        // `session_index.jsonl` is read from the sessions dir's parent.
+        assert_eq!(
+            super::CodexParser::for_env(&env).base_dir,
+            std::path::PathBuf::from("/relocated/codex").join("sessions")
         );
     }
 }
