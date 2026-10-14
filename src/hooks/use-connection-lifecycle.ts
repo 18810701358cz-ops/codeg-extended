@@ -451,13 +451,24 @@ export function useConnectionLifecycle({
     touchActivity,
   ])
 
+  // Why connecting failed, for the composer's inline banner. The auto-connect's
+  // own rejection says it first; a request parked behind another in-flight
+  // connect never rejects to it (its promise resolves at once, and the run
+  // that fails comes later), so fall back to what the provider published for
+  // this key — the record the toast and the status chip show — as long as it
+  // names the agent this surface wants. `detail ?? title` is the text that
+  // request would have rejected with.
+  const publishedConnectError =
+    conn.connectError?.agentType === agentType ? conn.connectError : null
   const autoConnectError =
     status === "connected" || status === "prompting"
       ? null
       : lastAutoConnectError?.contextKey === contextKey &&
           lastAutoConnectError.agentType === agentType
         ? lastAutoConnectError.message
-        : null
+        : publishedConnectError
+          ? (publishedConnectError.detail ?? publishedConnectError.title)
+          : null
 
   // sendPrompt, connCancel, connRespondPermission are stable (depend
   // only on actions + contextKey), so these callbacks are effectively stable.
