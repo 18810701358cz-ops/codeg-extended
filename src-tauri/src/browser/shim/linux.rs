@@ -51,7 +51,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -85,7 +85,9 @@ pub const FRAME_HANDLER_NAME: &str = "codegBrowserFrame";
 pub type MessageSink = Arc<dyn Fn(String, bool) + Send + Sync>;
 
 type DownloadStart = dyn Fn(&str, &mut PathBuf) -> bool + Send + Sync;
-type DownloadFinish = dyn Fn(&str, bool) + Send + Sync;
+/// The address, the destination the transfer was given, and whether it got
+/// there: the destination tells two transfers of one address apart.
+type DownloadFinish = dyn Fn(&str, &Path, bool) + Send + Sync;
 
 /// Source-specific callbacks retained for each in-flight download.
 #[derive(Clone)]
@@ -165,7 +167,9 @@ pub fn install_download_context(context: &WebContext) {
             download.cancel();
             return;
         };
-        let accepted = Rc::new(Cell::new(false));
+        // Where an accepted transfer was told to write; `None` for a refused
+        // one, which has no registry entry to finish.
+        let accepted: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
         let failed = Rc::new(Cell::new(false));
         let started = accepted.clone();
         let started_url = url.clone();
@@ -175,8 +179,9 @@ pub fn install_download_context(context: &WebContext) {
                 download.cancel();
                 return true;
             }
-            started.set(true);
-            // A cancel emits `failed`, which reports this transfer as unsuccessful.
+            // Recorded first: the registry entry exists from here on, and a
+            // cancel below emits `failed`, which reports it as unsuccessful.
+            *started.borrow_mut() = Some(path.clone());
             match tauri::Url::from_file_path(&path) {
                 Ok(uri) => download.set_destination(uri.as_str()),
                 Err(()) => download.cancel(),
@@ -186,9 +191,9 @@ pub fn install_download_context(context: &WebContext) {
         let error_state = failed.clone();
         download.connect_failed(move |_, _| error_state.set(true));
         download.connect_finished(move |_| {
-            // A refused download has no registry entry to finish.
-            if accepted.get() {
-                (handlers.finished)(&url, !failed.get());
+            let destination = accepted.borrow_mut().take();
+            if let Some(destination) = destination {
+                (handlers.finished)(&url, &destination, !failed.get());
             }
         });
     });

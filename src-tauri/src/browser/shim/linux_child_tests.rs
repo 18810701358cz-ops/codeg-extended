@@ -62,6 +62,7 @@ fn linux_browser_regressions() {
             browser_layer_keeps_workspace_and_page_input_reachable();
             browser_layer_preserves_workspace_layout_and_updated_bounds();
             browser_layer_keeps_workspace_focus();
+            hidden_page_hands_keys_to_the_workspace();
             eprintln!("GUI: shared profile cookies and clearing");
             mixed_surfaces_share_profile_state(&mut app, &owner);
             eprintln!("GUI: download attribution and closed source");
@@ -566,4 +567,62 @@ fn browser_layer_keeps_workspace_focus() {
         "the workspace must keep the keyboard across the move"
     );
     unsafe { window.destroy() };
+}
+
+/// What handing the keyboard back is for: once the page that held it is
+/// hidden, a key typed into the window reaches the workspace — where the
+/// overlay that asked for the hide lives — instead of going nowhere.
+fn hidden_page_hands_keys_to_the_workspace() {
+    gtk::init().expect("GTK display");
+    let window = gtk::Window::new(gtk::WindowType::Toplevel);
+    let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let workspace = gtk::Entry::new();
+    window.add(&vbox);
+    vbox.pack_start(&workspace, true, true, 0);
+    window.show_all();
+    let fixed = attach_container(&window, &vbox, workspace.upcast_ref());
+    let page = gtk::Entry::new();
+    fixed.put(&page, 10, 10);
+    page.show();
+    page.grab_focus();
+    assert!(page.is_focus(), "fixture: the page holds the keyboard");
+
+    release_focus_of(page.upcast_ref());
+    page.hide();
+    type_into_window(&window, 'y');
+    assert_eq!(workspace.text(), "y", "the key must reach the workspace");
+    assert_eq!(page.text(), "");
+    unsafe { window.destroy() };
+}
+
+/// A key pressed and released in `window`, routed the way GTK routes one:
+/// to whichever widget holds the window's keyboard focus.
+fn type_into_window(window: &gtk::Window, key: char) {
+    use gtk::glib::translate::ToGlibPtr;
+    let native = window.window().unwrap();
+    let display = WidgetExt::display(window);
+    let seat = display.default_seat().unwrap();
+    let keyval = u32::from(key);
+    let entry = gtk::gdk::Keymap::for_display(&display)
+        .unwrap()
+        .entries_for_keyval(keyval)
+        .into_iter()
+        .find(|entry| entry.level() == 0)
+        .unwrap();
+    for kind in [
+        gtk::gdk::EventType::KeyPress,
+        gtk::gdk::EventType::KeyRelease,
+    ] {
+        let mut event = gtk::gdk::Event::new(kind)
+            .downcast::<gtk::gdk::EventKey>()
+            .unwrap();
+        event.as_mut().window = native.to_glib_full();
+        event.as_mut().keyval = keyval;
+        event.as_mut().hardware_keycode = entry.keycode() as u16;
+        event.as_mut().group = entry.group() as u8;
+        event.as_mut().length = 1;
+        event.as_mut().string = key.to_string().to_glib_full();
+        event.set_device(seat.keyboard().as_ref());
+        window.event(&event);
+    }
 }

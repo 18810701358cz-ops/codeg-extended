@@ -73,7 +73,10 @@ fn attach_container(window: &gtk::Window, vbox: &gtk::Box, workspace: &gtk::Widg
 /// widget per window), and hiding the widget that holds it leaves the window
 /// with none at all: the overlay would hear no key until it was clicked.
 pub fn release_focus(webview: &wry::WebView) {
-    let page = webview.webview();
+    release_focus_of(webview.webview().upcast_ref());
+}
+
+fn release_focus_of(page: &gtk::Widget) {
     if !page.is_focus() {
         return;
     }
