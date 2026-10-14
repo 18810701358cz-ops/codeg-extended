@@ -1700,6 +1700,10 @@ fn content_text(content: &serde_json::Value) -> Option<String> {
 ///   but always STRING content, so it still initiates);
 /// * auto-compaction continuation summaries land MID-turn while the wire is
 ///   still rendering it — never a boundary;
+/// * `turnCompanion` records are written on the running turn's behalf and
+///   continue it, whatever their shape — including the `isMeta` STRING note
+///   the Read tool leaves after an image larger than the display limit
+///   (CLI 2.1.293), which otherwise reads exactly like a cron prompt;
 /// * everything else user-typed/injected (real prompts, `<task-notification>`
 ///   records, cron prompts) initiates.
 ///
@@ -1707,6 +1711,9 @@ fn content_text(content: &serde_json::Value) -> Option<String> {
 /// record, and never initiates: see [`folded_prompt_text`].
 fn turn_initiator_text(value: &serde_json::Value) -> Option<TurnInitiatorText> {
     if value.get("type").and_then(|t| t.as_str()) != Some("user") {
+        return None;
+    }
+    if value.get("turnCompanion").and_then(|v| v.as_bool()) == Some(true) {
         return None;
     }
     let content = value.get("message")?.get("content")?;
@@ -3611,6 +3618,71 @@ mod tests {
         assert!(
             tick_now(&mut ws, &ledger).is_none(),
             "slash command turn is foreground end-to-end"
+        );
+    }
+
+    /// Real-shape image-resize note (CLI 2.1.293): the Read tool's result for
+    /// an image larger than the model's display limit is followed by this
+    /// record, written on the running turn's behalf. `isMeta` with STRING
+    /// content — the cron prompt's shape — but marked `turnCompanion` and
+    /// stamped with the running submission's `promptId`.
+    fn image_resize_note(uuid: &str) -> String {
+        format!(
+            r#"{{"type":"user","timestamp":"2026-07-07T03:48:05.000Z","uuid":"{uuid}","promptId":"p1","isMeta":true,"turnCompanion":true,"userType":"external","message":{{"role":"user","content":"[Image: original 2880x1800, displayed at 2000x1250. Multiply coordinates by 1.44 to map to original image.]"}}}}"#
+        )
+    }
+
+    /// Reading a large image mid-turn puts that note in the middle of a
+    /// wire-rendered turn. Read as an initiator, it opened an episode, and the
+    /// overlay drew everything the turn wrote after the image a second time,
+    /// under the live copy.
+    #[test]
+    fn an_image_resize_note_mid_turn_stays_foreground() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_session(&dir);
+        write_lines(&path, &[]);
+        let ledger = PromptLedger::shared();
+        let mut ws = WatchState::with_file_for_test("s1", path.clone());
+
+        ledger.record_text("look at the screenshot");
+        let read_call = r#"{"type":"assistant","timestamp":"2026-07-07T03:48:04.000Z","uuid":"a-read","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/shot.png"}}]}}"#;
+        let read_result = r#"{"type":"user","timestamp":"2026-07-07T03:48:05.000Z","uuid":"u-read","promptId":"p1","message":{"role":"user","content":[{"tool_use_id":"toolu_read","type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}}"#;
+        write_lines(
+            &path,
+            &[
+                &user_prompt_array("u1", "look at the screenshot"),
+                read_call,
+                read_result,
+            ],
+        );
+        let event = tick_prompting(&mut ws, &ledger);
+        assert!(event.is_none() || unpack(event.unwrap()).0.is_empty());
+
+        write_lines(
+            &path,
+            &[
+                &image_resize_note("m1"),
+                &assistant_text("a2", "the header is misaligned"),
+            ],
+        );
+        let event = tick_prompting(&mut ws, &ledger);
+        assert!(
+            event.is_none() || unpack(event.unwrap()).0.is_empty(),
+            "the note continues the wire-rendered turn — nothing after it may surface as overlay"
+        );
+
+        // The cron shape without the companion mark still starts a turn.
+        write_lines(
+            &path,
+            &[
+                &cron_prompt("check the build"),
+                &assistant_text("a3", "checking"),
+            ],
+        );
+        let (turns, ..) = unpack(tick_now(&mut ws, &ledger).expect("turns event"));
+        assert!(
+            !turns.is_empty(),
+            "a cron prompt (isMeta string, no turnCompanion) still surfaces"
         );
     }
 
