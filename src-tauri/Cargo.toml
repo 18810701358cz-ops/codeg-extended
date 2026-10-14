@@ -225,6 +225,9 @@ qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg", "gif"] }
 include_dir = "0.7"
 sha2 = "0.10"
+# HMAC-SHA256 over a forge webhook's body (GitHub / Gitea signatures) with a
+# constant-time check. Already in the lock tree as a transitive dependency.
+hmac = "0.12"
 aes-gcm = { version = "0.10", features = ["stream"] }
 argon2 = "0.5"
 tempfile = "3"

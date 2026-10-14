@@ -550,6 +550,21 @@ pub async fn create_from_forge(
     source: crate::models::WorkTaskSource,
     force: bool,
 ) -> Result<ForgeCreateOutcome, DbError> {
+    create_from_forge_by(conn, draft, source, force, None).await
+}
+
+/// [`create_from_forge`], saying who asked: `auto_trigger = None` is a person
+/// (the trigger dialog), `Some(trigger)` is the repository panel's
+/// auto-processing and what woke it (`schedule` / `webhook` / `manual`). The
+/// timeline's `created` event carries it — actor `auto` and the trigger in its
+/// payload — so a task nobody clicked can say where it came from.
+pub async fn create_from_forge_by(
+    conn: &DatabaseConnection,
+    draft: WorkTaskDraft,
+    source: crate::models::WorkTaskSource,
+    force: bool,
+    auto_trigger: Option<&str>,
+) -> Result<ForgeCreateOutcome, DbError> {
     validate_draft(&draft)?;
     let folder = folder::Entity::find_by_id(draft.folder_id)
         .one(conn)
@@ -583,17 +598,50 @@ pub async fn create_from_forge(
             return Ok(ForgeCreateOutcome::Duplicate(to_info(existing)));
         }
     }
-    record_event(&txn, row.id, "created", "user", None).await?;
+    let (actor, created_payload) = match auto_trigger {
+        None => ("user", None),
+        Some(trigger) => ("auto", Some(serde_json::json!({ "auto": trigger }))),
+    };
+    record_event(&txn, row.id, "created", actor, created_payload).await?;
     record_event(
         &txn,
         row.id,
         "forge_linked",
-        "user",
+        actor,
         Some(serde_json::json!({ "source_key": source.key, "kind": source.kind })),
     )
     .await?;
     txn.commit().await?;
     Ok(ForgeCreateOutcome::Created(to_info(row)))
+}
+
+/// Which of `keys` have EVER had a task — any status, archived and deleted
+/// rows included.
+///
+/// The question auto-processing asks before it mints anything, and it is
+/// deliberately wider than the create dedup (live tasks only): an item whose
+/// automatic task was finished, canceled or deleted has been dealt with, and
+/// picking it up again on the next scan would undo the user's own decision
+/// every few minutes. Starting another task by hand stays possible — that path
+/// never asks this.
+pub async fn source_keys_ever_tasked(
+    conn: &DatabaseConnection,
+    keys: &[String],
+) -> Result<std::collections::HashSet<String>, DbError> {
+    let mut found = std::collections::HashSet::new();
+    // Chunked so a scan of a busy repository cannot outgrow SQLite's
+    // bound-parameter limit in one `IN (…)`.
+    for chunk in keys.chunks(500) {
+        let rows: Vec<Option<String>> = work_task::Entity::find()
+            .select_only()
+            .column(work_task::Column::SourceKey)
+            .filter(work_task::Column::SourceKey.is_in(chunk.iter().cloned()))
+            .into_tuple()
+            .all(conn)
+            .await?;
+        found.extend(rows.into_iter().flatten());
+    }
+    Ok(found)
 }
 
 /// Every non-terminal status — the single definition of "active" shared by

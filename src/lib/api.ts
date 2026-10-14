@@ -28,6 +28,8 @@ import type {
   AutomationDraft,
   DeepSeekCatalogModel,
   DeepSeekModelCatalog,
+  ForgeAutoScanReport,
+  ForgeAutoStatus,
   ForgeChangeDetail,
   ForgeChangedFileList,
   ForgeComment,
@@ -6208,4 +6210,20 @@ export async function forgeSettingsSet(
   settings: ForgePanelSettings | null
 ): Promise<ForgeSettingsStore> {
   return getTransport().call("forge_settings_set", { folderId, settings })
+}
+
+/** Where auto-processing stands for one folder: the last scan's report, the
+ *  next scheduled scan, the last webhook delivery. */
+export async function forgeAutoStatus(
+  folderId: number
+): Promise<ForgeAutoStatus> {
+  return getTransport().call("forge_auto_status", { folderId })
+}
+
+/** Scan one folder now with its SAVED rules, and get back what the scan did.
+ *  Resolves once the scan has finished. */
+export async function forgeAutoScanNow(
+  folderId: number
+): Promise<ForgeAutoScanReport> {
+  return getTransport().call("forge_auto_scan_now", { folderId })
 }

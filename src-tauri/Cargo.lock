@@ -1110,6 +1110,7 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "gtk",
+ "hmac",
  "http",
  "http-body",
  "hyper-util",
