@@ -43,6 +43,11 @@ pub fn container(owner: &WebviewWindow) -> Result<gtk::Fixed, String> {
 /// overlay inside that VBox adds a level and makes those handlers panic.
 /// Tauri still owns the same workspace webview and its WebviewWindow identity.
 fn attach_container(window: &gtk::Window, vbox: &gtk::Box, workspace: &gtk::Widget) -> gtk::Fixed {
+    // Taking the workspace out of its parent takes the window's keyboard focus
+    // with it. It goes back once the workspace is in place again: the first
+    // tab of a window opens on a click or a keystroke in the workspace, and
+    // whoever made it would otherwise find the keyboard dead until a click.
+    let had_focus = workspace.is_focus();
     let overlay = gtk::Overlay::new();
     overlay.set_widget_name(OVERLAY_NAME);
     let fixed = gtk::Fixed::new();
@@ -56,7 +61,31 @@ fn attach_container(window: &gtk::Window, vbox: &gtk::Box, workspace: &gtk::Widg
     window.add(&overlay);
     fixed.show();
     overlay.show();
+    if had_focus {
+        workspace.grab_focus();
+    }
     fixed
+}
+
+/// Main thread, before `webview` is hidden for an overlay: if it holds the
+/// window's keyboard focus, give that to the workspace webview under the
+/// browser layer. Raising the window does not move it (GTK keeps one focus
+/// widget per window), and hiding the widget that holds it leaves the window
+/// with none at all: the overlay would hear no key until it was clicked.
+pub fn release_focus(webview: &wry::WebView) {
+    let page = webview.webview();
+    if !page.is_focus() {
+        return;
+    }
+    let workspace = page
+        .parent()
+        .and_then(|layer| layer.parent())
+        .and_then(|overlay| overlay.downcast::<gtk::Overlay>().ok())
+        .and_then(|overlay| overlay.child());
+    match workspace {
+        Some(workspace) => workspace.grab_focus(),
+        None => tracing::debug!("[browser] focus not handed back: no workspace under the page"),
+    }
 }
 
 /// Persist both the requested size and Fixed coordinates. Wry 0.55's

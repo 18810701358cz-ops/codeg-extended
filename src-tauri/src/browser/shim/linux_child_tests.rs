@@ -58,15 +58,18 @@ fn linux_browser_regressions() {
             .unwrap();
             eprintln!("GUI: address input");
             embedded_browser_preserves_tauri_address_input(&mut app, &owner);
-            eprintln!("GUI: overlay routing and bounds");
+            eprintln!("GUI: overlay routing, bounds and focus");
             browser_layer_keeps_workspace_and_page_input_reachable();
             browser_layer_preserves_workspace_layout_and_updated_bounds();
+            browser_layer_keeps_workspace_focus();
             eprintln!("GUI: shared profile cookies and clearing");
             mixed_surfaces_share_profile_state(&mut app, &owner);
             eprintln!("GUI: download attribution and closed source");
             downloads_follow_the_source_tab(&mut app, &owner, &downloads);
             eprintln!("GUI: iframe notices");
             frame_denials_stay_quiet(&mut app, &owner);
+            eprintln!("GUI: focus handed back on hide");
+            hiding_a_focused_page_hands_focus_back(&mut app, &owner);
             crate::commands::browser::close_all_for_owner(app.handle(), owner.label());
             owner.close().unwrap();
             app.cleanup_before_exit();
@@ -302,6 +305,35 @@ fn frame_denials_stay_quiet(app: &mut tauri::App, owner: &tauri::WebviewWindow) 
     close_tab(app, "frame-tab");
 }
 
+/// An overlay that hides a page holding the keyboard must get the keyboard:
+/// GTK leaves the window with no focus widget at all once that page is hidden.
+fn hiding_a_focused_page_hands_focus_back(app: &mut tauri::App, owner: &tauri::WebviewWindow) {
+    let page = open_tab(app, owner, "focus-tab", SurfaceChoice::Child, "gui-focus");
+    page.grab_focus();
+    assert!(page.is_focus(), "fixture: the page holds the keyboard");
+    tauri::async_runtime::block_on(crate::commands::browser::set_visible_core(
+        owner,
+        &app.state(),
+        "focus-tab",
+        false,
+        true,
+        false,
+    ))
+    .unwrap();
+    let workspace = owner
+        .gtk_window()
+        .unwrap()
+        .child()
+        .and_then(|layer| layer.downcast::<gtk::Overlay>().ok())
+        .and_then(|layer| layer.child())
+        .expect("the workspace under the browser layer");
+    assert!(
+        workspace.is_focus(),
+        "hiding the page must hand the keyboard to the workspace"
+    );
+    close_tab(app, "focus-tab");
+}
+
 /// Exercise Tauri's real borderless-window handlers, which plain GTK/Wry
 /// fixtures do not install. Clicking the address input must also allow typing.
 fn embedded_browser_preserves_tauri_address_input(
@@ -509,5 +541,29 @@ fn browser_layer_preserves_workspace_layout_and_updated_bounds() {
     assert_eq!(content.preferred_width().0, 100);
     assert_eq!(content.preferred_height().0, 80);
     assert_eq!(workspace.toplevel(), Some(window.clone().upcast()));
+    unsafe { window.destroy() };
+}
+
+/// Moving the workspace under the overlay takes it out of its parent, which
+/// drops the window's keyboard focus; the workspace that had it gets it back.
+fn browser_layer_keeps_workspace_focus() {
+    gtk::init().expect("GTK display");
+    let window = gtk::Window::new(gtk::WindowType::Toplevel);
+    let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let workspace = gtk::DrawingArea::new();
+    workspace.set_can_focus(true);
+    window.add(&vbox);
+    vbox.pack_start(&workspace, true, true, 0);
+    window.show_all();
+    workspace.grab_focus();
+    assert!(
+        workspace.is_focus(),
+        "fixture: the workspace holds the keyboard"
+    );
+    attach_container(&window, &vbox, workspace.upcast_ref());
+    assert!(
+        workspace.is_focus(),
+        "the workspace must keep the keyboard across the move"
+    );
     unsafe { window.destroy() };
 }

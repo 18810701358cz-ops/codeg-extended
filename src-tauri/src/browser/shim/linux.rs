@@ -559,9 +559,9 @@ pub fn install_navigation_hooks(
                 report(key, NavigationEvent::Interrupted);
             }
         }
-        // `false`: the engine puts its own error page up, which is what the
-        // window the user is looking at should show. codeg's own message is in
-        // the tab's card, in the workspace window.
+        // `false`: the engine puts its own error page up, which is what an
+        // owned window should show. An embedded tab's view is hidden while
+        // the tab has an error, and the pane shows codeg's own page instead.
         false
     });
     webview.connect_load_failed_with_tls_errors(move |_webview, uri, _certificate, flags| {

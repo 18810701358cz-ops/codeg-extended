@@ -528,6 +528,24 @@ mod tests {
         }
     }
 
+    /// A refused scheme is announced only for the page's own navigation. On
+    /// Linux every frame is asked as if it were the top one, so a scheme a
+    /// frame may hold is refused quietly there: an iframe a page composes
+    /// must not put a "blocked" notice over the page. A scheme no frame may
+    /// hold is still announced.
+    #[test]
+    fn refused_schemes_are_announced_for_the_page_alone() {
+        let frame_scheme = u("data:text/html,<b>x</b>");
+        let local = u("file:///etc/passwd");
+        assert!(!report_scheme_denial(&frame_scheme, false));
+        assert!(!report_scheme_denial(&local, false));
+        assert!(report_scheme_denial(&local, true));
+        assert_eq!(
+            report_scheme_denial(&frame_scheme, true),
+            !cfg!(target_os = "linux")
+        );
+    }
+
     #[test]
     fn open_url_is_stricter_than_navigation() {
         assert!(open_url_allowed(&u("https://example.com")));

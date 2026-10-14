@@ -1163,6 +1163,12 @@ pub async fn set_visible_core(
         // overlay that caused the hide would never receive Esc / Tab.
         if handoff_focus {
             let _ = owner.set_focus();
+            // GTK: raising the window leaves its keyboard focus where it was,
+            // and hiding the page that holds it would leave the window none.
+            #[cfg(all(feature = "browser-child", target_os = "linux"))]
+            if let BrowserSurface::Child(child) = &surface {
+                let _ = child.release_focus();
+            }
         }
         surface
             .hide()

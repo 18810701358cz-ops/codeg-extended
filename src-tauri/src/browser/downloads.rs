@@ -107,8 +107,8 @@ impl BrowserDownloads {
         } else {
             DownloadState::Failed
         };
-        // Windows / Linux report where the file actually landed; macOS does
-        // not, and keeps the path chosen when the download was requested.
+        // Windows reports where the file actually landed; macOS and Linux do
+        // not, and keep the path chosen when the download was requested.
         if let Some(path) = path {
             if success && !path.as_os_str().is_empty() {
                 entry.file_name = file_name_of(&path);

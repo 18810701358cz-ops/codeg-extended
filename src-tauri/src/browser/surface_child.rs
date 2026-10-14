@@ -418,6 +418,13 @@ impl ChildHandle {
         self.op(|wv| wv.focus())
     }
 
+    /// Linux: give the keyboard to the workspace if this page holds it, ahead
+    /// of a hide that makes way for an overlay (see `shim::release_focus`).
+    #[cfg(target_os = "linux")]
+    pub fn release_focus(&self) -> Result<(), ChildError> {
+        self.with(shim::release_focus)
+    }
+
     pub fn zoom(&self, factor: f64) -> Result<(), ChildError> {
         if !page_zoom_supported() {
             return Ok(());
@@ -783,8 +790,9 @@ fn build_child(
     #[cfg(target_os = "linux")]
     {
         let fixed = shim::container(owner)?;
-        // A popup retains its real opener; regular views share the profile
-        // anchor's context, including with Tauri-owned browser windows.
+        // A popup is related to its real opener; a regular view to a fresh
+        // view in the profile's context, which owned browser windows share
+        // (see `linux_context`). Either way it lands in that context.
         let related = match configuration {
             Some(opener) => opener,
             None => super::shim::linux_context::related_view(profile)?,

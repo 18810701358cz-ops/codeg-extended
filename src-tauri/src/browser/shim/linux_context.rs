@@ -1,24 +1,38 @@
 //! One native WebKit context per browser profile, shared by child and owned
-//! surfaces. A non-navigating related view lets both builders use that context.
+//! surfaces. Neither builder takes a context it did not make — wry keeps its
+//! own to itself, and tauri keys its contexts by data directory — but both
+//! take a view to relate the new one to, and a related view is built in that
+//! view's context.
+//!
+//! The view handed out is a new one for every surface, never loaded, and let
+//! go of once that surface is built. Relating also gives the new page the
+//! related page's web process, and WebKit keeps a page's first navigation
+//! wherever it is when the page it comes from has shown nothing yet: one view
+//! kept for the profile would put the first page of every tab, whatever its
+//! site, in a single shared process. A fresh view has a process of its own to
+//! lend.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use webkit2gtk::{
     CookieManagerExt, CookiePersistentStorage, NetworkProxyMode, NetworkProxySettings, WebContext,
-    WebView, WebViewExt, WebsiteDataManager, WebsiteDataManagerExt,
+    WebContextExt, WebView, WebsiteDataManager, WebsiteDataManagerExt,
 };
 
 use crate::browser::profile;
 
 thread_local! {
-    static PROFILES: RefCell<HashMap<String, WebView>> = RefCell::new(HashMap::new());
+    /// Each profile's context, held for as long as the profile exists, open
+    /// tabs or not. Main thread only.
+    static PROFILES: RefCell<HashMap<String, WebContext>> = RefCell::new(HashMap::new());
 }
 
-/// Main thread only. The anchor never loads a page; it owns the profile's
-/// native context even when every visible tab has closed.
+/// Main thread only. A view in the profile's context to build ONE new surface
+/// from (see the module header). It never loads a page; the caller drops it
+/// once that surface is built.
 pub fn related_view(profile_id: &str) -> Result<WebView, String> {
-    let anchor = PROFILES.with(|profiles| {
+    let context = PROFILES.with(|profiles| {
         profiles
             .borrow_mut()
             .entry(profile_id.to_string())
@@ -38,7 +52,7 @@ pub fn related_view(profile_id: &str) -> Result<WebView, String> {
                 }
                 let context = WebContext::builder().website_data_manager(&manager).build();
                 super::linux::install_download_context(&context);
-                WebView::with_context(&context)
+                context
             })
             .clone()
     });
@@ -50,7 +64,7 @@ pub fn related_view(profile_id: &str) -> Result<WebView, String> {
             None
         }
     };
-    let manager = anchor
+    let manager = context
         .website_data_manager()
         .ok_or("browser profile has no data manager")?;
     if let Some(proxy) = proxy {
@@ -59,7 +73,7 @@ pub fn related_view(profile_id: &str) -> Result<WebView, String> {
     } else {
         manager.set_network_proxy_settings(NetworkProxyMode::Default, None);
     }
-    Ok(anchor)
+    Ok(WebView::with_context(&context))
 }
 
 /// Release the native store after the profile's tabs have been closed.
