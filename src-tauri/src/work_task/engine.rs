@@ -672,9 +672,9 @@ impl LaunchMode {
 /// `end_turn`; severity `warning` is a retry), plus a tool call (or
 /// update) whose status is `failed`. The message is the error string, the
 /// failure title / details, or the tool's content / raw output — whichever
-/// is non-empty. Anything else is not a turn failure by itself: a tool
-/// that fails and is then recovered still ends in review when the turn
-/// produced text or a diff.
+/// is non-empty. Anything else is not a turn failure by itself, and neither
+/// is an error the turn then moves on from (see [`is_turn_progress`]): only
+/// what a turn ENDED in can fail it.
 fn reported_agent_error(payload: &AcpEvent) -> Option<String> {
     match payload {
         AcpEvent::Error { message, .. } => first_nonempty([Some(message.as_str())]),
@@ -701,6 +701,19 @@ fn reported_agent_error(payload: &AcpEvent) -> Option<String> {
     }
 }
 
+/// Whether the agent moved on in this event: new text, new thinking, or a new
+/// tool call — the edge `SessionState` settles an AIR retry incident on. An
+/// error noted before it was recovered from (a failed edit retried, a failed
+/// lookup followed by the answer), so it is not what the turn ended in. A
+/// failed tool call is an error, not progress: `on_event` asks
+/// [`reported_agent_error`] first.
+fn is_turn_progress(payload: &AcpEvent) -> bool {
+    matches!(
+        payload,
+        AcpEvent::ContentDelta { .. } | AcpEvent::Thinking { .. } | AcpEvent::ToolCall { .. }
+    )
+}
+
 fn first_nonempty<'a>(parts: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
     parts
         .into_iter()
@@ -716,6 +729,12 @@ fn first_nonempty<'a>(parts: impl IntoIterator<Item = Option<&'a str>>) -> Optio
 /// snapshot is empty or missing. Baselined means the two triples are equal.
 /// A missing side on a baselined turn is an unreadable git snapshot, not
 /// evidence of a new diff, so a recorded error is not dropped (#538).
+///
+/// The triples are counts, so an edit that leaves all three unchanged (a line
+/// already changed, changed again) reads as no diff. That can only fail a turn
+/// that ENDED in the error it reported — one it moved on from is cleared (see
+/// [`is_turn_progress`]) — and failing such a turn with that error, its edits
+/// still in the worktree, is the truthful outcome anyway.
 fn turn_added_no_diff(signal: Option<&TurnSignal>, after: Option<(i32, i32, i32)>) -> bool {
     let Some(signal) = signal.filter(|signal| signal.baselined) else {
         return after.unwrap_or((0, 0, 0)) == (0, 0, 0);
@@ -2727,12 +2746,37 @@ impl TaskEngine {
             .error = Some(message);
     }
 
+    /// Forget the error noted for this connection's turn, keeping its
+    /// baseline. Two edges call it, so that the error left at `TurnComplete`
+    /// is one the turn ended in (#538):
+    ///
+    /// - `Prompting`, where `SessionState` and the live reducer open a new
+    ///   error scope too. The connection emits it before anything of the
+    ///   prompt's turn, so an error noted earlier came from before the work
+    ///   prompt — a `session/load` that fell back to a new session, say, which
+    ///   this loop can dequeue only after the launch has indexed the connection
+    ///   (it awaits git and the database per event, so it can run well behind
+    ///   the bus).
+    /// - turn progress ([`is_turn_progress`]): the agent recovered from it.
+    async fn clear_turn_agent_error(&self, conn_id: &str) {
+        if let Some(signal) = self.turn_signals.lock().await.get_mut(conn_id) {
+            signal.error = None;
+        }
+    }
+
     async fn on_event(self: &Arc<Self>, env: &EventEnvelope) {
         if let Some(message) = reported_agent_error(&env.payload) {
             self.note_turn_agent_error(&env.connection_id, env.seq, message)
                 .await;
+        } else if is_turn_progress(&env.payload) {
+            self.clear_turn_agent_error(&env.connection_id).await;
         }
         match &env.payload {
+            AcpEvent::StatusChanged {
+                status: ConnectionStatus::Prompting,
+            } => {
+                self.clear_turn_agent_error(&env.connection_id).await;
+            }
             AcpEvent::TurnComplete { stop_reason, .. } => {
                 // A pre-prompt compaction's completion is the LAUNCH's signal,
                 // never the round's — see `compaction_turns` for why the index
@@ -9892,6 +9936,241 @@ mod tests {
                 resolved,
             },
         }
+    }
+
+    fn envelope_at(conn_id: &str, seq: u64, payload: AcpEvent) -> EventEnvelope {
+        EventEnvelope {
+            seq,
+            connection_id: conn_id.to_string(),
+            payload,
+        }
+    }
+
+    fn prompting() -> AcpEvent {
+        AcpEvent::StatusChanged {
+            status: ConnectionStatus::Prompting,
+        }
+    }
+
+    const SESSION_LOAD_FALLBACK: &str =
+        "Failed to load session, starting new: Resource not found: session";
+
+    /// Launch the way `launch` leaves a resumed round whose `session/load`
+    /// fell back: the work turn is baselined and indexed, and the fallback's
+    /// `Error` (emitted while the session was being established) is still
+    /// queued for the engine, which reads it only now.
+    async fn task_with_a_lagging_setup_error() -> (Arc<TaskEngine>, i32) {
+        let (engine, task_id) = running_task().await;
+        engine.turn_signals.lock().await.insert(
+            PARENT_CONN.into(),
+            TurnSignal {
+                error: None,
+                baselined: true,
+                baseline: Some((0, 0, 0)),
+            },
+        );
+        engine
+            .on_event(&envelope_at(
+                PARENT_CONN,
+                2,
+                AcpEvent::Error {
+                    message: SESSION_LOAD_FALLBACK.into(),
+                    agent_type: "codex".into(),
+                    code: Some("session_load_fallback".into()),
+                    details: None,
+                    terminal: false,
+                },
+            ))
+            .await;
+        (engine, task_id)
+    }
+
+    /// #538: an error from before the work prompt started is not the turn's.
+    /// The prompt's `Prompting` edge opens the turn's own error scope, so an
+    /// empty `end_turn` that reported nothing itself still settles to review.
+    #[tokio::test]
+    async fn an_error_from_before_the_work_prompt_does_not_fail_the_turn() {
+        let (engine, task_id) = task_with_a_lagging_setup_error().await;
+        engine
+            .on_event(&envelope_at(PARENT_CONN, 3, prompting()))
+            .await;
+        {
+            // Only the error goes: the turn's baseline is what decides
+            // whether a later error of its own fails it.
+            let signals = engine.turn_signals.lock().await;
+            let signal = signals.get(PARENT_CONN).expect("the turn keeps its signal");
+            assert!(signal.error.is_none());
+            assert!(signal.baselined);
+            assert_eq!(signal.baseline, Some((0, 0, 0)));
+        }
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 6, "end_turn"))
+            .await;
+
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Review);
+        assert!(task.failure_reason.is_none(), "{:?}", task.failure_reason);
+        assert!(
+            task.last_error.is_none(),
+            "a setup error must not become the turn's failure, got {:?}",
+            task.last_error
+        );
+    }
+
+    /// The other half of the same edge: an error AFTER `Prompting` is the work
+    /// turn's, and it is the one the card shows.
+    #[tokio::test]
+    async fn an_error_after_the_work_prompt_starts_still_fails_the_turn() {
+        let (engine, task_id) = task_with_a_lagging_setup_error().await;
+        engine
+            .on_event(&envelope_at(PARENT_CONN, 3, prompting()))
+            .await;
+        engine
+            .on_event(&envelope_at(
+                PARENT_CONN,
+                5,
+                session_failure("error", UPSTREAM_400, false),
+            ))
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 6, "end_turn"))
+            .await;
+
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Failed);
+        assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
+        assert_eq!(task.last_error.as_deref(), Some(UPSTREAM_400));
+    }
+
+    fn tool_call(id: &str, kind: &str, status: &str, content: Option<&str>) -> AcpEvent {
+        AcpEvent::ToolCall {
+            tool_call_id: id.into(),
+            title: id.into(),
+            kind: kind.into(),
+            status: status.into(),
+            content: content.map(str::to_string),
+            raw_input: None,
+            raw_output: None,
+            locations: None,
+            meta: None,
+            images: None,
+        }
+    }
+
+    /// #538: only an error the turn ENDED in can fail it. One it moved on from
+    /// — a failed edit retried, a failed lookup followed by the answer, a
+    /// failure the model thought past — was recovered, even when the round
+    /// then ends on a tool call (no concluding text) with no diff proven.
+    #[tokio::test]
+    async fn an_error_the_turn_moved_on_from_does_not_fail_it() {
+        let answer = AcpEvent::ContentDelta {
+            text: "The timeout is set in config.rs, line 12.".into(),
+            parent_tool_use_id: None,
+        };
+        let thinking = AcpEvent::Thinking {
+            text: "That path does not exist; try the other one.".into(),
+            parent_tool_use_id: None,
+        };
+        let cases = [
+            (
+                "a failed edit retried",
+                vec![
+                    tool_call("edit-1", "edit", "failed", Some("patch did not apply")),
+                    tool_call("edit-2", "edit", "in_progress", None),
+                ],
+            ),
+            (
+                "an answer after a failed lookup",
+                vec![
+                    tool_call("grep-1", "search", "in_progress", None),
+                    AcpEvent::ToolCallUpdate {
+                        tool_call_id: "grep-1".into(),
+                        title: None,
+                        status: Some("failed".into()),
+                        content: Some("rg: no matches".into()),
+                        raw_input: None,
+                        raw_output: None,
+                        raw_output_append: None,
+                        locations: None,
+                        meta: None,
+                        images: None,
+                    },
+                    answer,
+                    tool_call("read-1", "read", "completed", None),
+                ],
+            ),
+            (
+                "a failure the model thought past",
+                vec![
+                    tool_call("cat-1", "read", "failed", Some("No such file")),
+                    thinking,
+                ],
+            ),
+        ];
+        for (label, events) in cases {
+            let (engine, task_id) = running_task().await;
+            engine.turn_signals.lock().await.insert(
+                PARENT_CONN.into(),
+                TurnSignal {
+                    error: None,
+                    baselined: true,
+                    baseline: Some((1, 1, 1)),
+                },
+            );
+            engine
+                .on_event(&envelope_at(PARENT_CONN, 1, prompting()))
+                .await;
+            for (i, event) in events.into_iter().enumerate() {
+                engine
+                    .on_event(&envelope_at(PARENT_CONN, 2 + i as u64, event))
+                    .await;
+            }
+            engine
+                .on_event(&turn_complete_envelope(PARENT_CONN, 9, "end_turn"))
+                .await;
+
+            let task = work_task_service::get_model(&engine.db.conn, task_id)
+                .await
+                .expect("task row");
+            assert_eq!(task.status, WorkTaskStatus::Review, "{label}");
+            assert!(task.failure_reason.is_none(), "{label}");
+            assert!(task.last_error.is_none(), "{label}: {:?}", task.last_error);
+        }
+    }
+
+    /// The other side of that edge: progress BEFORE the error does not clear
+    /// it. A turn that worked, then ended in an upstream failure, fails.
+    #[tokio::test]
+    async fn an_error_after_the_last_progress_still_fails_the_turn() {
+        let (engine, task_id) = running_task().await;
+        let events = [
+            prompting(),
+            AcpEvent::Thinking {
+                text: "Run the tests first.".into(),
+                parent_tool_use_id: None,
+            },
+            tool_call("test-1", "execute", "completed", None),
+            session_failure("error", UPSTREAM_400, false),
+        ];
+        for (i, event) in events.into_iter().enumerate() {
+            engine
+                .on_event(&envelope_at(PARENT_CONN, 1 + i as u64, event))
+                .await;
+        }
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 9, "end_turn"))
+            .await;
+
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Failed);
+        assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
+        assert_eq!(task.last_error.as_deref(), Some(UPSTREAM_400));
     }
 
     #[tokio::test]
