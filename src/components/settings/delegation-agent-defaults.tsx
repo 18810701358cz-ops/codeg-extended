@@ -38,6 +38,7 @@ import {
 } from "@/lib/types"
 import { getAgentLabel, isCustomAgentType } from "@/lib/custom-agents"
 import {
+  deriveModelGroups,
   modelListGroups,
   type ModelOptionGroup,
 } from "@/lib/model-config-groups"
@@ -443,6 +444,40 @@ function ModeRow({
   )
 }
 
+/**
+ * The agent's own default as the "Agent default" hint names it. It keeps the
+ * option's unstripped name, which already carries the provider when the agent
+ * writes names as `Provider/model`. A bare name that another option also uses
+ * (two providers both listing `glm-5` under `provider/glm-5` ids) is
+ * qualified with the provider header its row is grouped under. A value the
+ * agent does not list reads as itself.
+ *
+ * The backend ships the flat `options` for grouped selects too, so this
+ * lookup covers both shapes.
+ */
+function agentDefaultHintLabel(
+  option: SessionConfigOptionInfo,
+  value: string
+): string {
+  if (option.kind.type !== "select") return value
+  const options = option.kind.options
+  const own = options.find((o) => o.value === value)
+  if (!own) return value
+  const sharedName = options.some(
+    (o) => o.value !== value && o.name === own.name
+  )
+  if (!sharedName) return own.name
+  for (const group of deriveModelGroups(option) ?? []) {
+    const row = group.options.find((o) => o.value === value)
+    if (!row) continue
+    // A stripped row's own name already starts with its header.
+    return group.name !== null && row.name === own.name
+      ? `${group.name}/${own.name}`
+      : own.name
+  }
+  return own.name
+}
+
 interface ConfigOptionRowProps {
   option: SessionConfigOptionInfo
   overrideValue: string | null
@@ -468,16 +503,13 @@ function ConfigOptionRow({
   // server groups, else render flat — behavior unchanged for them.
   const groups: ModelOptionGroup[] = modelListGroups(option)
   const agentDefault = option.kind.current_value
-  // The hint names the agent's own default with its FULL id — the channel
-  // is the disambiguating part and a header can't provide it here. (The
-  // backend always ships the flat `options` too, so this lookup covers
-  // both grouped and ungrouped shapes.)
-  const agentDefaultLabel =
-    option.kind.options.find((o) => o.value === agentDefault)?.name ??
-    agentDefault
+  // The hint names the agent's own default with the provider in it — no
+  // group header stands beside the hint to supply it.
+  const agentDefaultLabel = agentDefaultHintLabel(option, agentDefault)
   // The sentinel/trigger resolve against the RENDERED rows so the selected
-  // model shows its prefix-stripped name (its provider is implied by the
-  // group it sits in), matching the composer's selector.
+  // model shows its prefix-stripped name, exactly as the composer's selector
+  // shows it. In the open list the group headers name the provider; the hint
+  // names the default's.
   const agentDefaultRenderedLabel =
     groups
       .flatMap((group) => group.options)
