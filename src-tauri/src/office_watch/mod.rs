@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::net::TcpStream;
-use tokio::process::Child;
+use tokio::process::{Child, ChildStdout};
 
 use crate::app_error::AppCommandError;
 use crate::commands::folders::resolve_tree_path;
@@ -200,6 +200,66 @@ fn lock_watches() -> MutexGuard<'static, HashMap<String, WatchInstance>> {
     OFFICE_WATCHES.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// Children whose start is still waiting for them to announce readiness, each
+/// under its start's id until that start takes it back ([`StartingChild`]).
+/// Quitting kills these along with the running watches: the process ends
+/// without dropping a pending start, so its child's `kill_on_drop` never fires,
+/// and an officecli left behind finishes starting, serves nobody, and makes
+/// every later watch of its file exit ("Another watch process is already
+/// running") until it idles out five minutes later.
+static STARTING: LazyLock<Mutex<Starting>> = LazyLock::new(|| Mutex::new(Starting::default()));
+
+#[derive(Default)]
+struct Starting {
+    children: HashMap<u64, Child>,
+    next_id: u64,
+    /// Set for good once quitting has taken the children: a start that gets
+    /// its child going after that kills it instead of parking it.
+    quitting: bool,
+}
+
+fn lock_starting() -> MutexGuard<'static, Starting> {
+    STARTING.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// A start's claim on the child it parked in [`STARTING`]. Dropping the claim,
+/// as an abandoned start does, reaps the child.
+struct StartingChild(u64);
+
+impl StartingChild {
+    /// Park `child`, or kill it if the app is quitting (`None`).
+    fn park(child: Child) -> Option<Self> {
+        let mut starting = lock_starting();
+        if starting.quitting {
+            drop(starting);
+            reap(child);
+            return None;
+        }
+        let id = starting.next_id;
+        starting.next_id += 1;
+        starting.children.insert(id, child);
+        Some(Self(id))
+    }
+
+    /// The child back, or `None` once quitting has killed it.
+    fn take(self) -> Option<Child> {
+        let mut starting = lock_starting();
+        let child = starting.children.remove(&self.0);
+        // Unlocked before `self` drops, which locks it again.
+        drop(starting);
+        child
+    }
+}
+
+impl Drop for StartingChild {
+    fn drop(&mut self) {
+        let child = lock_starting().children.remove(&self.0);
+        if let Some(child) = child {
+            reap(child);
+        }
+    }
+}
+
 /// Reap a child without blocking the caller.
 ///
 /// The signal goes out HERE, on the calling thread. Killing from the detached
@@ -313,13 +373,9 @@ fn parse_watch_port(line: &str) -> Option<u16> {
 /// (a TCP-accept probe alone can't tell whose listener answered). On success
 /// the stdout reader is handed to a background drain so a chatty watch can't
 /// dead-lock on a full pipe.
-async fn await_ready(port: u16, child: &mut Child, timeout: Duration) -> Result<(), WatchError> {
+async fn await_ready(port: u16, stdout: ChildStdout, timeout: Duration) -> Result<(), WatchError> {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| WatchError::StartFailed("no stdout pipe".to_string()))?;
     let mut lines = BufReader::new(stdout).lines();
     let deadline = Instant::now() + timeout;
 
@@ -426,7 +482,11 @@ async fn start_within(
     if let Some((port, cap)) = reuse_live(&key) {
         return Ok(OfficeWatchStarted { port, cap });
     }
-    if lock_watches().len() >= MAX_CONCURRENT_WATCHES {
+    // Count the watches still starting too: each is an officecli process
+    // already, and one can take a while to come up.
+    let running = lock_watches().len();
+    let starting = lock_starting().children.len();
+    if running + starting >= MAX_CONCURRENT_WATCHES {
         return Err(WatchError::TooMany);
     }
 
@@ -446,11 +506,29 @@ async fn start_within(
         .spawn()
         .map_err(|e| WatchError::StartFailed(e.to_string()))?;
 
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if let Err(ready_err) = await_ready(port, &mut child, remaining).await {
-        let _ = child.start_kill();
-        let stderr = drain_stderr(&mut child).await;
-        reap(child);
+    // Park the child where quitting can reach it while it comes up.
+    let stdout = child.stdout.take();
+    let Some(parked) = StartingChild::park(child) else {
+        return Err(WatchError::StartFailed("the app is quitting".to_string()));
+    };
+    let ready = match stdout {
+        Some(stdout) => {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            await_ready(port, stdout, remaining).await
+        }
+        None => Err(WatchError::StartFailed("no stdout pipe".to_string())),
+    };
+    if let Err(ready_err) = ready {
+        let stderr = match parked.take() {
+            Some(mut child) => {
+                let _ = child.start_kill();
+                let stderr = drain_stderr(&mut child).await;
+                reap(child);
+                stderr
+            }
+            // Quitting killed it already.
+            None => String::new(),
+        };
         return Err(ready_err.with_stderr(&stderr));
     }
 
@@ -459,6 +537,13 @@ async fn start_within(
     // reap ours.
     let result = {
         let mut watches = lock_watches();
+        // Taken back under the pool lock, so a quit draining both either finds
+        // the child registered or has already killed it.
+        let Some(child) = parked.take() else {
+            return Err(WatchError::StartFailed(
+                "stopped while officecli was starting".to_string(),
+            ));
+        };
         if let Some(entry) = watches.get_mut(&key) {
             if matches!(entry.child.try_wait(), Ok(None)) {
                 entry.ref_count += 1;
@@ -694,14 +779,32 @@ pub fn remove_known_port_for_test(port: u16) {
     }
 }
 
-/// Kill every watch process. Used on app/window/server shutdown.
+/// Kill every watch process, those still starting included, and let no start
+/// get one going afterwards. Used on app/server shutdown.
 pub fn stop_all_office_watches() -> usize {
-    let drained: Vec<(String, WatchInstance)> = lock_watches().drain().collect();
-    let n = drained.len();
+    let (drained, starting) = {
+        let mut watches = lock_watches();
+        // Both under the pool lock: a start registering its child right now
+        // either has it in the pool already or finds it gone (see `start_within`).
+        let starting = take_starting_children();
+        (watches.drain().collect::<Vec<_>>(), starting)
+    };
+    let n = drained.len() + starting.len();
     for (_, entry) in drained {
         reap(entry.child);
     }
+    for child in starting {
+        reap(child);
+    }
     n
+}
+
+/// Take every child a start is still waiting for, and refuse any child started
+/// from now on; those starts then fail.
+fn take_starting_children() -> Vec<Child> {
+    let mut starting = lock_starting();
+    starting.quitting = true;
+    starting.children.drain().map(|(_, child)| child).collect()
 }
 
 /// Kill every watch whose file lives under `root_path`. Used when a folder is
@@ -862,6 +965,11 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn stdout_of(child: &mut Child) -> ChildStdout {
+        child.stdout.take().unwrap()
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn readiness_accepts_startup_slower_than_eight_seconds() {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -872,7 +980,7 @@ mod tests {
             "sleep 9; printf 'Watch: http://localhost:%s\\n' \"$1\"; exec sleep 600",
             port,
         );
-        let result = await_ready(port, &mut child, READY_TIMEOUT).await;
+        let result = await_ready(port, stdout_of(&mut child), READY_TIMEOUT).await;
         reap(child);
         assert!(
             result.is_ok(),
@@ -888,7 +996,7 @@ mod tests {
             .unwrap();
         let port = listener.local_addr().unwrap().port();
         let mut child = readiness_child("exec sleep 600", port);
-        let result = await_ready(port, &mut child, Duration::from_millis(100)).await;
+        let result = await_ready(port, stdout_of(&mut child), Duration::from_millis(100)).await;
         reap(child);
         assert!(matches!(result, Err(WatchError::PortTimeout(_))));
     }
@@ -898,14 +1006,14 @@ mod tests {
     async fn readiness_rejects_wrong_port_and_early_exit() {
         let port = allocate_free_port().unwrap();
         let mut wrong_port = readiness_child("printf 'Watch: http://localhost:0\\n'", port);
-        let result = await_ready(port, &mut wrong_port, READY_TIMEOUT).await;
+        let result = await_ready(port, stdout_of(&mut wrong_port), READY_TIMEOUT).await;
         reap(wrong_port);
         assert!(
             matches!(result, Err(WatchError::PortTimeout(detail)) if detail.contains("expected"))
         );
 
         let mut exited = readiness_child("exit 1", port);
-        let result = await_ready(port, &mut exited, READY_TIMEOUT).await;
+        let result = await_ready(port, stdout_of(&mut exited), READY_TIMEOUT).await;
         reap(exited);
         assert!(matches!(result, Err(WatchError::StartFailed(_))));
     }
@@ -940,6 +1048,64 @@ mod tests {
             "{result:?}"
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Park a long-lived child as a start would, with its stdout, which closes
+    /// once the child is gone.
+    #[cfg(unix)]
+    fn park_sleeper() -> (StartingChild, ChildStdout) {
+        let mut child = tokio_command("sleep")
+            .arg("600")
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdout = stdout_of(&mut child);
+        let Some(parked) = StartingChild::park(child) else {
+            panic!("no test quits the app");
+        };
+        (parked, stdout)
+    }
+
+    /// A start abandoned while its child comes up (its request went away)
+    /// takes the child down with it instead of leaving it parked.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_abandoned_start_kills_its_child() {
+        use tokio::io::AsyncReadExt;
+
+        let (parked, mut stdout) = park_sleeper();
+        drop(parked);
+
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), stdout.read_to_end(&mut rest))
+            .await
+            .expect("the child should die with its start")
+            .unwrap();
+    }
+
+    /// Watches still starting count against the process cap: each is an
+    /// officecli process already, and may take a while to come up.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn watches_still_starting_count_against_the_cap() {
+        let parked: Vec<_> = (0..MAX_CONCURRENT_WATCHES)
+            .map(|_| park_sleeper())
+            .collect();
+
+        let dir = std::env::temp_dir().join(format!("codeg-ow-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("one-more.xlsx"), b"x").unwrap();
+        let result = start_within(
+            dir.to_string_lossy().to_string(),
+            "one-more.xlsx".into(),
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(matches!(result, Err(WatchError::TooMany)), "{result:?}");
+
+        drop(parked);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
