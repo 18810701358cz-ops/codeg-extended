@@ -41,7 +41,7 @@ afterEach(() => {
 })
 
 describe("office watch startup over WebTransport", () => {
-  it("keeps the request alive beyond the backend's 60s startup budget", async () => {
+  it("keeps the request alive beyond the backend's 120s startup budget", async () => {
     const started = { port: 26315, cap: "watch-cap" }
     const request = startOfficeWatch("/workspace", "report.docx")
     // Attach the rejection handler before moving time, so the old 60s
@@ -50,17 +50,17 @@ describe("office watch startup over WebTransport", () => {
       (value) => ({ value }),
       (error: unknown) => ({ error })
     )
-    await vi.advanceTimersByTimeAsync(65_000)
+    await vi.advanceTimersByTimeAsync(135_000)
     expect(requestSignal.aborted).toBe(false)
     finishRequest(new Response(JSON.stringify(started)))
     await expect(outcome).resolves.toEqual({ value: started })
   })
 
-  it("still aborts a hung preview startup after 90s", async () => {
+  it("still aborts a hung preview startup after 150s", async () => {
     const outcome = startOfficeWatch("/workspace", "report.docx").catch(
       (error: unknown) => error
     )
-    await vi.advanceTimersByTimeAsync(90_000)
+    await vi.advanceTimersByTimeAsync(150_000)
     expect(requestSignal.aborted).toBe(true)
     await expect(outcome).resolves.toEqual(new Error("Request timed out"))
   })

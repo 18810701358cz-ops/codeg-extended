@@ -46,7 +46,7 @@ use crate::process::tokio_command;
 /// announce readiness (its `Watch: http://…:<port>` stdout line) before giving up.
 /// Cold officecli starts can take tens of seconds even for an empty document.
 /// Keep the frontend's startOfficeWatch request deadline above this budget.
-const READY_TIMEOUT: Duration = Duration::from_secs(60);
+const READY_TIMEOUT: Duration = Duration::from_secs(120);
 /// Per-attempt TCP connect timeout for the post-announce reachability confirm.
 const READY_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 /// Hard cap on concurrent watch processes — a backstop against a pathological
