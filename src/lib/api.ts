@@ -1833,7 +1833,12 @@ export async function startOfficeWatch(
   rootPath: string,
   path: string
 ): Promise<{ port: number; cap: string; hold?: string }> {
-  return getTransport().call("start_office_watch", { rootPath, path })
+  // Allow the backend's 120s cold-start budget plus cleanup/response overhead.
+  return getTransport().call(
+    "start_office_watch",
+    { rootPath, path },
+    { timeoutMs: 150_000 }
+  )
 }
 
 /**
