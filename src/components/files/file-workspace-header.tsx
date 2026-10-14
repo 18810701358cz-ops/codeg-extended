@@ -24,7 +24,7 @@ import {
   WORKSPACE_DOWNLOAD_CANCELLED,
 } from "@/lib/api"
 import { toErrorMessage } from "@/lib/app-error"
-import { findOwningFolder } from "@/lib/file-open-target"
+import { findOwningFolder, splitAbsPath } from "@/lib/file-open-target"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import {
   useWorkspaceActions,
@@ -80,16 +80,22 @@ export function FileWorkspaceHeader() {
   // Present only while an HTML preview is on screen in this column — its
   // renderer publishes them and takes them away when it unmounts.
   const preview = useHtmlPreviewControls(activeFileTabId)
-  // The owning registered folder of the active file. Only the download button
-  // needs it (its ticket is issued against a workspace root, see below), and
-  // it has to be resolved before the early return below — hooks are
+  // Where the download button's ticket is rooted (see below). Inside a
+  // registered folder: that folder, with the path relative to it — the request
+  // the file tree's own download row makes. In no registered folder: the
+  // file's own directory and its name, which is the root the editor reads it
+  // through (`readFileForEdit(dir, name)`), so every file this column can show
+  // can also be downloaded. Resolved before the early return below — hooks are
   // unconditional.
   const allFolders = useAppWorkspaceStore((s) => s.allFolders)
   const activeAbsPath = activeFileTab?.path ?? null
-  const owningFolder = useMemo(
-    () => (activeAbsPath ? findOwningFolder(activeAbsPath, allFolders) : null),
-    [activeAbsPath, allFolders]
-  )
+  const downloadTarget = useMemo(() => {
+    if (!activeAbsPath) return null
+    const owning = findOwningFolder(activeAbsPath, allFolders)
+    if (owning) return { rootPath: owning.rootPath, path: owning.relPath }
+    const io = splitAbsPath(activeAbsPath)
+    return io ? { rootPath: io.rootPath, path: io.ioPath } : null
+  }, [activeAbsPath, allFolders])
 
   // A browser tab has no title row: its own toolbar (address bar and page
   // controls) becomes the top row of the column instead. Two rows of chrome
@@ -125,24 +131,25 @@ export function FileWorkspaceHeader() {
   )
   // Downloading is for the windows whose workspace lives on ANOTHER machine —
   // the server-hosted build, or a remote-desktop window: there the bytes have
-  // to be brought to the user, and a ticket against the owning folder's root is
-  // how they travel (the same route the file tree's own download row takes, and
-  // the same gate: `isWorkspaceFileApiAvailable`). A local desktop window
-  // already has the file on disk, where the button would be dead weight, and a
-  // file in no registered folder has no root to issue a ticket against.
+  // to be brought to the user, and a download ticket is how they travel (the
+  // same route the file tree's own download row takes, and the same gate:
+  // `isWorkspaceFileApiAvailable`). A local desktop window already has the
+  // file on disk, where the button would be dead weight. Only a file tab: a
+  // diff shows two versions of a file, and even the one that carries the
+  // file's absolute path (the external-conflict compare) is not the file.
   const canDownload =
     activeFileTab.kind === "file" &&
-    owningFolder !== null &&
+    downloadTarget !== null &&
     isWorkspaceFileApiAvailable()
 
   const handleDownload = () => {
-    if (!owningFolder || !path) return
+    if (!downloadTarget) return
     const name = activeFileTab.title
     void (async () => {
       try {
         const result = await downloadWorkspaceFile(
-          owningFolder.rootPath,
-          owningFolder.relPath,
+          downloadTarget.rootPath,
+          downloadTarget.path,
           name
         )
         // Web hands the transfer to the browser's own download manager

@@ -287,7 +287,12 @@ describe("FileWorkspaceHeader — a hoisted HTML preview", () => {
 
 describe("FileWorkspaceHeader — the download button", () => {
   it("sits beside the more menu and downloads through the owning folder", async () => {
-    mocks.activeFileTab = fileTab()
+    // Nested, so the folder-relative path is not just the file's name.
+    mocks.activeFileTab = fileTab({
+      id: "file:/repo/src/a.ts",
+      description: "/repo/src/a.ts",
+      path: "/repo/src/a.ts",
+    })
     renderHeader()
     const download = screen.getByRole("button", { name: "Download file" })
     const more = screen.getByRole("button", { name: "More" })
@@ -307,7 +312,7 @@ describe("FileWorkspaceHeader — the download button", () => {
     // its folder-relative form — exactly what the file tree's row sends.
     expect(mocks.downloadWorkspaceFile).toHaveBeenCalledWith(
       "/repo",
-      "a.ts",
+      "src/a.ts",
       "a.ts"
     )
   })
@@ -321,12 +326,29 @@ describe("FileWorkspaceHeader — the download button", () => {
     expect(screen.queryByRole("button", { name: "Download file" })).toBeNull()
   })
 
-  it("hides itself for a file in no registered folder", () => {
-    // Nothing to issue a ticket against, so the button would be dead.
+  it("downloads a file in no registered folder through its own directory", async () => {
+    // An agent's output outside the workspace, opened from the transcript: the
+    // file tree cannot reach it, so this button is its only way out. The
+    // editor reads it rooted at its directory, and the ticket is rooted there
+    // too.
     mocks.allFolders = []
-    mocks.activeFileTab = fileTab()
+    mocks.activeFileTab = fileTab({
+      id: "file:/tmp/out/report.csv",
+      title: "report.csv",
+      description: "/tmp/out/report.csv",
+      path: "/tmp/out/report.csv",
+      language: "csv",
+    })
     renderHeader()
-    expect(screen.queryByRole("button", { name: "Download file" })).toBeNull()
+    await act(async () => {
+      screen.getByRole("button", { name: "Download file" }).click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(mocks.downloadWorkspaceFile).toHaveBeenCalledWith(
+      "/tmp/out",
+      "report.csv",
+      "report.csv"
+    )
   })
 
   it("hides itself for a diff tab, which has no file to send", () => {
@@ -340,6 +362,20 @@ describe("FileWorkspaceHeader — the download button", () => {
     expect(screen.queryByRole("button", { name: "Download file" })).toBeNull()
   })
 
+  it("hides itself for the external-conflict compare, though it names the file", () => {
+    // The one diff tab carrying the file's absolute path, inside a registered
+    // folder: only the tab kind keeps the button off it. It shows the disk
+    // version against unsaved edits; neither side is "the file".
+    mocks.activeFileTab = fileTab({
+      id: "diff:external-conflict:%2Frepo%2Fa.ts",
+      kind: "rich-diff",
+      title: "a.ts (conflict)",
+    })
+    renderHeader()
+    expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Download file" })).toBeNull()
+  })
+
   it("says nothing when the browser's own download manager takes over", async () => {
     mocks.activeFileTab = fileTab()
     renderHeader()
@@ -347,6 +383,8 @@ describe("FileWorkspaceHeader — the download button", () => {
       screen.getByRole("button", { name: "Download file" }).click()
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
+    // The download did start; the silence is a choice, not a dead button.
+    expect(mocks.downloadWorkspaceFile).toHaveBeenCalledTimes(1)
     expect(mocks.toastSuccess).not.toHaveBeenCalled()
     expect(mocks.toastError).not.toHaveBeenCalled()
   })
