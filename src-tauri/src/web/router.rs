@@ -1403,6 +1403,10 @@ pub fn build_router(
             "/stop_office_watch",
             post(handlers::office_tools::stop_office_watch),
         )
+        .route(
+            "/renew_office_watch",
+            post(handlers::office_tools::renew_office_watch),
+        )
         // ─── Project boot ───
         .route(
             "/detect_package_manager",

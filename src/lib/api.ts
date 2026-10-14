@@ -1821,23 +1821,62 @@ export async function officecliRenderHtml(
  * officecli's own SSE channel, so the preview no longer re-reads (and locks)
  * the file the way the one-shot {@link officecliRenderHtml} did.
  *
- * `cap` is only used by web/server mode, where the iframe loads the preview
- * through the `/api/office-watch-proxy/{port}` reverse proxy and authenticates
- * with `?cap=` (the master token never enters the iframe). Desktop ignores it.
+ * `cap` names this watch: a new one mints a new `cap`. Web/server mode also
+ * authenticates the iframe with it, loading the preview through the
+ * `/api/office-watch-proxy/{port}` reverse proxy with `?cap=` (the master
+ * token never enters the iframe); desktop loads the loopback port directly.
+ *
+ * `hold` (web/server mode only) names the hold this start took on the watch,
+ * which the page renews and releases by name.
  */
 export async function startOfficeWatch(
   rootPath: string,
   path: string
-): Promise<{ port: number; cap: string }> {
+): Promise<{ port: number; cap: string; hold?: string }> {
   return getTransport().call("start_office_watch", { rootPath, path })
 }
 
-/** Release one reference to an office file's watch preview server. */
+/**
+ * Release one reference to an office file's watch preview server. `cap` and
+ * `hold` are what {@link startOfficeWatch} returned: when that watch is gone
+ * (stopped with its folder, say) the release is a no-op instead of taking a
+ * reference from whatever watch serves the file now, and a web page's release
+ * takes only its own hold.
+ */
 export async function stopOfficeWatch(
   rootPath: string,
-  path: string
+  path: string,
+  cap?: string,
+  hold?: string
 ): Promise<void> {
-  return getTransport().call("stop_office_watch", { rootPath, path })
+  return getTransport().call("stop_office_watch", {
+    rootPath,
+    path,
+    cap,
+    hold,
+  })
+}
+
+/**
+ * Renew this window's hold on the watch named by `cap`, and say whether it is
+ * still the live one serving the file — false once it was stopped, crashed,
+ * or replaced by a new one. A web page's hold lapses when the page goes quiet
+ * (the server can't tell a closed browser from one that just isn't talking),
+ * so a preview renews on a timer, naming its `hold`; one that lapsed meanwhile
+ * comes back. A desktop window's never lapses, and for it this only asks.
+ */
+export async function renewOfficeWatch(
+  rootPath: string,
+  path: string,
+  cap: string,
+  hold?: string
+): Promise<boolean> {
+  return getTransport().call("renew_office_watch", {
+    rootPath,
+    path,
+    cap,
+    hold,
+  })
 }
 
 export async function getSystemProxySettings(): Promise<SystemProxySettings> {
