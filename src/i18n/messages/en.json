@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} has finished responding",
         "notificationError": "{agent} error: {message}",
         "notificationQuestion": "{agent} is waiting for your answer",
+        "notificationPlanApproval": "{agent} is waiting for you to approve its plan",
         "notificationErrorRedacted": "{agent} ran into an error",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "Hide notification contents",
     "hideBodyHint": "Show a generic line instead of agent output. A notification centre keeps its payload outside the app, after the conversation is closed. The title still names the folder, so you can tell which window to go back to.",
     "eventsTitle": "Events",
-    "eventsHint": "Turn off any event that should not interrupt you. Repeats of the same event within a few seconds collapse into one notification.",
+    "eventsHint": "Turn off any event that should not interrupt you. Repeats of the same event within a few seconds collapse into one notification. Permission requests include plan approvals.",
     "eventBackgroundTask": "Background task",
     "eventWorkTask": "Work task"
+  },
+  "WindowAttentionSettings": {
+    "title": "Taskbar and Dock alerts",
+    "descriptionMac": "Bounce the Dock icon when an agent needs you while you are in another app.",
+    "descriptionWindows": "Flash the window's taskbar button when an agent needs you while the window is not focused.",
+    "descriptionLinux": "Mark the window as urgent when an agent needs you while it is not focused. How that shows depends on your desktop environment.",
+    "eventsTitle": "Events",
+    "eventsHintMac": "“Briefly” bounces the icon once. “Until you return” keeps it bouncing until you switch back to Codeg. Permission requests include plan approvals.",
+    "eventsHintWindows": "“Briefly” flashes the button a few times and leaves it highlighted. “Until you return” keeps it flashing until you switch back to the window. Permission requests include plan approvals.",
+    "eventsHintLinux": "Linux has a single urgency mark, so both levels keep the window marked until you switch back to it. Permission requests include plan approvals.",
+    "levelOff": "Off",
+    "levelInformational": "Briefly",
+    "levelCritical": "Until you return"
   },
   "NotificationSoundSettings": {
     "title": "Notification sounds",

@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} ha terminado de responder",
         "notificationError": "{agent} error: {message}",
         "notificationQuestion": "{agent} espera tu respuesta",
+        "notificationPlanApproval": "{agent} espera que apruebes su plan",
         "notificationErrorRedacted": "{agent} encontró un error",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "Ocultar el contenido",
     "hideBodyHint": "Muestra una línea genérica en lugar de la salida del agente. El centro de notificaciones conserva el contenido fuera de la app, incluso tras cerrar la conversación. El título sigue nombrando la carpeta, para que sepas a qué ventana volver.",
     "eventsTitle": "Eventos",
-    "eventsHint": "Desactiva los eventos que no deban interrumpirte. Las repeticiones del mismo evento en pocos segundos se agrupan en una sola notificación.",
+    "eventsHint": "Desactiva los eventos que no deban interrumpirte. Las repeticiones del mismo evento en pocos segundos se agrupan en una sola notificación. Las solicitudes de permiso incluyen las aprobaciones de planes.",
     "eventBackgroundTask": "Tarea en segundo plano",
     "eventWorkTask": "Tarea de trabajo"
+  },
+  "WindowAttentionSettings": {
+    "title": "Avisos en la barra de tareas y el Dock",
+    "descriptionMac": "Hace rebotar el icono del Dock cuando un agente te necesita mientras estás en otra app.",
+    "descriptionWindows": "Hace parpadear el botón de la ventana en la barra de tareas cuando un agente te necesita y la ventana no tiene el foco.",
+    "descriptionLinux": "Marca la ventana como urgente cuando un agente te necesita y la ventana no tiene el foco. Cómo se ve depende de tu entorno de escritorio.",
+    "eventsTitle": "Eventos",
+    "eventsHintMac": "“Brevemente” hace rebotar el icono una vez. “Hasta que vuelvas” lo mantiene rebotando hasta que regreses a Codeg. Las solicitudes de permiso incluyen las aprobaciones de planes.",
+    "eventsHintWindows": "“Brevemente” hace parpadear el botón unas veces y lo deja resaltado. “Hasta que vuelvas” lo mantiene parpadeando hasta que regreses a la ventana. Las solicitudes de permiso incluyen las aprobaciones de planes.",
+    "eventsHintLinux": "Linux tiene una sola marca de urgencia, así que ambos niveles mantienen la ventana marcada hasta que vuelvas a ella. Las solicitudes de permiso incluyen las aprobaciones de planes.",
+    "levelOff": "Desactivado",
+    "levelInformational": "Brevemente",
+    "levelCritical": "Hasta que vuelvas"
   },
   "NotificationSoundSettings": {
     "title": "Sonidos de notificación",

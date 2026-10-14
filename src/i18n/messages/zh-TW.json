@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} 已完成回應",
         "notificationError": "{agent} 錯誤：{message}",
         "notificationQuestion": "{agent} 正在等你回答",
+        "notificationPlanApproval": "{agent} 正在等你核准計畫",
         "notificationErrorRedacted": "{agent} 遇到錯誤",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "隱藏通知內容",
     "hideBodyHint": "用一句通用文案代替智慧體輸出。通知中心會把內容保留在應用之外，對話關掉了也還在。標題仍會顯示資料夾名稱，好讓你知道該回到哪個視窗。",
     "eventsTitle": "事件",
-    "eventsHint": "關掉不想被打斷的事件。同一事件在數秒內重複觸發時只通知一次。",
+    "eventsHint": "關掉不想被打斷的事件。同一事件在數秒內重複觸發時只通知一次。權限請求包含計畫核准。",
     "eventBackgroundTask": "背景任務",
     "eventWorkTask": "待辦任務"
+  },
+  "WindowAttentionSettings": {
+    "title": "工作列 / Dock 提醒",
+    "descriptionMac": "你在其他應用程式中時，智慧體需要你就讓 Dock 圖示跳動。",
+    "descriptionWindows": "視窗未取得焦點時，智慧體需要你就讓它的工作列按鈕閃爍。",
+    "descriptionLinux": "視窗未取得焦點時，智慧體需要你就把它標記為緊急。實際效果取決於桌面環境。",
+    "eventsTitle": "事件",
+    "eventsHintMac": "「短暫」讓圖示跳一下；「直到切回」會一直跳，直到你切回 Codeg。權限請求包含計畫核准。",
+    "eventsHintWindows": "「短暫」閃爍幾下後保持醒目；「直到切回」會一直閃爍，直到你切回視窗。權限請求包含計畫核准。",
+    "eventsHintLinux": "Linux 只有一種緊急標記，兩檔效果相同：視窗會一直帶著標記，直到你切回。權限請求包含計畫核准。",
+    "levelOff": "關閉",
+    "levelInformational": "短暫",
+    "levelCritical": "直到切回"
   },
   "NotificationSoundSettings": {
     "title": "提示音",

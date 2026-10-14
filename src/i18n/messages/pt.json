@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} terminou de responder",
         "notificationError": "{agent} erro: {message}",
         "notificationQuestion": "{agent} está aguardando sua resposta",
+        "notificationPlanApproval": "{agent} está aguardando você aprovar o plano",
         "notificationErrorRedacted": "{agent} encontrou um erro",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "Ocultar o conteúdo",
     "hideBodyHint": "Mostra uma linha genérica no lugar da saída do agente. A central de notificações guarda o conteúdo fora do app, mesmo depois de fechar a conversa. O título continua nomeando a pasta, para você saber a qual janela voltar.",
     "eventsTitle": "Eventos",
-    "eventsHint": "Desligue os eventos que não devem interromper você. Repetições do mesmo evento em poucos segundos são agrupadas em uma notificação.",
+    "eventsHint": "Desligue os eventos que não devem interromper você. Repetições do mesmo evento em poucos segundos são agrupadas em uma notificação. Solicitações de permissão incluem aprovações de plano.",
     "eventBackgroundTask": "Tarefa em segundo plano",
     "eventWorkTask": "Tarefa de trabalho"
+  },
+  "WindowAttentionSettings": {
+    "title": "Alertas na barra de tarefas e no Dock",
+    "descriptionMac": "Faz o ícone do Dock saltar quando um agente precisa de você enquanto você está em outro app.",
+    "descriptionWindows": "Faz o botão da janela piscar na barra de tarefas quando um agente precisa de você e a janela não está em foco.",
+    "descriptionLinux": "Marca a janela como urgente quando um agente precisa de você e ela não está em foco. A aparência depende do seu ambiente de desktop.",
+    "eventsTitle": "Eventos",
+    "eventsHintMac": "“Brevemente” faz o ícone saltar uma vez. “Até você voltar” o mantém saltando até você voltar ao Codeg. Solicitações de permissão incluem aprovações de plano.",
+    "eventsHintWindows": "“Brevemente” faz o botão piscar algumas vezes e o deixa destacado. “Até você voltar” o mantém piscando até você voltar à janela. Solicitações de permissão incluem aprovações de plano.",
+    "eventsHintLinux": "O Linux tem uma única marca de urgência, então os dois níveis mantêm a janela marcada até você voltar a ela. Solicitações de permissão incluem aprovações de plano.",
+    "levelOff": "Desligado",
+    "levelInformational": "Brevemente",
+    "levelCritical": "Até você voltar"
   },
   "NotificationSoundSettings": {
     "title": "Sons de notificação",

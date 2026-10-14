@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} 已完成响应",
         "notificationError": "{agent} 错误：{message}",
         "notificationQuestion": "{agent} 正在等你回答",
+        "notificationPlanApproval": "{agent} 正在等你审批计划",
         "notificationErrorRedacted": "{agent} 遇到错误",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "隐藏通知内容",
     "hideBodyHint": "用一句通用文案代替智能体输出。通知中心会把内容保留在应用之外，会话关掉了也还在。标题仍会显示文件夹名，好让你知道该回到哪个窗口。",
     "eventsTitle": "事件",
-    "eventsHint": "关掉不想被打断的事件。同一事件在数秒内重复触发时只通知一次。",
+    "eventsHint": "关掉不想被打断的事件。同一事件在数秒内重复触发时只通知一次。权限请求包含计划审批。",
     "eventBackgroundTask": "后台任务",
     "eventWorkTask": "待办任务"
+  },
+  "WindowAttentionSettings": {
+    "title": "任务栏 / Dock 提醒",
+    "descriptionMac": "你在其它应用里时，智能体需要你就让 Dock 图标跳动。",
+    "descriptionWindows": "窗口未聚焦时，智能体需要你就让它的任务栏按钮闪烁。",
+    "descriptionLinux": "窗口未聚焦时，智能体需要你就把它标记为紧急。具体效果取决于桌面环境。",
+    "eventsTitle": "事件",
+    "eventsHintMac": "「短暂」让图标跳一下；「直到切回」会一直跳，直到你切回 Codeg。权限请求包含计划审批。",
+    "eventsHintWindows": "「短暂」闪烁几下后保持高亮；「直到切回」会一直闪烁，直到你切回窗口。权限请求包含计划审批。",
+    "eventsHintLinux": "Linux 只有一种紧急标记，两档效果相同：窗口会一直带着标记，直到你切回。权限请求包含计划审批。",
+    "levelOff": "关闭",
+    "levelInformational": "短暂",
+    "levelCritical": "直到切回"
   },
   "NotificationSoundSettings": {
     "title": "提示音",

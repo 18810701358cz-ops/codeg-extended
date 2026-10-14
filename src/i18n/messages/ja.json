@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} の応答が完了しました",
         "notificationError": "{agent} エラー：{message}",
         "notificationQuestion": "{agent} が回答を待っています",
+        "notificationPlanApproval": "{agent} が計画の承認を待っています",
         "notificationErrorRedacted": "{agent} でエラーが発生しました",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "通知の本文を隠す",
     "hideBodyHint": "エージェントの出力の代わりに汎用の一文を表示します。通知センターは内容をアプリの外に保持し、会話を閉じても残ります。どのウィンドウに戻ればよいか分かるよう、タイトルにはフォルダー名が残ります。",
     "eventsTitle": "イベント",
-    "eventsHint": "邪魔してほしくないイベントをオフにします。数秒以内の同じイベントは 1 つにまとめられます。",
+    "eventsHint": "邪魔してほしくないイベントをオフにします。数秒以内の同じイベントは 1 つにまとめられます。権限リクエストには計画の承認も含まれます。",
     "eventBackgroundTask": "バックグラウンドタスク",
     "eventWorkTask": "ワークタスク"
+  },
+  "WindowAttentionSettings": {
+    "title": "タスクバー / Dock のアラート",
+    "descriptionMac": "別のアプリを使っている間にエージェントがあなたを必要とすると、Dock のアイコンを跳ねさせます。",
+    "descriptionWindows": "ウィンドウが未フォーカスの間にエージェントがあなたを必要とすると、タスクバーのボタンを点滅させます。",
+    "descriptionLinux": "ウィンドウが未フォーカスの間にエージェントがあなたを必要とすると、ウィンドウを緊急としてマークします。表示のされ方はデスクトップ環境によって異なります。",
+    "eventsTitle": "イベント",
+    "eventsHintMac": "「短く」はアイコンを 1 回跳ねさせます。「戻るまで」は Codeg に戻るまで跳ね続けます。権限リクエストには計画の承認も含まれます。",
+    "eventsHintWindows": "「短く」はボタンを数回点滅させ、そのまま強調表示します。「戻るまで」はウィンドウに戻るまで点滅し続けます。権限リクエストには計画の承認も含まれます。",
+    "eventsHintLinux": "Linux の緊急マークは 1 種類だけなので、どちらのレベルでもウィンドウに戻るまでマークが残ります。権限リクエストには計画の承認も含まれます。",
+    "levelOff": "オフ",
+    "levelInformational": "短く",
+    "levelCritical": "戻るまで"
   },
   "NotificationSoundSettings": {
     "title": "通知音",

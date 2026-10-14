@@ -60,6 +60,8 @@ const h = vi.hoisted(() => {
     // Stable across renders so tests can assert on what the error handler
     // routes to the OS notification.
     notifyDesktop: vi.fn(async () => true),
+    // The taskbar / Dock request that rides along with every OS notification.
+    requestWindowAttention: vi.fn(async () => true),
     toastWarning: vi.fn(),
     toastError: vi.fn(),
     toastInfo: vi.fn(),
@@ -102,6 +104,12 @@ vi.mock("@/lib/desktop-notification", () => ({
   // Snapshot replay wraps its dispatch in this; the real one only sets a
   // depth counter, so running the body straight through is faithful.
   withDesktopNotificationsSuppressed: (fn: () => unknown) => fn(),
+}))
+
+vi.mock("@/lib/window-attention", () => ({
+  requestWindowAttention: h.requestWindowAttention,
+  // Same as its notification twin: the real one only sets a depth counter.
+  withWindowAttentionSuppressed: (fn: () => unknown) => fn(),
 }))
 
 vi.mock("sonner", () => ({
@@ -5062,6 +5070,7 @@ describe("routing survives every surface watching one connection", () => {
       })
     })
     h.notifyDesktop.mockClear()
+    h.requestWindowAttention.mockClear()
 
     act(() => {
       firehose()({
@@ -5073,9 +5082,11 @@ describe("routing survives every surface watching one connection", () => {
     })
 
     // Two surfaces are streaming the same turn; the user must still get ONE
-    // "finished responding" notification. The store effect, by contrast, is
-    // per surface — both leave `prompting`.
+    // "finished responding" notification — and one taskbar request. The store
+    // effect, by contrast, is per surface — both leave `prompting`.
     expect(h.notifyDesktop).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("turn_complete")
     expect(h.store!.getConnection(TAB)!.status).toBe("connected")
     expect(h.store!.getConnection(CHILD_VIEW)!.status).toBe("connected")
   })
@@ -7095,5 +7106,215 @@ describe("AcpConnectionsProvider remembers advertised commands", () => {
     } as unknown as LiveSessionSnapshot)
     expect(h.store!.getConnection(TAB)!.availableCommands).toEqual([INIT])
     expect(h.rememberAdvertisedCommands).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("taskbar / Dock attention rides along with every desktop alert", () => {
+  async function connectOwner(): Promise<AttachHandlers> {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    h.notifyDesktop.mockClear()
+    h.requestWindowAttention.mockClear()
+    return latestAttachHandlers()
+  }
+
+  function startTurn(handlers: AttachHandlers, seq: number) {
+    emitAcpEvent(handlers, {
+      seq,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+  }
+
+  it("asks when the agent needs a permission", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "permission_request",
+      request_id: "req-1",
+      tool_call: { kind: "execute", status: "pending", toolCallId: "call_1" },
+      options: [],
+    })
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("permission_request")
+  })
+
+  it("asks when the agent asks the user a question", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "question_request",
+      question_id: "q-1",
+      questions: [],
+    })
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("question_request")
+  })
+
+  it("treats a plan approval as the permission request it is — banner included", async () => {
+    // Grok's `exit_plan_mode` blocks the agent on the user exactly like a
+    // permission prompt (which is how Claude Code's ExitPlanMode arrives), and
+    // used to raise no OS notification at all.
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "plan_approval_request",
+      approval_id: "ap-1",
+      tool_call_id: "call_plan",
+      plan_markdown: "# Plan\n\n1. Do the thing",
+    })
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("permission_request")
+    expect(h.notifyDesktop).toHaveBeenCalledTimes(1)
+    expect(h.notifyDesktop).toHaveBeenCalledWith(
+      "permission_request",
+      expect.objectContaining({
+        body: expect.stringContaining("notificationPlanApproval"),
+      })
+    )
+    // The plan is the agent's own prose and never reaches the notification.
+    expect(JSON.stringify(h.notifyDesktop.mock.calls)).not.toContain(
+      "Do the thing"
+    )
+    expect(h.tCalls).toContainEqual([
+      "notificationPlanApproval",
+      { agent: "Claude Code" },
+    ])
+  })
+
+  it("asks once a turn finishes, and not for one the user cancelled", async () => {
+    const handlers = await connectOwner()
+    startTurn(handlers, 1)
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "cancelled",
+    })
+    expect(h.requestWindowAttention).not.toHaveBeenCalled()
+
+    startTurn(handlers, 3)
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    })
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("turn_complete")
+  })
+
+  it("asks as an error for a turn that ended on a typed failure", async () => {
+    const handlers = await connectOwner()
+    startTurn(handlers, 1)
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_failure",
+      // The shape the AIR session-failure tests above use.
+      record: {
+        id: "t1:error",
+        revision: 1,
+        category: "connection",
+        severity: "error",
+        title: "The connection to Claude was lost.",
+        actions: ["new_session"],
+      },
+    } as unknown as EventEnvelope)
+    h.requestWindowAttention.mockClear()
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    })
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("error")
+  })
+
+  it("asks when the session breaks", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "raw english fallback",
+      agent_type: "claude_code",
+      code: "turn_failed_empty_protocol",
+    })
+
+    expect(h.notifyDesktop).toHaveBeenCalledWith("error", expect.anything())
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("error")
+  })
+
+  it("asks when background tasks settle", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "background_activity",
+      session_id: "sess-1",
+      outstanding: 0,
+      settled: [{ task_id: "agent1", status: "completed" }],
+      watermark: 1,
+    } as unknown as EventEnvelope)
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("background_task")
+  })
+
+  it("stays quiet for history replayed after a reconnect", async () => {
+    // A prompt answered ten minutes ago must not flash the taskbar now.
+    const handlers = await connectOwner()
+    act(() => {
+      handlers.onReplay(
+        [
+          {
+            seq: 1,
+            connection_id: "spawned-conn",
+            type: "permission_request",
+            request_id: "req-old",
+            tool_call: { kind: "execute", toolCallId: "call_old" },
+            options: [],
+          } as EventEnvelope,
+          {
+            seq: 2,
+            connection_id: "spawned-conn",
+            type: "plan_approval_request",
+            approval_id: "ap-old",
+            tool_call_id: "call_plan_old",
+            plan_markdown: "old plan",
+          } as EventEnvelope,
+        ],
+        2
+      )
+    })
+    expect(h.requestWindowAttention).not.toHaveBeenCalled()
+    expect(h.notifyDesktop).not.toHaveBeenCalled()
+
+    // Live events after the replay ask normally again.
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "question_request",
+      question_id: "q-live",
+      questions: [],
+    })
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("question_request")
   })
 })

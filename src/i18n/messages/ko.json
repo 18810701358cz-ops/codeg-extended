@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} 응답이 완료되었습니다",
         "notificationError": "{agent} 오류: {message}",
         "notificationQuestion": "{agent}이(가) 답변을 기다리고 있습니다",
+        "notificationPlanApproval": "{agent}이(가) 계획 승인을 기다리고 있습니다",
         "notificationErrorRedacted": "{agent}에서 오류가 발생했습니다",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "알림 내용 숨기기",
     "hideBodyHint": "에이전트 출력 대신 일반적인 문구를 표시합니다. 알림 센터는 내용을 앱 밖에 보관하며 대화를 닫은 뒤에도 남습니다. 어느 창으로 돌아갈지 알 수 있도록 제목에는 폴더 이름이 그대로 남습니다.",
     "eventsTitle": "이벤트",
-    "eventsHint": "방해받고 싶지 않은 이벤트를 끕니다. 몇 초 이내의 동일 이벤트는 하나로 합쳐집니다.",
+    "eventsHint": "방해받고 싶지 않은 이벤트를 끕니다. 몇 초 이내의 동일 이벤트는 하나로 합쳐집니다. 권한 요청에는 계획 승인도 포함됩니다.",
     "eventBackgroundTask": "백그라운드 작업",
     "eventWorkTask": "작업 항목"
+  },
+  "WindowAttentionSettings": {
+    "title": "작업 표시줄 / Dock 알림",
+    "descriptionMac": "다른 앱을 사용하는 동안 에이전트가 사용자를 필요로 하면 Dock 아이콘이 튀어 오르게 합니다.",
+    "descriptionWindows": "창이 포커스되지 않은 동안 에이전트가 사용자를 필요로 하면 작업 표시줄 버튼을 깜박입니다.",
+    "descriptionLinux": "창이 포커스되지 않은 동안 에이전트가 사용자를 필요로 하면 창을 긴급으로 표시합니다. 표시 방식은 데스크톱 환경에 따라 다릅니다.",
+    "eventsTitle": "이벤트",
+    "eventsHintMac": "“짧게”는 아이콘이 한 번 튀어 오릅니다. “돌아올 때까지”는 Codeg로 돌아올 때까지 계속 튀어 오릅니다. 권한 요청에는 계획 승인도 포함됩니다.",
+    "eventsHintWindows": "“짧게”는 버튼을 몇 번 깜박인 뒤 강조 표시를 유지합니다. “돌아올 때까지”는 창으로 돌아올 때까지 계속 깜박입니다. 권한 요청에는 계획 승인도 포함됩니다.",
+    "eventsHintLinux": "Linux에는 긴급 표시가 한 종류뿐이라 두 단계 모두 창으로 돌아올 때까지 표시가 유지됩니다. 권한 요청에는 계획 승인도 포함됩니다.",
+    "levelOff": "끄기",
+    "levelInformational": "짧게",
+    "levelCritical": "돌아올 때까지"
   },
   "NotificationSoundSettings": {
     "title": "알림음",

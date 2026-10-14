@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} hat die Antwort abgeschlossen",
         "notificationError": "{agent} Fehler: {message}",
         "notificationQuestion": "{agent} wartet auf deine Antwort",
+        "notificationPlanApproval": "{agent} wartet darauf, dass du den Plan genehmigst",
         "notificationErrorRedacted": "{agent} ist auf einen Fehler gestoßen",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "Inhalt ausblenden",
     "hideBodyHint": "Zeigt eine allgemeine Zeile statt der Agentenausgabe. Die Mitteilungszentrale behält den Inhalt außerhalb der App, auch nachdem die Unterhaltung geschlossen wurde. Der Titel nennt weiterhin den Ordner, damit du weißt, zu welchem Fenster du zurückmusst.",
     "eventsTitle": "Ereignisse",
-    "eventsHint": "Schalte Ereignisse ab, die dich nicht unterbrechen sollen. Wiederholungen desselben Ereignisses innerhalb weniger Sekunden werden zu einer Benachrichtigung zusammengefasst.",
+    "eventsHint": "Schalte Ereignisse ab, die dich nicht unterbrechen sollen. Wiederholungen desselben Ereignisses innerhalb weniger Sekunden werden zu einer Benachrichtigung zusammengefasst. Berechtigungsanfragen umfassen auch Plan-Genehmigungen.",
     "eventBackgroundTask": "Hintergrundaufgabe",
     "eventWorkTask": "Arbeitsaufgabe"
+  },
+  "WindowAttentionSettings": {
+    "title": "Taskleisten- und Dock-Hinweise",
+    "descriptionMac": "Lässt das Dock-Symbol hüpfen, wenn ein Agent dich braucht, während du in einer anderen App bist.",
+    "descriptionWindows": "Lässt die Taskleisten-Schaltfläche des Fensters blinken, wenn ein Agent dich braucht und das Fenster nicht fokussiert ist.",
+    "descriptionLinux": "Markiert das Fenster als dringend, wenn ein Agent dich braucht und es nicht fokussiert ist. Wie das aussieht, hängt von deiner Desktop-Umgebung ab.",
+    "eventsTitle": "Ereignisse",
+    "eventsHintMac": "„Kurz“ lässt das Symbol einmal hüpfen. „Bis du zurück bist“ lässt es hüpfen, bis du zu Codeg zurückwechselst. Berechtigungsanfragen umfassen auch Plan-Genehmigungen.",
+    "eventsHintWindows": "„Kurz“ lässt die Schaltfläche ein paar Mal blinken und hebt sie danach hervor. „Bis du zurück bist“ lässt sie blinken, bis du zum Fenster zurückwechselst. Berechtigungsanfragen umfassen auch Plan-Genehmigungen.",
+    "eventsHintLinux": "Linux kennt nur eine Dringlichkeitsmarkierung, daher bleibt das Fenster bei beiden Stufen markiert, bis du zu ihm zurückwechselst. Berechtigungsanfragen umfassen auch Plan-Genehmigungen.",
+    "levelOff": "Aus",
+    "levelInformational": "Kurz",
+    "levelCritical": "Bis du zurück bist"
   },
   "NotificationSoundSettings": {
     "title": "Benachrichtigungstöne",

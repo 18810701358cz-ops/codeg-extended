@@ -45,6 +45,7 @@ import { toErrorMessage } from "@/lib/app-error"
 import { CloseBehaviorSettingsSection } from "@/components/settings/close-behavior-settings"
 import { DesktopNotificationSettingsSection } from "@/components/settings/desktop-notification-settings"
 import { NotificationSoundSettingsSection } from "@/components/settings/notification-sound-settings"
+import { WindowAttentionSettingsSection } from "@/components/settings/window-attention-settings"
 
 const TERMINAL_SHELL_OPTION_SYSTEM = "system"
 const TERMINAL_SHELL_OPTION_CUSTOM = "custom"
@@ -515,9 +516,12 @@ export function GeneralSettings() {
 
         <CloseBehaviorSettingsSection />
 
-        {/* The two halves of "how Codeg gets my attention", adjacent on
-            purpose: one leaves the window, one does not. */}
+        {/* "How Codeg gets my attention", adjacent on purpose: a banner in
+            the OS notification centre, the window's own taskbar entry or Dock
+            icon, and a sound from inside the window. */}
         <DesktopNotificationSettingsSection />
+
+        <WindowAttentionSettingsSection />
 
         <NotificationSoundSettingsSection />
       </div>

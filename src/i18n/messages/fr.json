@@ -3098,6 +3098,7 @@
         "notificationTurnComplete": "{agent} a terminé de répondre",
         "notificationError": "{agent} erreur : {message}",
         "notificationQuestion": "{agent} attend votre réponse",
+        "notificationPlanApproval": "{agent} attend que vous approuviez son plan",
         "notificationErrorRedacted": "{agent} a rencontré une erreur",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -5236,9 +5237,22 @@
     "hideBody": "Masquer le contenu",
     "hideBodyHint": "Affiche une ligne générique au lieu de la sortie de l'agent. Le centre de notifications conserve le contenu hors de l'application, même après la fermeture de la conversation. Le titre nomme toujours le dossier, pour que vous sachiez à quelle fenêtre revenir.",
     "eventsTitle": "Événements",
-    "eventsHint": "Désactivez les événements qui ne doivent pas vous interrompre. Les répétitions d'un même événement en quelques secondes sont regroupées en une seule notification.",
+    "eventsHint": "Désactivez les événements qui ne doivent pas vous interrompre. Les répétitions d'un même événement en quelques secondes sont regroupées en une seule notification. Les demandes d'autorisation incluent les validations de plan.",
     "eventBackgroundTask": "Tâche en arrière-plan",
     "eventWorkTask": "Tâche de travail"
+  },
+  "WindowAttentionSettings": {
+    "title": "Alertes de la barre des tâches et du Dock",
+    "descriptionMac": "Fait rebondir l'icône du Dock quand un agent a besoin de vous pendant que vous êtes dans une autre app.",
+    "descriptionWindows": "Fait clignoter le bouton de la fenêtre dans la barre des tâches quand un agent a besoin de vous et que la fenêtre n'est pas active.",
+    "descriptionLinux": "Marque la fenêtre comme urgente quand un agent a besoin de vous et qu'elle n'est pas active. Le rendu dépend de votre environnement de bureau.",
+    "eventsTitle": "Événements",
+    "eventsHintMac": "« Brièvement » fait rebondir l'icône une fois. « Jusqu'à votre retour » la fait rebondir jusqu'à ce que vous reveniez dans Codeg. Les demandes d'autorisation incluent les validations de plan.",
+    "eventsHintWindows": "« Brièvement » fait clignoter le bouton quelques fois puis le laisse en surbrillance. « Jusqu'à votre retour » le fait clignoter jusqu'à ce que vous reveniez à la fenêtre. Les demandes d'autorisation incluent les validations de plan.",
+    "eventsHintLinux": "Linux n'a qu'une seule marque d'urgence : aux deux niveaux, la fenêtre reste marquée jusqu'à ce que vous y reveniez. Les demandes d'autorisation incluent les validations de plan.",
+    "levelOff": "Désactivé",
+    "levelInformational": "Brièvement",
+    "levelCritical": "Jusqu'à votre retour"
   },
   "NotificationSoundSettings": {
     "title": "Sons de notification",
