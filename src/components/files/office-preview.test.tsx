@@ -427,6 +427,16 @@ describe("OfficePreview", () => {
       act(async () => {
         vi.advanceTimersByTime(WATCH_RENEW_INTERVAL_MS)
       })
+    // Mount, and let the start's answer land inside act(): the renewal timer
+    // is armed by an effect of the render that answer brings. Waiting for the
+    // frame alone can return before React has run that effect (outside act,
+    // a commit's passive effects run in a later task, which load can delay),
+    // and moving the clock before the timer exists skips it.
+    const mount = async (active: boolean) => {
+      const view = render(preview(active))
+      await act(async () => {})
+      return view
+    }
 
     it("renews on a timer, out of sight too", async () => {
       // A web page's hold lapses once the page goes quiet; a hidden preview,
@@ -434,7 +444,7 @@ describe("OfficePreview", () => {
       mockIsDesktop.mockReturnValue(false)
       mockStart.mockResolvedValue({ port: 26315, cap: "held", hold: "page" })
 
-      const { rerender } = render(preview(true))
+      const { rerender } = await mount(true)
       await screen.findByTitle("officePreviewTitle")
       expect(mockRenew).not.toHaveBeenCalled()
       await tick()
@@ -466,7 +476,7 @@ describe("OfficePreview", () => {
       })
       mockRenew.mockResolvedValue(false)
 
-      render(preview(true))
+      await mount(true)
       await screen.findByTitle("officePreviewTitle")
       await tick()
 
@@ -490,7 +500,7 @@ describe("OfficePreview", () => {
       mockStart.mockResolvedValueOnce({ port: 26316, cap: "second" })
       mockRenew.mockResolvedValue(false)
 
-      const { rerender } = render(preview(true))
+      const { rerender } = await mount(true)
       await screen.findByTitle("officePreviewTitle")
       rerender(preview(false))
       await tick()
@@ -517,7 +527,7 @@ describe("OfficePreview", () => {
       mockStart.mockResolvedValue({ port: 26315, cap: "held" })
       mockRenew.mockRejectedValue(new Error("offline"))
 
-      render(preview(true))
+      await mount(true)
       const frame = await screen.findByTitle("officePreviewTitle")
       await tick()
       expect(mockRenew).toHaveBeenCalledTimes(1)
