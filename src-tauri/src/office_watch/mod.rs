@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::net::TcpStream;
-use tokio::process::Child;
+use tokio::process::{Child, ChildStdout};
 
 use crate::app_error::AppCommandError;
 use crate::commands::folders::resolve_tree_path;
@@ -42,9 +42,14 @@ use crate::process::tokio_command;
 
 // ─── Tunables ───────────────────────────────────────────────────────────
 
-/// Upper bound on how long we wait for a freshly-spawned watch server to
-/// announce readiness (its `Watch: http://…:<port>` stdout line) before giving up.
-const READY_TIMEOUT: Duration = Duration::from_secs(8);
+/// Upper bound on how long a start may take before giving up: waiting out
+/// another start of the same file, then for the freshly-spawned watch server to
+/// announce readiness (its `Watch: http://…:<port>` stdout line). officecli
+/// renders the whole document before it binds the port and announces it, so a
+/// large file or a slow or busy machine can take tens of seconds; only a start
+/// that never gets there waits this long. Keep the frontend's
+/// `startOfficeWatch` request deadline above this budget.
+const READY_TIMEOUT: Duration = Duration::from_secs(120);
 /// Per-attempt TCP connect timeout for the post-announce reachability confirm.
 const READY_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 /// Hard cap on concurrent watch processes — a backstop against a pathological
@@ -85,6 +90,19 @@ pub enum WatchError {
 }
 
 impl WatchError {
+    /// Append child diagnostics to the inner detail, preserving the error code
+    /// and letting Display add the contextual prefix exactly once.
+    fn with_stderr(self, stderr: &str) -> Self {
+        if stderr.is_empty() {
+            return self;
+        }
+        match self {
+            Self::PortTimeout(detail) => Self::PortTimeout(format!("{detail} — {stderr}")),
+            Self::StartFailed(detail) => Self::StartFailed(format!("{detail} — {stderr}")),
+            other => other,
+        }
+    }
+
     /// Stable machine code the frontend switches on to render the right
     /// degraded UI (install guide vs. retry). Carried into `AppCommandError`
     /// via `i18n_params` at the command boundary.
@@ -182,6 +200,66 @@ fn lock_watches() -> MutexGuard<'static, HashMap<String, WatchInstance>> {
     OFFICE_WATCHES.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// Children whose start is still waiting for them to announce readiness, each
+/// under its start's id until that start takes it back ([`StartingChild`]).
+/// Quitting kills these along with the running watches: the process ends
+/// without dropping a pending start, so its child's `kill_on_drop` never fires,
+/// and an officecli left behind finishes starting, serves nobody, and makes
+/// every later watch of its file exit ("Another watch process is already
+/// running") until it idles out five minutes later.
+static STARTING: LazyLock<Mutex<Starting>> = LazyLock::new(|| Mutex::new(Starting::default()));
+
+#[derive(Default)]
+struct Starting {
+    children: HashMap<u64, Child>,
+    next_id: u64,
+    /// Set for good once quitting has taken the children: a start that gets
+    /// its child going after that kills it instead of parking it.
+    quitting: bool,
+}
+
+fn lock_starting() -> MutexGuard<'static, Starting> {
+    STARTING.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// A start's claim on the child it parked in [`STARTING`]. Dropping the claim,
+/// as an abandoned start does, reaps the child.
+struct StartingChild(u64);
+
+impl StartingChild {
+    /// Park `child`, or kill it if the app is quitting (`None`).
+    fn park(child: Child) -> Option<Self> {
+        let mut starting = lock_starting();
+        if starting.quitting {
+            drop(starting);
+            reap(child);
+            return None;
+        }
+        let id = starting.next_id;
+        starting.next_id += 1;
+        starting.children.insert(id, child);
+        Some(Self(id))
+    }
+
+    /// The child back, or `None` once quitting has killed it.
+    fn take(self) -> Option<Child> {
+        let mut starting = lock_starting();
+        let child = starting.children.remove(&self.0);
+        // Unlocked before `self` drops, which locks it again.
+        drop(starting);
+        child
+    }
+}
+
+impl Drop for StartingChild {
+    fn drop(&mut self) {
+        let child = lock_starting().children.remove(&self.0);
+        if let Some(child) = child {
+            reap(child);
+        }
+    }
+}
+
 /// Reap a child without blocking the caller.
 ///
 /// The signal goes out HERE, on the calling thread. Killing from the detached
@@ -263,8 +341,9 @@ fn loose_key(root_path: &str, rel_path: &str) -> Option<String> {
 // ─── Spawn / readiness ──────────────────────────────────────────────────
 
 /// Ask the OS for a free loopback port by binding to `:0` then releasing it.
-/// There's an inherent (microsecond) TOCTOU window before officecli binds it;
-/// the readiness probe catches the rare loss as `PortTimeout`/`StartFailed`.
+/// officecli binds it only after rendering the document, so another process can
+/// take it in between; the readiness check catches that rare loss as
+/// `PortTimeout`/`StartFailed`, since it needs our own child to announce the port.
 fn allocate_free_port() -> Result<u16, WatchError> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|_| WatchError::NoPort)?;
     let port = listener.local_addr().map_err(|_| WatchError::NoPort)?.port();
@@ -294,15 +373,11 @@ fn parse_watch_port(line: &str) -> Option<u16> {
 /// (a TCP-accept probe alone can't tell whose listener answered). On success
 /// the stdout reader is handed to a background drain so a chatty watch can't
 /// dead-lock on a full pipe.
-async fn await_ready(port: u16, child: &mut Child) -> Result<(), WatchError> {
+async fn await_ready(port: u16, stdout: ChildStdout, timeout: Duration) -> Result<(), WatchError> {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| WatchError::StartFailed("no stdout pipe".to_string()))?;
     let mut lines = BufReader::new(stdout).lines();
-    let deadline = Instant::now() + READY_TIMEOUT;
+    let deadline = Instant::now() + timeout;
 
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -373,6 +448,18 @@ pub async fn start_office_watch_core(
     root_path: String,
     path: String,
 ) -> Result<OfficeWatchStarted, WatchError> {
+    start_within(root_path, path, READY_TIMEOUT).await
+}
+
+/// [`start_office_watch_core`], giving up once the whole start has taken
+/// `budget` — waiting for another start of the same file included, so the
+/// caller hears back in time whatever else is starting that file.
+async fn start_within(
+    root_path: String,
+    path: String,
+    budget: Duration,
+) -> Result<OfficeWatchStarted, WatchError> {
+    let deadline = Instant::now() + budget;
     let canonical_target = resolve_office_target(&root_path, &path)?;
     let key = watch_key(&canonical_target);
 
@@ -387,11 +474,19 @@ pub async fn start_office_watch_core(
     // serialization is never broken mid-spawn); the idle sweep prunes entries no
     // task holds (`Arc::strong_count == 1`), bounding the map's growth.
     let spawn_lock = spawn_lock_for(&key);
-    let _guard = spawn_lock.lock().await;
+    let Ok(_guard) = tokio::time::timeout_at(deadline.into(), spawn_lock.lock()).await else {
+        return Err(WatchError::PortTimeout(
+            "another start of this file did not finish in time".to_string(),
+        ));
+    };
     if let Some((port, cap)) = reuse_live(&key) {
         return Ok(OfficeWatchStarted { port, cap });
     }
-    if lock_watches().len() >= MAX_CONCURRENT_WATCHES {
+    // Count the watches still starting too: each is an officecli process
+    // already, and one can take a while to come up.
+    let running = lock_watches().len();
+    let starting = lock_starting().children.len();
+    if running + starting >= MAX_CONCURRENT_WATCHES {
         return Err(WatchError::TooMany);
     }
 
@@ -411,18 +506,30 @@ pub async fn start_office_watch_core(
         .spawn()
         .map_err(|e| WatchError::StartFailed(e.to_string()))?;
 
-    if let Err(ready_err) = await_ready(port, &mut child).await {
-        let _ = child.start_kill();
-        let stderr = drain_stderr(&mut child).await;
-        let detail = match (ready_err.to_string(), stderr.as_str()) {
-            (msg, "") => msg,
-            (msg, err) => format!("{msg} — {err}"),
+    // Park the child where quitting can reach it while it comes up.
+    let stdout = child.stdout.take();
+    let Some(parked) = StartingChild::park(child) else {
+        return Err(WatchError::StartFailed("the app is quitting".to_string()));
+    };
+    let ready = match stdout {
+        Some(stdout) => {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            await_ready(port, stdout, remaining).await
+        }
+        None => Err(WatchError::StartFailed("no stdout pipe".to_string())),
+    };
+    if let Err(ready_err) = ready {
+        let stderr = match parked.take() {
+            Some(mut child) => {
+                let _ = child.start_kill();
+                let stderr = drain_stderr(&mut child).await;
+                reap(child);
+                stderr
+            }
+            // Quitting killed it already.
+            None => String::new(),
         };
-        reap(child);
-        return Err(match ready_err {
-            WatchError::PortTimeout(_) => WatchError::PortTimeout(detail),
-            _ => WatchError::StartFailed(detail),
-        });
+        return Err(ready_err.with_stderr(&stderr));
     }
 
     // Register. Re-check after the async gap: another task may have won the
@@ -430,6 +537,13 @@ pub async fn start_office_watch_core(
     // reap ours.
     let result = {
         let mut watches = lock_watches();
+        // Taken back under the pool lock, so a quit draining both either finds
+        // the child registered or has already killed it.
+        let Some(child) = parked.take() else {
+            return Err(WatchError::StartFailed(
+                "stopped while officecli was starting".to_string(),
+            ));
+        };
         if let Some(entry) = watches.get_mut(&key) {
             if matches!(entry.child.try_wait(), Ok(None)) {
                 entry.ref_count += 1;
@@ -665,14 +779,32 @@ pub fn remove_known_port_for_test(port: u16) {
     }
 }
 
-/// Kill every watch process. Used on app/window/server shutdown.
+/// Kill every watch process, those still starting included, and let no start
+/// get one going afterwards. Used on app/server shutdown.
 pub fn stop_all_office_watches() -> usize {
-    let drained: Vec<(String, WatchInstance)> = lock_watches().drain().collect();
-    let n = drained.len();
+    let (drained, starting) = {
+        let mut watches = lock_watches();
+        // Both under the pool lock: a start registering its child right now
+        // either has it in the pool already or finds it gone (see `start_within`).
+        let starting = take_starting_children();
+        (watches.drain().collect::<Vec<_>>(), starting)
+    };
+    let n = drained.len() + starting.len();
     for (_, entry) in drained {
         reap(entry.child);
     }
+    for child in starting {
+        reap(child);
+    }
     n
+}
+
+/// Take every child a start is still waiting for, and refuse any child started
+/// from now on; those starts then fail.
+fn take_starting_children() -> Vec<Child> {
+    let mut starting = lock_starting();
+    starting.quitting = true;
+    starting.children.drain().map(|(_, child)| child).collect()
 }
 
 /// Kill every watch whose file lives under `root_path`. Used when a folder is
@@ -782,6 +914,248 @@ pub async fn office_watch_idle_sweep_task(idle_timeout: Duration, interval: Dura
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_errors_keep_one_prefix_and_child_diagnostics() {
+        for stderr in ["", "renderer failed"] {
+            let timeout =
+                WatchError::PortTimeout("officecli did not announce readiness in time".into())
+                    .with_stderr(stderr);
+            assert_eq!(timeout.code(), "PORT_TIMEOUT");
+            assert_eq!(
+                timeout
+                    .to_string()
+                    .matches("officecli watch did not become ready in time:")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                timeout.to_string().contains("renderer failed"),
+                !stderr.is_empty()
+            );
+
+            let failed =
+                WatchError::StartFailed("officecli exited before announcing readiness".into())
+                    .with_stderr(stderr);
+            assert_eq!(failed.code(), "START_FAILED");
+            assert_eq!(
+                failed
+                    .to_string()
+                    .matches("failed to start officecli watch:")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                failed.to_string().contains("renderer failed"),
+                !stderr.is_empty()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn readiness_child(script: &str, port: u16) -> Child {
+        tokio_command("sh")
+            .args(["-c", script, "watch-fixture", &port.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    }
+
+    #[cfg(unix)]
+    fn stdout_of(child: &mut Child) -> ChildStdout {
+        child.stdout.take().unwrap()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_accepts_startup_slower_than_eight_seconds() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut child = readiness_child(
+            "sleep 9; printf 'Watch: http://localhost:%s\\n' \"$1\"; exec sleep 600",
+            port,
+        );
+        let result = await_ready(port, stdout_of(&mut child), READY_TIMEOUT).await;
+        reap(child);
+        assert!(
+            result.is_ok(),
+            "slow watch startup should succeed: {result:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_still_requires_the_child_announcement() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut child = readiness_child("exec sleep 600", port);
+        let result = await_ready(port, stdout_of(&mut child), Duration::from_millis(100)).await;
+        reap(child);
+        assert!(matches!(result, Err(WatchError::PortTimeout(_))));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_rejects_wrong_port_and_early_exit() {
+        let port = allocate_free_port().unwrap();
+        let mut wrong_port = readiness_child("printf 'Watch: http://localhost:0\\n'", port);
+        let result = await_ready(port, stdout_of(&mut wrong_port), READY_TIMEOUT).await;
+        reap(wrong_port);
+        assert!(
+            matches!(result, Err(WatchError::PortTimeout(detail)) if detail.contains("expected"))
+        );
+
+        let mut exited = readiness_child("exit 1", port);
+        let result = await_ready(port, stdout_of(&mut exited), READY_TIMEOUT).await;
+        reap(exited);
+        assert!(matches!(result, Err(WatchError::StartFailed(_))));
+    }
+
+    /// A start queued behind another start of the same file answers within its
+    /// own budget. Waiting that start out first and then spending a whole budget
+    /// of its own would outlast the frontend's request deadline.
+    #[tokio::test]
+    async fn a_start_queued_behind_another_answers_within_its_budget() {
+        let dir = std::env::temp_dir().join(format!("codeg-ow-queued-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let docx = dir.join("queued.docx");
+        std::fs::write(&docx, b"x").unwrap();
+        let key = watch_key(&std::fs::canonicalize(&docx).unwrap());
+
+        // Another start of the file holds its spawn lock and never finishes.
+        let spawn_lock = spawn_lock_for(&key);
+        let _other_start = spawn_lock.lock().await;
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            start_within(
+                dir.to_string_lossy().to_string(),
+                "queued.docx".into(),
+                Duration::from_millis(300),
+            ),
+        )
+        .await
+        .expect("the queued start must give up once its budget is spent");
+        assert!(
+            matches!(result, Err(WatchError::PortTimeout(_))),
+            "{result:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A start queued behind another start of the same file shares the watch
+    /// that start registered, once it lets go of the file.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_queued_start_shares_the_watch_the_other_start_registered() {
+        let dir = std::env::temp_dir().join(format!("codeg-ow-shared-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let docx = dir.join("shared.docx");
+        std::fs::write(&docx, b"x").unwrap();
+        let key = watch_key(&std::fs::canonicalize(&docx).unwrap());
+
+        // Another start of the file is under way when this one comes in.
+        let spawn_lock = spawn_lock_for(&key);
+        let other_start = spawn_lock.lock().await;
+        let queued = tokio::spawn(start_within(
+            dir.to_string_lossy().to_string(),
+            "shared.docx".into(),
+            Duration::from_secs(10),
+        ));
+        // It holds the file's spawn lock too once it is waiting for it.
+        for _ in 0..200 {
+            if Arc::strong_count(&spawn_lock) > 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(Arc::strong_count(&spawn_lock) > 2, "the start never queued");
+
+        // The other start registers its watch, then lets go.
+        let port = allocate_free_port().unwrap();
+        seed_live_watch(&key, port, "winner-cap", false);
+        drop(other_start);
+
+        // At once: sharing it needs no officecli of its own.
+        let started = tokio::time::timeout(Duration::from_secs(1), queued)
+            .await
+            .expect("the queued start should share the watch without starting officecli")
+            .unwrap()
+            .unwrap();
+        assert_eq!((started.port, started.cap.as_str()), (port, "winner-cap"));
+        assert_eq!(lock_watches().get(&key).unwrap().ref_count, 2);
+
+        if let Some(entry) = lock_watches().remove(&key) {
+            reap(entry.child);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Park a child as a start would, with its stdout, which closes once the
+    /// child is gone. Short-lived, so one a broken claim strands still ends.
+    #[cfg(unix)]
+    fn park_sleeper() -> (StartingChild, ChildStdout) {
+        let mut child = tokio_command("sleep")
+            .arg("30")
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdout = stdout_of(&mut child);
+        let Some(parked) = StartingChild::park(child) else {
+            panic!("no test quits the app");
+        };
+        (parked, stdout)
+    }
+
+    /// A start abandoned while its child comes up (its request went away)
+    /// takes the child down with it instead of leaving it parked.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_abandoned_start_kills_its_child() {
+        use tokio::io::AsyncReadExt;
+
+        let (parked, mut stdout) = park_sleeper();
+        drop(parked);
+
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), stdout.read_to_end(&mut rest))
+            .await
+            .expect("the child should die with its start")
+            .unwrap();
+    }
+
+    /// Watches still starting count against the process cap: each is an
+    /// officecli process already, and may take a while to come up.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn watches_still_starting_count_against_the_cap() {
+        let parked: Vec<_> = (0..MAX_CONCURRENT_WATCHES)
+            .map(|_| park_sleeper())
+            .collect();
+
+        let dir = std::env::temp_dir().join(format!("codeg-ow-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("one-more.xlsx"), b"x").unwrap();
+        let result = start_within(
+            dir.to_string_lossy().to_string(),
+            "one-more.xlsx".into(),
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(matches!(result, Err(WatchError::TooMany)), "{result:?}");
+
+        drop(parked);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn error_code_mapping_is_stable() {
