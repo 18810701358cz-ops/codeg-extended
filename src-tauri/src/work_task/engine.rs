@@ -73,6 +73,12 @@ const SCHEDULE_INTERVAL_SECS: u64 = 15;
 /// Cap on the preflight output tail persisted with a red light.
 const PREFLIGHT_TAIL_CHARS: usize = 4000;
 
+/// Cap on an agent-reported error kept for a failed turn's `last_error` — the
+/// same budget as the init and preflight output tails. A failed tool call can
+/// carry a whole command log, and the row is rebroadcast on every upsert; the
+/// tail is where such a log usually says what went wrong.
+const TURN_ERROR_TAIL_CHARS: usize = PREFLIGHT_TAIL_CHARS;
+
 /// How often a waiting pre-prompt compaction re-checks that its connection is
 /// still alive. NOT a deadline on the turn — see `await_compaction_turn`, which
 /// only ever ends the wait on evidence the turn is over or the connection is
@@ -2743,7 +2749,7 @@ impl TaskEngine {
             .await
             .entry(conn_id.to_string())
             .or_default()
-            .error = Some(message);
+            .error = Some(tail_chars(&message, TURN_ERROR_TAIL_CHARS));
     }
 
     /// Forget the error noted for this connection's turn, keeping its
@@ -10171,6 +10177,49 @@ mod tests {
         assert_eq!(task.status, WorkTaskStatus::Failed);
         assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
         assert_eq!(task.last_error.as_deref(), Some(UPSTREAM_400));
+    }
+
+    /// A failed tool call can carry a whole command log. The card keeps its
+    /// tail, capped like the init and preflight output.
+    #[tokio::test]
+    async fn a_failed_tool_log_is_kept_as_its_capped_tail() {
+        const LAST_LINE: &str = "错误：最后一行说明出了什么问题";
+        let (engine, task_id) = running_task().await;
+        let log = format!("{}\n{LAST_LINE}", "噪声 noise ".repeat(5_000));
+        let expected: String = {
+            let chars: Vec<char> = log.chars().collect();
+            chars[chars.len() - TURN_ERROR_TAIL_CHARS..]
+                .iter()
+                .collect()
+        };
+        engine
+            .on_event(&env(
+                PARENT_CONN,
+                AcpEvent::ToolCallUpdate {
+                    tool_call_id: "tc-log".into(),
+                    title: None,
+                    status: Some("failed".into()),
+                    content: Some(log),
+                    raw_input: None,
+                    raw_output: None,
+                    raw_output_append: None,
+                    locations: None,
+                    meta: None,
+                    images: None,
+                },
+            ))
+            .await;
+        engine
+            .on_event(&turn_complete_envelope(PARENT_CONN, 2, "end_turn"))
+            .await;
+
+        let task = work_task_service::get_model(&engine.db.conn, task_id)
+            .await
+            .expect("task row");
+        assert_eq!(task.status, WorkTaskStatus::Failed);
+        let shown = task.last_error.unwrap_or_default();
+        assert!(shown.ends_with(LAST_LINE), "kept the head, not the tail");
+        assert_eq!(shown, expected, "the tail is cut by characters, not bytes");
     }
 
     #[tokio::test]
