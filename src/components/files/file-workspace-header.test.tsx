@@ -11,6 +11,11 @@ const mocks = vi.hoisted(() => ({
   toggleFileTabPreview: vi.fn(),
   // Returns a promise in both runtimes — the caller attaches a `.catch`.
   openPath: vi.fn(() => Promise.resolve()),
+  allFolders: [] as { id: number; path: string }[],
+  downloadWorkspaceFile: vi.fn(),
+  isWorkspaceFileApiAvailable: vi.fn(() => true),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
 }))
 
 vi.mock("@/contexts/workspace-context", () => ({
@@ -29,6 +34,18 @@ vi.mock("@/components/files/file-path-breadcrumb", () => ({
   ),
 }))
 vi.mock("@/lib/platform", () => ({ openPath: mocks.openPath }))
+vi.mock("@/lib/api", () => ({
+  downloadWorkspaceFile: mocks.downloadWorkspaceFile,
+  isWorkspaceFileApiAvailable: mocks.isWorkspaceFileApiAvailable,
+  WORKSPACE_DOWNLOAD_CANCELLED: "cancelled",
+}))
+vi.mock("@/stores/app-workspace-store", () => ({
+  useAppWorkspaceStore: (select: (state: { allFolders: unknown }) => unknown) =>
+    select({ allFolders: mocks.allFolders }),
+}))
+vi.mock("sonner", () => ({
+  toast: { success: mocks.toastSuccess, error: mocks.toastError },
+}))
 
 import {
   resetHtmlPreviewControlsForTests,
@@ -119,6 +136,11 @@ const CONTROLS: HtmlPreviewControls = {
 beforeEach(() => {
   mocks.activeFileTab = null
   mocks.previewFileTabIds = new Set<string>()
+  mocks.allFolders = [{ id: 1, path: "/repo" }]
+  mocks.downloadWorkspaceFile.mockReset()
+  mocks.downloadWorkspaceFile.mockResolvedValue({ status: "started" })
+  mocks.isWorkspaceFileApiAvailable.mockReset()
+  mocks.isWorkspaceFileApiAvailable.mockReturnValue(true)
   vi.clearAllMocks()
   resetHtmlPreviewControlsForTests()
 })
@@ -260,5 +282,97 @@ describe("FileWorkspaceHeader — a hoisted HTML preview", () => {
     expect(
       screen.getByText("Unsaved changes are not shown")
     ).toBeInTheDocument()
+  })
+})
+
+describe("FileWorkspaceHeader — the download button", () => {
+  it("sits beside the more menu and downloads through the owning folder", async () => {
+    mocks.activeFileTab = fileTab()
+    renderHeader()
+    const download = screen.getByRole("button", { name: "Download file" })
+    const more = screen.getByRole("button", { name: "More" })
+    // A permanent affordance on the row, left of the ⋮ — the request that put
+    // it there was "a download button next to the three dots", not a fifth row
+    // inside the menu.
+    expect(download.parentElement).toBe(more.parentElement)
+    expect(
+      download.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    await act(async () => {
+      download.click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    // The ticket is issued against the workspace ROOT, so the path travels in
+    // its folder-relative form — exactly what the file tree's row sends.
+    expect(mocks.downloadWorkspaceFile).toHaveBeenCalledWith(
+      "/repo",
+      "a.ts",
+      "a.ts"
+    )
+  })
+
+  it("hides itself where the file is already on this machine", () => {
+    // A local desktop window has the file on disk; the server-hosted build and
+    // a remote-desktop window are the two that need the byte stream.
+    mocks.isWorkspaceFileApiAvailable.mockReturnValue(false)
+    mocks.activeFileTab = fileTab()
+    renderHeader()
+    expect(screen.queryByRole("button", { name: "Download file" })).toBeNull()
+  })
+
+  it("hides itself for a file in no registered folder", () => {
+    // Nothing to issue a ticket against, so the button would be dead.
+    mocks.allFolders = []
+    mocks.activeFileTab = fileTab()
+    renderHeader()
+    expect(screen.queryByRole("button", { name: "Download file" })).toBeNull()
+  })
+
+  it("hides itself for a diff tab, which has no file to send", () => {
+    mocks.activeFileTab = fileTab({
+      id: "diff:session:1",
+      kind: "diff",
+      path: null,
+      language: "diff",
+    })
+    renderHeader()
+    expect(screen.queryByRole("button", { name: "Download file" })).toBeNull()
+  })
+
+  it("says nothing when the browser's own download manager takes over", async () => {
+    mocks.activeFileTab = fileTab()
+    renderHeader()
+    await act(async () => {
+      screen.getByRole("button", { name: "Download file" }).click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(mocks.toastSuccess).not.toHaveBeenCalled()
+    expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+
+  it("reports where a remote save landed, and a failure", async () => {
+    mocks.activeFileTab = fileTab()
+    mocks.downloadWorkspaceFile.mockResolvedValue({
+      status: "done",
+      savedPath: "/Users/me/a.ts",
+    })
+    renderHeader()
+    await act(async () => {
+      screen.getByRole("button", { name: "Download file" }).click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Downloaded a.ts", {
+      description: "/Users/me/a.ts",
+    })
+
+    mocks.downloadWorkspaceFile.mockRejectedValue(new Error("disk full"))
+    await act(async () => {
+      screen.getByRole("button", { name: "Download file" }).click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(mocks.toastError).toHaveBeenCalledWith("Failed to download a.ts", {
+      description: "disk full",
+    })
   })
 })

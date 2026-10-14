@@ -1,9 +1,11 @@
 "use client"
 
+import { useMemo } from "react"
 import {
   AppWindow,
   Code,
   Copy,
+  Download,
   EllipsisVertical,
   ExternalLink,
   Eye,
@@ -16,6 +18,14 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { openPath } from "@/lib/platform"
 import { isHtmlPreviewable } from "@/lib/language-detect"
+import {
+  downloadWorkspaceFile,
+  isWorkspaceFileApiAvailable,
+  WORKSPACE_DOWNLOAD_CANCELLED,
+} from "@/lib/api"
+import { toErrorMessage } from "@/lib/app-error"
+import { findOwningFolder } from "@/lib/file-open-target"
+import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import {
   useWorkspaceActions,
   useWorkspaceFileTabs,
@@ -34,10 +44,11 @@ import { cn, copyTextFromMenu } from "@/lib/utils"
 /**
  * Desktop file-detail header: the active file's name on the left, its file-type
  * actions on the right — the markdown/html preview⇄source toggle, the HTML
- * preview's own controls (see below) and a "more" menu for everything that does
- * not earn a permanent button (open in the system browser, copy path, reload,
- * switch renderer). Self-hides for a browser tab, whose toolbar is its own
- * header (see below). Maximize/restore lives in the file tab strip
+ * preview's own controls (see below), a download button where the file lives on
+ * a machine this window cannot reach into, and a "more" menu for everything
+ * that does not earn a permanent button (open in the system browser, copy path,
+ * reload, switch renderer). Self-hides for a browser tab, whose toolbar is its
+ * own header (see below). Maximize/restore lives in the file tab strip
  * (`FileWorkspaceTabBar`, embedded) instead, flush right of the tabs.
  *
  * An HTML preview rendered in this column draws NO header strip of its own
@@ -69,6 +80,16 @@ export function FileWorkspaceHeader() {
   // Present only while an HTML preview is on screen in this column — its
   // renderer publishes them and takes them away when it unmounts.
   const preview = useHtmlPreviewControls(activeFileTabId)
+  // The owning registered folder of the active file. Only the download button
+  // needs it (its ticket is issued against a workspace root, see below), and
+  // it has to be resolved before the early return below — hooks are
+  // unconditional.
+  const allFolders = useAppWorkspaceStore((s) => s.allFolders)
+  const activeAbsPath = activeFileTab?.path ?? null
+  const owningFolder = useMemo(
+    () => (activeAbsPath ? findOwningFolder(activeAbsPath, allFolders) : null),
+    [activeAbsPath, allFolders]
+  )
 
   // A browser tab has no title row: its own toolbar (address bar and page
   // controls) becomes the top row of the column instead. Two rows of chrome
@@ -102,6 +123,46 @@ export function FileWorkspaceHeader() {
   const hasMenu = Boolean(
     path || preview?.reload || preview?.switchEngine || canOpenInBrowser
   )
+  // Downloading is for the windows whose workspace lives on ANOTHER machine —
+  // the server-hosted build, or a remote-desktop window: there the bytes have
+  // to be brought to the user, and a ticket against the owning folder's root is
+  // how they travel (the same route the file tree's own download row takes, and
+  // the same gate: `isWorkspaceFileApiAvailable`). A local desktop window
+  // already has the file on disk, where the button would be dead weight, and a
+  // file in no registered folder has no root to issue a ticket against.
+  const canDownload =
+    activeFileTab.kind === "file" &&
+    owningFolder !== null &&
+    isWorkspaceFileApiAvailable()
+
+  const handleDownload = () => {
+    if (!owningFolder || !path) return
+    const name = activeFileTab.title
+    void (async () => {
+      try {
+        const result = await downloadWorkspaceFile(
+          owningFolder.rootPath,
+          owningFolder.relPath,
+          name
+        )
+        // Web hands the transfer to the browser's own download manager
+        // ("started"), which reports its progress itself — a toast there would
+        // be noise. Only the remote-desktop save dialog has an outcome worth
+        // reporting.
+        if (result.status === "started") return
+        if (result.status === WORKSPACE_DOWNLOAD_CANCELLED) return
+        if (result.savedPath) {
+          toast.success(tFileTree("toasts.downloadSaved", { name }), {
+            description: result.savedPath,
+          })
+        }
+      } catch (error) {
+        toast.error(tFileTree("toasts.downloadFailed", { name }), {
+          description: toErrorMessage(error),
+        })
+      }
+    })()
+  }
 
   const actionBtn =
     "flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:bg-primary/8 transition-colors"
@@ -192,6 +253,17 @@ export function FileWorkspaceHeader() {
             ) : (
               <Eye className="h-4 w-4" />
             )}
+          </button>
+        )}
+        {canDownload && (
+          <button
+            type="button"
+            onClick={handleDownload}
+            className={actionBtn}
+            aria-label={tFileTree("download")}
+            title={tFileTree("download")}
+          >
+            <Download className="h-4 w-4" />
           </button>
         )}
         {hasMenu && (
