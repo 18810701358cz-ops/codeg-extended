@@ -3209,13 +3209,20 @@ impl TaskEngine {
                     .await
                     .unwrap_or(false)
             }
+            // What the agent reported for this turn (a rejected prompt's own
+            // message, codeg's reading of an empty turn) says more than the
+            // bare stop reason, which is all a turn that reported nothing has.
             other => work_task_service::fail(
                 &self.db.conn,
                 task_id,
                 &[WorkTaskStatus::Running, WorkTaskStatus::AwaitingInput],
                 Some(run_seq),
                 "agent_error",
-                Some(format!("agent stopped: {other}")),
+                Some(
+                    signal
+                        .and_then(|s| s.error)
+                        .unwrap_or_else(|| format!("agent stopped: {other}")),
+                ),
             )
             .await
             .unwrap_or(false),
@@ -10220,6 +10227,54 @@ mod tests {
         let shown = task.last_error.unwrap_or_default();
         assert!(shown.ends_with(LAST_LINE), "kept the head, not the tail");
         assert_eq!(shown, expected, "the tail is cut by characters, not bytes");
+    }
+
+    /// #538 for a turn that ends on a failed stop reason: a rejected prompt's
+    /// own message is what the card shows, not just "agent stopped: rejected".
+    /// A turn that reported nothing keeps that stop-reason line.
+    #[tokio::test]
+    async fn a_failed_stop_reason_shows_what_the_turn_reported() {
+        const REJECTION: &str = "ACP protocol error: Internal error: [400] Assistant tool call \
+             function.arguments must be valid JSON.";
+        {
+            let (engine, task_id) = running_task().await;
+            engine
+                .on_event(&envelope_at(PARENT_CONN, 1, prompting()))
+                .await;
+            engine
+                .on_event(&envelope_at(
+                    PARENT_CONN,
+                    2,
+                    AcpEvent::Error {
+                        message: REJECTION.into(),
+                        agent_type: "gemini".into(),
+                        code: None,
+                        details: None,
+                        terminal: false,
+                    },
+                ))
+                .await;
+            engine
+                .on_event(&turn_complete_envelope(PARENT_CONN, 3, "rejected"))
+                .await;
+            let task = work_task_service::get_model(&engine.db.conn, task_id)
+                .await
+                .expect("task row");
+            assert_eq!(task.status, WorkTaskStatus::Failed);
+            assert_eq!(task.failure_reason.as_deref(), Some("agent_error"));
+            assert_eq!(task.last_error.as_deref(), Some(REJECTION));
+        }
+        {
+            let (engine, task_id) = running_task().await;
+            engine
+                .on_event(&turn_complete_envelope(PARENT_CONN, 3, "rejected"))
+                .await;
+            let task = work_task_service::get_model(&engine.db.conn, task_id)
+                .await
+                .expect("task row");
+            assert_eq!(task.status, WorkTaskStatus::Failed);
+            assert_eq!(task.last_error.as_deref(), Some("agent stopped: rejected"));
+        }
     }
 
     #[tokio::test]
