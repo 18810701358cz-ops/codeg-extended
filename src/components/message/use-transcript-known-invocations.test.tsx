@@ -95,7 +95,7 @@ describe("useTranscriptKnownInvocations", () => {
       useTranscriptKnownInvocations("claude_code", commands, "/ws")
     )
     expect(sorted(result.current)).toEqual(["/init", "/review"])
-    // Every agent but Codex advertises its skills as commands already.
+    // Every agent but Codex and Antigravity advertises its skills as commands.
     expect(mockUseAgentSkills).toHaveBeenCalledWith(null, "/ws")
   })
 
@@ -107,6 +107,22 @@ describe("useTranscriptKnownInvocations", () => {
     )
     expect(sorted(result.current)).toEqual(["$deploy", "$ship", "/review"])
     expect(mockUseAgentSkills).toHaveBeenCalledWith("codex", "/ws")
+  })
+
+  it("adds Antigravity's on-disk skills under `/`, beside its commands", () => {
+    // Antigravity advertises only its built-ins, never a skill.
+    const skills: AgentSkillItem[] = [
+      { ...CODEX_SKILLS[0], path: "/ws/.agents/skills/ship" },
+    ]
+    mockUseAgentSkills.mockImplementation((agentType) =>
+      agentType === "antigravity" ? skills : NO_SKILLS
+    )
+    const commands = [command("plan"), command("usage")]
+    const { result } = renderHook(() =>
+      useTranscriptKnownInvocations("antigravity", commands, "/ws")
+    )
+    expect(sorted(result.current)).toEqual(["/plan", "/ship", "/usage"])
+    expect(mockUseAgentSkills).toHaveBeenCalledWith("antigravity", "/ws")
   })
 
   it("knows nothing before the agent advertises in a new folder, beyond Codex's disk skills", () => {
