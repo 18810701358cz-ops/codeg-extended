@@ -1840,6 +1840,12 @@ export interface WorkTask {
   /** Planned start of a to-do task (ISO); null = no plan. Consumed the moment
    *  the task is claimed, by the scheduler or by hand. */
   scheduled_at: string | null
+  /** The user put this reviewed / failed task aside to handle later (ISO
+   *  instant; "以后处理"): the board files it under Done and the attention badge
+   *  stops counting it, while it stays as resumable as it was. Cleared by every
+   *  way out of review / failed — a follow-up, retry, merge, completion or
+   *  cancel. Absent/null = not put aside (read it through `isDeferred`). */
+  deferred_at?: string | null
   /** Forge provenance ('forge_issue' | 'forge_pr'); absent = not forge-sourced. */
   source_kind?: string | null
   /** Canonical source key ({provider}:{host}:{owner_repo}:{kind}:{number}). */
@@ -2194,6 +2200,9 @@ export interface ForgeTaskLink {
   source_key: string
   task_id: number
   status: WorkTaskStatus
+  /** The task was put aside to handle later (see `WorkTask.deferred_at`) —
+   *  the chip names that instead of its review / failure. Absent = false. */
+  deferred?: boolean
   verdict: string | null
   updated_at: string
 }

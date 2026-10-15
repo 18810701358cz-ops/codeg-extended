@@ -1806,6 +1806,10 @@ pub fn build_router(
             post(handlers::work_task::work_task_archive),
         )
         .route(
+            "/work_task_defer",
+            post(handlers::work_task::work_task_defer),
+        )
+        .route(
             "/work_task_cleanup",
             post(handlers::work_task::work_task_cleanup),
         )

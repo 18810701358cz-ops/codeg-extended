@@ -18,6 +18,7 @@ import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import {
   workTaskArchive,
   workTaskCreate,
+  workTaskDefer,
   workTaskMergeUnqueue,
   workTaskReorder,
   workTaskStart,
@@ -68,6 +69,7 @@ import {
 } from "./board-columns"
 import {
   isAnotherTaskMerging,
+  isDeferred,
   isMergeQueued,
   mergeQueueRanks,
 } from "./task-acceptance"
@@ -78,6 +80,7 @@ import { TaskCompleteDialog } from "./task-complete-dialog"
 import { TaskDeliverPrDialog } from "./task-deliver-pr-dialog"
 import { TaskDetailSheet } from "./task-detail-sheet"
 import { TaskEditorDialog } from "./task-editor-dialog"
+import { TaskFollowUpDialog } from "./task-follow-up-dialog"
 import { TaskList } from "./task-list"
 import { TaskMergeDialog } from "./task-merge-dialog"
 import { TaskRestartDialog, type TaskRestartKind } from "./task-restart-dialog"
@@ -261,6 +264,11 @@ export function TasksPage() {
   const [restartTask, setRestartTask] = useState<WorkTask | null>(null)
   const [restartKind, setRestartKind] = useState<TaskRestartKind>("retry")
   const [restartOpen, setRestartOpen] = useState(false)
+  // "继续处理" from a card (a deferred reviewed task leads with it) — the
+  // drawer unfolds its own box instead. The row is captured at the click, like
+  // the restart's: the dialog seeds from it once per open.
+  const [followUpTask, setFollowUpTask] = useState<WorkTask | null>(null)
+  const [followUpOpen, setFollowUpOpen] = useState(false)
   // Planning a to-do task's start — tracked by id so the dialog reads the live
   // row (a task claimed while it is open no longer accepts a plan).
   const [scheduleTaskId, setScheduleTaskId] = useState<number | null>(null)
@@ -419,6 +427,11 @@ export function TasksPage() {
     setRestartOpen(true)
   }, [])
 
+  const openFollowUp = useCallback((task: WorkTask) => {
+    setFollowUpTask(task)
+    setFollowUpOpen(true)
+  }, [])
+
   const openSchedule = useCallback((task: WorkTask) => {
     setScheduleTaskId(task.id)
     setScheduleOpen(true)
@@ -443,6 +456,8 @@ export function TasksPage() {
       onComplete: () => openComplete(task),
       onArchive: () =>
         void act(() => workTaskArchive(task.id, task.archived_at == null)),
+      onDefer: () => void act(() => workTaskDefer(task.id, !isDeferred(task))),
+      onFollowUp: () => openFollowUp(task),
       onEdit: () => {
         setEditorTask(task)
         setEditorOpen(true)
@@ -454,6 +469,7 @@ export function TasksPage() {
       openCancel,
       openComplete,
       openDeliver,
+      openFollowUp,
       openMerge,
       openRestart,
       openSchedule,
@@ -612,14 +628,24 @@ export function TasksPage() {
   )
 
   // Archives whatever the Done column currently shows unarchived — respects
-  // the visibility toggles by construction (it reads the grouped column).
+  // the visibility toggles by construction (it reads the grouped column). A
+  // task put aside to handle later shares the column but is the opposite of
+  // finished: archiving it would bury exactly what the user meant to come back
+  // to (and a reviewed one cannot be archived at all).
+  const archivableDone = useMemo(
+    () =>
+      columns.done.filter(
+        (task) => task.archived_at == null && !isDeferred(task)
+      ),
+    [columns.done]
+  )
   const archiveAllDone = useCallback(() => {
-    const targets = columns.done.filter((task) => task.archived_at == null)
+    const targets = archivableDone
     if (targets.length === 0) return
     void act(() =>
       Promise.all(targets.map((task) => workTaskArchive(task.id, true)))
     )
-  }, [act, columns.done])
+  }, [act, archivableDone])
 
   // The badge counts deviations from the DEFAULT view (canceled shown,
   // archived hidden), not checked boxes — a pristine board shows no badge.
@@ -908,8 +934,7 @@ export function TasksPage() {
                       </span>
                     )}
                     <div className="flex-1" />
-                    {col === "done" &&
-                    columns.done.some((task) => task.archived_at == null) ? (
+                    {col === "done" && archivableDone.length > 0 ? (
                       <Button
                         type="button"
                         size="xs"
@@ -1076,6 +1101,11 @@ export function TasksPage() {
         onOpenChange={setRestartOpen}
         task={restartTask}
         kind={restartKind}
+      />
+      <TaskFollowUpDialog
+        open={followUpOpen}
+        onOpenChange={setFollowUpOpen}
+        task={followUpTask}
       />
       <TaskScheduleDialog
         open={scheduleOpen && scheduleTask != null}

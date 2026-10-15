@@ -127,6 +127,27 @@ describe("TasksViewProvider", () => {
     expect(screen.getByTestId("attention").textContent).toBe("2")
   })
 
+  it("leaves tasks put aside to handle later out of the badge", async () => {
+    // The badge mirrors the "needs you" column: a reviewed or failed task the
+    // user deferred waits under Done, and counting it would keep nagging about
+    // exactly what they said can wait.
+    listMock.mockResolvedValueOnce([
+      sample(1, "review"),
+      { ...sample(2, "review"), deferred_at: "2026-08-01T02:00:00Z" },
+      { ...sample(3, "failed"), deferred_at: "2026-08-01T02:00:00Z" },
+      sample(4, "failed"),
+    ])
+    render(
+      <TasksViewProvider>
+        <Probe />
+      </TasksViewProvider>
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId("count").textContent).toBe("4")
+    )
+    expect(screen.getByTestId("attention").textContent).toBe("2")
+  })
+
   it("refetches on transport reconnect and keeps data on fetch errors", async () => {
     listMock.mockResolvedValueOnce([sample(1, "failed")])
     render(

@@ -500,6 +500,9 @@ pub struct ForgeTaskLink {
     pub source_key: String,
     pub task_id: i32,
     pub status: crate::models::WorkTaskStatus,
+    /// The task was put aside to handle later — the board files it under Done
+    /// and the workbench chip says so instead of its review / failure.
+    pub deferred: bool,
     pub verdict: Option<String>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -1228,6 +1231,7 @@ pub async fn work_task_lookup_by_source_core(
             source_key,
             task_id: m.id,
             status: m.status,
+            deferred: m.deferred_at.is_some(),
             verdict: m.verdict,
             updated_at: m.updated_at,
         })

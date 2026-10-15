@@ -2134,6 +2134,7 @@ mod tauri_app {
                 work_task_commands::work_task_deliver_pr,
                 work_task_commands::work_task_complete,
                 work_task_commands::work_task_archive,
+                work_task_commands::work_task_defer,
                 work_task_commands::work_task_cleanup,
                 work_task_commands::work_task_diff,
                 work_task_commands::work_task_changed_files,

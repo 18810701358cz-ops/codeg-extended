@@ -4032,6 +4032,16 @@ export async function workTaskArchive(
   return getTransport().call("work_task_archive", { id, archived })
 }
 
+/** Put a reviewed / failed task aside to handle later ("以后处理" — it waits
+ *  under Done), or bring it back to "needs you". No status change: a follow-up,
+ *  retry or merge picks a deferred task back up on its own. */
+export async function workTaskDefer(
+  id: number,
+  deferred: boolean
+): Promise<void> {
+  return getTransport().call("work_task_defer", { id, deferred })
+}
+
 /** Remove the task's worktree + branch (also retries a failed cleanup). */
 export async function workTaskCleanup(id: number): Promise<void> {
   return getTransport().call("work_task_cleanup", { id })
