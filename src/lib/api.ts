@@ -28,6 +28,8 @@ import type {
   AutomationDraft,
   DeepSeekCatalogModel,
   DeepSeekModelCatalog,
+  ForgeAutoScanReport,
+  ForgeAutoStatus,
   ForgeChangeDetail,
   ForgeChangedFileList,
   ForgeComment,
@@ -56,6 +58,7 @@ import type {
   WorkTaskTemplate,
   ConversationSummary,
   ConversationDetail,
+  ConversationOutline,
   ConversationTurnsPage,
   DbConversationDetail,
   FolderInfo,
@@ -94,6 +97,8 @@ import type {
   FolderHistoryEntry,
   FolderDetail,
   FolderGroupDetail,
+  ConversationBranchTag,
+  ConversationTagDetail,
   SidebarLayoutEntry,
   FolderLinkDetail,
   FolderLinkPlan,
@@ -1837,23 +1842,67 @@ export async function officecliRenderHtml(
  * officecli's own SSE channel, so the preview no longer re-reads (and locks)
  * the file the way the one-shot {@link officecliRenderHtml} did.
  *
- * `cap` is only used by web/server mode, where the iframe loads the preview
- * through the `/api/office-watch-proxy/{port}` reverse proxy and authenticates
- * with `?cap=` (the master token never enters the iframe). Desktop ignores it.
+ * `cap` names this watch: a new one mints a new `cap`. Web/server mode also
+ * authenticates the iframe with it, loading the preview through the
+ * `/api/office-watch-proxy/{port}` reverse proxy with `?cap=` (the master
+ * token never enters the iframe); desktop loads the loopback port directly.
+ *
+ * `hold` (web/server mode only) names the hold this start took on the watch,
+ * which the page renews and releases by name.
  */
 export async function startOfficeWatch(
   rootPath: string,
   path: string
-): Promise<{ port: number; cap: string }> {
-  return getTransport().call("start_office_watch", { rootPath, path })
+): Promise<{ port: number; cap: string; hold?: string }> {
+  // Allow the backend's 120s cold-start budget plus cleanup/response overhead.
+  return getTransport().call(
+    "start_office_watch",
+    { rootPath, path },
+    { timeoutMs: 150_000 }
+  )
 }
 
-/** Release one reference to an office file's watch preview server. */
+/**
+ * Release one reference to an office file's watch preview server. `cap` and
+ * `hold` are what {@link startOfficeWatch} returned: when that watch is gone
+ * (stopped with its folder, say) the release is a no-op instead of taking a
+ * reference from whatever watch serves the file now, and a web page's release
+ * takes only its own hold.
+ */
 export async function stopOfficeWatch(
   rootPath: string,
-  path: string
+  path: string,
+  cap?: string,
+  hold?: string
 ): Promise<void> {
-  return getTransport().call("stop_office_watch", { rootPath, path })
+  return getTransport().call("stop_office_watch", {
+    rootPath,
+    path,
+    cap,
+    hold,
+  })
+}
+
+/**
+ * Renew this window's hold on the watch named by `cap`, and say whether it is
+ * still the live one serving the file — false once it was stopped, crashed,
+ * or replaced by a new one. A web page's hold lapses when the page goes quiet
+ * (the server can't tell a closed browser from one that just isn't talking),
+ * so a preview renews on a timer, naming its `hold`; one that lapsed meanwhile
+ * comes back. A desktop window's never lapses, and for it this only asks.
+ */
+export async function renewOfficeWatch(
+  rootPath: string,
+  path: string,
+  cap: string,
+  hold?: string
+): Promise<boolean> {
+  return getTransport().call("renew_office_watch", {
+    rootPath,
+    path,
+    cap,
+    hold,
+  })
 }
 
 export async function getSystemProxySettings(): Promise<SystemProxySettings> {
@@ -2288,6 +2337,71 @@ export async function setFolderGroup(
   return getTransport().call("set_folder_group", { folderId, groupId })
 }
 
+export async function listConversationTags(): Promise<ConversationTagDetail[]> {
+  return getTransport().call("list_conversation_tags", {})
+}
+
+/** Create a tag. `folderId: null` makes it global; a folder id scopes it to
+ *  that folder's family (a worktree child resolves to its root). */
+export async function createConversationTag(args: {
+  folderId: number | null
+  name: string
+  color: string
+}): Promise<ConversationTagDetail> {
+  return getTransport().call("create_conversation_tag", args)
+}
+
+/** Rename and/or recolour a tag. An omitted field is left alone. */
+export async function updateConversationTag(
+  tagId: number,
+  patch: { name?: string; color?: string }
+): Promise<ConversationTagDetail> {
+  return getTransport().call("update_conversation_tag", { tagId, ...patch })
+}
+
+/** Delete a tag; it comes off every conversation that carried it. */
+export async function deleteConversationTag(tagId: number): Promise<void> {
+  return getTransport().call("delete_conversation_tag", { tagId })
+}
+
+/** Persist one scope's order after a drag: its complete list, first to last. */
+export async function reorderConversationTags(tagIds: number[]): Promise<void> {
+  return getTransport().call("reorder_conversation_tags", { tagIds })
+}
+
+/** The branch tag setting: off, in its default colour, until first saved. */
+export async function getConversationBranchTag(): Promise<ConversationBranchTag> {
+  return getTransport().call("get_conversation_branch_tag", {})
+}
+
+/** Save the branch tag setting whole; resolves to it as stored (the colour
+ *  normalized). */
+export async function updateConversationBranchTag(
+  setting: ConversationBranchTag
+): Promise<ConversationBranchTag> {
+  return getTransport().call("update_conversation_branch_tag", {
+    enabled: setting.enabled,
+    color: setting.color,
+  })
+}
+
+/**
+ * Put tags on / take tags off one conversation — a delta, so two windows
+ * toggling different tags at once both land. Resolves to the conversation's
+ * fresh summary (the same one broadcast on `conversation://changed`).
+ */
+export async function updateConversationTags(args: {
+  conversationId: number
+  add?: number[]
+  remove?: number[]
+}): Promise<DbConversationSummary> {
+  return getTransport().call("update_conversation_tags", {
+    conversationId: args.conversationId,
+    add: args.add ?? [],
+    remove: args.remove ?? [],
+  })
+}
+
 export async function updateFolderColor(
   folderId: number,
   color: FolderThemeColor
@@ -2363,6 +2477,17 @@ export async function getFolderConversationTurns(
     conversationId,
     beforeIndex,
     limit,
+  })
+}
+
+/** Fetch the message navigator's outline of the history before `beforeIndex`. */
+export async function getFolderConversationOutline(
+  conversationId: number,
+  beforeIndex: number
+): Promise<ConversationOutline> {
+  return getTransport().call("get_folder_conversation_outline", {
+    conversationId,
+    beforeIndex,
   })
 }
 
@@ -3284,6 +3409,7 @@ export type SettingsSection =
   | "office-tools"
   | "collaboration"
   | "browser"
+  | "computer-use"
   | "version-control"
   | "shortcuts"
   | "system"
@@ -4016,6 +4142,18 @@ export async function listDirectoryEntries(
   return getTransport().call("list_directory_entries", { path })
 }
 
+/**
+ * Create the folder `name` directly inside `parentPath`, on the host that owns
+ * the filesystem the directory browser walks, and resolve to its path. One
+ * level only, and an existing entry of that name is an error, never reused.
+ */
+export async function createDirectory(
+  parentPath: string,
+  name: string
+): Promise<string> {
+  return getTransport().call("create_directory", { parentPath, name })
+}
+
 export async function listDirectoryWithFiles(
   path: string
 ): Promise<DirectoryItem[]> {
@@ -4031,7 +4169,8 @@ export const UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 
 // `btoa` only accepts a binary string, and `String.fromCharCode(...bytes)`
 // hits the call-stack limit somewhere around a few hundred KB. Chunk the
-// buffer so a 2 MB upload encodes without blowing the stack.
+// buffer so an upload at the full `UPLOAD_MAX_BYTES` encodes without
+// blowing the stack.
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf)
   let binary = ""
@@ -4854,9 +4993,9 @@ export async function terminalResize(
 
 /**
  * Recent output of an already-running terminal, for a viewer attaching to a
- * PTY it did not spawn (a canvas terminal card coming back from another
- * route). `alive: false` is the settled answer "nothing to attach to" — spawn
- * instead; it is never an error, so callers don't have to parse one.
+ * PTY it did not spawn (a canvas terminal card or restored panel tab).
+ * `alive: false, exists: true` carries retained final output; `exists: false`
+ * means no session is known. Older backends omit `exists`.
  *
  * Subscribe to `terminal://output/<id>` BEFORE calling this, and drop the
  * events whose `seq` is at or below the returned `seq` — that overlap is
@@ -4868,8 +5007,18 @@ export async function terminalSnapshot(
   return getTransport().call("terminal_snapshot", { terminalId })
 }
 
+/** Close a terminal: ends its process and forgets it, output included. */
 export async function terminalKill(terminalId: string): Promise<void> {
   return getTransport().call("terminal_kill", { terminalId })
+}
+
+/**
+ * End a terminal's process but keep the terminal: its final output stays on
+ * the backend for the tab still showing it, as after a natural exit, until
+ * `terminalKill` closes it. A server without `keepOutput` closes it instead.
+ */
+export async function terminalStop(terminalId: string): Promise<void> {
+  return getTransport().call("terminal_kill", { terminalId, keepOutput: true })
 }
 
 export async function terminalList(): Promise<TerminalInfo[]> {
@@ -5212,6 +5361,42 @@ export async function setCodegMcpToolGroup(
   return getTransport().call("set_codeg_mcp_tool_group", { key, enabled })
 }
 
+// ─── Generative UI (the ui-render skill) ────────────────────────────────
+// Enabled per agent like the bundled packs; link statuses reuse the Expert*
+// DTOs, with `expertId` carrying the skill's id.
+
+/** Mirror of Rust `GenerativeUiSkillInfo`. */
+export interface GenerativeUiSkillInfo {
+  /** The skill's name: its folder, and what the user types (`/ui-render`). */
+  id: string
+  /** The central skill store holds a skill of that name the user made, so
+   *  Codeg leaves the skill alone until it is renamed. */
+  conflict: boolean
+}
+
+export async function generativeUiSkillInfo(): Promise<GenerativeUiSkillInfo> {
+  return getTransport().call("generative_ui_skill_info")
+}
+
+/** One round-trip snapshot of the skill's link state for every agent. */
+export async function generativeUiListAllInstallStatuses(): Promise<
+  ExpertInstallStatus[]
+> {
+  return getTransport().call("generative_ui_list_all_install_statuses")
+}
+
+/** Apply a batch of enable/disable ops; returns one result per op. */
+export async function generativeUiApplyLinks(
+  ops: LinkOp[]
+): Promise<LinkOpResult[]> {
+  return getTransport().call("generative_ui_apply_links", { ops })
+}
+
+/** The skill's `SKILL.md`, for the matrix's preview drawer. */
+export async function generativeUiReadContent(): Promise<string> {
+  return getTransport().call("generative_ui_read_content")
+}
+
 // ─── Live feedback settings + submit ───────────────────────────────────
 
 /** Mirror of Rust `FeedbackSettings`. */
@@ -5348,7 +5533,15 @@ export async function setChatAuthoringSettings(
  * Does NOT touch chat-side `selectorsCache` or `localStorage` preferences. */
 export async function describeAgentOptions(
   agentType: AgentType,
-  workingDir?: string | null
+  workingDir?: string | null,
+  /** Config selections to apply on the probe session before reading the
+   *  snapshot. Callers pass the model: an agent that derives one option's
+   *  choices from another's value (opencode lists `effort` per model) then
+   *  answers for the user's selection instead of its own default model. An
+   *  applied option still reports the agent's own pick as its `current_value`
+   *  (what it runs when left unset), so a "Default" label keeps naming the
+   *  agent's model rather than the selection. */
+  configValues?: Record<string, string> | null
 ): Promise<AgentOptionsSnapshot> {
   // The backend probe has its own 60s timeout (`ConnectionManager::
   // probe_agent_options`) plus 500ms grace + poll/serialization
@@ -5361,6 +5554,7 @@ export async function describeAgentOptions(
     {
       agentType,
       workingDir: workingDir ?? null,
+      configValues: configValues ?? null,
     },
     { timeoutMs: 70_000 }
   )
@@ -6086,4 +6280,20 @@ export async function forgeSettingsSet(
   settings: ForgePanelSettings | null
 ): Promise<ForgeSettingsStore> {
   return getTransport().call("forge_settings_set", { folderId, settings })
+}
+
+/** Where auto-processing stands for one folder: the last scan's report, the
+ *  next scheduled scan, the last webhook delivery. */
+export async function forgeAutoStatus(
+  folderId: number
+): Promise<ForgeAutoStatus> {
+  return getTransport().call("forge_auto_status", { folderId })
+}
+
+/** Scan one folder now with its SAVED rules, and get back what the scan did.
+ *  Resolves once the scan has finished. */
+export async function forgeAutoScanNow(
+  folderId: number
+): Promise<ForgeAutoScanReport> {
+  return getTransport().call("forge_auto_scan_now", { folderId })
 }

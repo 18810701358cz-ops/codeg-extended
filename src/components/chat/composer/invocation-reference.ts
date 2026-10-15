@@ -25,6 +25,16 @@ export function commandInvocationToken(name: string): string {
   return name.startsWith("$") ? name : `/${name}`
 }
 
+/**
+ * What the agent says goes after a command (codex `/review-branch` → `branch
+ * name`, claude `/mcp` → `[reconnect|enable|disable [<server>|all]]`), or
+ * `null` when it advertises nothing to type there. Menus show it beside the
+ * token; selecting the command still inserts the token alone.
+ */
+export function commandInputHint(cmd: AvailableCommandInfo): string | null {
+  return cmd.input_hint?.trim() || null
+}
+
 /** A `/`-triggered ACP slash command → command badge (`/name` — except a
  *  Codex skill-as-command named `$skill`, whose `$` moves into the prefix so it
  *  serializes to `$skill`, the token Codex actually executes). */
@@ -65,7 +75,7 @@ export function skillToReference(
  * prefix that agent triggers them by.
  */
 export function buildKnownInvocations(
-  commands: readonly AvailableCommandInfo[] | null | undefined,
+  commands: readonly Pick<AvailableCommandInfo, "name">[] | null | undefined,
   skills?: readonly AgentSkillItem[] | null,
   skillPrefix: InvocationPrefix = "/"
 ): KnownInvocations {

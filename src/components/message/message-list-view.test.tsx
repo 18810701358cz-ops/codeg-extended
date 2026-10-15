@@ -698,6 +698,18 @@ describe("markThreadTail", () => {
     expect(tailFlags(items)).toEqual([false, null])
   })
 
+  it("steps over a failed round's closing line", () => {
+    // A tail fork keeps everything up to the reply before the line, so the
+    // partial reply a failed turn left is still where "fork from here" lands.
+    const failure = assistantItem("err", {
+      role: "system",
+      parts: [{ type: "turn-error", message: "API Error: 503" }],
+    })
+    const items = [assistantItem("partial"), failure]
+    markThreadTail(items)
+    expect(tailFlags(items)).toEqual([true, false])
+  })
+
   it("steps over a trailing turn that renders nothing", () => {
     const items = [assistantItem("a"), assistantItem("empty", { parts: [] })]
     markThreadTail(items)

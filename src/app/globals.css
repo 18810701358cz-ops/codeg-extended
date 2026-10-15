@@ -9,6 +9,10 @@
 @import "@fontsource-variable/fira-code";
 @import "@fontsource-variable/geist-mono";
 @custom-variant dark (&:is(.dark *));
+/* json-render's shadcn components (the cards in components/message/
+   json-render-block.tsx) carry their Tailwind classes in node_modules, which
+   Tailwind v4 does not scan. */
+@source "../../node_modules/@json-render/shadcn/dist";
 
 :root {
   /* 默认界面字体 = Inter（与 DEFAULT_UI_FONT_ID = "inter" 一致，须等于
@@ -1043,6 +1047,20 @@
   font-size: 0.625rem; /* 10px @100% */
 }
 
+/* The chat column's max width: the user's dragged width (see
+   `ChatWidthHandles`), else 48rem (= the old `max-w-3xl`). Capped at the parent
+   minus `--chat-gutter` on each side — a relative ceiling, so it follows the
+   window, and the column never runs edge to edge (the conversation shell sets
+   the gutter, which keeps the drag handles off the window's resize border;
+   elsewhere it is 0). Shared by the transcript rows and the composer dock so
+   they stay aligned. */
+@utility chat-content-w {
+  max-width: min(
+    var(--chat-content-width, 48rem),
+    100% - 2 * var(--chat-gutter, 0px)
+  );
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -1684,6 +1702,27 @@
   }
 }
 
+/* Settings → Appearance → "Chat animations" off. <html> carries
+   `data-chat-animations="off"` (set by the pre-hydration script and by
+   `AppearanceProvider`); `.chat-motion-scope` wraps the conversation view in
+   `MessageListView`. Inside it every CSS animation and transition is dropped:
+   collapse/expand (the `animate-in/out` slides, the tool fade, the reply fold),
+   chevron rotations, pulse/typing dots, hover fades.
+
+   Safe for `instant-collapsible`: it reads `animationName` after the close
+   commits and, finding `none`, unmounts synchronously — the same path it takes
+   without any exit animation. `.animate-spin` is deliberately kept: a spinner is
+   the only "still working" cue left once the pulse and shimmer are gone, and
+   rotation is not the slow fade this switch is about. JS-driven motion (Shimmer,
+   smooth stick-to-bottom scrolling) reads the same setting via
+   `useChatAnimationsEnabled`. */
+[data-chat-animations="off"] .chat-motion-scope *:not(.animate-spin),
+[data-chat-animations="off"] .chat-motion-scope *:not(.animate-spin)::before,
+[data-chat-animations="off"] .chat-motion-scope *:not(.animate-spin)::after {
+  animation: none !important;
+  transition: none !important;
+}
+
 /* Welcome-page quick actions: the skill rail (see quick-actions.tsx). A plain
    horizontal scroller — paging is done by the two arrow buttons calling
    `scrollBy`, so nothing here animates. The native scrollbar is hidden: the row
@@ -1752,20 +1791,40 @@
 }
 
 /* Workspace panel show/hide slide. Toggling the left sidebar, right aux panel,
-   or bottom terminal recomputes the react-resizable-panels layout and snaps
-   each panel's `flex-grow` (0 ↔ N). FolderWorkspaceShell tags the affected
-   panel group with `.panel-slide-animating` for the duration of the toggle
-   only — never during handle drags or container/window resizes — so the
-   neighboring panes get pushed smoothly instead of jumping. The `>` child
-   combinator scopes the transition to the group's own panels, so a horizontal
-   (sidebar/aux) toggle never animates the nested vertical (terminal) group,
-   and vice versa. */
+   or bottom terminal snaps that panel's px `flex-basis` (0 ↔ N —
+   FolderWorkspaceShell pins those three panels in px over the
+   react-resizable-panels `flex-grow`, which the center / workspace pane still
+   carries). FolderWorkspaceShell tags the affected panel group with
+   `.panel-slide-animating` for the duration of the toggle only — never during
+   handle drags or container/window resizes — so the neighboring panes get
+   pushed smoothly instead of jumping. The `>` child combinator scopes the
+   transition to the group's own panels, so a horizontal (sidebar/aux) toggle
+   never animates the nested vertical (terminal) group, and vice versa. */
 .panel-slide-animating > [data-panel] {
-  transition: flex-grow 240ms ease-out;
+  transition:
+    flex-grow 240ms ease-out,
+    flex-basis 240ms ease-out;
 }
 
+/* The top strips' corner reserves (`ChromeReserve`) slide with the side
+   panels: a reserve that snapped in/out while its column was still sliding
+   made the tabs jump by the reserve's width and then slide back. Descendant
+   (not child) selector, since the reserves sit deep inside the shell's panels
+   — so it is pinned to the HORIZONTAL (sidebar/aux) group: the nested vertical
+   (terminal) group carries the same class while it slides, and no reserve
+   follows the terminal. Timing pinned to the panels' by
+   chrome-reserve-slide-source.test.ts. */
+.panel-slide-animating[data-panel-group-direction="horizontal"]
+  .chrome-reserve {
+  transition: width 240ms ease-out;
+}
+
+/* The reserve selector is repeated in full: a shorter one would lose to the
+   rule above on specificity and leave the reserves sliding. */
 @media (prefers-reduced-motion: reduce) {
-  .panel-slide-animating > [data-panel] {
+  .panel-slide-animating > [data-panel],
+  .panel-slide-animating[data-panel-group-direction="horizontal"]
+    .chrome-reserve {
     transition: none;
   }
 }
@@ -2996,5 +3055,27 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   }
   100% {
     transform: translateX(300%);
+  }
+}
+
+/* Computer use: the mark an agent's action leaves where it landed — a ring
+   that opens and fades, and the whole mark fading after it. */
+@keyframes computer-marker-ring {
+  0% {
+    transform: scale(0.4);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+@keyframes computer-marker-fade {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }

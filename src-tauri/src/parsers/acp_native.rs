@@ -29,6 +29,17 @@
 //! `session/load` replay have no such line (the agent replays only
 //! notifications), so there the boundary falls back to "a user message chunk
 //! starts a new turn" — which is exactly how the replay is structured.
+//!
+//! What a live transcript holds between a turn end and the next prompt is work
+//! the agent did on its own — a background job's follow-up, say. It projects
+//! as an assistant turn of its own, starting at its first update; the one
+//! exception is an update for a call an earlier turn started, which completes
+//! that turn's card instead (see `apply_update`).
+//!
+//! A message codeg delivered into a running turn (a native steer) is recorded
+//! as a prompt marked [`TranscriptEntry::steer`]. It splits the turn like a
+//! prompt does, into the reply before it, the message, and the reply to it,
+//! but the turn goes on to the same turn end.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -266,6 +277,14 @@ fn prompt_block_from_content(content: agent_client_protocol::schema::v1::Content
     }
 }
 
+/// Where tool calls are projected: a turn's blocks, plus the index of each
+/// call's `ToolUse` and `ToolResult` among them.
+struct ToolCards<'a> {
+    blocks: &'a mut Vec<ContentBlock>,
+    tool_use_index: &'a mut HashMap<String, usize>,
+    tool_result_index: &'a mut HashMap<String, usize>,
+}
+
 /// Accumulated state of one assistant turn under construction.
 #[derive(Default)]
 struct PendingTurn {
@@ -290,6 +309,17 @@ impl PendingTurn {
             started_at_ms: at_ms,
             last_at_ms: at_ms,
             ..Default::default()
+        }
+    }
+
+    /// This turn's tool-call cards, for [`upsert_tool_call`] to project into —
+    /// which gives the turn content.
+    fn tool_cards(&mut self) -> ToolCards<'_> {
+        self.has_content = true;
+        ToolCards {
+            blocks: &mut self.blocks,
+            tool_use_index: &mut self.tool_use_index,
+            tool_result_index: &mut self.tool_result_index,
         }
     }
 
@@ -400,12 +430,35 @@ pub fn project_turns(entries: &[TranscriptEntry]) -> Vec<MessageTurn> {
     // the next chunk's prose onto `[uri](uri)` would render one run-on
     // paragraph where the live path renders two.
     let mut user_prose_open = false;
+    // True from a recorded turn end to the next recorded prompt: the gap
+    // between two prompted turns, where everything recorded is work the agent
+    // did on its own. Never set in a replay, which has no turn ends.
+    let mut between_turns = false;
+    // Index in `turns` of the user turn of the prompt being answered: set by a
+    // recorded prompt, kept across the messages delivered into its turn (a
+    // steer), cleared at its turn end. Bounds how far back the turn end and a
+    // tool call's update may reach (see `apply_update`). Never set in a replay.
+    let mut prompt_start: Option<usize> = None;
+    // True from a steer to the end of the turn it was delivered into: the part
+    // under construction started at the steer, not at the turn's prompt.
+    let mut steered = false;
     let mut seq = 0usize;
 
     for entry in entries {
         match entry.k {
             EntryKind::Prompt => {
+                between_turns = false;
                 flush(&mut pending, &mut turns, &mut seq);
+                // A steer is a user message of its own, so it splits the turn
+                // like a prompt — the shape Claude Code's history draws, and
+                // the live view's — but the turn goes on: same prompt, same
+                // turn end.
+                if entry.steer {
+                    steered = true;
+                } else {
+                    steered = false;
+                    prompt_start = Some(turns.len());
+                }
                 let blocks = prompt_blocks(&entry.p);
                 turns.push(MessageTurn {
                     id: format!("acp-{seq}"),
@@ -427,13 +480,37 @@ pub fn project_turns(entries: &[TranscriptEntry]) -> Vec<MessageTurn> {
             }
             EntryKind::TurnEnd => {
                 if let Some(p) = pending.as_mut() {
-                    apply_turn_end(p, &entry.p);
+                    // After a steer, the part being closed started at the
+                    // steer, while `durationMs` spans the whole turn from its
+                    // prompt; the part's own span (`flush`) is the honest one.
+                    apply_turn_end(p, &entry.p, !steered);
                     p.last_at_ms = entry.t;
+                } else if steered {
+                    // Nothing came after the last steer, so the usage and model
+                    // the turn end reports go on the part before it — never on
+                    // a reply to an earlier prompt.
+                    if let Some(last) = turns
+                        .iter_mut()
+                        .skip(prompt_start.unwrap_or(usize::MAX))
+                        .rev()
+                        .find(|turn| matches!(turn.role, TurnRole::Assistant))
+                    {
+                        let (model, usage) = turn_end_model_and_usage(&entry.p);
+                        if model.is_some() {
+                            last.model = model;
+                        }
+                        if usage.is_some() {
+                            last.usage = usage;
+                        }
+                    }
                 }
                 flush(&mut pending, &mut turns, &mut seq);
                 prompt_just_recorded = false;
                 turn_start_hint = None;
                 user_prose_open = false;
+                between_turns = true;
+                steered = false;
+                prompt_start = None;
             }
             EntryKind::Update => {
                 // Deserialized from a BORROWED `&Value`, not a cloned one: this
@@ -451,6 +528,8 @@ pub fn project_turns(entries: &[TranscriptEntry]) -> Vec<MessageTurn> {
                 apply_update(
                     update,
                     entry.t,
+                    between_turns,
+                    prompt_start,
                     &mut pending,
                     &mut turns,
                     &mut seq,
@@ -486,20 +565,33 @@ fn flush(pending: &mut Option<PendingTurn>, turns: &mut Vec<MessageTurn>, seq: &
     *seq += 1;
 }
 
-fn apply_turn_end(pending: &mut PendingTurn, payload: &serde_json::Value) {
-    if let Some(ms) = payload.get("durationMs").and_then(|v| v.as_u64()) {
-        pending.duration_ms = Some(ms);
-    }
-    if let Some(model) = payload.get("model").and_then(|v| v.as_str()) {
-        if !model.is_empty() {
-            pending.model = Some(model.to_string());
+/// Close the open part of a turn with what its turn end reports. `whole_turn`
+/// is false when the part started at a steer rather than at the turn's prompt:
+/// the recorded duration then spans more than this part and is left out.
+fn apply_turn_end(pending: &mut PendingTurn, payload: &serde_json::Value, whole_turn: bool) {
+    if whole_turn {
+        if let Some(ms) = payload.get("durationMs").and_then(|v| v.as_u64()) {
+            pending.duration_ms = Some(ms);
         }
     }
-    if let Some(usage) = payload.get("usage") {
-        if let Some(parsed) = parse_usage(usage) {
-            pending.usage = Some(parsed);
-        }
+    let (model, usage) = turn_end_model_and_usage(payload);
+    if model.is_some() {
+        pending.model = model;
     }
+    if usage.is_some() {
+        pending.usage = usage;
+    }
+}
+
+/// The model and the usage a turn end reports, when it reports them.
+fn turn_end_model_and_usage(payload: &serde_json::Value) -> (Option<String>, Option<TurnUsage>) {
+    let model = payload
+        .get("model")
+        .and_then(|v| v.as_str())
+        .filter(|model| !model.is_empty())
+        .map(str::to_string);
+    let usage = payload.get("usage").and_then(parse_usage);
+    (model, usage)
 }
 
 /// Read an ACP usage object. Field names follow the `unstable_session_usage`
@@ -531,6 +623,8 @@ fn parse_usage(value: &serde_json::Value) -> Option<TurnUsage> {
 fn apply_update(
     update: SessionUpdate,
     at_ms: u64,
+    between_turns: bool,
+    prompt_start: Option<usize>,
     pending: &mut Option<PendingTurn>,
     turns: &mut Vec<MessageTurn>,
     seq: &mut usize,
@@ -631,7 +725,7 @@ fn apply_update(
             let id = tc.tool_call_id.to_string();
             let status = format!("{:?}", tc.status).to_lowercase();
             upsert_tool_call(
-                p,
+                p.tool_cards(),
                 &id,
                 Some(tc.title.clone()),
                 tc.raw_input.as_ref(),
@@ -642,13 +736,59 @@ fn apply_update(
             );
         }
         SessionUpdate::ToolCallUpdate(tcu) => {
+            let id = tcu.tool_call_id.to_string();
+            let status = tcu.fields.status.map(|s| format!("{s:?}").to_lowercase());
+            // An update for a call the open part of the turn did not start can
+            // still belong to a card already drawn:
+            //
+            // * Between turns, a call an EARLIER turn started, finishing after
+            //   that turn ended (a command that went to the background, say).
+            //   Its card is in the turn that opened it, and the live view draws
+            //   nothing for the update itself, so it completes that card rather
+            //   than opening a turn with a second card for the same call.
+            // * Inside a turn, a call this prompt's turn started before a
+            //   message split it — a steer, or a user chunk echoed mid-turn: a
+            //   command the steer sent to the background reporting back, or a
+            //   streamed call the steer cut off failing at the turn's end. The
+            //   live view keeps one card per call across such a split and
+            //   updates it in place, so the update goes back to that card.
+            //
+            // Inside a turn the search never reaches past the prompt that
+            // opened it: the live view draws an update from an earlier turn's
+            // call as a card of the running turn, so there it stays one.
+            let held_by_open_turn = pending
+                .as_ref()
+                .is_some_and(|p| p.tool_use_index.contains_key(&id));
+            let reach = if between_turns { Some(0) } else { prompt_start };
+            if let Some(reach) = reach.filter(|_| !held_by_open_turn) {
+                let closed = turns
+                    .iter_mut()
+                    .skip(reach)
+                    .rev()
+                    .find_map(|turn| closed_tool_card(turn, &id).map(|slots| (turn, slots)));
+                if let Some((turn, (mut uses, mut results))) = closed {
+                    upsert_tool_call(
+                        ToolCards {
+                            blocks: &mut turn.blocks,
+                            tool_use_index: &mut uses,
+                            tool_result_index: &mut results,
+                        },
+                        &id,
+                        tcu.fields.title.clone(),
+                        tcu.fields.raw_input.as_ref(),
+                        tcu.fields.content.as_deref().unwrap_or(&[]),
+                        tcu.fields.raw_output.as_ref(),
+                        status.as_deref(),
+                        tcu.meta.clone().map(serde_json::Value::Object),
+                    );
+                    return;
+                }
+            }
             *prompt_just_recorded = false;
             let p = open_turn!();
             p.last_at_ms = at_ms;
-            let id = tcu.tool_call_id.to_string();
-            let status = tcu.fields.status.map(|s| format!("{s:?}").to_lowercase());
             upsert_tool_call(
-                p,
+                p.tool_cards(),
                 &id,
                 tcu.fields.title.clone(),
                 tcu.fields.raw_input.as_ref(),
@@ -688,13 +828,44 @@ fn content_block_text(block: &agent_client_protocol::schema::v1::ContentBlock) -
     }
 }
 
+/// Where `id`'s card sits in a turn that is already closed, as the index maps
+/// [`upsert_tool_call`] patches through — `None` when the turn has no card for
+/// it. A closed turn keeps no index of its own, and only an update for a call
+/// the open part did not start ever asks, so the turn's blocks are searched
+/// instead.
+fn closed_tool_card(
+    turn: &MessageTurn,
+    id: &str,
+) -> Option<(HashMap<String, usize>, HashMap<String, usize>)> {
+    let mut uses = HashMap::new();
+    let mut results = HashMap::new();
+    for (index, block) in turn.blocks.iter().enumerate() {
+        match block {
+            ContentBlock::ToolUse {
+                tool_use_id: Some(use_id),
+                ..
+            } if use_id == id => {
+                uses.insert(id.to_string(), index);
+            }
+            ContentBlock::ToolResult {
+                tool_use_id: Some(result_id),
+                ..
+            } if result_id == id => {
+                results.insert(id.to_string(), index);
+            }
+            _ => {}
+        }
+    }
+    (!uses.is_empty()).then_some((uses, results))
+}
+
 /// Insert or patch one tool call's `ToolUse` / `ToolResult` pair.
 ///
 /// Uses the same input/output/image projection as the live path so a tool call
 /// looks identical whether it is streaming or reloaded from disk.
 #[allow(clippy::too_many_arguments)]
 fn upsert_tool_call(
-    pending: &mut PendingTurn,
+    cards: ToolCards<'_>,
     id: &str,
     title: Option<String>,
     raw_input: Option<&serde_json::Value>,
@@ -703,9 +874,12 @@ fn upsert_tool_call(
     status: Option<&str>,
     meta: Option<serde_json::Value>,
 ) {
-    pending.has_content = true;
-    let own_input =
-        json_value_to_text(&raw_input.cloned()).filter(|t| !t.trim().is_empty());
+    let ToolCards {
+        blocks,
+        tool_use_index,
+        tool_result_index,
+    } = cards;
+    let own_input = json_value_to_text(&raw_input.cloned()).filter(|t| !t.trim().is_empty());
     let synthesized_edit = if own_input.is_none() {
         synthesize_edit_input_from_diffs(content)
     } else {
@@ -720,14 +894,14 @@ fn upsert_tool_call(
         .collect();
     let is_error = status == Some("failed");
 
-    match pending.tool_use_index.get(id).copied() {
+    match tool_use_index.get(id).copied() {
         Some(idx) => {
             if let Some(ContentBlock::ToolUse {
                 tool_name,
                 input_preview: existing_input,
                 meta: existing_meta,
                 ..
-            }) = pending.blocks.get_mut(idx)
+            }) = blocks.get_mut(idx)
             {
                 if let Some(t) = title.filter(|t| !t.is_empty()) {
                     *tool_name = t;
@@ -741,8 +915,8 @@ fn upsert_tool_call(
             }
         }
         None => {
-            pending.tool_use_index.insert(id.to_string(), pending.blocks.len());
-            pending.blocks.push(ContentBlock::ToolUse {
+            tool_use_index.insert(id.to_string(), blocks.len());
+            blocks.push(ContentBlock::ToolUse {
                 tool_use_id: Some(id.to_string()),
                 // ACP has no tool *name* channel — `title` is what the agent
                 // chose to display, and it is what the frontend classifier
@@ -760,14 +934,14 @@ fn upsert_tool_call(
     if output.is_none() && images.is_empty() && !is_error {
         return;
     }
-    match pending.tool_result_index.get(id).copied() {
+    match tool_result_index.get(id).copied() {
         Some(idx) => {
             if let Some(ContentBlock::ToolResult {
                 output_preview,
                 is_error: existing_error,
                 images: existing_images,
                 ..
-            }) = pending.blocks.get_mut(idx)
+            }) = blocks.get_mut(idx)
             {
                 if output.is_some() {
                     *output_preview = output;
@@ -779,10 +953,8 @@ fn upsert_tool_call(
             }
         }
         None => {
-            pending
-                .tool_result_index
-                .insert(id.to_string(), pending.blocks.len());
-            pending.blocks.push(ContentBlock::ToolResult {
+            tool_result_index.insert(id.to_string(), blocks.len());
+            blocks.push(ContentBlock::ToolResult {
                 tool_use_id: Some(id.to_string()),
                 output_preview: output,
                 is_error,
@@ -876,7 +1048,12 @@ mod tests {
     use crate::acp_transcript::{TranscriptEntry, TranscriptHeader};
 
     fn entry(t: u64, k: EntryKind, p: serde_json::Value) -> TranscriptEntry {
-        TranscriptEntry { t, k, p }
+        TranscriptEntry {
+            t,
+            k,
+            p,
+            steer: false,
+        }
     }
 
     fn update(t: u64, p: serde_json::Value) -> TranscriptEntry {
@@ -1328,6 +1505,176 @@ mod tests {
         }
     }
 
+    fn turn_end(t: u64) -> TranscriptEntry {
+        entry(
+            t,
+            EntryKind::TurnEnd,
+            serde_json::json!({"stopReason": "end_turn"}),
+        )
+    }
+
+    fn started_job(t: u64) -> TranscriptEntry {
+        update(
+            t,
+            serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "job-1",
+                "title": "Bash",
+                "kind": "execute",
+                "status": "in_progress",
+                "rawInput": { "command": "sleep 30 && echo done" }
+            }),
+        )
+    }
+
+    fn job_done(t: u64, id: &str) -> TranscriptEntry {
+        update(
+            t,
+            serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": id,
+                "status": "completed",
+                "content": [
+                    { "type": "content", "content": { "type": "text", "text": "done" } }
+                ]
+            }),
+        )
+    }
+
+    /// `(kind, id, text)` per block: enough to tell which card a result joined.
+    fn block_outline(turn: &MessageTurn) -> Vec<(&'static str, String, String)> {
+        turn.blocks
+            .iter()
+            .map(|b| match b {
+                ContentBlock::Text { text } => ("text", String::new(), text.clone()),
+                ContentBlock::ToolUse {
+                    tool_use_id,
+                    tool_name,
+                    ..
+                } => (
+                    "call",
+                    tool_use_id.clone().unwrap_or_default(),
+                    tool_name.clone(),
+                ),
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    output_preview,
+                    ..
+                } => (
+                    "result",
+                    tool_use_id.clone().unwrap_or_default(),
+                    output_preview.clone().unwrap_or_default(),
+                ),
+                other => panic!("unexpected block {other:?}"),
+            })
+            .collect()
+    }
+
+    /// Issue #903: what the agent does between a turn end and the next prompt
+    /// (a background job's follow-up) is a turn of its own, spanning its own
+    /// updates — not part of the turn before, nor of the prompt after.
+    #[test]
+    fn a_turn_the_agent_runs_between_prompts_is_its_own_turn() {
+        let turns = project_turns(&[
+            prompt(1_000, "start the job"),
+            update(1_100, text_chunk("agent_message_chunk", "Started.")),
+            turn_end(1_200),
+            update(5_000, text_chunk("agent_message_chunk", "The job ")),
+            update(5_400, text_chunk("agent_message_chunk", "finished.")),
+            prompt(9_000, "thanks"),
+            update(9_100, text_chunk("agent_message_chunk", "Welcome.")),
+        ]);
+        let roles: Vec<String> = turns.iter().map(|t| format!("{:?}", t.role)).collect();
+        assert_eq!(
+            roles,
+            ["User", "Assistant", "Assistant", "User", "Assistant"]
+        );
+        let own = &turns[2];
+        assert_eq!(
+            block_outline(own),
+            [("text", String::new(), "The job finished.".to_string())]
+        );
+        assert_eq!(own.timestamp, epoch_ms_to_utc(5_000));
+        assert_eq!(own.completed_at, Some(epoch_ms_to_utc(5_400)));
+        assert_eq!(own.duration_ms, Some(400));
+    }
+
+    /// A call that outlives its turn (a command moved to the background)
+    /// reports its completion between turns. That completes the card its turn
+    /// drew — the live view draws nothing for the update — instead of opening a
+    /// turn with a second card for the same call; and it neither stretches the
+    /// closed turn nor starts the agent's next one.
+    #[test]
+    fn a_late_completion_between_turns_completes_the_card_its_turn_drew() {
+        let turns = project_turns(&[
+            prompt(1_000, "run it in the background"),
+            started_job(1_100),
+            update(1_200, text_chunk("agent_message_chunk", "Started.")),
+            turn_end(1_300),
+            job_done(5_000, "job-1"),
+            update(5_100, text_chunk("agent_message_chunk", "It finished.")),
+            prompt(9_000, "thanks"),
+        ]);
+        assert_eq!(turns.len(), 4, "{turns:#?}");
+        assert_eq!(
+            block_outline(&turns[1]),
+            [
+                ("call", "job-1".to_string(), "Bash".to_string()),
+                ("text", String::new(), "Started.".to_string()),
+                ("result", "job-1".to_string(), "done".to_string()),
+            ]
+        );
+        assert_eq!(turns[1].completed_at, Some(epoch_ms_to_utc(1_300)));
+        assert_eq!(
+            block_outline(&turns[2]),
+            [("text", String::new(), "It finished.".to_string())]
+        );
+        assert_eq!(turns[2].timestamp, epoch_ms_to_utc(5_100));
+    }
+
+    /// The between-turns rule is scoped to where the live view draws nothing.
+    /// Inside a later turn it draws the update as a card of the running turn,
+    /// so history does too; and a call no turn ever drew still gets its card.
+    #[test]
+    fn a_completion_for_a_card_no_closed_turn_holds_draws_where_it_lands() {
+        let in_a_later_turn = project_turns(&[
+            prompt(1_000, "run it in the background"),
+            started_job(1_100),
+            turn_end(1_300),
+            prompt(2_000, "and now?"),
+            job_done(2_100, "job-1"),
+            update(2_200, text_chunk("agent_message_chunk", "Done.")),
+            turn_end(2_300),
+        ]);
+        assert_eq!(
+            block_outline(&in_a_later_turn[1]),
+            [("call", "job-1".to_string(), "Bash".to_string())]
+        );
+        assert_eq!(
+            block_outline(&in_a_later_turn[3]),
+            [
+                ("call", "job-1".to_string(), "tool".to_string()),
+                ("result", "job-1".to_string(), "done".to_string()),
+                ("text", String::new(), "Done.".to_string()),
+            ]
+        );
+
+        let never_drawn = project_turns(&[
+            prompt(1_000, "hi"),
+            update(1_100, text_chunk("agent_message_chunk", "Hello.")),
+            turn_end(1_200),
+            job_done(5_000, "job-9"),
+        ]);
+        assert_eq!(never_drawn.len(), 3, "{never_drawn:#?}");
+        assert_eq!(
+            block_outline(&never_drawn[2]),
+            [
+                ("call", "job-9".to_string(), "tool".to_string()),
+                ("result", "job-9".to_string(), "done".to_string()),
+            ]
+        );
+    }
+
     /// A `delegate_to_agent` call from the codeg-mcp companion must replay
     /// under its wire name. The frontend's tool-kind classifier
     /// (`isAgentLikeToolName`) recognizes `delegate_to_agent` across host
@@ -1526,6 +1873,278 @@ mod tests {
             ContentBlock::Text { text } => assert_eq!(text, "more"),
             other => panic!("expected text, got {other:?}"),
         }
+    }
+
+    /// A message codeg delivered into the running turn (a native steer).
+    fn steer(t: u64, text: &str) -> TranscriptEntry {
+        TranscriptEntry {
+            steer: true,
+            ..prompt(t, text)
+        }
+    }
+
+    fn reported_turn_end(t: u64, duration_ms: u64) -> TranscriptEntry {
+        entry(
+            t,
+            EntryKind::TurnEnd,
+            serde_json::json!({
+                "stopReason": "end_turn",
+                "durationMs": duration_ms,
+                "model": "claude-sonnet-5-5",
+                "usage": { "inputTokens": 10, "outputTokens": 5 }
+            }),
+        )
+    }
+
+    fn roles(turns: &[MessageTurn]) -> Vec<String> {
+        turns.iter().map(|t| format!("{:?}", t.role)).collect()
+    }
+
+    /// #892: a steer splits its turn into the reply before it, the steer as a
+    /// user turn, and the reply to it — the shape Claude Code's own history
+    /// draws. The turn end's `durationMs` spans the whole turn from its prompt,
+    /// so the part after the steer is timed from the steer instead; the usage
+    /// and model the turn end reports go on that part as they would on the
+    /// whole turn.
+    #[test]
+    fn a_steer_splits_its_turn_and_times_each_part_by_its_own_span() {
+        let turns = project_turns(&[
+            prompt(1_000, "build the page"),
+            update(1_500, text_chunk("agent_message_chunk", "Building.")),
+            steer(2_000, "make it blue"),
+            update(2_600, text_chunk("agent_message_chunk", "Blue it is.")),
+            reported_turn_end(3_000, 1_990),
+        ]);
+        assert_eq!(roles(&turns), ["User", "Assistant", "User", "Assistant"]);
+        assert_eq!(
+            block_outline(&turns[2]),
+            [("text", String::new(), "make it blue".to_string())]
+        );
+        assert_eq!(turns[2].timestamp, epoch_ms_to_utc(2_000));
+        assert_eq!(turns[1].duration_ms, Some(500));
+        assert_eq!(turns[1].usage, None);
+        assert_eq!(turns[3].duration_ms, Some(1_000));
+        assert_eq!(turns[3].completed_at, Some(epoch_ms_to_utc(3_000)));
+        assert_eq!(turns[3].model.as_deref(), Some("claude-sonnet-5-5"));
+        assert_eq!(turns[3].usage.as_ref().map(|u| u.output_tokens), Some(5));
+
+        // Each steer starts a part of its own.
+        let twice = project_turns(&[
+            prompt(1_000, "build the page"),
+            update(1_200, text_chunk("agent_message_chunk", "Building.")),
+            steer(2_000, "make it blue"),
+            update(2_300, text_chunk("agent_message_chunk", "Blue.")),
+            steer(3_000, "and bigger"),
+            update(3_400, text_chunk("agent_message_chunk", "Bigger.")),
+            reported_turn_end(4_000, 2_990),
+        ]);
+        let durations: Vec<Option<u64>> = twice.iter().map(|t| t.duration_ms).collect();
+        assert_eq!(
+            durations,
+            [None, Some(200), None, Some(300), None, Some(1_000)]
+        );
+
+        // Without a steer the turn end's duration stands.
+        let plain = project_turns(&[
+            prompt(1_000, "build the page"),
+            update(1_500, text_chunk("agent_message_chunk", "Built.")),
+            reported_turn_end(3_000, 1_990),
+        ]);
+        assert_eq!(plain[1].duration_ms, Some(1_990));
+    }
+
+    /// A steer that lands after the reply's last frame leaves nothing for the
+    /// turn end to close. Its usage and model then go on the reply before the
+    /// steer — and never on the reply to an earlier prompt.
+    #[test]
+    fn a_turn_end_after_a_trailing_steer_reports_on_the_reply_before_it() {
+        let turns = project_turns(&[
+            prompt(1_000, "build the page"),
+            update(1_500, text_chunk("agent_message_chunk", "Built.")),
+            steer(2_000, "make it blue"),
+            steer(2_100, "and bigger"),
+            reported_turn_end(2_500, 1_490),
+        ]);
+        assert_eq!(roles(&turns), ["User", "Assistant", "User", "User"]);
+        assert_eq!(turns[1].duration_ms, Some(500));
+        assert_eq!(turns[1].model.as_deref(), Some("claude-sonnet-5-5"));
+        assert_eq!(turns[1].usage.as_ref().map(|u| u.input_tokens), Some(10));
+
+        let silent = project_turns(&[
+            prompt(1_000, "hello"),
+            update(1_100, text_chunk("agent_message_chunk", "Hi.")),
+            turn_end(1_200),
+            prompt(2_000, "build the page"),
+            steer(2_500, "make it blue"),
+            reported_turn_end(3_000, 990),
+        ]);
+        assert_eq!(roles(&silent), ["User", "Assistant", "User", "User"]);
+        assert_eq!(silent[1].usage, None);
+        assert_eq!(silent[1].model, None);
+    }
+
+    /// A call the reply started before a steer can report after it: a command
+    /// the steer sent to the background reporting back, or a streamed call the
+    /// steer cut off failing at the turn's end. The live view keeps one card per
+    /// call and updates it in place, so the update goes back to that card
+    /// instead of drawing a second one after the steer.
+    #[test]
+    fn an_update_after_a_steer_goes_back_to_the_card_before_it() {
+        let backgrounded = project_turns(&[
+            prompt(1_000, "build the page"),
+            started_job(1_100),
+            update(1_200, text_chunk("agent_message_chunk", "Building.")),
+            steer(2_000, "make it blue"),
+            job_done(2_100, "job-1"),
+            update(2_200, text_chunk("agent_message_chunk", "Blue it is.")),
+            turn_end(3_000),
+        ]);
+        assert_eq!(
+            roles(&backgrounded),
+            ["User", "Assistant", "User", "Assistant"]
+        );
+        assert_eq!(
+            block_outline(&backgrounded[1]),
+            [
+                ("call", "job-1".to_string(), "Bash".to_string()),
+                ("text", String::new(), "Building.".to_string()),
+                ("result", "job-1".to_string(), "done".to_string()),
+            ]
+        );
+        assert_eq!(
+            block_outline(&backgrounded[3]),
+            [("text", String::new(), "Blue it is.".to_string())]
+        );
+
+        let cut_off = project_turns(&[
+            prompt(1_000, "build the page"),
+            started_job(1_100),
+            steer(2_000, "make it blue"),
+            update(2_200, text_chunk("agent_message_chunk", "Blue it is.")),
+            update(
+                2_900,
+                serde_json::json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "job-1",
+                    "status": "failed",
+                    "content": [{ "type": "content", "content": {
+                        "type": "text", "text": "Claude stopped this tool call before it ran."
+                    } }]
+                }),
+            ),
+            turn_end(3_000),
+        ]);
+        assert_eq!(
+            block_outline(&cut_off[1]),
+            [
+                ("call", "job-1".to_string(), "Bash".to_string()),
+                (
+                    "result",
+                    "job-1".to_string(),
+                    "Claude stopped this tool call before it ran.".to_string()
+                ),
+            ]
+        );
+        assert_eq!(
+            block_outline(&cut_off[3]),
+            [("text", String::new(), "Blue it is.".to_string())]
+        );
+    }
+
+    /// The reach back stops at the prompt that opened the running turn: an
+    /// update from an earlier turn's call is drawn by the live view as a card
+    /// of the running turn, so it stays one. A user chunk the agent echoes
+    /// mid-turn splits a turn the way a steer does, and the update goes back
+    /// across it as well — the live view draws no user chunk at all and keeps
+    /// the card where it was. A replay records no prompts, so nothing reaches
+    /// back there.
+    #[test]
+    fn an_update_reaches_back_only_within_the_running_prompts_turn() {
+        let earlier_turn = project_turns(&[
+            prompt(1_000, "run it in the background"),
+            started_job(1_100),
+            turn_end(1_300),
+            prompt(2_000, "make it blue"),
+            steer(2_100, "and bigger"),
+            job_done(2_200, "job-1"),
+            turn_end(2_300),
+        ]);
+        assert_eq!(
+            block_outline(&earlier_turn[1]),
+            [("call", "job-1".to_string(), "Bash".to_string())]
+        );
+        assert_eq!(
+            block_outline(&earlier_turn[4]),
+            [
+                ("call", "job-1".to_string(), "tool".to_string()),
+                ("result", "job-1".to_string(), "done".to_string()),
+            ]
+        );
+
+        let echoed = project_turns(&[
+            prompt(1_000, "build the page"),
+            started_job(1_100),
+            update(1_200, text_chunk("user_message_chunk", "make it blue")),
+            update(1_300, text_chunk("agent_message_chunk", "Blue it is.")),
+            job_done(1_400, "job-1"),
+            turn_end(1_500),
+        ]);
+        assert_eq!(roles(&echoed), ["User", "Assistant", "User", "Assistant"]);
+        assert_eq!(
+            block_outline(&echoed[1]),
+            [
+                ("call", "job-1".to_string(), "Bash".to_string()),
+                ("result", "job-1".to_string(), "done".to_string()),
+            ]
+        );
+
+        let replay = project_turns(&[
+            update(1_000, text_chunk("user_message_chunk", "build the page")),
+            started_job(1_100),
+            update(1_200, text_chunk("user_message_chunk", "make it blue")),
+            job_done(1_300, "job-1"),
+        ]);
+        assert_eq!(roles(&replay), ["User", "Assistant", "User", "Assistant"]);
+        assert_eq!(
+            block_outline(&replay[3]),
+            [
+                ("call", "job-1".to_string(), "tool".to_string()),
+                ("result", "job-1".to_string(), "done".to_string()),
+            ]
+        );
+    }
+
+    /// A transcript written before steers were marked has no mid-turn prompt
+    /// to mark — but an unmarked prompt still opens a turn of its own, as it
+    /// always did.
+    #[test]
+    fn an_unmarked_prompt_still_opens_a_turn() {
+        let turns = project_turns(&[
+            prompt(1_000, "first"),
+            update(1_100, text_chunk("agent_message_chunk", "One.")),
+            prompt(2_000, "second"),
+            update(2_100, text_chunk("agent_message_chunk", "Two.")),
+            reported_turn_end(3_000, 777),
+        ]);
+        assert_eq!(roles(&turns), ["User", "Assistant", "User", "Assistant"]);
+        assert_eq!(turns[3].duration_ms, Some(777));
+    }
+
+    /// The marker is a field only a steer carries: an ordinary entry writes it
+    /// not at all, so files stay as they were, and a reader that predates it
+    /// reads a steer as an ordinary prompt.
+    #[test]
+    fn the_steer_marker_is_written_only_on_steers() {
+        let plain = serde_json::to_value(prompt(1, "hi")).unwrap();
+        assert!(plain.get("s").is_none(), "{plain}");
+        let marked = serde_json::to_value(steer(1, "hi")).unwrap();
+        assert_eq!(marked["s"], serde_json::json!(true));
+        let read: TranscriptEntry = serde_json::from_value(marked).unwrap();
+        assert!(read.steer);
+        let legacy: TranscriptEntry =
+            serde_json::from_str(r#"{"t":1,"k":"prompt","p":[{"type":"text","text":"hi"}]}"#)
+                .unwrap();
+        assert!(!legacy.steer);
     }
 
     #[test]

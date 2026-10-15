@@ -15,6 +15,7 @@ import {
   type SidebarConversationListHandle,
 } from "./sidebar-conversation-list"
 import type { DbConversationSummary, FolderDetail } from "@/lib/types"
+import type { TagFilter } from "@/lib/conversation-tags"
 import {
   resetAppWorkspaceStore,
   useAppWorkspaceStore,
@@ -1684,5 +1685,96 @@ describe("SidebarConversationList — folder groups", () => {
     expect(title.className).toContain("text-sidebar-foreground/75")
     expect(title.className).not.toContain("folder-title-tint")
     expect(title.getAttribute("style")).toBeNull()
+  })
+})
+
+describe("SidebarConversationList — tag filter", () => {
+  // Rendered with its own filter prop; the provider stays mounted so `t` is
+  // stable, exactly like `tree()`.
+  const filterHarness: { set: (f: TagFilter) => void } = { set: () => {} }
+  function FilteredHarness({ initial }: { initial: TagFilter }) {
+    const [filter, setFilter] = useState(initial)
+    useEffect(() => {
+      filterHarness.set = setFilter
+    }, [])
+    return (
+      <SidebarConversationList
+        showCompleted
+        sortMode="created"
+        tagFilter={filter}
+      />
+    )
+  }
+  const filtered = (initial: TagFilter) => (
+    <NextIntlClientProvider locale="en" messages={enMessages}>
+      <FilteredHarness initial={initial} />
+    </NextIntlClientProvider>
+  )
+
+  beforeEach(() => {
+    probes.card = 0
+    probes.folder = 0
+    store.activeTabId = null
+    store.tabSpec = []
+    const folders = [folder(1, "Folder 1"), folder(2, "Folder 2")]
+    useAppWorkspaceStore.setState({
+      folders,
+      allFolders: folders,
+      conversations: [
+        conv(11, 1, { tag_ids: [5] }),
+        conv(12, 1),
+        conv(21, 2, { tag_ids: [6] }),
+        conv(31, 9, { kind: "chat" }),
+      ],
+    })
+  })
+
+  const shownIds = (container: HTMLElement) =>
+    [...container.querySelectorAll("[data-conversation-id]")].map((el) =>
+      Number(el.getAttribute("data-conversation-id"))
+    )
+
+  it("shows only matching conversations and drops folders with no match", () => {
+    const { container, getByText } = render(
+      filtered({ tagIds: [5], mode: "any" })
+    )
+    expect(shownIds(container)).toEqual([11])
+    expect(container.querySelector('[data-folder-id="1"]')).not.toBeNull()
+    expect(container.querySelector('[data-folder-id="2"]')).toBeNull()
+    // The Chat section is still there, saying why it is empty.
+    expect(getByText("No conversations with these tags")).toBeTruthy()
+  })
+
+  it("matches all selected tags in all mode", () => {
+    useAppWorkspaceStore.setState({
+      conversations: [
+        conv(11, 1, { tag_ids: [5, 6] }),
+        conv(12, 1, { tag_ids: [5] }),
+      ],
+    })
+    const { container } = render(filtered({ tagIds: [5, 6], mode: "all" }))
+    expect(shownIds(container)).toEqual([11])
+  })
+
+  it("puts every folder back once the filter is cleared", () => {
+    const { container } = render(filtered({ tagIds: [5], mode: "any" }))
+    act(() => filterHarness.set({ tagIds: [], mode: "any" }))
+    expect(shownIds(container).sort()).toEqual([11, 12, 21, 31])
+    expect(container.querySelector('[data-folder-id="2"]')).not.toBeNull()
+  })
+
+  it("still re-renders only the changed card under an active filter", () => {
+    render(filtered({ tagIds: [5, 6], mode: "any" }))
+    const prev = useAppWorkspaceStore.getState().conversations
+    const next = prev.slice()
+    const idx = next.findIndex((c) => c.id === 21)
+    next[idx] = { ...next[idx], status: "completed" }
+    probes.card = 0
+    probes.folder = 0
+    act(() => {
+      useAppWorkspaceStore.setState({ conversations: next })
+    })
+    expect(probes.card).toBe(1)
+    expect(probes.folder).toBe(0)
   })
 })

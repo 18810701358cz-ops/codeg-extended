@@ -37,6 +37,11 @@ import {
   type SessionConfigOptionInfo,
 } from "@/lib/types"
 import { getAgentLabel, isCustomAgentType } from "@/lib/custom-agents"
+import {
+  deriveModelGroups,
+  modelListGroups,
+  type ModelOptionGroup,
+} from "@/lib/model-config-groups"
 import { describeAgentOptions } from "@/lib/api"
 import { useAcpAgents } from "@/hooks/use-acp-agents"
 import { useAgentVocabulary } from "@/hooks/use-agent-vocabulary"
@@ -80,20 +85,35 @@ interface CachedSnapshot {
   ts: number
 }
 const SNAPSHOT_TTL_MS = 30_000
-const snapshotCache = new Map<AgentType, CachedSnapshot>()
+// Keyed by (agent, model): an agent that derives one option's choices from
+// another's value (opencode lists `effort` per model) answers differently per
+// model, so a cached snapshot for one model must not serve another.
+const snapshotCache = new Map<string, CachedSnapshot>()
 
-function readCache(agent: AgentType): AgentOptionsSnapshot | null {
-  const entry = snapshotCache.get(agent)
+function snapshotKey(agent: AgentType, model: string | null): string {
+  return JSON.stringify([agent, model])
+}
+
+function readCache(
+  agent: AgentType,
+  model: string | null
+): AgentOptionsSnapshot | null {
+  const key = snapshotKey(agent, model)
+  const entry = snapshotCache.get(key)
   if (!entry) return null
   if (Date.now() - entry.ts > SNAPSHOT_TTL_MS) {
-    snapshotCache.delete(agent)
+    snapshotCache.delete(key)
     return null
   }
   return entry.snapshot
 }
 
-function writeCache(agent: AgentType, snapshot: AgentOptionsSnapshot): void {
-  snapshotCache.set(agent, { snapshot, ts: Date.now() })
+function writeCache(
+  agent: AgentType,
+  model: string | null,
+  snapshot: AgentOptionsSnapshot
+): void {
+  snapshotCache.set(snapshotKey(agent, model), { snapshot, ts: Date.now() })
 }
 
 export interface DelegationAgentDefaultsPanelProps {
@@ -133,43 +153,58 @@ export function DelegationAgentDefaultsPanel({
   const [error, setError] = useState<string | null>(null)
   const reqIdRef = useRef(0)
 
-  const loadSnapshot = useCallback(async (agent: AgentType, force: boolean) => {
-    if (!force) {
-      const cached = readCache(agent)
-      if (cached) {
-        setLoaded({ agent, snapshot: cached })
-        setError(null)
-        setLoading(false)
-        return
+  const loadSnapshot = useCallback(
+    async (agent: AgentType, model: string | null, force: boolean) => {
+      // Bump FIRST so a cache hit also invalidates a probe still in flight for
+      // the previous (agent, model) — otherwise that probe's late answer would
+      // replace the snapshot just shown for the current one.
+      const reqId = ++reqIdRef.current
+      if (!force) {
+        const cached = readCache(agent, model)
+        if (cached) {
+          setLoaded({ agent, snapshot: cached })
+          setError(null)
+          setLoading(false)
+          return
+        }
       }
-    }
-    const reqId = ++reqIdRef.current
-    setLoading(true)
-    setError(null)
-    setLoaded(null)
-    try {
-      const fresh = await describeAgentOptions(agent)
-      if (reqIdRef.current !== reqId) return
-      writeCache(agent, fresh)
-      setLoaded({ agent, snapshot: fresh })
-    } catch (err: unknown) {
-      if (reqIdRef.current !== reqId) return
-      setError(toErrorMessage(err))
-    } finally {
-      if (reqIdRef.current === reqId) setLoading(false)
-    }
-  }, [])
+      setLoading(true)
+      setError(null)
+      setLoaded(null)
+      try {
+        const fresh = await describeAgentOptions(
+          agent,
+          null,
+          model ? { model } : null
+        )
+        if (reqIdRef.current !== reqId) return
+        writeCache(agent, model, fresh)
+        setLoaded({ agent, snapshot: fresh })
+      } catch (err: unknown) {
+        if (reqIdRef.current !== reqId) return
+        setError(toErrorMessage(err))
+      } finally {
+        if (reqIdRef.current === reqId) setLoading(false)
+      }
+    },
+    []
+  )
+
+  // The model currently selected for this agent (its saved override). The
+  // probe applies it so option lists an agent derives per model — opencode's
+  // `effort` — answer for THAT model instead of the agent's own default.
+  const probeModel = value[selectedAgent]?.config_values?.model ?? null
 
   useEffect(() => {
-    // Debounce so rapid tab clicks (which would each fire a real probe
-    // — even with backend serialization, each one still spawns the CLI)
-    // collapse into a single load. Cancelling on cleanup means the
-    // *last* tab the user lands on wins, not the first.
+    // Debounce so rapid tab clicks / model changes (each would fire a real
+    // probe — even with backend serialization, each one still spawns the
+    // CLI) collapse into a single load. Cancelling on cleanup means the
+    // *last* (agent, model) the user lands on wins, not the first.
     const handle = window.setTimeout(() => {
-      void loadSnapshot(selectedAgent, false)
+      void loadSnapshot(selectedAgent, probeModel, false)
     }, TAB_SWITCH_DEBOUNCE_MS)
     return () => window.clearTimeout(handle)
-  }, [selectedAgent, loadSnapshot])
+  }, [selectedAgent, probeModel, loadSnapshot])
 
   const updateAgentDefaults = useCallback(
     (agent: AgentType, next: AgentDelegationDefaults | null) => {
@@ -264,7 +299,9 @@ export function DelegationAgentDefaultsPanel({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => void loadSnapshot(selectedAgent, true)}
+                onClick={() =>
+                  void loadSnapshot(selectedAgent, probeModel, true)
+                }
               >
                 {t("retry")}
               </Button>
@@ -408,6 +445,40 @@ function ModeRow({
   )
 }
 
+/**
+ * The agent's own default as the "Agent default" hint names it. It keeps the
+ * option's unstripped name, which already carries the provider when the agent
+ * writes names as `Provider/model`. A bare name that another option also uses
+ * (two providers both listing `glm-5` under `provider/glm-5` ids) is
+ * qualified with the provider header its row is grouped under. A value the
+ * agent does not list reads as itself.
+ *
+ * The backend ships the flat `options` for grouped selects too, so this
+ * lookup covers both shapes.
+ */
+function agentDefaultHintLabel(
+  option: SessionConfigOptionInfo,
+  value: string
+): string {
+  if (option.kind.type !== "select") return value
+  const options = option.kind.options
+  const own = options.find((o) => o.value === value)
+  if (!own) return value
+  const sharedName = options.some(
+    (o) => o.value !== value && o.name === own.name
+  )
+  if (!sharedName) return own.name
+  for (const group of deriveModelGroups(option) ?? []) {
+    const row = group.options.find((o) => o.value === value)
+    if (!row) continue
+    // A stripped row's own name already starts with its header.
+    return group.name !== null && row.name === own.name
+      ? `${group.name}/${own.name}`
+      : own.name
+  }
+  return own.name
+}
+
 interface ConfigOptionRowProps {
   option: SessionConfigOptionInfo
   overrideValue: string | null
@@ -424,13 +495,26 @@ function ConfigOptionRow({
   const t = useTranslations("AcpAgentSettings.multiAgent")
   if (option.kind.type !== "select") return null
 
-  const allOptions =
-    option.kind.groups.length > 0
-      ? option.kind.groups.flatMap((g) => g.options)
-      : option.kind.options
+  // Same grouping the composer's model picker uses (`modelListGroups`):
+  // values carrying a `provider/` prefix group under their provider, with
+  // the shared provider prefix stripped from each row. Some agents serve
+  // ids as `provider/model` (two providers can offer the SAME model id), so
+  // a flat list of bare model names is ambiguous — here the provider becomes
+  // a group header and the rows stay clean. Non-model options keep their
+  // server groups, else render flat — behavior unchanged for them.
+  const groups: ModelOptionGroup[] = modelListGroups(option)
   const agentDefault = option.kind.current_value
-  const agentDefaultLabel =
-    allOptions.find((o) => o.value === agentDefault)?.name ?? agentDefault
+  // The hint names the agent's own default with the provider in it — no
+  // group header stands beside the hint to supply it.
+  const agentDefaultLabel = agentDefaultHintLabel(option, agentDefault)
+  // The sentinel/trigger resolve against the RENDERED rows so the selected
+  // model shows its prefix-stripped name, exactly as the composer's selector
+  // shows it. In the open list the group headers name the provider; the hint
+  // names the default's.
+  const agentDefaultRenderedLabel =
+    groups
+      .flatMap((group) => group.options)
+      .find((o) => o.value === agentDefault)?.name ?? agentDefaultLabel
   // When no override exists, the trigger shows the Default sentinel item
   // so the user can tell "I'm inheriting" apart from "I picked the
   // agent's current default explicitly" — the latter would stick to that
@@ -455,27 +539,32 @@ function ConfigOptionRow({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={DEFAULT_SENTINEL}>
-            {t("defaultOptionLabel", { value: agentDefaultLabel })}
+            {t("defaultOptionLabel", { value: agentDefaultRenderedLabel })}
           </SelectItem>
-          {option.kind.groups.length > 0
-            ? option.kind.groups.map((group) => (
-                <SelectGroup key={group.group}>
-                  <SelectLabel>{group.name}</SelectLabel>
-                  {group.options.map((item) => (
-                    <SelectItem
-                      key={`${group.group}-${item.value}`}
-                      value={item.value}
-                    >
-                      {item.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              ))
-            : option.kind.options.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
+          {groups.map((group) =>
+            group.name === null ? (
+              group.options.map((item) => (
+                <SelectItem
+                  key={`${group.key}-${item.value}`}
+                  value={item.value}
+                >
                   {item.name}
                 </SelectItem>
-              ))}
+              ))
+            ) : (
+              <SelectGroup key={group.key}>
+                <SelectLabel>{group.name}</SelectLabel>
+                {group.options.map((item) => (
+                  <SelectItem
+                    key={`${group.key}-${item.value}`}
+                    value={item.value}
+                  >
+                    {item.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )
+          )}
         </SelectContent>
       </Select>
     </div>

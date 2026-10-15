@@ -132,6 +132,21 @@ export interface AgentExecutionStats {
   lines_removed?: number | null
   other_tool_count?: number | null
   tool_calls?: AgentToolCall[]
+  /** The child's thinking/text/tool activity in arrival order, from the same
+   *  transcript pass that produced `tool_calls` (Rust mirror:
+   *  `AgentExecutionStats.timeline`; a `tool_call` entry's `childIndex`
+   *  anchors into `tool_calls` at the same ordinal). Lets the settled card
+   *  replay the child's mixed timeline when the live transcript is gone. */
+  timeline?: AgentTranscriptEntry[]
+  /** What the child's task file filed as its outcome (Qoder): for a
+   *  `status: "completed"` run, its final report, recovered after the parent
+   *  turn died before the async result was delivered (the card's tool_result
+   *  is then an error); other statuses file an error message or a
+   *  placeholder. Rendered ONLY on an errored card whose `status` is
+   *  `completed` — a normally completed async child delivered its result via
+   *  the notification turn, so this field stays invisible there (display
+   *  policy lives in the card, parsers attach it blindly). */
+  recovered_result?: string
   /** The child's own session id, when the sub-agent ran as a standalone session
    *  on disk instead of as chunks folded into the parent (Grok: every
    *  `spawn_subagent` child). Drives the Agent card's "open the sub-agent's
@@ -141,15 +156,27 @@ export interface AgentExecutionStats {
 }
 
 /**
- * One entry of a live subagent transcript (LIVE-only — never persisted, never
- * emitted by the Rust parsers). Entries arrive pre-merged: the reducer/backend
- * split blocks only at kind/attribution boundaries, so consecutive same-kind
- * chunks of one subagent are a single growing entry.
+ * One entry of a subagent transcript. Two data sources share this shape: the
+ * LIVE channel (a running capsule's stream; entries arrive pre-merged — the
+ * reducer/backend split blocks only at kind/attribution boundaries, so
+ * consecutive same-kind chunks of one subagent are a single growing entry)
+ * and history (`AgentExecutionStats.timeline`, parsed from the child's own
+ * JSONL by the Rust parsers — one entry per thinking/text/tool block, in
+ * arrival order).
  */
-export interface AgentTranscriptEntry {
-  type: "text" | "thinking"
-  text: string
-}
+export type AgentTranscriptEntry =
+  | { type: "text" | "thinking"; text: string }
+  | {
+      /**
+       * A marker into the mixed timeline: the child's OWN tool call, keeping
+       * its chronological position among the prose around it. `childIndex` is
+       * the call's ordinal among this parent's children — `agent_stats.
+       * tool_calls` carries no ids, and both lists are appended in the same
+       * arrival pass, so the ordinal is exact.
+       */
+      type: "tool_call"
+      childIndex: number
+    }
 
 /**
  * Image payload shared across `ContentBlock::Image` /
@@ -234,17 +261,26 @@ export type ContentBlock =
        */
       images?: ImageData[] | null
       /**
-       * Frontend-only, LIVE-stream data (same doctrine as the `plan` block:
-       * never persisted, never emitted by the Rust JSONL parsers). The
-       * in-flight transcript of a Claude native subagent — text/thinking
-       * chunks attributed to this Agent tool call via
+       * LIVE-stream data: the in-flight transcript of a native subagent —
+       * a marker per child tool call, plus (Claude Code only) the text/
+       * thinking chunks attributed to this Agent tool call via
        * `_meta.claudeCode.parentToolUseId` (claude-agent-acp ≥0.63) —
-       * rendered inside the live Agent capsule. Detached at settle:
-       * history shows the parsed `agent_stats` shape only.
+       * rendered inside the live Agent capsule. Still attached at settle so
+       * the finished card keeps the interleaved order it showed live; once
+       * history reloads from disk, the parsed `agent_stats.timeline` takes
+       * over as the card's timeline source.
        */
       agent_transcript?: AgentTranscriptEntry[] | null
     }
   | { type: "thinking"; text: string }
+  /**
+   * The turn FAILED, in the agent's own words. Mirror of Rust
+   * `ContentBlock::TurnError`: a parser puts it alone in a `system` turn
+   * closing the round, and the live stream does the same with the failure the
+   * adapter reported (`buildStreamingTurnsFromLiveMessage`). Drawn as one muted
+   * line, never as a reply.
+   */
+  | { type: "turn_error"; message: string }
   /**
    * Frontend-only, LIVE-stream synthetic block. It is NEVER persisted and
    * NEVER emitted by the Rust JSONL parsers — the persisted plan path is a
@@ -454,6 +490,51 @@ export type FolderGroupChange =
 export const FOLDER_GROUP_CHANGED_EVENT = "folder-group://changed"
 
 /**
+ * A conversation tag: a label (name + one colour) the user can put on
+ * conversations, several per conversation.
+ *
+ * `folder_id` is the tag's scope: `null` for a GLOBAL tag, offered on every
+ * conversation (chat-mode ones included); otherwise the ROOT folder that owns
+ * it, offered only on that folder's conversations and its worktrees'. A
+ * worktree child never owns tags — creating one there lands on its root.
+ *
+ * `color` is always a normalized `#rrggbb`; both theme treatments are derived
+ * from it (see `tagChipStyle`). `sort_order` is the position within the scope.
+ */
+export interface ConversationTagDetail {
+  id: number
+  folder_id: number | null
+  name: string
+  color: string
+  sort_order: number
+}
+
+/**
+ * The branch tag: every conversation's `git_branch` drawn as a chip beside its
+ * tags — whether at all, and in which colour (normalized `#rrggbb`). One
+ * setting for the whole app. Mirrors the Rust `ConversationBranchTag`.
+ */
+export interface ConversationBranchTag {
+  enabled: boolean
+  color: string
+}
+
+/**
+ * Payload for `conversation-tag://changed` — tag DEFINITIONS, plus the branch
+ * tag setting. Which tags a conversation carries rides on
+ * `conversation://changed` instead (the summary's `tag_ids`). `reordered`
+ * carries nothing on purpose: re-read the list. Mirrors the Rust
+ * `ConversationTagChange` (serde `tag = "kind"`).
+ */
+export type ConversationTagChange =
+  | { kind: "upsert"; tag: ConversationTagDetail }
+  | { kind: "deleted"; id: number }
+  | { kind: "reordered" }
+  | { kind: "branch_tag"; setting: ConversationBranchTag }
+
+export const CONVERSATION_TAG_CHANGED_EVENT = "conversation-tag://changed"
+
+/**
  * Result of `createChatConversation`: the new conversation id plus the hidden
  * chat folder backing it, so the caller can drop the folder straight into
  * `allFolders` (resolving cwd / active-folder) without a refetch.
@@ -516,6 +597,14 @@ export interface DbConversationSummary {
    *  worktree path it originally ran in. Drives the "source worktree removed"
    *  badge. */
   origin_cwd?: string | null
+  /**
+   * Ids of the {@link ConversationTagDetail tags} on this conversation,
+   * ascending. Absent when it has none (the backend omits an empty list). May
+   * name a tag this client has already seen deleted — the tag-deleted broadcast
+   * is not followed by per-conversation upserts — so always resolve ids against
+   * the tag store and skip unknown ones rather than trusting the count.
+   */
+  tag_ids?: number[]
 }
 
 /** Payload for the global `conversation://changed` side-channel that keeps
@@ -905,6 +994,13 @@ export interface DbConversationDetail {
   /** Assistant turns in `full[0..turns_offset)` (baseline globalization). */
   assistant_turns_before_offset?: number | null
   /**
+   * User turns in `full[0..turns_offset)`: the messages above the loaded
+   * window, which the message navigator counts without loading them. Absent
+   * from servers that predate the navigator outline
+   * (`getFolderConversationOutline`), so it doubles as that capability flag.
+   */
+  user_turns_before_offset?: number | null
+  /**
    * Structural fingerprint of `full[0..turns_offset)` as a fixed-width 16-hex
    * string (a raw u64 JSON number would be rounded past 2^53-1). Compared on
    * window refreshes to detect prefix rewrites (compaction), and used as the
@@ -927,12 +1023,29 @@ export interface ConversationTurnsPage {
   turns_offset: number
   turns_total: number
   assistant_turns_before_offset: number
+  /** User turns in `full[0..turns_offset)`; absent from older servers. */
+  user_turns_before_offset?: number | null
   /** H(0..turns_offset) — adopted as the window fingerprint after a prepend. */
   prefix_hash: string
   /** H(0..min(beforeIndex, total)) — must equal the client's current window
    *  fingerprint for the page to legally join the loaded window. */
   prefix_hash_before_index: string
   uncovered_prefix_max_ts?: string | null
+}
+
+/**
+ * The message navigator's outline of the history above the loaded window:
+ * `full[0..min(beforeIndex, total))`, one entry per turn (`turns[i]` is
+ * global turn `i`), each cut down by the backend to what
+ * `extractSessionFilesGrouped` reads — so it indexes exactly like the full
+ * turns would. Ids, roles and timestamps are kept, so any prefix of it can be
+ * fingerprinted and checked against the window before it is used.
+ */
+export interface ConversationOutline {
+  turns: MessageTurn[]
+  turns_total: number
+  /** H(0..turns.length). */
+  prefix_hash: string
 }
 
 export type ConversationStatus =
@@ -2156,6 +2269,100 @@ export interface ForgePanelSettings {
   /** Standing instructions appended after a scenario's built-in wording,
    *  keyed by scenario id plus the reserved `all` (every scenario). */
   scenario_prompts: Record<string, string>
+  /** Auto-processing for this scope. Always sent by the backend; optional here
+   *  because a blob from a build that predates it has none, which reads as
+   *  auto-processing off. */
+  auto?: ForgeAutoSettings
+}
+
+/** Auto-processing of one scope — mirrors `forge::settings::ForgeAutoSettings`.
+ *
+ *  Matching OPEN items become tasks, each at most once, picked up by a
+ *  schedule, a webhook, or both. Rule patterns are case-insensitive and `*`
+ *  matches any run of characters (`area/*`, `*[bot]`); exclusions always win
+ *  over inclusions. */
+export interface ForgeAutoSettings {
+  /** Scan the repository on a timer. */
+  schedule: boolean
+  /** Minutes between scheduled scans (1–1440; clamped server-side). */
+  interval_minutes: number
+  /** Scan as soon as the forge delivers a webhook for the repository. */
+  webhook: boolean
+  /** What the forge signs deliveries with. Generated on save when the webhook
+   *  is on and none is set; kept when it is switched off. */
+  webhook_secret: string | null
+  issues: boolean
+  pull_requests: boolean
+  /** Scenario an automatic issue task runs; null = the kind's default. */
+  issue_scenario: string | null
+  pr_scenario: string | null
+  include_labels: string[]
+  exclude_labels: string[]
+  include_authors: string[]
+  exclude_authors: string[]
+  skip_drafts: boolean
+  /** Queue the task as soon as it exists (subject to the folder's concurrency
+   *  limit) instead of leaving it in To-do. */
+  auto_start: boolean
+  /** Comment the outcome back on the item when the task finishes. */
+  writeback: boolean
+  /** Also pick up items already open, untouched, before switch-on. */
+  include_existing: boolean
+  /** When auto-processing was switched on (ISO). SERVER-STAMPED — a value
+   *  sent from here is ignored. */
+  enabled_at: string | null
+}
+
+/** What set an auto-processing scan off. */
+export type ForgeAutoTrigger = "schedule" | "webhook" | "manual"
+
+/** Why a listed item was passed over — the first rule that ruled it out. */
+export type ForgeAutoSkip =
+  | "kind"
+  | "not_open"
+  | "draft"
+  | "excluded_label"
+  | "excluded_author"
+  | "missing_label"
+  | "author_not_included"
+
+/** One scan's report — mirrors `forge::auto::ScanReport`. */
+export interface ForgeAutoScanReport {
+  trigger: ForgeAutoTrigger
+  started_at: string
+  finished_at: string
+  /** Why the scan stopped before it could look at anything. */
+  error: string | null
+  /** The window's start; null = every open item. */
+  since: string | null
+  examined: number
+  matched: number
+  already_handled: number
+  created: {
+    number: number
+    is_pr: boolean
+    title: string
+    task_id: number
+    started: boolean
+    start_error: string | null
+  }[]
+  failed: { number: number; is_pr: boolean; error: string }[]
+  skipped: Partial<Record<ForgeAutoSkip, number>>
+  /** The listing hit its page bound; the next scan re-reads the same window. */
+  truncated: boolean
+}
+
+/** Where auto-processing stands for one folder — mirrors
+ *  `forge::auto::ForgeAutoStatus`. In-memory on the backend: a restart starts
+ *  the record afresh. */
+export interface ForgeAutoStatus {
+  /** False in a codeg that does not run auto-processing (another process
+   *  holds the task engine for this data directory). */
+  available: boolean
+  scanning: boolean
+  last_scan: ForgeAutoScanReport | null
+  next_scan_at: string | null
+  last_delivery_at: string | null
 }
 
 /** Every scope of the panel's preferences — mirrors
@@ -2482,8 +2689,10 @@ export interface ToolCallImageWire {
  * launch card in-memory (rewriting its `[[codeg-background-task]]` marker via
  * `resolveBackgroundTask`) instead of a `refetchDetail` — which double-rendered
  * the #870-held turn and raced the transcript's last write. `tool_use_id` is
- * the launching tool call's id (`toolu_…`), NOT `task_id`; absent for a
- * background shell (no marker card to flip).
+ * the launching tool call's id (`toolu_…`), NOT `task_id`. A background shell's
+ * notification names its `Bash` call too, whose card has no marker to flip (the
+ * store leaves it alone); absent when the notification names no call (an MCP
+ * call moved to the background).
  */
 export interface BackgroundSettledInfo {
   task_id: string
@@ -2747,8 +2956,10 @@ export type AcpEvent =
        * `"session_unavailable"`, `"session_archived"`, or `"session_busy"`.
        *
        * The first three mean the session is gone. `"session_busy"` does not —
-       * another live session holds it (codex keeps the parent thread's writer
-       * after a fork), and it clears when that one closes.
+       * another live holder has it open (another Codex client — the app, the
+       * CLI or an IDE extension — or, for about a minute after a fork, the
+       * forking session, until codex unloads the parent it closed), and it
+       * clears when that one lets go.
        */
       code: string
     }
@@ -4535,15 +4746,24 @@ export interface TerminalEvent {
    *  snapshot already contains (`seq <= snapshot.seq`). Absent on the exit
    *  event, which carries no output. */
   seq?: number
+  generation?: string
 }
 
-/** Recent output of a live terminal plus the cursor it was read at. `alive`
- *  false means no such terminal is running — the caller should spawn one
- *  rather than attach. */
+/** Recent output of a live or completed terminal.
+ *  When `alive` is false, `exists` distinguishes retained final output
+ *  from a missing session. */
 export interface TerminalSnapshot {
+  /** False after a backend restart or explicit close. Absent on old servers. */
+  exists?: boolean
+  /** Process exit code when a completed PTY reported one. */
+  exit_code?: number | null
+  generation?: string | null
   alive: boolean
   data: string
   seq: number
+  /** The PTY's size, which `data` was laid out for. Absent on old servers. */
+  cols?: number | null
+  rows?: number | null
 }
 
 export interface TokenBreakdown {
@@ -4680,6 +4900,8 @@ export interface OpenCodeCatalogModel {
   context: number | null
   cost_in: number | null
   cost_out: number | null
+  cost_cache_read: number | null
+  cost_cache_write: number | null
 }
 
 /**

@@ -195,9 +195,10 @@ pub(crate) fn apply_custom_version_to_url(
     url.replace(registry_version, custom_version)
 }
 
-/// Check whether an NPX agent command is spawnable.
-/// Uses PATH first, then falls back to the current npm global prefix to handle
-/// GUI environments that don't inherit the user's shell PATH.
+/// Check whether an NPX agent command is spawnable, by the same lookup as
+/// [`resolve_npx_command`]: PATH, then `~/.local/bin`, then the current npm
+/// global prefix. The fallbacks handle GUI environments that don't inherit the
+/// user's shell PATH.
 pub(crate) async fn is_cmd_available(cmd: &str) -> bool {
     resolve_npx_command(cmd).await.is_some()
 }
@@ -212,17 +213,17 @@ pub(crate) fn resolve_command_on_path(cmd: &str) -> Option<PathBuf> {
 /// cached — the managed cache always wins, the system CLI only fills the
 /// gap, mirroring how npx agents already prefer a PATH install at launch.
 /// Checks PATH first, then `~/.local/bin` — a common install-script target
-/// a macOS GUI app's PATH typically lacks.
+/// a macOS GUI app's PATH typically lacks. [`resolve_npx_command`] runs these
+/// same two steps before the npm global prefix, so an npx agent's official
+/// installer copy (Hermes) is found the same way.
 pub(crate) fn resolve_system_agent_binary(cmd: &str) -> Option<PathBuf> {
     if let Some(path) = resolve_command_on_path(cmd) {
         return Some(path);
     }
-    let exe = if cfg!(windows) {
-        format!("{cmd}.exe")
-    } else {
-        cmd.to_string()
-    };
-    let cand = home_dir_or_default().join(".local").join("bin").join(exe);
+    let cand = home_dir_or_default()
+        .join(".local")
+        .join("bin")
+        .join(binary_cache::executable_file_name(cmd));
     cand.is_file().then_some(cand)
 }
 
@@ -238,11 +239,7 @@ pub(crate) fn resolve_system_agent_binary_for(agent_type: AgentType, cmd: &str) 
     if let Some(path) = resolve_system_agent_binary(cmd) {
         return Some(path);
     }
-    let exe = if cfg!(windows) {
-        format!("{cmd}.exe")
-    } else {
-        cmd.to_string()
-    };
+    let exe = binary_cache::executable_file_name(cmd);
     let home = home_dir_or_default();
     registry::binary_system_dirs(agent_type).iter().find_map(|dir| {
         let cand = home.join(dir).join(&exe);
@@ -256,14 +253,11 @@ pub(crate) fn resolve_system_agent_binary_for(agent_type: AgentType, cmd: &str) 
 /// it doesn't speak ACP" instead of a bare "not installed".
 ///
 /// Widest resolution of the three probes, because a false negative here loses
-/// the most convincing evidence: PATH + the npm global prefix (the GUI-PATH-gap
-/// fallback `resolve_npx_command` already implements), then `~/.local/bin` via
-/// [`resolve_system_agent_binary`], then the vendor installers' own dirs.
+/// the most convincing evidence: everything [`resolve_npx_command`] checks
+/// (PATH, `~/.local/bin`, the npm global prefix), then the vendor installers'
+/// own dirs.
 pub(crate) async fn resolve_vendor_cli(cmd: &str, extra_dirs: &[&str]) -> Option<PathBuf> {
     if let Some(path) = resolve_npx_command(cmd).await {
-        return Some(path);
-    }
-    if let Some(path) = resolve_system_agent_binary(cmd) {
         return Some(path);
     }
     let exe = if cfg!(windows) {
@@ -405,8 +399,19 @@ async fn prewarm_uvx_agent(
     Ok(())
 }
 
+/// Resolve an npx agent's command the way connect, launch, status and
+/// diagnostics all see it: PATH, then `~/.local/bin` (both via
+/// [`resolve_system_agent_binary`]), then the current npm global prefix.
+///
+/// Both fallbacks cover an app PATH that lacks the user's shell PATH.
+/// `~/.local/bin` goes first on purpose: when neither copy is on the app's
+/// PATH, a vendor's official installer copy (which targets `~/.local/bin`)
+/// beats an npm copy, as it typically does in a terminal where the installer
+/// put `~/.local/bin` first on PATH. See the Hermes "Launch preference" note
+/// in `acp/registry.rs`. [`NpxCommandResolver::resolve_for_list`] must keep
+/// the same order.
 pub(crate) async fn resolve_npx_command(cmd: &str) -> Option<PathBuf> {
-    if let Some(path) = resolve_command_on_path(cmd) {
+    if let Some(path) = resolve_system_agent_binary(cmd) {
         return Some(path);
     }
     resolve_npx_command_from_current_npm_prefix(cmd).await
@@ -424,7 +429,7 @@ impl NpxCommandResolver {
             return cached.clone();
         }
 
-        let resolved = if let Some(path) = resolve_command_on_path(cmd) {
+        let resolved = if let Some(path) = resolve_system_agent_binary(cmd) {
             Some(path)
         } else {
             let prefix = if let Some(prefix) = &self.request_npm_prefix {
@@ -920,6 +925,24 @@ fn parse_node_major(v: &str) -> Option<u64> {
     v.trim().trim_start_matches('v').split('.').next()?.parse().ok()
 }
 
+/// Whether the active Node.js `current` (`v20.11.1` / `20.11.1`) meets an
+/// agent's floor `required`, or `None` when either version is unreadable.
+///
+/// Compared on the whole `major.minor.patch`, as the launch preflight does
+/// (`acp::preflight::parse_node_version`), so the two never disagree. They did
+/// when this read majors only: a floor inside a major — codex-acp 2.2's 20.3.0,
+/// which is where `AbortSignal.any` (called on every prompt) first exists,
+/// Kimi's 22.19.0, OpenClaw's 24.16.0 — passed Node 20.2 / 22.18 / 24.15 here
+/// while preflight's `node_version` check failed them. Majors are only the
+/// fallback for a version that does not parse whole.
+fn node_meets_requirement(current: &str, required: &str) -> Option<bool> {
+    use crate::acp::preflight::parse_node_version;
+    if let (Some(cur), Some(req)) = (parse_node_version(current), parse_node_version(required)) {
+        return Some(cur >= req);
+    }
+    Some(parse_node_major(current)? >= parse_node_major(required)?)
+}
+
 /// Compare the user's login-shell PATH against the app PATH. Unix-only; on
 /// Windows it returns a note (npm bins there are `.cmd` in the prefix root and a
 /// robust login-shell probe is out of scope for v1).
@@ -1261,18 +1284,26 @@ fn compute_verdict(inp: &DiagInputs) -> DiagnosticsVerdict {
     }
 
     if let (Some(req), Some(ver)) = (agent.node_required.as_deref(), inp.node.version.as_deref()) {
-        if let (Some(rmaj), Some(nmaj)) = (parse_node_major(req), parse_node_major(ver)) {
-            if nmaj < rmaj {
-                return diag_verdict(
-                    DiagLevel::Fail,
-                    "node_too_old",
-                    "The active Node.js is older than this agent requires.",
-                );
-            }
+        if node_meets_requirement(ver, req) == Some(false) {
+            return diag_verdict(
+                DiagLevel::Fail,
+                "node_too_old",
+                "The active Node.js is older than this agent requires.",
+            );
         }
     }
 
     if agent.resolve_npx.is_none() {
+        if agent.db_version.is_none()
+            && agent.detected_version.is_none()
+            && inp.terminal.cmd_resolved.is_some()
+        {
+            return diag_verdict(
+                DiagLevel::Fail,
+                "terminal_only_path",
+                "The command resolves in your terminal but not in the app process — a GUI PATH gap.",
+            );
+        }
         // An ACP adapter agent that was never installed is the single most
         // reported "bug": the user has the vendor CLI and reads "not installed"
         // as codeg failing to see it. Answer the question they're actually
@@ -1500,9 +1531,7 @@ fn build_report(
                 .node
                 .version
                 .as_deref()
-                .and_then(parse_node_major)
-                .zip(parse_node_major(req))
-                .map(|(n, r)| n >= r)
+                .and_then(|ver| node_meets_requirement(ver, req))
                 .unwrap_or(true);
             checks.push(diag_check(
                 "node_required",
@@ -1733,6 +1762,51 @@ mod diagnostics_tests {
     }
 
     #[test]
+    fn verdict_terminal_only_path_without_npm_evidence() {
+        let mut inp = base_inputs();
+        inp.agent = Some(AgentDiag {
+            name: "Hermes Agent".to_string(),
+            cmd: "hermes".to_string(),
+            distribution: "npx",
+            ..Default::default()
+        });
+        inp.terminal.cmd_resolved = Some("/Users/u/.local/bin/hermes".to_string());
+        let v = compute_verdict(&inp);
+        assert_eq!(v.code, "terminal_only_path");
+        assert_eq!(v.level, DiagLevel::Fail);
+    }
+
+    // That no-record check sits after the Node checks, so Node problems are
+    // still reported first, as for every npx agent...
+    #[test]
+    fn verdict_node_missing_outranks_terminal_only_path() {
+        let mut inp = DiagInputs {
+            agent: Some(AgentDiag {
+                name: "Hermes Agent".to_string(),
+                cmd: "hermes".to_string(),
+                distribution: "npx",
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        inp.terminal.cmd_resolved = Some("/Users/u/.local/bin/hermes".to_string());
+        assert_eq!(compute_verdict(&inp).code, "node_missing");
+    }
+
+    // ...and before the adapter explainer: when the adapter's OWN command
+    // resolves in the login shell, the adapter is installed, so "the adapter
+    // is not installed" would be wrong.
+    #[test]
+    fn verdict_terminal_only_path_outranks_adapter_explainer() {
+        let mut inp = base_inputs();
+        inp.agent = Some(adapter_agent_never_installed(Some(
+            "/opt/homebrew/bin/codex",
+        )));
+        inp.terminal.cmd_resolved = Some("/Users/u/bin/codex-acp".to_string());
+        assert_eq!(compute_verdict(&inp).code, "terminal_only_path");
+    }
+
+    #[test]
     fn verdict_node_too_old() {
         let mut inp = base_inputs();
         inp.node.version = Some("v18.19.0".to_string());
@@ -1741,6 +1815,40 @@ mod diagnostics_tests {
         a.resolve_npx = Some("/x/codex-acp".to_string()); // resolves, but node too old
         inp.agent = Some(a);
         assert_eq!(compute_verdict(&inp).code, "node_too_old");
+    }
+
+    // The floor is a full version, and diagnostics must read it the way the
+    // launch preflight does: codex-acp 2.2 needs 20.3.0 (`AbortSignal.any`),
+    // so a Node 20.2 that resolves the command is still too old.
+    #[test]
+    fn verdict_node_too_old_within_the_required_major() {
+        let mut inp = base_inputs();
+        inp.node.version = Some("v20.2.0".to_string());
+        let mut a = agent_installed_unresolved();
+        a.node_required = Some("20.3.0".to_string());
+        a.resolve_npx = Some("/x/codex-acp".to_string());
+        inp.agent = Some(a);
+        assert_eq!(compute_verdict(&inp).code, "node_too_old");
+
+        inp.node.version = Some("v20.3.0".to_string());
+        assert_eq!(compute_verdict(&inp).code, "ok");
+    }
+
+    #[test]
+    fn node_requirement_compares_whole_versions() {
+        assert_eq!(node_meets_requirement("v20.2.0", "20.3.0"), Some(false));
+        assert_eq!(node_meets_requirement("v20.3.0", "20.3.0"), Some(true));
+        assert_eq!(node_meets_requirement("v20.19.1", "20.3.0"), Some(true));
+        assert_eq!(node_meets_requirement("v22.18.0", "22.19.0"), Some(false));
+        assert_eq!(node_meets_requirement("v24.0.0", "22.19.0"), Some(true));
+        assert_eq!(
+            node_meets_requirement("v22.0.0-nightly", "22.0.0"),
+            Some(true)
+        );
+        // A version without its patch still compares by major.
+        assert_eq!(node_meets_requirement("v20", "20.3.0"), Some(true));
+        assert_eq!(node_meets_requirement("v18", "20.3.0"), Some(false));
+        assert_eq!(node_meets_requirement("unknown", "20.3.0"), None);
     }
 
     #[test]
@@ -2091,7 +2199,8 @@ async fn system_probed_version_with(
     let mut version = None;
     if let Some(probe) = declared_probe {
         // The declared probe is a full command line (`agent-cli --version`);
-        // its program resolves like an agent command (PATH, then npm prefix).
+        // its program resolves like an agent command (PATH, then
+        // `~/.local/bin`, then npm prefix).
         let mut parts = probe.split_whitespace();
         if let Some(program) = parts.next() {
             let args: Vec<String> = parts.map(str::to_string).collect();
@@ -4933,10 +5042,14 @@ const KIMI_SYNTHETIC_TOKEN_ACCESS: &str = "codeg-local-gate";
 /// past session's model id to draw a gauge, while this one is the budget codeg DECLARES
 /// for a bring-your-own provider whose model is unknown — the managed block routes to
 /// any of the six interface types, so the model behind it may be GPT or Claude, not a
-/// Kimi model at all. Kimi spends the declared number rather than checking it (a live
-/// run with this default emits `llm.request.maxTokens = 262144` and
-/// `usage_update {size: 262144}`), so it is the compaction budget, not a fact about the
-/// model. Users on a bigger window raise it in the config panel.
+/// Kimi model at all. Kimi spends the declared number rather than checking it: a live
+/// run with this default reports `usage_update {size: 262144}`, so it is the
+/// compaction budget, not a fact about the model. Up to 2.1.1 Kimi also turned it
+/// into the request's output cap (`llm.request.maxTokens = 262144`), which an
+/// OpenAI-compatible server rejects when it is above the model's own output limit.
+/// From 2.2.0 it no longer sets the cap: an `openai` / `openai_responses` block
+/// sends none, and a `kimi` block caps output at this window minus the context in
+/// use. Users on a bigger window raise it in the config panel.
 const KIMI_DEFAULT_MAX_CONTEXT_SIZE: i64 = 262_144;
 /// The six native provider `type` values Kimi accepts in `[providers.<name>]`.
 const KIMI_INTERFACE_TYPES: &[&str] = &[
@@ -8021,14 +8134,14 @@ fn shell_join(argv: &[String]) -> String {
 
 /// The argv for Hermes's `--setup` and `model` flows: a `hermes` CLI on PATH
 /// by bare name (official installer or an npm global bin on PATH — the short
-/// form reads best in guidance), else the npm-prefix-resolved absolute path
-/// (an npm install whose bin dir is NOT on the terminal's PATH must be
-/// addressed absolutely or the displayed command fails), else a documented
-/// `npx -y --package <pin> hermes …` form that bootstraps on demand.
-/// `--package` is required in that form: the package's default bin is
-/// `hermes-agent` (a different console script), not `hermes`. Returned as
-/// argv vectors so callers can shell-quote per platform for display or
-/// execute them.
+/// form reads best in guidance), else the absolute path `resolve_npx_command`
+/// finds in `~/.local/bin` or the npm prefix (a copy whose dir is NOT on the
+/// terminal's PATH must be addressed absolutely or the displayed command
+/// fails), else a documented `npx -y --package <pin> hermes …` form that
+/// bootstraps on demand. `--package` is required in that form: the package's
+/// default bin is `hermes-agent` (a different console script), not `hermes`.
+/// Returned as argv vectors so callers can shell-quote per platform for
+/// display or execute them.
 async fn hermes_setup_argvs() -> (Vec<String>, Vec<String>) {
     let meta = registry::get_agent_meta(AgentType::Hermes);
     let package = match meta.distribution {
@@ -8051,7 +8164,7 @@ async fn hermes_setup_argvs() -> (Vec<String>, Vec<String>) {
         // Unreachable: Hermes is always an Npx distribution. Fall through to
         // the npx guidance with the same pinned spec so a future match-arm
         // change can't resurrect a stale recipe.
-        _ => "hermes-agent@0.21.5",
+        _ => "hermes-agent@0.22.0",
     };
     let build = |tail: &[&str]| -> Vec<String> {
         let mut argv = vec![
@@ -10263,7 +10376,7 @@ fn agent_env_keys(agent_type: AgentType) -> (&'static str, &'static str, &'stati
         // `auth.type = "gemini-api-key"` reads (the server says so in its own
         // `auth_required` message). `AGY_ACP_DEFAULT_MODEL` is real — it is
         // the env the server's `get_default_model_id` consults before falling
-        // back to `gemini-3.7-flash-high`. There is NO endpoint override, so
+        // back to `gemini-3.8-flash-high`. There is NO endpoint override, so
         // the base-url slot stays an inert `AGY_BASE_URL` placeholder for the
         // same reason `CURSOR_MODEL`/`QODER_BASE_URL` above are: it keeps the
         // generic cascade off the `OPENAI_*` keys.
@@ -11297,6 +11410,7 @@ pub async fn acp_describe_agent_options_core(
     data_dir: &Path,
     agent_type: AgentType,
     working_dir: Option<String>,
+    preferred_config_values: BTreeMap<String, String>,
 ) -> Result<crate::acp::types::AgentOptionsSnapshot, AcpError> {
     verify_agent_installed(agent_type).await?;
     // Build the same runtime env delegation/acp_connect would build so
@@ -11306,7 +11420,12 @@ pub async fn acp_describe_agent_options_core(
     // model_provider injects a different model list, etc.).
     let runtime_env = build_session_runtime_env(db, agent_type, None, data_dir).await?;
     manager
-        .probe_agent_options(agent_type, working_dir, runtime_env)
+        .probe_agent_options(
+            agent_type,
+            working_dir,
+            runtime_env,
+            preferred_config_values,
+        )
         .await
 }
 
@@ -11315,6 +11434,9 @@ pub async fn acp_describe_agent_options_core(
 pub async fn acp_describe_agent_options(
     agent_type: AgentType,
     working_dir: Option<String>,
+    // Config selections to apply on the probe session before reading the
+    // snapshot — callers pass the model so per-model option lists match.
+    config_values: Option<BTreeMap<String, String>>,
     manager: State<'_, ConnectionManager>,
     db: State<'_, AppDatabase>,
     app_handle: tauri::AppHandle,
@@ -11324,7 +11446,15 @@ pub async fn acp_describe_agent_options(
         .app_data_dir()
         .map(|p| crate::paths::resolve_effective_data_dir(&p))
         .unwrap_or_else(|_| PathBuf::from("."));
-    acp_describe_agent_options_core(&manager, &db, &app_data_dir, agent_type, working_dir).await
+    acp_describe_agent_options_core(
+        &manager,
+        &db,
+        &app_data_dir,
+        agent_type,
+        working_dir,
+        config_values.unwrap_or_default(),
+    )
+    .await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -13536,10 +13666,10 @@ pub(crate) async fn acp_prepare_npx_agent_core(
             // postinstall leaves a shim that exits "runtime is not ready".
             // Verify the binary a launch would resolve actually answers
             // `--version` BEFORE recording success — the same resolution
-            // order connect uses, so an official-installer CLI on PATH
-            // legitimately satisfies the check. Without this, a broken
-            // install is recorded as installed and only fails at connect
-            // time with an opaque error.
+            // order connect uses, so an official-installer CLI (on PATH or in
+            // `~/.local/bin`) legitimately satisfies the check. Without this,
+            // a broken install is recorded as installed and only fails at
+            // connect time with an opaque error.
             if npm_package_requires_scripts(&install_spec) {
                 emit_agent_install_event(
                     emitter,
@@ -14484,16 +14614,8 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_version_script(dir: &std::path::Path, name: &str, banner: &str) -> PathBuf {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-
         let bin = dir.join(name);
-        {
-            let mut f = std::fs::File::create(&bin).expect("create script");
-            f.write_all(format!("#!/bin/sh\necho \"{banner}\"\n").as_bytes())
-                .expect("write script");
-        }
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        crate::process::write_test_script(&bin, &format!("#!/bin/sh\necho \"{banner}\"\n"));
         bin
     }
 
@@ -16425,19 +16547,23 @@ base_url = \"https://example.test/v1\"
 
     #[test]
     fn pi_agent_dir_expands_tilde_override_like_the_pi_runtime() {
-        let mut env = BTreeMap::new();
-        env.insert("PI_CODING_AGENT_DIR".to_string(), "~/custom-pi".to_string());
-        assert_eq!(
-            pi_agent_dir_for_env(&env),
-            pi_child_home(&env).join("custom-pi")
-        );
-        // pi's `normalizePath` takes the value verbatim: a padded value is a
-        // different (here: relative) directory, not the trimmed one.
-        env.insert(
-            "PI_CODING_AGENT_DIR".to_string(),
-            " ~/custom-pi".to_string(),
-        );
-        assert_eq!(pi_agent_dir_for_env(&env), PathBuf::from(" ~/custom-pi"));
+        // `~` is the child's home, which `pi_child_home` reads off codeg's own
+        // home variable, and other tests point `HOME` at temp dirs through
+        // `temp_env`. Pin it, so this test serializes against them on
+        // temp_env's lock and the expansion has one home to land in.
+        let home = tempfile::tempdir().expect("tempdir");
+        temp_env::with_var(CHILD_HOME_KEY, Some(home.path()), || {
+            let mut env = BTreeMap::new();
+            env.insert("PI_CODING_AGENT_DIR".to_string(), "~/custom-pi".to_string());
+            assert_eq!(pi_agent_dir_for_env(&env), home.path().join("custom-pi"));
+            // pi's `normalizePath` takes the value verbatim: a padded value is a
+            // different (here: relative) directory, not the trimmed one.
+            env.insert(
+                "PI_CODING_AGENT_DIR".to_string(),
+                " ~/custom-pi".to_string(),
+            );
+            assert_eq!(pi_agent_dir_for_env(&env), PathBuf::from(" ~/custom-pi"));
+        });
     }
 
     /// `~` is the CHILD's home — a launch that relocates `HOME` relocates pi's
@@ -16600,10 +16726,8 @@ base_url = \"https://example.test/v1\"
 
     #[cfg(unix)]
     fn fake_pi(dir: &Path, name: &str, body: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let script = dir.join(name);
-        fs::write(&script, format!("#!/bin/sh\n{body}")).unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::process::write_test_script(&script, &format!("#!/bin/sh\n{body}"));
         script
     }
 
@@ -18339,10 +18463,10 @@ wire_api = "chat"
     // own version is also the recorded fallback when detection comes up empty.
     #[test]
     fn hermes_custom_version_spec_keeps_lifecycle_scripts_and_records_its_version() {
-        let spec = build_npm_install_spec("hermes-agent@0.21.5", Some("0.22.0")).unwrap();
-        assert_eq!(spec, "hermes-agent@0.22.0");
+        let spec = build_npm_install_spec("hermes-agent@0.22.0", Some("0.23.0")).unwrap();
+        assert_eq!(spec, "hermes-agent@0.23.0");
         assert!(npm_package_requires_scripts(&spec));
-        assert_eq!(version_from_package_spec(&spec).as_deref(), Some("0.22.0"));
+        assert_eq!(version_from_package_spec(&spec).as_deref(), Some("0.23.0"));
     }
 
     #[test]
@@ -18426,6 +18550,53 @@ wire_api = "chat"
 
         assert_eq!(resolved, None);
         let _ = std::fs::remove_dir_all(prefix);
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn npx_command_resolution_checks_local_bin_before_npm_prefix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let bin_dir = home.path().join(".local").join("bin");
+        let prefix = home.path().join("npm-prefix");
+        let prefix_bin_dir = npm_prefix_bin_dir(&prefix);
+        let cmd = "codeg-test-local-bin-npx-agent";
+        let command_path = bin_dir.join(cmd);
+        // Only in the npm prefix: the list path must still fall through to it.
+        let prefix_only_cmd = "codeg-test-npm-prefix-only-npx-agent";
+        let prefix_only_path = prefix_bin_dir.join(prefix_only_cmd);
+        for path in [
+            bin_dir.join(cmd),
+            prefix_bin_dir.join(cmd),
+            prefix_only_path.clone(),
+        ] {
+            std::fs::create_dir_all(path.parent().expect("bin directory"))
+                .expect("create bin directory");
+            std::fs::write(&path, "").expect("write command");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("mark command executable");
+        }
+
+        let (direct, listed, listed_prefix_only) =
+            temp_env::async_with_vars([("HOME", Some(home.path()))], async {
+                let direct = resolve_npx_command(cmd).await;
+                let mut resolver = NpxCommandResolver {
+                    request_npm_prefix: Some(Some(prefix.clone())),
+                    ..Default::default()
+                };
+                let listed = resolver.resolve_for_list(cmd).await;
+                let listed_prefix_only = resolver.resolve_for_list(prefix_only_cmd).await;
+                (direct, listed, listed_prefix_only)
+            })
+            .await;
+
+        assert_eq!(direct.as_deref(), Some(command_path.as_path()));
+        assert_eq!(listed.as_deref(), Some(command_path.as_path()));
+        assert_eq!(
+            listed_prefix_only.as_deref(),
+            Some(prefix_only_path.as_path())
+        );
     }
 
     fn write_skill_md(name: &str, body: &str) -> (PathBuf, PathBuf) {
@@ -19296,17 +19467,27 @@ wire_api = "chat"
         tilde.insert("HERMES_HOME".to_string(), "~/alt-hermes".to_string());
         assert_eq!(hermes_home_for_launch(&tilde), PathBuf::from("~/alt-hermes"));
 
-        // A blank override REPLACES the parent value in the child, and Hermes then
-        // falls back to the default `~/.hermes` — not the parent's HERMES_HOME.
-        let mut blank = BTreeMap::new();
-        blank.insert("HERMES_HOME".to_string(), "  ".to_string());
-        assert_eq!(
-            hermes_home_for_launch(&blank),
-            home_dir_or_default().join(".hermes")
-        );
+        // Both sides of the two checks below resolve `~` off codeg's own `HOME`,
+        // and other tests point `HOME` at temp dirs through `temp_env`. Pin it,
+        // so this test serializes against them on temp_env's lock. The expected
+        // paths still come from codeg's resolver, which on Windows ignores
+        // `HOME` (`dirs::home_dir()` asks for the profile folder).
+        let home = tempfile::tempdir().expect("tempdir");
+        temp_env::with_var("HOME", Some(home.path()), || {
+            // A blank override REPLACES the parent value in the child, and
+            // Hermes then falls back to the default `~/.hermes` — not the
+            // parent's HERMES_HOME.
+            let mut blank = BTreeMap::new();
+            blank.insert("HERMES_HOME".to_string(), "  ".to_string());
+            assert_eq!(
+                hermes_home_for_launch(&blank),
+                home_dir_or_default().join(".hermes")
+            );
 
-        // No override → the child inherits the parent env (codeg's resolution).
-        assert_eq!(hermes_home_for_launch(&BTreeMap::new()), hermes_home_dir());
+            // No override → the child inherits the parent env (codeg's
+            // resolution).
+            assert_eq!(hermes_home_for_launch(&BTreeMap::new()), hermes_home_dir());
+        });
     }
 
     #[test]
@@ -19783,7 +19964,7 @@ wire_api = "chat"
                     .expect("npx recipe must pin via --package");
                 assert_eq!(
                     argv.get(pkg_idx + 1).map(String::as_str),
-                    Some("hermes-agent@0.21.5")
+                    Some("hermes-agent@0.22.0")
                 );
                 assert_eq!(argv.get(pkg_idx + 2).map(String::as_str), Some("hermes"));
             } else {
@@ -20395,7 +20576,7 @@ model = "gpt"
             )
         };
 
-        let annotated = annotate_npm_bootstrap_failure("hermes-agent@0.21.5", download());
+        let annotated = annotate_npm_bootstrap_failure("hermes-agent@0.22.0", download());
         let text = annotated.to_string();
         assert!(text.contains("fetch failed"), "keeps the original error");
         assert!(text.contains("HTTP(S)_PROXY"), "adds the proxy hint");
@@ -20407,7 +20588,7 @@ model = "gpt"
 
         // A hermes failure that isn't a download stays untouched.
         let permissions = annotate_npm_bootstrap_failure(
-            "hermes-agent@0.21.5",
+            "hermes-agent@0.22.0",
             AcpError::Protocol("failed to install npm package globally: EACCES".to_string()),
         );
         assert!(!permissions.to_string().contains("HTTP(S)_PROXY"));

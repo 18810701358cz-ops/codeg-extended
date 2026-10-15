@@ -60,12 +60,16 @@ const h = vi.hoisted(() => {
     // Stable across renders so tests can assert on what the error handler
     // routes to the OS notification.
     notifyDesktop: vi.fn(async () => true),
+    // The taskbar / Dock request that rides along with every OS notification.
+    requestWindowAttention: vi.fn(async () => true),
     toastWarning: vi.fn(),
     toastError: vi.fn(),
     toastInfo: vi.fn(),
     toastDismiss: vi.fn(),
     // The status-bar alert list — where every notified warning/error is kept.
     recordAlert: vi.fn(),
+    // Where a connection's advertised commands are filed for its transcripts.
+    rememberAdvertisedCommands: vi.fn(),
     openSettingsWindow: vi.fn(async () => {}),
     // Every `t(key, values)` this render made. The mock below still returns
     // the bare key (what most assertions compare against), so interpolated
@@ -102,6 +106,12 @@ vi.mock("@/lib/desktop-notification", () => ({
   withDesktopNotificationsSuppressed: (fn: () => unknown) => fn(),
 }))
 
+vi.mock("@/lib/window-attention", () => ({
+  requestWindowAttention: h.requestWindowAttention,
+  // Same as its notification twin: the real one only sets a depth counter.
+  withWindowAttentionSuppressed: (fn: () => unknown) => fn(),
+}))
+
 vi.mock("sonner", () => ({
   toast: {
     warning: h.toastWarning,
@@ -112,6 +122,10 @@ vi.mock("sonner", () => ({
 }))
 
 vi.mock("@/contexts/alert-context", () => ({ recordAlert: h.recordAlert }))
+
+vi.mock("@/lib/advertised-commands-store", () => ({
+  rememberAdvertisedCommands: h.rememberAdvertisedCommands,
+}))
 
 vi.mock("@/lib/selector-prefs-storage", () => ({
   getSavedPrefsForConnect: () => ({ modeId: undefined, configValues: {} }),
@@ -228,6 +242,7 @@ beforeEach(() => {
   h.toastInfo.mockClear()
   h.toastDismiss.mockClear()
   h.recordAlert.mockClear()
+  h.rememberAdvertisedCommands.mockClear()
   h.openSettingsWindow.mockClear()
 })
 
@@ -1014,6 +1029,189 @@ describe("AcpConnectionsProvider AIR session-failure lifecycle", () => {
 // carries PARTIAL deltas keyed by task id, so the reducer owns a merge that has
 // to match `SessionState::apply_event` — including its refusal to invent a row
 // for a task it never saw announced.
+// A failed turn closes on one muted line in the transcript, live as on reload
+// (where the parsers read the agent's own record of the failure). Live, it is
+// a `turn_error` block the reducer appends to the turn's message: the
+// adapter's terminal record, a prompt the agent rejected, or codeg's verdict
+// that the turn failed — never a turn that merely ended early with output.
+describe("AcpConnectionsProvider failed-turn line", () => {
+  async function promptingOwner(): Promise<AttachHandlers> {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    const handlers = latestAttachHandlers()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    return handlers
+  }
+
+  function failureRecord(revision: number, severity: string, title: string) {
+    return {
+      id: "t1:error",
+      revision,
+      category: "service",
+      severity,
+      title,
+      actions: ["retry"],
+    }
+  }
+
+  function lineOf(): unknown {
+    return h
+      .store!.getConnection(TAB)
+      ?.liveMessage?.content.filter((block) => block.type === "turn_error")
+  }
+
+  it("closes the turn on the adapter's terminal record, not on its retries", async () => {
+    const handlers = await promptingOwner()
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_failure",
+      record: failureRecord(1, "warning", "Reconnecting… 1/5"),
+    })
+    expect(lineOf()).toEqual([])
+
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_failure",
+      record: failureRecord(
+        2,
+        "error",
+        "API Error: 503 No available accounts."
+      ),
+    })
+    expect(lineOf()).toEqual([
+      {
+        type: "turn_error",
+        message: "API Error: 503 No available accounts.",
+        fromAgent: true,
+      },
+    ])
+    const content = h.store!.getConnection(TAB)!.liveMessage!.content
+    expect(content[content.length - 1]?.type).toBe("turn_error")
+  })
+
+  it("lands text still queued for the stream before the line", async () => {
+    const handlers = await promptingOwner()
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "content_delta",
+      text: "looking",
+    })
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_failure",
+      record: failureRecord(1, "error", "API Error: 503"),
+    })
+    expect(h.store!.getConnection(TAB)!.liveMessage!.content).toEqual([
+      { type: "text", text: "looking" },
+      { type: "turn_error", message: "API Error: 503", fromAgent: true },
+    ])
+  })
+
+  it("keeps the agent's own words over codeg's verdict, whichever comes first", async () => {
+    const handlers = await promptingOwner()
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "ended the turn without producing any response.",
+      agent_type: "claude_code",
+      code: "turn_failed_empty",
+    })
+    // codeg's verdict, in its localized wording (this harness's `t` echoes
+    // the key).
+    expect(lineOf()).toEqual([
+      {
+        type: "turn_error",
+        message: "backendErrors.turnFailedEmpty",
+        fromAgent: false,
+      },
+    ])
+
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_failure",
+      record: failureRecord(1, "error", "Upstream exploded"),
+    })
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "needs you to sign in again.",
+      agent_type: "claude_code",
+      code: "turn_failed_auth_required",
+    })
+    expect(lineOf()).toEqual([
+      { type: "turn_error", message: "Upstream exploded", fromAgent: true },
+    ])
+  })
+
+  it("reads a rejected prompt's own message, without the backend's prefix", async () => {
+    const handlers = await promptingOwner()
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "ACP protocol error: API key expired.",
+      agent_type: "cline",
+      code: null,
+    })
+    expect(lineOf()).toEqual([
+      { type: "turn_error", message: "API key expired.", fromAgent: true },
+    ])
+  })
+
+  it("adds nothing for a turn that ended early with output", async () => {
+    const handlers = await promptingOwner()
+    for (const [seq, code] of [
+      [2, "turn_failed_refusal"],
+      [3, "turn_failed_max_tokens"],
+      [4, "turn_failed_max_turn_requests"],
+    ] as const) {
+      emitAcpEvent(handlers, {
+        seq,
+        connection_id: "spawned-conn",
+        type: "error",
+        message: "ended early",
+        agent_type: "claude_code",
+        code,
+      })
+    }
+    expect(lineOf()).toEqual([])
+  })
+
+  it("adds nothing outside a turn", async () => {
+    const handlers = await promptingOwner()
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    })
+    const before = h.store!.getConnection(TAB)!.liveMessage
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_failure",
+      record: failureRecord(1, "error", "Session-scoped failure"),
+    })
+    expect(h.store!.getConnection(TAB)!.liveMessage).toBe(before)
+  })
+})
+
 describe("AcpConnectionsProvider AIR async tasks", () => {
   async function connectOwner(): Promise<AttachHandlers> {
     h.acpFindConnectionForConversation.mockResolvedValue(null)
@@ -4872,6 +5070,7 @@ describe("routing survives every surface watching one connection", () => {
       })
     })
     h.notifyDesktop.mockClear()
+    h.requestWindowAttention.mockClear()
 
     act(() => {
       firehose()({
@@ -4883,9 +5082,11 @@ describe("routing survives every surface watching one connection", () => {
     })
 
     // Two surfaces are streaming the same turn; the user must still get ONE
-    // "finished responding" notification. The store effect, by contrast, is
-    // per surface — both leave `prompting`.
+    // "finished responding" notification — and one taskbar request. The store
+    // effect, by contrast, is per surface — both leave `prompting`.
     expect(h.notifyDesktop).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("turn_complete")
     expect(h.store!.getConnection(TAB)!.status).toBe("connected")
     expect(h.store!.getConnection(CHILD_VIEW)!.status).toBe("connected")
   })
@@ -6134,6 +6335,103 @@ describe("connect() is observable while it is still in flight", () => {
   })
 })
 
+describe("a switch that lands while another agent is still connecting", () => {
+  // The composer's agent row stays clickable for the whole `connecting`
+  // window, so a second pick can arrive while the first agent is still
+  // spawning. The user asked for the NEWEST one: `connect()` must park that
+  // request, kill what the abandoned attempt spawned, and never let it reach
+  // the store — otherwise a stale agent claims the tab and the switch the user
+  // watched happen silently reverts.
+  it("kills the abandoned spawn and runs the agent picked last", async () => {
+    await mountProvider()
+    const spawns: Array<() => void> = []
+    h.acpConnect.mockImplementation(
+      (agentType: string) =>
+        new Promise<string>((res) => {
+          spawns.push(() => res(`${agentType}-conn`))
+        })
+    )
+
+    let first: Promise<void> | undefined
+    let second: Promise<void> | undefined
+    await act(async () => {
+      first = h.actions!.connect(TAB, "claude_code", "/tmp/x")
+      await h.actions!.connect(TAB, "codex", "/tmp/x")
+      second = h.actions!.connect(TAB, "gemini", "/tmp/x")
+    })
+
+    // Parked, not racing: exactly one agent is being spawned.
+    expect(h.acpConnect).toHaveBeenCalledTimes(1)
+    expect(h.acpConnect.mock.calls[0]![0]).toBe("claude_code")
+    expect(h.store!.getConnectPending(TAB)?.agentType).toBe("gemini")
+
+    await act(async () => {
+      spawns[0]!()
+      await first
+    })
+    await act(async () => {})
+
+    // The abandoned attempt is torn down and never registered...
+    expect(h.acpDisconnect).toHaveBeenCalledWith("claude_code-conn")
+    expect(h.store!.getConnection(TAB)).toBeUndefined()
+    // ...and the newest request is the one actually connecting now.
+    expect(h.acpConnect).toHaveBeenCalledTimes(2)
+    expect(h.acpConnect.mock.calls[1]![0]).toBe("gemini")
+
+    await act(async () => {
+      spawns[1]!()
+      await second
+    })
+
+    expect(h.store!.getConnection(TAB)?.agentType).toBe("gemini")
+  })
+
+  it("replaces a registered connection before its startup finishes", async () => {
+    await mountProvider()
+    h.acpConnect
+      .mockResolvedValueOnce("starting-claude")
+      .mockResolvedValueOnce("starting-codex")
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x")
+    })
+    // No connected event has arrived from the first agent's handshake.
+    expect(h.store!.getConnection(TAB)?.status).toBe("connecting")
+
+    await act(async () => {
+      await h.actions!.connect(TAB, "codex", "/tmp/x")
+    })
+    expect(h.acpDisconnect).toHaveBeenCalledWith("starting-claude")
+    expect(h.acpConnect).toHaveBeenCalledTimes(2)
+    expect(h.store!.getConnection(TAB)?.agentType).toBe("codex")
+    expect(h.store!.getConnection(TAB)?.status).toBe("connecting")
+  })
+
+  it("does not notify a failed preflight for a choice the user replaced", async () => {
+    await mountProvider()
+    let rejectStatus!: (error: Error) => void
+    h.acpGetAgentStatus.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStatus = reject
+        })
+    )
+    let first: Promise<void> | undefined
+    await act(async () => {
+      first = h.actions!.connect(TAB, "claude_code", "/tmp/x")
+      await h.actions!.connect(TAB, "codex", "/tmp/x")
+    })
+    await act(async () => {
+      rejectStatus(new Error("old agent configuration failed"))
+      await first
+    })
+
+    expect(h.store!.getConnection(TAB)?.agentType).toBe("codex")
+    expect(h.store!.getConnectError(TAB)).toBeUndefined()
+    expect(h.recordAlert).not.toHaveBeenCalled()
+    expect(h.toastError).not.toHaveBeenCalled()
+  })
+})
+
 describe("connect failures land on the surface that asked", () => {
   // A failed connect never produces a store entry, so its reason used to go
   // only to the status-bar alerts — for a saved conversation the ONLY place it
@@ -6768,5 +7066,352 @@ describe("AIR session failures are told as notifications", () => {
     // …without a burst of stale notifications.
     expect(h.toastError).not.toHaveBeenCalled()
     expect(h.recordAlert).not.toHaveBeenCalled()
+  })
+})
+
+describe("AcpConnectionsProvider remembers advertised commands", () => {
+  const REVIEW = { name: "review", description: "Review the diff" }
+  const INIT = { name: "init", description: "" }
+
+  async function connectOwner(): Promise<AttachHandlers> {
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1")
+    })
+    return latestAttachHandlers()
+  }
+
+  it("files a list the agent advertises under the connection's own agent and cwd", async () => {
+    const handlers = await connectOwner()
+    expect(h.rememberAdvertisedCommands).not.toHaveBeenCalled()
+
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "available_commands",
+      commands: [REVIEW, INIT],
+    })
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledTimes(1)
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledWith(
+      "claude_code",
+      "/tmp/x",
+      [REVIEW, INIT]
+    )
+
+    // The same list again changes nothing on the connection, so there is
+    // nothing new to file either.
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "available_commands",
+      commands: [REVIEW, INIT],
+    })
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledTimes(1)
+
+    // A changed list replaces it, an empty one included: that is an answer.
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "available_commands",
+      commands: [],
+    })
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledTimes(2)
+    expect(h.rememberAdvertisedCommands).toHaveBeenLastCalledWith(
+      "claude_code",
+      "/tmp/x",
+      []
+    )
+  })
+
+  it("files the list a snapshot carries, which is the only copy after a refresh", async () => {
+    const handlers = await connectOwner()
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      availableCommands: [REVIEW],
+      eventSeq: 5,
+    })
+    hydrateSnapshot(handlers, {
+      connection_id: "spawned-conn",
+      conversation_id: null,
+      folder_id: null,
+      status: "connected",
+      external_id: null,
+      live_message: null,
+      active_tool_calls: [],
+      pending_permission: null,
+      pending_question: null,
+      pending_user_message: null,
+      active_delegations: [],
+      feedback: [],
+      feedback_tool_available: false,
+      modes: null,
+      current_mode: null,
+      config_options: null,
+      prompt_capabilities: null,
+      usage: null,
+      fork_supported: false,
+      available_commands: [REVIEW],
+      selectors_ready: false,
+      config_stale: false,
+      config_stale_kind: null,
+      event_seq: 5,
+    })
+    expect(h.store!.getConnection(TAB)!.availableCommands).toEqual([REVIEW])
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledTimes(1)
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledWith(
+      "claude_code",
+      "/tmp/x",
+      [REVIEW]
+    )
+  })
+
+  it("files the list a stale snapshot fills in, when the connection had none", async () => {
+    const handlers = await connectOwner()
+    // A later event moves the cursor past the snapshot's seq, so the hydrate
+    // takes the stale branch, which still fills a list the connection lacks.
+    emitAcpEvent(handlers, {
+      seq: 6,
+      connection_id: "spawned-conn",
+      type: "usage_update",
+      used: 10,
+      size: 100,
+    })
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      availableCommands: [INIT],
+      eventSeq: 5,
+    })
+    hydrateSnapshot(handlers, {
+      event_seq: 5,
+    } as unknown as LiveSessionSnapshot)
+    expect(h.store!.getConnection(TAB)!.availableCommands).toEqual([INIT])
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledTimes(1)
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledWith(
+      "claude_code",
+      "/tmp/x",
+      [INIT]
+    )
+
+    // A stale snapshot never replaces a list the connection already has.
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      availableCommands: [REVIEW],
+      eventSeq: 5,
+    })
+    hydrateSnapshot(handlers, {
+      event_seq: 5,
+    } as unknown as LiveSessionSnapshot)
+    expect(h.store!.getConnection(TAB)!.availableCommands).toEqual([INIT])
+    expect(h.rememberAdvertisedCommands).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("taskbar / Dock attention rides along with every desktop alert", () => {
+  async function connectOwner(): Promise<AttachHandlers> {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    h.notifyDesktop.mockClear()
+    h.requestWindowAttention.mockClear()
+    return latestAttachHandlers()
+  }
+
+  function startTurn(handlers: AttachHandlers, seq: number) {
+    emitAcpEvent(handlers, {
+      seq,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+  }
+
+  it("asks when the agent needs a permission", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "permission_request",
+      request_id: "req-1",
+      tool_call: { kind: "execute", status: "pending", toolCallId: "call_1" },
+      options: [],
+    })
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("permission_request")
+  })
+
+  it("asks when the agent asks the user a question", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "question_request",
+      question_id: "q-1",
+      questions: [],
+    })
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("question_request")
+  })
+
+  it("treats a plan approval as the permission request it is — banner included", async () => {
+    // Grok's `exit_plan_mode` blocks the agent on the user exactly like a
+    // permission prompt (which is how Claude Code's ExitPlanMode arrives), and
+    // used to raise no OS notification at all.
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "plan_approval_request",
+      approval_id: "ap-1",
+      tool_call_id: "call_plan",
+      plan_markdown: "# Plan\n\n1. Do the thing",
+    })
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("permission_request")
+    expect(h.notifyDesktop).toHaveBeenCalledTimes(1)
+    expect(h.notifyDesktop).toHaveBeenCalledWith(
+      "permission_request",
+      expect.objectContaining({
+        body: expect.stringContaining("notificationPlanApproval"),
+      })
+    )
+    // The plan is the agent's own prose and never reaches the notification.
+    expect(JSON.stringify(h.notifyDesktop.mock.calls)).not.toContain(
+      "Do the thing"
+    )
+    expect(h.tCalls).toContainEqual([
+      "notificationPlanApproval",
+      { agent: "Claude Code" },
+    ])
+  })
+
+  it("asks once a turn finishes, and not for one the user cancelled", async () => {
+    const handlers = await connectOwner()
+    startTurn(handlers, 1)
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "cancelled",
+    })
+    expect(h.requestWindowAttention).not.toHaveBeenCalled()
+
+    startTurn(handlers, 3)
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    })
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("turn_complete")
+  })
+
+  it("asks as an error for a turn that ended on a typed failure", async () => {
+    const handlers = await connectOwner()
+    startTurn(handlers, 1)
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_failure",
+      // The shape the AIR session-failure tests above use.
+      record: {
+        id: "t1:error",
+        revision: 1,
+        category: "connection",
+        severity: "error",
+        title: "The connection to Claude was lost.",
+        actions: ["new_session"],
+      },
+    } as unknown as EventEnvelope)
+    h.requestWindowAttention.mockClear()
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    })
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("error")
+  })
+
+  it("asks when the session breaks", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "raw english fallback",
+      agent_type: "claude_code",
+      code: "turn_failed_empty_protocol",
+    })
+
+    expect(h.notifyDesktop).toHaveBeenCalledWith("error", expect.anything())
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("error")
+  })
+
+  it("asks when background tasks settle", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "background_activity",
+      session_id: "sess-1",
+      outstanding: 0,
+      settled: [{ task_id: "agent1", status: "completed" }],
+      watermark: 1,
+    } as unknown as EventEnvelope)
+
+    expect(h.requestWindowAttention).toHaveBeenCalledTimes(1)
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("background_task")
+  })
+
+  it("stays quiet for history replayed after a reconnect", async () => {
+    // A prompt answered ten minutes ago must not flash the taskbar now.
+    const handlers = await connectOwner()
+    act(() => {
+      handlers.onReplay(
+        [
+          {
+            seq: 1,
+            connection_id: "spawned-conn",
+            type: "permission_request",
+            request_id: "req-old",
+            tool_call: { kind: "execute", toolCallId: "call_old" },
+            options: [],
+          } as EventEnvelope,
+          {
+            seq: 2,
+            connection_id: "spawned-conn",
+            type: "plan_approval_request",
+            approval_id: "ap-old",
+            tool_call_id: "call_plan_old",
+            plan_markdown: "old plan",
+          } as EventEnvelope,
+        ],
+        2
+      )
+    })
+    expect(h.requestWindowAttention).not.toHaveBeenCalled()
+    expect(h.notifyDesktop).not.toHaveBeenCalled()
+
+    // Live events after the replay ask normally again.
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "question_request",
+      question_id: "q-live",
+      questions: [],
+    })
+    expect(h.requestWindowAttention).toHaveBeenCalledWith("question_request")
   })
 })

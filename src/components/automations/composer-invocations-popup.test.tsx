@@ -75,4 +75,27 @@ describe("ComposerInvocationsPopup", () => {
     renderInHost(invocations({ isOpen: false }))
     expect(screen.queryByText("/mcp")).toBeNull()
   })
+
+  it("shows the argument a command takes beside its token", () => {
+    const commands: AvailableCommandInfo[] = [
+      {
+        name: "mcp",
+        description: "List configured MCP tools.",
+        input_hint: "[reconnect]",
+      },
+      {
+        name: "skills",
+        description: "List available skills.",
+        input_hint: "  ",
+      },
+    ]
+    renderInHost(invocations({ commands }))
+
+    const mcp = screen.getByText("/mcp").closest("button") as HTMLElement
+    expect(mcp.textContent).toBe("/mcp[reconnect]List configured MCP tools.")
+    const skills = screen.getByText("/skills").closest("button") as HTMLElement
+    expect(skills.textContent).toBe("/skillsList available skills.")
+    // A blank hint draws nothing, not an empty span.
+    expect(skills.querySelectorAll("span")).toHaveLength(2)
+  })
 })

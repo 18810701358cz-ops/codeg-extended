@@ -1,18 +1,46 @@
-import type { ReactNode } from "react"
+import type { ReactNode, Ref, RefObject } from "react"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import type { MessageScrollContextValue } from "@/components/message/message-scroll-context"
 
 const testState = vi.hoisted(() => ({
   scrollRef: { current: null as HTMLDivElement | null },
+  stopScroll: vi.fn(),
+  virtuaScrollToIndex: vi.fn(),
+  // The virtua handle's geometry: where the view is, where each row starts.
+  scrollOffset: 0,
+  itemOffset: (index: number) => index * 100,
 }))
 
 vi.mock("use-stick-to-bottom", () => ({
-  useStickToBottomContext: () => ({ scrollRef: testState.scrollRef }),
+  useStickToBottomContext: () => ({
+    scrollRef: testState.scrollRef,
+    stopScroll: testState.stopScroll,
+  }),
 }))
 
-vi.mock("virtua", () => ({
-  Virtualizer: ({ children }: { children: ReactNode }) => <>{children}</>,
-}))
+vi.mock("virtua", async () => {
+  const { useImperativeHandle } =
+    await vi.importActual<typeof import("react")>("react")
+  return {
+    Virtualizer: ({
+      children,
+      ref,
+    }: {
+      children: ReactNode
+      ref?: Ref<unknown>
+    }) => {
+      useImperativeHandle(ref, () => ({
+        scrollToIndex: testState.virtuaScrollToIndex,
+        getItemOffset: (index: number) => testState.itemOffset(index),
+        get scrollOffset() {
+          return testState.scrollOffset
+        },
+      }))
+      return <>{children}</>
+    },
+  }
+})
 
 vi.mock("@/components/ai-elements/message-thread", () => ({
   MessageThreadContent: ({
@@ -52,45 +80,204 @@ function pointerDown(element: HTMLElement, button: number) {
   fireEvent(element, new MouseEvent("pointerdown", { bubbles: true, button }))
 }
 
-function keyDown(element: HTMLElement, key: string) {
-  fireEvent.keyDown(element, { key })
+function keyDown(
+  element: HTMLElement,
+  key: string,
+  modifiers: Omit<KeyboardEventInit, "key"> = {}
+) {
+  fireEvent.keyDown(element, { key, ...modifiers })
 }
 
 beforeEach(() => {
   testState.scrollRef.current = null
+  testState.stopScroll.mockReset()
+  testState.virtuaScrollToIndex.mockReset()
+  testState.scrollOffset = 0
+  testState.itemOffset = (index: number) => index * 100
+})
+
+describe("VirtualizedMessageThread scroll API", () => {
+  function renderWithScrollApi() {
+    const scrollApiRef = {
+      current: null,
+    } as RefObject<MessageScrollContextValue | null>
+    render(
+      <VirtualizedMessageThread
+        items={[{ id: "a" }, { id: "b" }]}
+        getItemKey={(item) => item.id}
+        renderItem={() => null}
+        scrollApiRef={scrollApiRef}
+        hasOlder
+      />
+    )
+    return scrollApiRef
+  }
+
+  it("releases the stick-to-bottom lock before jumping up, past the loader row", () => {
+    // Pinned at the bottom of a long thread; the target row starts far above.
+    testState.scrollOffset = 5_000
+    const scrollApiRef = renderWithScrollApi()
+    scrollApiRef.current?.scrollToIndex(1, { align: "start", smooth: true })
+    expect(testState.stopScroll).toHaveBeenCalledTimes(1)
+    // Item 1 is virtua row 2: the loader row sits above the items.
+    expect(testState.virtuaScrollToIndex).toHaveBeenCalledWith(2, {
+      align: "start",
+      smooth: true,
+    })
+    expect(testState.stopScroll.mock.invocationCallOrder[0]).toBeLessThan(
+      testState.virtuaScrollToIndex.mock.invocationCallOrder[0]
+    )
+  })
+
+  it.each([
+    // The target row (virtua row 2, at 200px) starts inside the view…
+    ["below the top of the view", 150],
+    // …or exactly at its top.
+    ["at the top of the view", 200],
+  ])(
+    "keeps the lock for a jump to a row starting %s",
+    (_label, scrollOffset) => {
+      // The jump can't move up, and a reply streaming in below must stay
+      // followed.
+      testState.scrollOffset = scrollOffset
+      const scrollApiRef = renderWithScrollApi()
+      scrollApiRef.current?.scrollToIndex(1, { align: "start", smooth: true })
+      expect(testState.stopScroll).not.toHaveBeenCalled()
+      expect(testState.virtuaScrollToIndex).toHaveBeenCalledWith(2, {
+        align: "start",
+        smooth: true,
+      })
+    }
+  )
 })
 
 describe("VirtualizedMessageThread focus origin", () => {
-  it("marks pointer-origin focus and clears it on blur", () => {
-    renderThread()
-    const viewport = screen.getByTestId("viewport")
+  it("marks pointer-origin focus and clears it once focus moves away", () => {
+    vi.useFakeTimers()
+    try {
+      renderThread()
+      const viewport = screen.getByTestId("viewport")
+      const other = document.createElement("button")
+      document.body.appendChild(other)
 
-    pointerDown(screen.getByTestId("content"), 0)
+      pointerDown(screen.getByTestId("content"), 0)
 
-    expect(document.activeElement).toBe(viewport)
-    expect(viewport).toHaveAttribute("data-focus-origin", "pointer")
-    expect(viewport.className).toContain(
-      "data-[focus-origin=pointer]:focus-visible:ring-0"
-    )
+      expect(document.activeElement).toBe(viewport)
+      expect(viewport).toHaveAttribute("data-focus-origin", "pointer")
+      expect(viewport.className).toContain(
+        "data-[focus-origin=pointer]:focus-visible:ring-0"
+      )
 
-    fireEvent.blur(viewport)
-    expect(viewport).not.toHaveAttribute("data-focus-origin")
+      other.focus()
+      vi.runAllTimers()
+      expect(viewport).not.toHaveAttribute("data-focus-origin")
+      other.remove()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it("clears the pointer marker on keyboard input so the ring returns", () => {
-    renderThread()
-    const viewport = screen.getByTestId("viewport")
+  it("keeps the pointer marker when only the window loses focus", () => {
+    vi.useFakeTimers()
+    try {
+      renderThread()
+      const viewport = screen.getByTestId("viewport")
 
-    pointerDown(screen.getByTestId("content"), 0)
-    expect(viewport).toHaveAttribute("data-focus-origin", "pointer")
+      pointerDown(screen.getByTestId("content"), 0)
 
-    // Switching to keyboard scrolling drops the marker, so the suppressing
-    // `data-[focus-origin=pointer]` selector no longer matches and the
-    // keyboard focus ring becomes visible again.
-    keyDown(viewport, "ArrowDown")
-    expect(viewport).not.toHaveAttribute("data-focus-origin")
-    expect(document.activeElement).toBe(viewport)
+      // Switching apps blurs the viewport but leaves it the active element;
+      // the browser re-focuses it when the window comes back (e.g. on a
+      // resize), and without the marker the ring would show then.
+      fireEvent.blur(viewport)
+      vi.runAllTimers()
+      expect(document.activeElement).toBe(viewport)
+      expect(viewport).toHaveAttribute("data-focus-origin", "pointer")
+
+      fireEvent.focus(window)
+      expect(viewport).toHaveAttribute("data-focus-origin", "pointer")
+    } finally {
+      vi.useRealTimers()
+    }
   })
+
+  it("drops the pointer marker when focus moved on while the window was away", () => {
+    vi.useFakeTimers()
+    const other = document.createElement("button")
+    document.body.appendChild(other)
+    try {
+      renderThread()
+      const viewport = screen.getByTestId("viewport")
+
+      pointerDown(screen.getByTestId("content"), 0)
+      // The window loses focus: the viewport blurs but stays active.
+      fireEvent.blur(viewport)
+      vi.runAllTimers()
+      expect(viewport).toHaveAttribute("data-focus-origin", "pointer")
+
+      // A script focuses another control while the window is in the
+      // background: the active element changes, but the viewport sees no
+      // second blur (its blur went out with the window's). Only the window
+      // coming back can notice.
+      const activeElement = vi
+        .spyOn(document, "activeElement", "get")
+        .mockReturnValue(other)
+      try {
+        fireEvent.focus(window)
+      } finally {
+        activeElement.mockRestore()
+      }
+      expect(viewport).not.toHaveAttribute("data-focus-origin")
+    } finally {
+      other.remove()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    ["ArrowDown", "ArrowDown", {}],
+    ["ArrowUp", "ArrowUp", {}],
+    ["PageDown", "PageDown", {}],
+    ["PageUp", "PageUp", {}],
+    ["Space", " ", {}],
+    ["Shift+Space", " ", { shiftKey: true }],
+    ["Home", "Home", {}],
+    ["Ctrl+End", "End", { ctrlKey: true }],
+    ["Cmd+ArrowDown", "ArrowDown", { metaKey: true }],
+  ])(
+    "clears the pointer marker on %s, a scroll key, so the ring can return",
+    (_label, key, modifiers) => {
+      renderThread()
+      const viewport = screen.getByTestId("viewport")
+
+      pointerDown(screen.getByTestId("content"), 0)
+      expect(viewport).toHaveAttribute("data-focus-origin", "pointer")
+
+      keyDown(viewport, key, modifiers)
+      expect(viewport).not.toHaveAttribute("data-focus-origin")
+      expect(document.activeElement).toBe(viewport)
+    }
+  )
+
+  it.each([
+    ["Escape", "Escape", {}],
+    ["Ctrl+C", "c", { ctrlKey: true }],
+    ["Cmd+C", "c", { metaKey: true }],
+    ["Shift", "Shift", { shiftKey: true }],
+  ])(
+    "keeps the pointer marker through %s, which doesn't scroll",
+    (_label, key, modifiers) => {
+      renderThread()
+      const viewport = screen.getByTestId("viewport")
+
+      pointerDown(screen.getByTestId("content"), 0)
+
+      // In Chromium the click's script focus already matches :focus-visible,
+      // so only the marker keeps the whole transcript from being ringed here.
+      keyDown(viewport, key, modifiers)
+      expect(viewport).toHaveAttribute("data-focus-origin", "pointer")
+      expect(document.activeElement).toBe(viewport)
+    }
+  )
 
   it("keeps keyboard-origin focus distinguishable", () => {
     renderThread()

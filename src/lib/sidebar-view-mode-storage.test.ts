@@ -7,17 +7,20 @@ import {
   loadSectionCollapsed,
   loadSectionOrder,
   loadShowRecent,
+  loadTagFilter,
   moveSectionInOrder,
   normalizeSectionOrder,
   saveRecentFilter,
   saveSectionOrder,
   saveShowRecent,
+  saveTagFilter,
   type SidebarRecentFilter,
 } from "./sidebar-view-mode-storage"
 
 const SECTION_ORDER_KEY = "workspace:sidebar-section-order"
 const SHOW_RECENT_KEY = "workspace:sidebar-show-recent"
 const RECENT_FILTER_KEY = "workspace:sidebar-recent-filter"
+const TAG_FILTER_KEY = "workspace:sidebar-tag-filter"
 
 describe("normalizeSectionOrder", () => {
   it("passes a complete order through unchanged", () => {
@@ -175,5 +178,46 @@ describe("loadSectionCollapsed", () => {
       JSON.stringify({ recent: true, chats: false, bogus: 1 })
     )
     expect(loadSectionCollapsed()).toEqual({ recent: true, chats: false })
+  })
+})
+
+describe("tag filter persistence", () => {
+  beforeEach(() => localStorage.clear())
+
+  it("is empty with nothing stored", () => {
+    expect(loadTagFilter()).toEqual({ tagIds: [], mode: "any" })
+  })
+
+  it("round-trips a selection and its mode", () => {
+    saveTagFilter({ tagIds: [3, 1], mode: "all" })
+    expect(loadTagFilter()).toEqual({ tagIds: [3, 1], mode: "all" })
+  })
+
+  it("clears the entry rather than storing an empty selection", () => {
+    saveTagFilter({ tagIds: [3], mode: "all" })
+    saveTagFilter({ tagIds: [], mode: "all" })
+    expect(localStorage.getItem(TAG_FILTER_KEY)).toBeNull()
+    expect(loadTagFilter()).toEqual({ tagIds: [], mode: "any" })
+  })
+
+  it("reads anything malformed as no filter, never as a hidden one", () => {
+    for (const raw of [
+      "not json",
+      "[]",
+      "null",
+      JSON.stringify({ tagIds: "1,2" }),
+      JSON.stringify({ tagIds: [0, -2, 1.5, "3"] }),
+    ]) {
+      localStorage.setItem(TAG_FILTER_KEY, raw)
+      expect(loadTagFilter()).toEqual({ tagIds: [], mode: "any" })
+    }
+  })
+
+  it("keeps the valid ids of a partly bad entry, de-duplicated", () => {
+    localStorage.setItem(
+      TAG_FILTER_KEY,
+      JSON.stringify({ tagIds: [4, "x", 4, 9], mode: "weird" })
+    )
+    expect(loadTagFilter()).toEqual({ tagIds: [4, 9], mode: "any" })
   })
 })

@@ -1,5 +1,7 @@
 "use client"
 
+import { EMPTY_TAG_FILTER, type TagFilter } from "@/lib/conversation-tags"
+
 const FOLDER_EXPANDED_KEY = "workspace:sidebar-folder-expanded"
 const FOLDER_GROUP_EXPANDED_KEY = "workspace:sidebar-folder-group-expanded"
 const SHOW_COMPLETED_KEY = "workspace:sidebar-show-completed"
@@ -11,6 +13,7 @@ const SORT_MODE_KEY = "workspace:sidebar-sort-mode"
 const SECTION_ORDER_KEY = "workspace:sidebar-section-order"
 const SECTION_COLLAPSED_KEY = "workspace:sidebar-section-collapsed"
 const CONVERSATION_EXPANDED_KEY = "workspace:sidebar-conversation-expanded"
+const TAG_FILTER_KEY = "workspace:sidebar-tag-filter"
 
 export type SidebarSortMode = "created" | "updated"
 
@@ -441,6 +444,51 @@ export function saveSectionCollapsed(state: SidebarSectionCollapsed): void {
   if (typeof window === "undefined") return
   try {
     localStorage.setItem(SECTION_COLLAPSED_KEY, JSON.stringify(state))
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * The sidebar's tag filter. Persisted like the other view preferences, and
+ * read defensively: anything malformed — a value from a future version, a
+ * hand-edited entry — reads as "no filter" rather than hiding conversations
+ * for a reason nobody can see. Ids naming tags that no longer exist are kept
+ * here and dropped by the caller once the tag list is known (`pruneTagFilter`).
+ */
+export function loadTagFilter(): TagFilter {
+  if (typeof window === "undefined") return EMPTY_TAG_FILTER
+  try {
+    const raw = localStorage.getItem(TAG_FILTER_KEY)
+    if (!raw) return EMPTY_TAG_FILTER
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== "object") return EMPTY_TAG_FILTER
+    const obj = parsed as Record<string, unknown>
+    const ids = Array.isArray(obj.tagIds)
+      ? obj.tagIds.filter(
+          (id): id is number => Number.isInteger(id) && (id as number) > 0
+        )
+      : []
+    const tagIds = [...new Set(ids)]
+    if (tagIds.length === 0) return EMPTY_TAG_FILTER
+    return { tagIds, mode: obj.mode === "all" ? "all" : "any" }
+  } catch {
+    return EMPTY_TAG_FILTER
+  }
+}
+
+export function saveTagFilter(filter: TagFilter): void {
+  if (typeof window === "undefined") return
+  try {
+    if (filter.tagIds.length === 0) {
+      // Nothing selected IS the default; don't leave a stale mode behind.
+      localStorage.removeItem(TAG_FILTER_KEY)
+      return
+    }
+    localStorage.setItem(
+      TAG_FILTER_KEY,
+      JSON.stringify({ tagIds: filter.tagIds, mode: filter.mode })
+    )
   } catch {
     /* ignore */
   }

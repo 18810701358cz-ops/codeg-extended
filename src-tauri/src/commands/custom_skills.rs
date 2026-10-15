@@ -10,7 +10,7 @@
 //!
 //! **Identity by exclusion.** A "custom skill" is any directory in the central
 //! store that holds a `SKILL.md` and whose id is NOT claimed by a bundled pack
-//! (experts ∪ science ∪ office). This keeps the store's disjoint-id-namespace
+//! (experts ∪ science ∪ office ∪ the generative-UI skill). This keeps the store's disjoint-id-namespace
 //! safety model (see `science.rs`) holding for custom too, and lets a user drop
 //! a folder into `~/.codeg/skills` and have it appear on refresh. The startup
 //! extraction of bundled packs is id-scoped (hash + manifest + backup, never a
@@ -156,12 +156,17 @@ fn supported_agents() -> Vec<AgentType> {
 // ─── Reserved (built-in) ids ────────────────────────────────────────────
 
 /// Union of every bundled pack's ids. A central-store dir with one of these ids
-/// belongs to experts/science/office and is never treated as custom.
+/// belongs to experts/science/office — or is the generative-UI skill — and is
+/// never treated as custom.
 fn reserved_ids() -> BTreeSet<String> {
     let mut set = BTreeSet::new();
     set.extend(crate::commands::experts::bundled_ids());
     set.extend(crate::commands::science::bundled_ids());
     set.extend(crate::commands::office_tools::bundled_skill_ids());
+    // `ui-render` (and 0.35.0's `json-render`, until startup moves it over)
+    // only while the directory is the copy Codeg wrote: a skill of that name
+    // the user made themselves stays theirs to see and edit.
+    set.extend(crate::commands::generative_ui::reserved_skill_ids());
     set
 }
 
@@ -1097,6 +1102,36 @@ mod tests {
                 .expect("delete batch");
             assert!(results.iter().all(|r| r.ok), "{results:?}");
             assert!(!dir.exists(), "central dir must be gone after delete");
+        })
+        .await;
+    }
+
+    /// The generative-UI skill shares the central store but is only Codeg's
+    /// once its marker is there; until then a `ui-render` is the user's.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fs_ui_render_stays_custom_until_codeg_marks_it() {
+        with_temp_home(|| async {
+            let id = crate::commands::generative_ui::SKILL_ID;
+            let content = "---\nname: ui-render\n---\nmine\n";
+            custom_create_skill(id.into(), content.into())
+                .await
+                .expect("free until Codeg claims it");
+            let listed = |items: Vec<CustomSkillItem>| items.iter().any(|s| s.id == id);
+            assert!(listed(custom_list().await.expect("list")));
+
+            fs::write(
+                central_experts_dir()
+                    .join(id)
+                    .join(crate::commands::generative_ui::MARKER_FILE),
+                "",
+            )
+            .unwrap();
+            assert!(!listed(custom_list().await.expect("list")));
+            assert!(matches!(
+                custom_save_skill(id.into(), content.into()).await,
+                Err(CustomSkillsError::ReservedId(_))
+            ));
         })
         .await;
     }

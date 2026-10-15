@@ -13,6 +13,7 @@ import {
 import { useTranslations } from "next-intl"
 import { useActiveFolder } from "@/contexts/active-folder-context"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
+import { useTabStore } from "@/stores/tab-store"
 import { browserTabBackendId, buildFileTabId } from "@/lib/file-tab-id"
 import {
   gitDiff,
@@ -50,6 +51,7 @@ import {
   isImageFile,
   isOfficeOwnerFile,
   isOfficePreviewable,
+  isPdfFile,
   languageFromPath,
 } from "@/lib/language-detect"
 import {
@@ -85,6 +87,11 @@ import {
   getBrowserPrefs,
   subscribeBrowserPrefs,
 } from "@/lib/browser/browser-prefs"
+import {
+  parseEmulatedBrowserDevice,
+  sameBrowserDevice,
+  type EmulatedBrowserDevice,
+} from "@/lib/browser/browser-device"
 import {
   isRemoteHostAddress,
   remoteConnectionOfProfile,
@@ -131,6 +138,12 @@ export interface BrowserTabSeed {
    *  machine's `localhost`, not the one the address was printed on. Absent on
    *  every other tab. */
   remote?: true
+  /** The device the tab shows its page as (`lib/browser/browser-device`):
+   *  its page laid out in a tablet's or a phone's viewport, or in a custom
+   *  device's (kept as that viewport). Absent on a tab showing it as the
+   *  desktop it is, which every tab does until someone picks another — so
+   *  records written before this existed read the same. */
+  device?: EmulatedBrowserDevice
 }
 
 interface FileWorkspaceTabBase {
@@ -294,7 +307,10 @@ interface WorkspaceActionsValue {
   setFileTabComposing: (tabId: string, composing: boolean) => void
   reloadActiveFile: () => Promise<void>
   toggleFileTabPreview: (tabId: string) => void
+  // Maximize one column over the other, or put it back. Fusion only, and at
+  // most one at a time: maximizing one releases the other.
   toggleFilesMaximized: () => void
+  toggleConversationMaximized: () => void
   // Open (or re-activate) a built-in browser tab for an http(s) URL. One tab
   // per URL (fragment ignored): a second open activates the existing tab.
   // Returns the tab id, or null when the URL does not parse. The native
@@ -325,6 +341,9 @@ interface WorkspaceActionsValue {
       index?: number
       profile?: string
       remote?: boolean
+      /** The device a NEW record shows its page as (a reopened tab's); a tab
+       *  already open on the page keeps its own. */
+      device?: EmulatedBrowserDevice
     }
   ) => string | null
   // Register a tab for a webview the BACKEND already created — a popup the
@@ -347,6 +366,14 @@ interface WorkspaceActionsValue {
   // time it is shown a fresh surface loads that page. No-op for a tab that
   // has no surface. Returns whether a surface was released.
   suspendBrowserTab: (tabId: string) => boolean
+  // Show a browser tab's page as `device` from now on: filling the pane (the
+  // desktop) or laid out in a tablet's, a phone's or a custom device's
+  // viewport. The tab keeps it through a suspend, a restart and a reopen.
+  // No-op for an unknown id, and for a custom size out of range.
+  setBrowserTabDevice: (
+    tabId: string,
+    device: "desktop" | EmulatedBrowserDevice
+  ) => void
 }
 
 /** What a browser tab needs to come back after a restart (see
@@ -359,12 +386,17 @@ export interface RestorableBrowserTab {
   profile: string
   /** See `BrowserTabSeed.remote`. */
   remote?: boolean
+  /** See `BrowserTabSeed.device`. */
+  device?: EmulatedBrowserDevice
 }
 
 interface WorkspaceViewValue {
   mode: WorkspaceMode
   activePane: WorkspacePane
+  /** The file column covers the conversation column. */
   filesMaximized: boolean
+  /** The conversation column covers the file column. */
+  conversationMaximized: boolean
 }
 
 interface WorkspaceFileTabsValue {
@@ -471,6 +503,38 @@ const IMAGE_MIME: Record<string, string> = {
   ico: "image/x-icon",
 }
 
+// Byte ceiling for reading a PDF. Documents (scans especially) routinely run
+// past the 20 MB that `read_file_base64` defaults to, a default sized for
+// images, so a PDF asks for the backend's own ceiling instead (it clamps).
+const PDF_READ_MAX_BYTES = 100_000_000
+
+type BinaryPreviewKind = "image" | "pdf"
+
+/**
+ * Images and PDFs: the files a tab holds as a base64 `data:` URL rather than
+ * as text. The kind doubles as the tab's synthetic `language`, which is what
+ * every renderer branches on. Null for every other file.
+ */
+function binaryPreviewKind(absPath: string): BinaryPreviewKind | null {
+  if (isImageFile(absPath)) return "image"
+  if (isPdfFile(absPath)) return "pdf"
+  return null
+}
+
+async function readBinaryPreview(
+  absPath: string,
+  kind: BinaryPreviewKind
+): Promise<string> {
+  if (kind === "pdf") {
+    const b64 = await readFileBase64(absPath, PDF_READ_MAX_BYTES)
+    return `data:application/pdf;base64,${b64}`
+  }
+  const ext = absPath.split(".").pop()?.toLowerCase() ?? ""
+  const mime = IMAGE_MIME[ext] ?? "image/png"
+  const b64 = await readFileBase64(absPath)
+  return `data:${mime};base64,${b64}`
+}
+
 function loadingTab(
   id: string,
   folderId: number | null,
@@ -545,7 +609,10 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   const [previewFileTabIds, setPreviewFileTabIds] = useState<Set<string>>(
     new Set()
   )
-  const [filesMaximized, setFilesMaximized] = useState(false)
+  // The column maximized over the other one, if either: the files overlay the
+  // conversation, or the conversation overlays the files. One slot, so the
+  // two can never both be on.
+  const [maximizedPane, setMaximizedPane] = useState<WorkspacePane | null>(null)
   // FIFO queue of unresolved disk-vs-buffer divergences (head is shown by
   // the always-mounted conflict dialog). Isolated state: never flows into
   // the fileTabs slice, so idle cost is zero.
@@ -705,20 +772,44 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   )
 
   const mode: WorkspaceMode = fileTabs.length > 0 ? "fusion" : "conversation"
-  const effectiveFilesMaximized = mode === "fusion" && filesMaximized
+  // Low-frequency: flips only when the conversation strip empties or refills.
+  const hasConversationTabs = useTabStore((s) => s.tabs.length > 0)
+  const effectiveFilesMaximized = mode === "fusion" && maximizedPane === "files"
+  const effectiveConversationMaximized =
+    mode === "fusion" && maximizedPane === "conversation" && hasConversationTabs
 
   // Reset maximize state once the file workspace is empty so reopening a file
   // later starts from the normal split instead of a stale maximized layout.
+  // A maximized conversation also lets go once its strip empties: the column
+  // would be an empty pane over the files, and its restore button goes away
+  // with the strip.
   useEffect(() => {
-    if (fileTabs.length === 0 && filesMaximized) {
+    if (maximizedPane === null) return
+    if (
+      fileTabs.length === 0 ||
+      (maximizedPane === "conversation" && !hasConversationTabs)
+    ) {
       /* eslint-disable react-hooks/set-state-in-effect */
-      setFilesMaximized(false)
+      setMaximizedPane(null)
       /* eslint-enable react-hooks/set-state-in-effect */
     }
-  }, [fileTabs.length, filesMaximized])
+  }, [fileTabs.length, hasConversationTabs, maximizedPane])
+
+  // Latest-state mirror for `closeFileTab`, a stable callback (see the refs
+  // above).
+  const conversationMaximizedRef = useRef(false)
+  useEffect(() => {
+    conversationMaximizedRef.current = effectiveConversationMaximized
+  }, [effectiveConversationMaximized])
 
   const toggleFilesMaximized = useCallback(() => {
-    setFilesMaximized((prev) => !prev)
+    setMaximizedPane((prev) => (prev === "files" ? null : "files"))
+  }, [])
+
+  const toggleConversationMaximized = useCallback(() => {
+    setMaximizedPane((prev) =>
+      prev === "conversation" ? null : "conversation"
+    )
   }, [])
 
   const setActivePane = useCallback((nextPane: WorkspacePane) => {
@@ -731,12 +822,17 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
     )
     // Releasing the files overlay so a session opened from the sidebar (or any
     // other path that activates the conversation pane) becomes visible instead
-    // of staying hidden behind a maximized files pane.
-    setFilesMaximized(false)
+    // of staying hidden behind a maximized files pane. A maximized
+    // conversation stays as it is: that is the pane being activated.
+    setMaximizedPane((prev) => (prev === "files" ? null : prev))
   }, [])
 
   const activateFilePane = useCallback(() => {
     setActivePaneState((prev) => (prev === "files" ? prev : "files"))
+    // The mirror image: a file opened or switched to (a link in the
+    // transcript, the file tree, a page an agent opens in front of the user)
+    // comes out from under a maximized conversation instead of opening unseen.
+    setMaximizedPane((prev) => (prev === "conversation" ? null : prev))
   }, [])
 
   // NOTE: there is deliberately NO folder-removal cleanup for file tabs.
@@ -814,31 +910,36 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
       openerTabId: string | null,
       profile: string,
       title?: string | null,
-      remote?: boolean
-    ): BrowserWorkspaceTab => ({
-      id: buildFileTabId({ kind: "browser", id: backendTabId }),
-      kind: "browser",
-      folderId,
-      // Host AND port, not just the host: two local servers are two tabs both
-      // called "localhost" otherwise, which is now a routine sight — a tab
-      // opened in the background (an auto-opened local server, a ⌘-click)
-      // keeps this name until someone switches to it and the page says its
-      // own. For an ordinary address with no explicit port this is the host,
-      // exactly as before.
-      title: title || (displayHostPort(url) ?? url),
-      description: null,
-      path: null,
-      language: "browser",
-      content: "",
-      loading: true,
-      readonly: true,
-      browser: {
-        initialUrl: url,
-        openerTabId,
-        profile,
-        ...(remote ? { remote: true as const } : {}),
-      },
-    }),
+      remote?: boolean,
+      device?: EmulatedBrowserDevice
+    ): BrowserWorkspaceTab => {
+      const emulated = parseEmulatedBrowserDevice(device)
+      return {
+        id: buildFileTabId({ kind: "browser", id: backendTabId }),
+        kind: "browser",
+        folderId,
+        // Host AND port, not just the host: two local servers are two tabs
+        // both called "localhost" otherwise, which is now a routine sight — a
+        // tab opened in the background (an auto-opened local server, a
+        // ⌘-click) keeps this name until someone switches to it and the page
+        // says its own. For an ordinary address with no explicit port this is
+        // the host, exactly as before.
+        title: title || (displayHostPort(url) ?? url),
+        description: null,
+        path: null,
+        language: "browser",
+        content: "",
+        loading: true,
+        readonly: true,
+        browser: {
+          initialUrl: url,
+          openerTabId,
+          profile,
+          ...(remote ? { remote: true as const } : {}),
+          ...(emulated ? { device: emulated } : {}),
+        },
+      }
+    },
     []
   )
 
@@ -852,6 +953,7 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
         index?: number
         profile?: string
         remote?: boolean
+        device?: EmulatedBrowserDevice
       }
     ) => {
       const normalized = normalizeUrlForDedupe(url)
@@ -921,7 +1023,8 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
         opener?.id ?? null,
         profile,
         null,
-        remote
+        remote,
+        options?.device
       )
       const insert = (prev: FileWorkspaceTab[]) => {
         if (prev.some((tab) => tab.id === record.id)) return prev
@@ -1049,7 +1152,8 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
               null,
               profile,
               entry.title,
-              remote
+              remote,
+              entry.device
             )
           )
         }
@@ -1183,6 +1287,29 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
     releaseBrowserTab(tabId, { suspending: true })
     return true
   }, [])
+
+  const setBrowserTabDevice = useCallback(
+    (tabId: string, device: "desktop" | EmulatedBrowserDevice) => {
+      const next =
+        device === "desktop" ? undefined : parseEmulatedBrowserDevice(device)
+      // Not a device after all (a size out of range): nothing to switch to,
+      // and the desktop is not what was asked for either.
+      if (device !== "desktop" && !next) return
+      setFileTabs((prev) => {
+        const tab = prev.find((t) => t.id === tabId)
+        if (!tab || tab.kind !== "browser") return prev
+        if (sameBrowserDevice(tab.browser.device, next)) return prev
+        // The desktop is the key's absence, not a value of it: a record
+        // that never left the desktop and one that came back to it are the
+        // same record.
+        const browser: BrowserTabSeed = { ...tab.browser }
+        if (next) browser.device = next
+        else delete browser.device
+        return prev.map((t) => (t.id === tabId ? { ...tab, browser } : t))
+      })
+    },
+    []
+  )
 
   // Mark an existing tab as refreshing. Preserves content / originalContent /
   // modifiedContent / gitBaseContent / savedContent / etag / mtimeMs /
@@ -1450,17 +1577,15 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
       if (existing.isDirty) return
       if (inFlightLoadsRef.current.has(tabId)) return
 
-      const image = isImageFile(absPath)
+      const binary = binaryPreviewKind(absPath)
 
       markTabRefreshing(tabId)
       const gen = beginFetchGeneration(tabId)
 
       try {
-        if (image) {
-          const ext = absPath.split(".").pop()?.toLowerCase() ?? ""
-          const mime = IMAGE_MIME[ext] ?? "image/png"
-          const b64 = await withTimeout(
-            readFileBase64(absPath),
+        if (binary) {
+          const dataUrl = await withTimeout(
+            readBinaryPreview(absPath, binary),
             15_000,
             t("previewRequestTimedOut")
           )
@@ -1470,7 +1595,7 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
               tab.id === tabId
                 ? {
                     ...tab,
-                    content: `data:${mime};base64,${b64}`,
+                    content: dataUrl,
                     readonly: true,
                     loading: false,
                     saveState: "idle",
@@ -1755,8 +1880,8 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
           }
         }
         const tabId = buildFileTabId({ kind: "file", path: absPath })
-        const image = isImageFile(absPath)
-        const office = !image && isOfficePreviewable(absPath)
+        const binary = binaryPreviewKind(absPath)
+        const office = !binary && isOfficePreviewable(absPath)
         const seed = loadingTab(
           tabId,
           null,
@@ -1764,7 +1889,7 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
           fileName(absPath),
           absPath,
           absPath,
-          image ? "image" : office ? "office" : languageFromPath(absPath)
+          binary ?? (office ? "office" : languageFromPath(absPath))
         )
 
         const decision = decideLoad(
@@ -1800,11 +1925,11 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
             return
           }
 
-          if (image) {
-            const ext = absPath.split(".").pop()?.toLowerCase() ?? ""
-            const mime = IMAGE_MIME[ext] ?? "image/png"
-            const b64 = await withTimeout(
-              readFileBase64(absPath),
+          // Images and PDFs are bytes, not text: they land on the tab as a
+          // `data:` URL for their renderer, with no etag and no git base.
+          if (binary) {
+            const dataUrl = await withTimeout(
+              readBinaryPreview(absPath, binary),
               15_000,
               t("previewRequestTimedOut")
             )
@@ -1814,7 +1939,7 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
                 tab.id === tabId
                   ? {
                       ...tab,
-                      content: `data:${mime};base64,${b64}`,
+                      content: dataUrl,
                       readonly: true,
                       loading: false,
                       saveState: "idle",
@@ -2943,7 +3068,12 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
           // column, so focus the files pane — mirroring the conversation
           // closeTab. The section pointer-capture used to do this; the tab strip
           // now sits outside the pane-activation wrapper, so do it explicitly.
-          activateFilePane()
+          // Not while a maximized conversation covers the column: the strip
+          // is hidden then, so the close came from elsewhere (an agent closing
+          // its page, a page closing itself), the user is not in the file
+          // column, and activating it would pull the column out from under
+          // the conversation they are reading.
+          if (!conversationMaximizedRef.current) activateFilePane()
           return next[nextIdx].id
         })
 
@@ -3182,10 +3312,12 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
       reloadActiveFile,
       toggleFileTabPreview,
       toggleFilesMaximized,
+      toggleConversationMaximized,
       openBrowserTab,
       adoptBrowserTab,
       restoreBrowserTabs,
       suspendBrowserTab,
+      setBrowserTabDevice,
     }),
     [
       setActivePane,
@@ -3214,10 +3346,12 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
       reloadActiveFile,
       toggleFileTabPreview,
       toggleFilesMaximized,
+      toggleConversationMaximized,
       openBrowserTab,
       adoptBrowserTab,
       restoreBrowserTabs,
       suspendBrowserTab,
+      setBrowserTabDevice,
     ]
   )
 
@@ -3226,8 +3360,9 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
       mode,
       activePane,
       filesMaximized: effectiveFilesMaximized,
+      conversationMaximized: effectiveConversationMaximized,
     }),
-    [mode, activePane, effectiveFilesMaximized]
+    [mode, activePane, effectiveFilesMaximized, effectiveConversationMaximized]
   )
 
   const fileTabsValue = useMemo<WorkspaceFileTabsValue>(
@@ -3303,8 +3438,8 @@ export function useOptionalWorkspaceView(): WorkspaceViewValue | null {
   return useContext(WorkspaceViewContext)
 }
 
-// Low-frequency layout state (mode / activePane / filesMaximized). Changes
-// only on fusion transitions, pane switches, and maximize toggles.
+// Low-frequency layout state (mode / activePane / which column is maximized).
+// Changes only on fusion transitions, pane switches, and maximize toggles.
 export function useWorkspaceView(): WorkspaceViewValue {
   const ctx = useContext(WorkspaceViewContext)
   if (!ctx) {

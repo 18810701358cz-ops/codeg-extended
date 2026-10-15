@@ -1045,6 +1045,12 @@ fn macos_major_version() -> isize {
     macos_version().0
 }
 
+/// `WKWebView.pageZoom` arrived in macOS 11. wry's `zoom` sends it without
+/// asking, and an older WebKit answers the unknown selector with an exception.
+pub fn supports_page_zoom() -> bool {
+    macos_major_version() >= 11
+}
+
 /// `WKWebsiteDataStore(forIdentifier:)` and `proxyConfigurations` both arrived
 /// in macOS 14; before that the tabs share WebKit's default store with the app
 /// and cannot be proxied. Safe from any thread.

@@ -1411,6 +1411,283 @@ fn hermes_minimal_session_snapshot() {
     });
 }
 
+/// Hermes v0.21.6's ACP adapter stamps `ended_at` on every session it holds
+/// when its stdio closes, including one that was only loaded, so the column
+/// can be far later than anything in the transcript. A summary's `ended_at` is
+/// what codeg's import reads as the transcript's end, so it must be the newest
+/// active, non-system message, for a never-ended pre-v0.21.6 row as much as for
+/// a stamped one. A session with none falls back to the column, a timestamp
+/// outside upstream's epoch window does not count, and an unusable value is no
+/// activity at all rather than "now".
+#[test]
+fn hermes_summary_end_is_the_newest_message_not_the_adapter_exit() {
+    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement};
+
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let base = temp.path().to_path_buf();
+    let db_path = base.join("state.db");
+    // Whole and binary-fraction offsets keep the expected millis exact.
+    let t0 = 1_791_629_998.0_f64;
+    let millis = |secs: f64| (secs * 1000.0) as i64;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build tokio runtime");
+    rt.block_on(async {
+        let conn = Database::connect(format!("sqlite:{}?mode=rwc", db_path.display()))
+            .await
+            .expect("open sqlite");
+        for ddl in [
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, model TEXT, \
+             model_config TEXT, parent_session_id TEXT, started_at REAL, ended_at REAL, \
+             cwd TEXT, title TEXT, archived INTEGER DEFAULT 0, input_tokens INTEGER, \
+             output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER)",
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, \
+             role TEXT, content TEXT, tool_call_id TEXT, tool_calls TEXT, tool_name TEXT, \
+             reasoning TEXT, reasoning_content TEXT, timestamp REAL, finish_reason TEXT, \
+             active INTEGER DEFAULT 1)",
+        ] {
+            conn.execute(Statement::from_string(DatabaseBackend::Sqlite, ddl))
+                .await
+                .expect("create table");
+        }
+
+        // Answered at t0 + 2.5, loaded again later and closed at t0 + 31.75
+        // without a word; its rewound draft and system row are not activity.
+        hermes_ins_session(
+            &conn,
+            "opened",
+            r#"{"cwd":"/w"}"#,
+            "/w",
+            "opened",
+            t0,
+            t0 + 31.75,
+            0,
+            0,
+            0,
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "opened",
+            "user",
+            "hi".to_string(),
+            "",
+            "",
+            "",
+            "",
+            t0,
+            "",
+            1,
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "opened",
+            "assistant",
+            "hello".to_string(),
+            "",
+            "",
+            "",
+            "",
+            t0 + 2.5,
+            "stop",
+            1,
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "opened",
+            "assistant",
+            "(rewound)".to_string(),
+            "",
+            "",
+            "",
+            "",
+            t0 + 20.0,
+            "stop",
+            0,
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "opened",
+            "system",
+            "SYSTEM PROMPT".to_string(),
+            "",
+            "",
+            "",
+            "",
+            t0 + 25.0,
+            "",
+            1,
+        )
+        .await;
+
+        // A garbage double salvaged from a damaged page must not pin recency.
+        hermes_ins_session(
+            &conn,
+            "garbage",
+            r#"{"cwd":"/w"}"#,
+            "/w",
+            "garbage",
+            t0,
+            t0 + 100.0,
+            0,
+            0,
+            0,
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "garbage",
+            "user",
+            "hi".to_string(),
+            "",
+            "",
+            "",
+            "",
+            t0 + 1.0,
+            "",
+            1,
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "garbage",
+            "assistant",
+            "hello".to_string(),
+            "",
+            "",
+            "",
+            "",
+            8.4e252,
+            "stop",
+            1,
+        )
+        .await;
+
+        // Nothing countable: not listed, and by id the column is all there is.
+        hermes_ins_session(
+            &conn,
+            "quiet",
+            r#"{"cwd":"/w"}"#,
+            "/w",
+            "quiet",
+            t0,
+            t0 + 50.0,
+            0,
+            0,
+            0,
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "quiet",
+            "system",
+            "SYSTEM PROMPT".to_string(),
+            "",
+            "",
+            "",
+            "",
+            t0 + 10.0,
+            "",
+            1,
+        )
+        .await;
+
+        // The shape every ACP row had before v0.21.6: never ended at all.
+        hermes_exec(
+            &conn,
+            "INSERT INTO sessions (id, source, model, model_config, started_at, ended_at, \
+             cwd, title, archived) VALUES (?,?,?,?,?,NULL,?,?,0)",
+            vec![
+                "never-ended".into(),
+                "acp".into(),
+                "gpt-5.5".into(),
+                r#"{"cwd":"/w"}"#.into(),
+                t0.into(),
+                "/w".into(),
+                "never-ended".into(),
+            ],
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "never-ended",
+            "user",
+            "hi".to_string(),
+            "",
+            "",
+            "",
+            "",
+            t0 + 4.0,
+            "",
+            1,
+        )
+        .await;
+
+        // Nothing usable anywhere: an unusable value is no activity, not "now".
+        hermes_ins_session(
+            &conn,
+            "unusable",
+            r#"{"cwd":"/w"}"#,
+            "/w",
+            "unusable",
+            t0,
+            -1.0,
+            0,
+            0,
+            0,
+        )
+        .await;
+        hermes_ins_msg(
+            &conn,
+            "unusable",
+            "user",
+            "hi".to_string(),
+            "",
+            "",
+            "",
+            "",
+            8.4e252,
+            "",
+            1,
+        )
+        .await;
+    });
+
+    let parser = HermesParser::with_base_dir(base);
+    let listed = parser.list_conversations().expect("list conversations");
+    let end_of = |id: &str| {
+        listed
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("{id} is listed"))
+            .ended_at
+            .map(|at| at.timestamp_millis())
+    };
+    assert_eq!(end_of("opened"), Some(millis(t0 + 2.5)));
+    assert_eq!(end_of("garbage"), Some(millis(t0 + 1.0)));
+    assert_eq!(end_of("never-ended"), Some(millis(t0 + 4.0)));
+    assert_eq!(end_of("unusable"), None);
+    assert!(listed.iter().all(|s| s.id != "quiet"));
+
+    let by_id = |id: &str| {
+        parser
+            .get_conversation(id)
+            .expect("get conversation")
+            .summary
+            .ended_at
+            .map(|at| at.timestamp_millis())
+    };
+    assert_eq!(by_id("opened"), Some(millis(t0 + 2.5)));
+    assert_eq!(by_id("garbage"), Some(millis(t0 + 1.0)));
+    assert_eq!(by_id("quiet"), Some(millis(t0 + 50.0)));
+    assert_eq!(by_id("unusable"), None);
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Kimi Code
 // ────────────────────────────────────────────────────────────────────────────

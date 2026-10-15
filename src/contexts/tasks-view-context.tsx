@@ -13,6 +13,7 @@ import {
 import { useTranslations } from "next-intl"
 import { workTaskList } from "@/lib/api"
 import { notifyDesktop } from "@/lib/desktop-notification"
+import { requestWindowAttention } from "@/lib/window-attention"
 import { onTransportReconnect, subscribe } from "@/lib/platform"
 import {
   loadTasksViewMode,
@@ -154,10 +155,11 @@ export function TasksViewProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * System notification when a task flips into review (ready for acceptance) or
- * failed. The engine runs headless, so this fetch-to-fetch diff is the only
- * place that sees the transition; the window-state gate and the user's
- * per-event switch live inside `notifyDesktop`.
+ * System notification — and a taskbar / Dock nudge — when a task flips into
+ * review (ready for acceptance) or failed. The engine runs headless, so this
+ * fetch-to-fetch diff is the only place that sees the transition; the
+ * window-state gates and the user's per-event switches live inside
+ * `notifyDesktop` and `requestWindowAttention`.
  */
 function notifyFlips(
   prev: Map<number, WorkTask["status"]> | null,
@@ -194,5 +196,6 @@ function notifyFlips(
         ? t("notifyReviewRedacted")
         : t("notifyFailedRedacted"),
     })
+    void requestWindowAttention("work_task")
   }
 }

@@ -622,6 +622,7 @@ impl ConnectionManager {
             status: ConnectionStatus::Connected,
             owner_window_label: "test-window".to_string(),
             cmd_tx: tx,
+            handshake: tokio_util::sync::CancellationToken::new(),
             state: Arc::new(tokio::sync::RwLock::new(state)),
             emitter,
             prompt_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -665,6 +666,7 @@ impl ConnectionManager {
             status: ConnectionStatus::Connected,
             owner_window_label: "test-window".to_string(),
             cmd_tx: tx,
+            handshake: tokio_util::sync::CancellationToken::new(),
             state: Arc::new(tokio::sync::RwLock::new(state)),
             emitter,
             prompt_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -2329,6 +2331,16 @@ impl ConnectionManager {
                         origin_cwd: Set(None),
                     };
                     let inserted = sibling.insert(txn).await?;
+                    // The sibling keeps the pre-fork history under the
+                    // original's name, so it keeps the original's tags too —
+                    // without them the user's tagging would appear to have
+                    // fallen off the conversation they forked FROM.
+                    crate::db::service::conversation_tag_service::copy_conversation_tags(
+                        txn,
+                        conversation_id,
+                        inserted.id,
+                    )
+                    .await?;
                     Ok(inserted.id)
                 })
             })
@@ -2350,6 +2362,10 @@ impl ConnectionManager {
         };
         if let Some(conn) = removed {
             tracing::info!("[ACP] disconnect connection={}", conn_id);
+            // First: a connection still in its handshake is not reading
+            // `cmd_tx`, and a full channel would hold the send below until it
+            // did. Cancelled, it stops and drops the receiver instead.
+            conn.handshake.cancel();
             let _ = conn.cmd_tx.send(ConnectionCommand::Disconnect).await;
             Ok(())
         } else {
@@ -2409,6 +2425,15 @@ impl ConnectionManager {
     /// what `codeg-mcp` will pass through to `session/set_config_option`
     /// when a delegation actually fires.
     ///
+    /// `preferred_config_values` are applied on the probe session before the
+    /// snapshot is read, exactly as a real launch would apply them: an agent
+    /// that derives one option's choices from another's value (opencode
+    /// re-lists `effort` per selected model) then answers for the user's
+    /// selection instead of its own default. A value the agent rejects is
+    /// logged and skipped — the snapshot still comes back. Each applied
+    /// option itself still reports the agent's own pick as its current value
+    /// (see [`report_agent_chosen_values`]).
+    ///
     /// Returns `Ok(snapshot)` even when the agent advertises no options
     /// (empty `config_options`, `None` modes) — that's a valid outcome the
     /// UI can render as "this agent has nothing to configure."
@@ -2417,6 +2442,7 @@ impl ConnectionManager {
         agent_type: AgentType,
         working_dir: Option<String>,
         runtime_env: BTreeMap<String, String>,
+        preferred_config_values: BTreeMap<String, String>,
     ) -> Result<AgentOptionsSnapshot, AcpError> {
         // Owner window label is informational only (used for
         // disconnect_by_owner_window), but worth being explicit so a probe
@@ -2443,6 +2469,7 @@ impl ConnectionManager {
                 .clone()
         };
         let _probe_guard = per_agent_lock.lock_owned().await;
+        let applied_ids: Vec<String> = preferred_config_values.keys().cloned().collect();
         let conn_id = self
             .spawn_agent(
                 agent_type,
@@ -2452,7 +2479,7 @@ impl ConnectionManager {
                 owner_window,
                 EventEmitter::Noop,
                 None,
-                BTreeMap::new(),
+                preferred_config_values,
             )
             .await?;
 
@@ -2477,7 +2504,19 @@ impl ConnectionManager {
         // message over the generic ProbeTimedOut / ConnectionNotFound —
         // an agent that died on Initialize already explained why.
         let snapshot = match raw_snapshot {
-            Ok(s) => Ok(s),
+            Ok(mut s) => {
+                if !applied_ids.is_empty() {
+                    if let Some(state) = state_arc.as_ref() {
+                        let agent_chosen = state.read().await.agent_chosen_config_values.clone();
+                        report_agent_chosen_values(
+                            &mut s.config_options,
+                            &applied_ids,
+                            &agent_chosen,
+                        );
+                    }
+                }
+                Ok(s)
+            }
             Err(wait_err) => {
                 let captured = if let Some(state) = state_arc.as_ref() {
                     state.read().await.last_error.clone()
@@ -2591,6 +2630,7 @@ impl ConnectionManager {
                     // Same handoff as `disconnect`: closing a window leaves
                     // the agents exiting, not exited.
                     self.park_draining(&conn).await;
+                    conn.handshake.cancel();
                     txs.push(conn.cmd_tx);
                 }
             }
@@ -2677,6 +2717,7 @@ impl ConnectionManager {
                     // immediately, so the child is parked as draining to stay
                     // visible while it exits — and, here, to be swept below.
                     self.park_draining(&conn).await;
+                    conn.handshake.cancel();
                     txs.push(conn.cmd_tx);
                 }
             }
@@ -2784,7 +2825,10 @@ impl ConnectionManager {
             let mut connections = self.connections.lock().await;
             connections
                 .drain()
-                .map(|(_, conn)| (conn.cmd_tx, conn.child_pid))
+                .map(|(_, conn)| {
+                    conn.handshake.cancel();
+                    (conn.cmd_tx, conn.child_pid)
+                })
                 .collect()
         };
         let disconnected = handles.len();
@@ -4184,10 +4228,113 @@ impl SessionPlanApprovalAccess for ConnectionManagerPlanApprovalLookup {
     }
 }
 
+/// Make every option the probe applied a caller's selection to report the value
+/// the agent picked on its own, instead of that selection.
+///
+/// Every consumer of the probe's snapshot reads an option's current value as
+/// what it runs when the caller leaves it unset: the delegation settings panel
+/// names its "Default" choice after it, and the task and automation editors
+/// show and pin it for an option nobody touched. For an applied option that is
+/// the agent's own pick, which the session no longer holds once the selection
+/// is in — reporting the selection would label the user's model as the agent's
+/// default. The options the agent derived from the selection (opencode's
+/// `effort`, re-listed per model) keep the value it answered, because that is
+/// what they run when unset given the selection.
+///
+/// `agent_chosen` is the establishment's own answer
+/// (`SessionState::agent_chosen_config_values`). An applied id the agent never
+/// answered with, or the snapshot does not carry, is left alone.
+fn report_agent_chosen_values(
+    options: &mut [crate::acp::types::SessionConfigOptionInfo],
+    applied_ids: &[String],
+    agent_chosen: &BTreeMap<String, String>,
+) {
+    use crate::acp::types::SessionConfigKindInfo;
+    for option in options
+        .iter_mut()
+        .filter(|option| applied_ids.contains(&option.id))
+    {
+        let Some(chosen) = agent_chosen.get(&option.id) else {
+            continue;
+        };
+        match &mut option.kind {
+            SessionConfigKindInfo::Select(select) => select.current_value = chosen.clone(),
+            SessionConfigKindInfo::Boolean(boolean) => boolean.current_value = chosen == "true",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::acp::connection::AgentConnection;
+
+    /// The probe applies the caller's model, so the session it reads holds that
+    /// model; the delegation panel names its "Default" choice after the
+    /// snapshot's current value. Model ids from a live opencode 2.0.24 probe:
+    /// the agent opened on `exo-free` and the caller asked for
+    /// `step-5-preview-free`. The agent's own effort differs from the one it
+    /// answered after the switch, so the test can tell which one survives.
+    #[test]
+    fn the_probe_reports_the_agents_own_pick_for_the_options_it_applied() {
+        use crate::acp::types::{
+            SessionConfigBooleanInfo, SessionConfigKindInfo, SessionConfigOptionInfo,
+            SessionConfigSelectInfo,
+        };
+        let option = |id: &str, kind: SessionConfigKindInfo| SessionConfigOptionInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: None,
+            category: None,
+            kind,
+            recommended_value: None,
+        };
+        let select = |current: &str| {
+            SessionConfigKindInfo::Select(SessionConfigSelectInfo {
+                current_value: current.to_string(),
+                options: Vec::new(),
+                groups: Vec::new(),
+            })
+        };
+        let current = |options: &[SessionConfigOptionInfo], id: &str| {
+            let option = options.iter().find(|o| o.id == id).expect("present");
+            match &option.kind {
+                SessionConfigKindInfo::Select(select) => select.current_value.clone(),
+                SessionConfigKindInfo::Boolean(boolean) => boolean.current_value.to_string(),
+            }
+        };
+        let mut options = vec![
+            option("model", select("opencode/step-5-preview-free")),
+            option("effort", select("default")),
+            option("mode", select("plan")),
+            option(
+                "auto_approve",
+                SessionConfigKindInfo::Boolean(SessionConfigBooleanInfo {
+                    current_value: true,
+                }),
+            ),
+        ];
+        let agent_chosen: BTreeMap<String, String> = [
+            ("model", "opencode/exo-free"),
+            ("effort", "high"),
+            ("mode", "build"),
+            ("auto_approve", "false"),
+        ]
+        .into_iter()
+        .map(|(id, value)| (id.to_string(), value.to_string()))
+        .collect();
+        // `provider` was applied but neither answered nor in the snapshot.
+        let applied = ["model", "auto_approve", "provider"].map(String::from);
+
+        report_agent_chosen_values(&mut options, &applied, &agent_chosen);
+
+        assert_eq!(current(&options, "model"), "opencode/exo-free");
+        assert_eq!(current(&options, "auto_approve"), "false");
+        // Not applied: what the agent answered GIVEN the selection stands — the
+        // default effort of the selected model, and a mode nobody asked for.
+        assert_eq!(current(&options, "effort"), "default");
+        assert_eq!(current(&options, "mode"), "plan");
+    }
 
     /// An agent that has left the connection map but not yet exited can still
     /// be appending to the transcript a restore is about to unlink, so the
@@ -4366,6 +4513,7 @@ mod tests {
             status: ConnectionStatus::Connected,
             owner_window_label: "test-window".to_string(),
             cmd_tx: tx,
+            handshake: tokio_util::sync::CancellationToken::new(),
             state: Arc::new(RwLock::new(state)),
             emitter: EventEmitter::Noop,
             prompt_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -4623,6 +4771,138 @@ mod tests {
         );
     }
 
+    /// Every path that ends a connection also cancels its handshake. The
+    /// `Disconnect` each sends goes unread until the session is established, so
+    /// a path that skipped the cancel would leave a connection still starting
+    /// up to finish its handshake — and its agent running — before it noticed.
+    #[tokio::test]
+    async fn every_disconnect_path_cancels_the_handshake() {
+        let mgr = ConnectionManager::new();
+        async fn connect(
+            mgr: &ConnectionManager,
+            id: &str,
+            agent_type: AgentType,
+        ) -> tokio_util::sync::CancellationToken {
+            mgr.insert_test_connection(id, agent_type, None, EventEmitter::Noop)
+                .await;
+            mgr.connections.lock().await[id].handshake.clone()
+        }
+
+        let closed_tab = connect(&mgr, "closed-tab", AgentType::Codex).await;
+        mgr.disconnect("closed-tab").await.unwrap();
+        assert!(closed_tab.is_cancelled(), "disconnect");
+
+        let closed_window = connect(&mgr, "closed-window", AgentType::Codex).await;
+        mgr.disconnect_by_owner_window("test-window").await;
+        assert!(closed_window.is_cancelled(), "disconnect_by_owner_window");
+
+        let signed_out = connect(&mgr, "signed-out", AgentType::Antigravity).await;
+        mgr.disconnect_by_agent_type(AgentType::Antigravity).await;
+        assert!(signed_out.is_cancelled(), "disconnect_by_agent_type");
+
+        let quit = connect(&mgr, "quit", AgentType::Codex).await;
+        mgr.disconnect_all().await;
+        assert!(quit.is_cancelled(), "disconnect_all");
+    }
+
+    /// The case that made it matter: a draft switching agents disconnects the
+    /// connection it is leaving, whose agent may not have answered Initialize
+    /// yet. The `Disconnect` goes unread until the conversation loop starts,
+    /// and Initialize waits up to 60 s, so the agent process outlived the
+    /// disconnect by up to a minute.
+    ///
+    /// The agent is `sleep`, launched as a custom binary agent: it never
+    /// answers. Unix-only (relies on `sleep` / `kill(2)`).
+    #[cfg(unix)]
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disconnect_stops_an_agent_that_has_not_answered_initialize() {
+        use crate::acp::custom_registry::{
+            hydrate, hydrate_test_guard, BinaryPlatformSpec, CustomAgentDef, CustomAgentSpec,
+            CustomDistributionKind,
+        };
+
+        // `hydrate` replaces a process-global map; hold its lock throughout.
+        let _registry = hydrate_test_guard();
+        let def = CustomAgentDef {
+            registry_id: "never-answers".into(),
+            name: "Never answers".into(),
+            description: String::new(),
+            version: "1.0.0".into(),
+            distribution_kind: CustomDistributionKind::Binary,
+            spec: CustomAgentSpec {
+                binary: BTreeMap::from([(
+                    crate::acp::registry::current_platform().to_string(),
+                    BinaryPlatformSpec {
+                        archive: "https://example.invalid/never-answers.tar.gz".into(),
+                        // Nothing cached under this id, so the launch falls
+                        // back to `sleep` on PATH.
+                        cmd: "sleep".into(),
+                        args: vec!["120".into()],
+                        env: BTreeMap::new(),
+                        sha256: None,
+                    },
+                )]),
+                ..Default::default()
+            },
+            icon_url: None,
+            skills_shared_store: false,
+            skills_dir: None,
+            source: Default::default(),
+            version_probe: None,
+            supports_mcp: true,
+        };
+        assert!(hydrate(std::slice::from_ref(&def)).is_empty());
+        let agent_type = AgentType::custom("never-answers").unwrap();
+
+        let mgr = ConnectionManager::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = mgr
+            .spawn_agent(
+                agent_type,
+                Some(dir.path().to_string_lossy().into_owned()),
+                None,
+                BTreeMap::new(),
+                "test-window".to_string(),
+                EventEmitter::Noop,
+                None,
+                BTreeMap::new(),
+            )
+            .await
+            .expect("the agent launches");
+        let pid_cell = Arc::clone(&mgr.connections.lock().await[&id].child_pid);
+        let mut pid = 0;
+        for _ in 0..500 {
+            pid = pid_cell.load(std::sync::atomic::Ordering::SeqCst);
+            if pid != 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_ne!(pid, 0, "the agent process never started");
+        // Up and still waiting to be answered, so whatever ends it below is
+        // the disconnect and not the agent leaving on its own.
+        assert!(is_alive(pid as i32), "the agent exited on its own");
+
+        mgr.disconnect(&id).await.unwrap();
+
+        // Longer than `wait_until_dead` allows, for a loaded CI machine; the
+        // handshake used to hold on for up to 60 s.
+        let mut gone = false;
+        for _ in 0..500 {
+            if !is_alive(pid as i32) {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        hydrate(&[]);
+        assert!(
+            gone,
+            "agent {pid} outlived its disconnect — the handshake kept it running"
+        );
+    }
+
     /// Like [`spawn_process_tree`], but both levels ignore `SIGTERM`: the shell
     /// sets it to `SIG_IGN`, which `sleep` then inherits across `exec`. Stands
     /// in for an agent that traps it and takes its time — or never leaves.
@@ -4821,6 +5101,7 @@ mod tests {
             status: ConnectionStatus::Connected,
             owner_window_label: "test-window".to_string(),
             cmd_tx: tx,
+            handshake: tokio_util::sync::CancellationToken::new(),
             state: Arc::new(RwLock::new(state)),
             emitter: EventEmitter::Noop,
             prompt_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -5714,6 +5995,7 @@ mod tests {
             status: ConnectionStatus::Connected,
             owner_window_label: "test-window".to_string(),
             cmd_tx: tx,
+            handshake: tokio_util::sync::CancellationToken::new(),
             state: Arc::new(RwLock::new(state)),
             emitter: EventEmitter::Noop,
             prompt_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -7397,6 +7679,7 @@ mod tests {
             status: ConnectionStatus::Connected,
             owner_window_label: "test-window".to_string(),
             cmd_tx: tx,
+            handshake: tokio_util::sync::CancellationToken::new(),
             state: Arc::new(RwLock::new(state)),
             emitter: EventEmitter::Noop,
             prompt_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -7477,6 +7760,59 @@ mod tests {
         assert_eq!(sibling.status, "pending_review");
         assert_eq!(sibling.folder_id, folder_id);
         assert_eq!(sibling.git_branch.as_deref(), Some("feature/x"));
+    }
+
+    #[tokio::test]
+    async fn fork_session_sibling_keeps_the_conversations_tags() {
+        use crate::db::service::conversation_tag_service;
+        use crate::db::test_helpers;
+        let db = test_helpers::fresh_in_memory_db().await;
+        let folder_id = test_helpers::seed_folder(&db, "/tmp/fork-tags").await;
+        let pre = conversation_service::create(
+            &db.conn,
+            folder_id,
+            AgentType::ClaudeCode,
+            Some("Tagged".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        conversation_service::bind_external_id(&db.conn, pre.id, "session-S1", &[])
+            .await
+            .unwrap();
+        let global = conversation_tag_service::create_tag(&db.conn, None, "bug", "#d73a4a")
+            .await
+            .unwrap();
+        let owned = conversation_tag_service::create_tag(&db.conn, Some(folder_id), "ui", "#0e8a16")
+            .await
+            .unwrap();
+        conversation_tag_service::update_conversation_tags(
+            &db.conn,
+            pre.id,
+            &[global.id, owned.id],
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let (mgr, join) =
+            manager_with_fake_fork("c-fork-tags", pre.id, "session-S2", "session-S1").await;
+        let result = mgr
+            .fork_session(&db, "c-fork-tags", None, None, None)
+            .await
+            .expect("fork_session should succeed");
+        let _ = join.await;
+
+        let mut expected = vec![global.id, owned.id];
+        expected.sort_unstable();
+        let sibling = conversation_service::get_by_id(&db.conn, result.sibling_conversation_id)
+            .await
+            .unwrap();
+        assert_eq!(sibling.tag_ids, expected, "the pre-fork history keeps its tags");
+        let current = conversation_service::get_by_id(&db.conn, pre.id)
+            .await
+            .unwrap();
+        assert_eq!(current.tag_ids, expected, "the forked row keeps them too");
     }
 
     #[tokio::test]
@@ -8068,6 +8404,7 @@ mod tests {
             status: ConnectionStatus::Connected,
             owner_window_label: "test-window".to_string(),
             cmd_tx: tx,
+            handshake: tokio_util::sync::CancellationToken::new(),
             state: Arc::new(RwLock::new(state)),
             emitter: EventEmitter::Noop,
             prompt_lock: Arc::new(tokio::sync::Mutex::new(())),

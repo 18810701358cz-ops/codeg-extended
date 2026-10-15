@@ -62,7 +62,8 @@ export function WorkspaceChromeController() {
   // Tab-close/navigation shortcuts used to live in the visible tab strips.
   // Mobile no longer mounts those strips, so this always-mounted controller now
   // owns them too (see the keydown handler below).
-  const { mode, activePane, filesMaximized } = useWorkspaceView()
+  const { mode, activePane, filesMaximized, conversationMaximized } =
+    useWorkspaceView()
   const { activeFileTabId, fileTabs } = useWorkspaceFileTabs()
   const {
     closeFileTab,
@@ -95,7 +96,12 @@ export function WorkspaceChromeController() {
   // there is none, which leaves ⌘W to the OS: it closes the window.
   const closeCurrentTab = useCallback(
     (pane: WorkspacePane): boolean => {
-      const target = tabShortcutTarget(mode, pane, filesMaximized)
+      const target = tabShortcutTarget(
+        mode,
+        pane,
+        filesMaximized,
+        conversationMaximized
+      )
       if (target.conversation) {
         if (!activeTabId) return false
         closeTab(activeTabId)
@@ -108,7 +114,15 @@ export function WorkspaceChromeController() {
       }
       return false
     },
-    [activeFileTabId, activeTabId, closeFileTab, closeTab, filesMaximized, mode]
+    [
+      activeFileTabId,
+      activeTabId,
+      closeFileTab,
+      closeTab,
+      conversationMaximized,
+      filesMaximized,
+      mode,
+    ]
   )
 
   // ⌘W the macOS app menu caught (see `menu-close-shortcut`): pressed where
@@ -144,8 +158,11 @@ export function WorkspaceChromeController() {
         // What a click there would have done (see the pane handlers in the
         // workspace layout): a page gives the workspace no pointer or focus
         // event of its own. It also routes the next ⌘W, which arrives with
-        // no view holding the keyboard once this page has closed.
-        if (mode === "fusion" && (pressedIn === "files" || !filesMaximized)) {
+        // no view holding the keyboard once this page has closed. Never into
+        // a column the other one is maximized over.
+        const covered =
+          pressedIn === "files" ? conversationMaximized : filesMaximized
+        if (mode === "fusion" && !covered) {
           setActivePane(pressedIn)
         }
       }
@@ -154,6 +171,7 @@ export function WorkspaceChromeController() {
     [
       activePane,
       closeCurrentTab,
+      conversationMaximized,
       filesMaximized,
       mode,
       setActivePane,
@@ -239,7 +257,12 @@ export function WorkspaceChromeController() {
       // preventDefault firing so mod+w never falls through to closing the OS
       // window. Routing mirrors the old split: conversation pane vs files pane.
       const { conversation: conversationPaneActive, files: filesPaneActive } =
-        tabShortcutTarget(mode, activePane, filesMaximized)
+        tabShortcutTarget(
+          mode,
+          activePane,
+          filesMaximized,
+          conversationMaximized
+        )
 
       const isNextTab = matchShortcutEvent(e, shortcuts.next_tab)
       const isPrevTab = matchShortcutEvent(e, shortcuts.prev_tab)
@@ -332,6 +355,7 @@ export function WorkspaceChromeController() {
               // Said only when it was remote: otherwise the address decides,
               // as it does when the tab comes back after a restart.
               ...(closed.remote === true ? { remote: true } : {}),
+              ...(closed.device ? { device: closed.device } : {}),
             })
             return
           }
@@ -389,6 +413,7 @@ export function WorkspaceChromeController() {
     mode,
     activePane,
     filesMaximized,
+    conversationMaximized,
     fileTabs,
     closeAllFileTabs,
     switchFileTab,

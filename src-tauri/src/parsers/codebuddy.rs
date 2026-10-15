@@ -19,13 +19,19 @@ use crate::parsers::{
     backfill_turn_durations, compute_session_stats, folder_name_from_path,
     infer_context_window_max_tokens, is_safe_subagent_id, latest_turn_total_usage_tokens,
     merge_context_window_stats, relocate_orphaned_tool_results, resolve_patch_line_numbers,
-    structurize_read_tool_output, title_from_user_text, truncate_str, AgentParser, ParseError,
+    structurize_read_tool_output, title_from_user_text, truncate_str, AgentEnv, AgentParser,
+    ParseError,
 };
 
 /// Resolve CodeBuddy's config dir, honoring `CODEBUDDY_CONFIG_DIR`, else
 /// `~/.codebuddy` (mirrors `resolve_claude_config_dir`).
 pub(crate) fn resolve_codebuddy_config_dir() -> PathBuf {
-    resolve_codebuddy_config_dir_from(std::env::var_os("CODEBUDDY_CONFIG_DIR"), dirs::home_dir())
+    resolve_codebuddy_config_dir_for_env(&AgentEnv::inherited())
+}
+
+/// The config dir of the CodeBuddy launched with `env`.
+pub(crate) fn resolve_codebuddy_config_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_codebuddy_config_dir_from(env.var_os("CODEBUDDY_CONFIG_DIR"), dirs::home_dir())
 }
 
 fn resolve_codebuddy_config_dir_from(
@@ -52,8 +58,13 @@ pub struct CodeBuddyParser {
 
 impl CodeBuddyParser {
     pub fn new() -> Self {
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the CodeBuddy launched with `env`.
+    pub fn for_env(env: &AgentEnv) -> Self {
         Self {
-            base_dir: resolve_codebuddy_config_dir().join("projects"),
+            base_dir: resolve_codebuddy_config_dir_for_env(env).join("projects"),
         }
     }
 
@@ -298,7 +309,11 @@ impl CodeBuddyParser {
                             meta: None,
                         }],
                         timestamp: ts,
-                        usage: None,
+                        // A model request's usage is written on the LAST item of
+                        // its response, which is a `function_call` whenever the
+                        // request ends in a tool call. Each request carries it
+                        // once, so reading it here counts nothing twice.
+                        usage: usage_from_raw(&value),
                         duration_ms: None,
                         model: None,
                         completed_at: Some(ts),
@@ -616,21 +631,35 @@ fn reasoning_text(value: &Value) -> String {
     String::new()
 }
 
-/// Map CodeBuddy's `providerData.rawUsage` (OpenAI completions shape) onto
-/// `TurnUsage`. `prompt_tokens` already includes the cached prefix, so subtract
-/// `cached_tokens` to get the non-cached input.
+/// Map CodeBuddy's `providerData.rawUsage` onto `TurnUsage`.
+///
+/// CodeBuddy writes one of two shapes there. A Chat Completions model gets the
+/// provider's own usage object, taken off the raw stream: `prompt_tokens` /
+/// `completion_tokens`, the cached count under
+/// `prompt_tokens_details.cached_tokens`. A Responses-API model (a custom model
+/// can be one since 2.163.0) carries no usage on its raw stream events, so the
+/// record gets the agents SDK's `response_done` usage instead: `inputTokens` /
+/// `outputTokens`, the cached count under `inputTokensDetails.cached_tokens`.
+/// The API's own spelling of those (`input_tokens`, `output_tokens`,
+/// `input_tokens_details`) is accepted as well, as the SDK's `Usage` reader
+/// accepts it. Either input count already includes the cached prefix, so the
+/// cached tokens are subtracted to get the non-cached input.
 fn usage_from_raw(value: &Value) -> Option<TurnUsage> {
     let raw = value.get("providerData")?.get("rawUsage")?;
-    let prompt = raw.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(0);
-    let completion = raw
-        .get("completion_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let cached = raw
-        .get("prompt_tokens_details")
-        .and_then(|d| d.get("cached_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let first = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|key| raw.get(*key).and_then(Value::as_u64))
+    };
+    let prompt = first(&["prompt_tokens", "inputTokens", "input_tokens"]).unwrap_or(0);
+    let completion = first(&["completion_tokens", "outputTokens", "output_tokens"]).unwrap_or(0);
+    let cached = [
+        "prompt_tokens_details",
+        "inputTokensDetails",
+        "input_tokens_details",
+    ]
+    .iter()
+    .find_map(|key| raw.get(*key)?.get("cached_tokens").and_then(Value::as_u64))
+    .unwrap_or(0);
     if prompt == 0 && completion == 0 && cached == 0 {
         return None;
     }
@@ -824,7 +853,12 @@ fn tool_is_error(value: &Value) -> bool {
 /// `agentCapabilities.metaPromptSupport`; per the 2.159.0 changelog it reaches
 /// the model but is not shown, broadcast or replayed as a user message):
 /// `markAcpMetaPromptItems` stamps the same flag on its user items. codeg never
-/// sends one, but another client's would land here.
+/// sends one, but another client's would land here. Since 2.162.0 it also
+/// covers the task-list reminders CodeBuddy persists for the model: a
+/// `<system-reminder>` text flagged `{isMeta, skipRun, startsNewUserRequest:
+/// false, taskReminderKind: "task" | "todo", taskReminderAnchorId}` that it
+/// leaves out of its own replay (`CODEBUDDY_DISABLE_TASK_REMINDERS=1` turns
+/// them off).
 ///
 /// CodeBuddy's OWN renderer skips exactly these records when it replays a
 /// session (`"message" === type && "user" === role && (isMeta ||
@@ -1087,6 +1121,8 @@ fn agent_stats_from_subagent(
         lines_removed: None,
         other_tool_count: None,
         tool_calls,
+        timeline: Vec::new(),
+        recovered_result: None,
         // CodeBuddy's sub-agent transcript is a file under the parent session,
         // not a session of its own.
         child_session_id: None,
@@ -1305,6 +1341,172 @@ mod tests {
         assert_eq!(usage.output_tokens, 267);
         assert_eq!(usage.cache_read_input_tokens, 12800);
         assert_eq!(usage.input_tokens, 24049 - 12800);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Each model request's usage is written once, on the last item of its
+    /// response, and when the request ends in a tool call that item is the
+    /// `function_call`. The figures are from a real session: one tool round,
+    /// then the answer. Both requests must count.
+    #[test]
+    fn usage_written_on_a_function_call_counts() {
+        let root = std::env::temp_dir().join(format!("codeg-cb-fc-usage-{}", uuid::Uuid::new_v4()));
+        let sid = "sess-fc-usage";
+        write_session(
+            &root,
+            "Users-demo-app",
+            sid,
+            &[
+                json!({"type":"message","role":"user","timestamp":1781821844178i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "content":[{"type":"input_text","text":"what is this app?"}]}),
+                json!({"type":"function_call","timestamp":1781821845000i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "name":"Read","callId":"call_1","arguments":"{\"file_path\":\"/Users/demo/app/README.md\"}",
+                       "providerData":{"messageId":"m1","rawUsage":{"prompt_tokens":12995,"completion_tokens":267,"total_tokens":13262,
+                         "prompt_tokens_details":{"cached_tokens":0}}}}),
+                json!({"type":"function_call_result","timestamp":1781821846000i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "name":"Read","callId":"call_1","status":"completed","output":{"type":"text","text":"# demo"},
+                       "providerData":{"messageId":"m1"}}),
+                json!({"type":"message","role":"assistant","timestamp":1781821847000i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "content":[{"type":"output_text","text":"A demo app."}],
+                       "providerData":{"messageId":"m2","rawUsage":{"prompt_tokens":13388,"completion_tokens":52,"total_tokens":13440,
+                         "prompt_tokens_details":{"cached_tokens":12992}}}}),
+            ],
+        );
+
+        let parser = CodeBuddyParser::with_base_dir(root.clone());
+        let detail = parser.get_conversation(sid).expect("detail");
+        let usage = detail
+            .session_stats
+            .as_ref()
+            .and_then(|s| s.total_usage.as_ref())
+            .expect("usage");
+        assert_eq!(usage.output_tokens, 267 + 52);
+        assert_eq!(usage.cache_read_input_tokens, 12992);
+        assert_eq!(usage.input_tokens, 12995 + (13388 - 12992));
+
+        // And it is attributed to the turn that made the tool call.
+        let tool_turn = detail
+            .turns
+            .iter()
+            .find(|t| {
+                t.blocks
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::ToolUse { .. }))
+            })
+            .expect("tool-call turn");
+        let tool_usage = tool_turn.usage.as_ref().expect("tool-call turn usage");
+        assert_eq!(
+            (tool_usage.input_tokens, tool_usage.output_tokens),
+            (12995, 267)
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A Responses-API model's record carries the agents SDK's `response_done`
+    /// usage, which is what CodeBuddy stores when the raw stream reports none.
+    #[test]
+    fn responses_api_usage_is_read() {
+        let record = json!({"providerData":{"rawUsage":{
+            "inputTokens":5000,"outputTokens":120,"totalTokens":5120,
+            "inputTokensDetails":{"cached_tokens":4096},
+            "outputTokensDetails":{"reasoning_tokens":64},
+            "requestUsageEntries":[{"inputTokens":5000,"outputTokens":120,"totalTokens":5120}]
+        }}});
+        let usage = usage_from_raw(&record).expect("usage");
+        assert_eq!(usage.input_tokens, 5000 - 4096);
+        assert_eq!(usage.output_tokens, 120);
+        assert_eq!(usage.cache_read_input_tokens, 4096);
+
+        let api_spelling = json!({"providerData":{"rawUsage":{
+            "input_tokens":900,"output_tokens":30,"input_tokens_details":{"cached_tokens":512}
+        }}});
+        let usage = usage_from_raw(&api_spelling).expect("usage");
+        assert_eq!(usage.input_tokens, 900 - 512);
+        assert_eq!(usage.output_tokens, 30);
+        assert_eq!(usage.cache_read_input_tokens, 512);
+
+        // Through the parser, as the session's usage.
+        let root =
+            std::env::temp_dir().join(format!("codeg-cb-responses-{}", uuid::Uuid::new_v4()));
+        let sid = "sess-responses";
+        write_session(
+            &root,
+            "Users-demo-app",
+            sid,
+            &[
+                json!({"type":"message","role":"user","timestamp":1781821844178i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "content":[{"type":"input_text","text":"hi"}]}),
+                json!({"type":"message","role":"assistant","timestamp":1781821845000i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "content":[{"type":"output_text","text":"Hello."}],
+                       "providerData":{"messageId":"m1","rawUsage":{
+                         "inputTokens":5000,"outputTokens":120,"totalTokens":5120,
+                         "inputTokensDetails":{"cached_tokens":4096},"outputTokensDetails":{"reasoning_tokens":64}}}}),
+            ],
+        );
+        let detail = CodeBuddyParser::with_base_dir(root.clone())
+            .get_conversation(sid)
+            .expect("detail");
+        let usage = detail
+            .session_stats
+            .as_ref()
+            .and_then(|s| s.total_usage.as_ref())
+            .expect("usage");
+        assert_eq!(
+            (
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_input_tokens
+            ),
+            (5000 - 4096, 120, 4096)
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 2.162.0 persists the task-list reminders it adds for the model as
+    /// `<system-reminder>` user records flagged `isMeta`. The record below has
+    /// the shape its reminder factory builds; it is no prompt, so it adds no
+    /// user turn and no message count.
+    #[test]
+    fn task_list_reminders_are_not_prompts() {
+        let root = std::env::temp_dir().join(format!("codeg-cb-reminder-{}", uuid::Uuid::new_v4()));
+        let sid = "sess-reminder";
+        let reminder = "<system-reminder>\nThe TodoWrite tool hasn't been used recently. If you're working on tasks that would benefit from tracking progress, consider using the TodoWrite tool to track progress. Make sure that you NEVER mention this reminder to the user\n\n</system-reminder>";
+        write_session(
+            &root,
+            "Users-demo-app",
+            sid,
+            &[
+                json!({"id":"u1","type":"message","role":"user","timestamp":1781821844178i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "content":[{"type":"input_text","text":"fix the bug"}]}),
+                json!({"id":"a1","type":"message","role":"assistant","timestamp":1781821845000i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "content":[{"type":"output_text","text":"Fixed."}]}),
+                json!({"id":"r1","type":"message","role":"user","timestamp":1781821846000i64,"cwd":"/Users/demo/app","sessionId":sid,
+                       "content":[{"type":"input_text","text":reminder}],
+                       "providerData":{"isMeta":true,"skipRun":true,"startsNewUserRequest":false,
+                         "taskReminderKind":"todo","taskReminderAnchorId":"a1"}}),
+            ],
+        );
+
+        let parser = CodeBuddyParser::with_base_dir(root.clone());
+        let summaries = parser.list_conversations().expect("list");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].message_count, 2);
+
+        let detail = parser.get_conversation(sid).expect("detail");
+        assert_eq!(detail.summary.message_count, 2);
+        let user_texts: Vec<_> = detail
+            .turns
+            .iter()
+            .filter(|t| matches!(t.role, TurnRole::User))
+            .flat_map(|t| t.blocks.iter())
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(user_texts, vec!["fix the bug"]);
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -2416,5 +2618,16 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_config_dir_of_the_launch_env() {
+        let env = AgentEnv::with_overrides(&[("CODEBUDDY_CONFIG_DIR", "/relocated/codebuddy")]);
+        assert_eq!(
+            CodeBuddyParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/codebuddy").join("projects")
+        );
     }
 }

@@ -12,6 +12,7 @@ import { CompletedTurnContent } from "./completed-turn-content"
 import { ContextCompactionCard } from "./context-compaction-card"
 import { CollapsibleUserMessage } from "./collapsible-user-message"
 import { CollapsibleSystemMessage } from "./collapsible-system-message"
+import { ContentPartsRenderer } from "./content-parts-renderer"
 import {
   contextCompactionPayload,
   contextCompactionSummary,
@@ -33,6 +34,8 @@ import {
 import { TurnStats } from "./turn-stats"
 import { LiveTurnStats } from "./live-turn-stats"
 import { ModelLabelProvider } from "./model-label-context"
+import { KnownInvocationsProvider } from "./known-invocations-context"
+import { useTranscriptKnownInvocations } from "./use-transcript-known-invocations"
 import { ReplyArtifacts } from "./reply-artifacts"
 import { UserResourceLinks } from "./user-resource-links"
 import { UserImageAttachments } from "./user-image-attachments"
@@ -71,7 +74,12 @@ import {
   buildPlanKey,
   extractLatestPlanEntriesFromMessages,
 } from "@/lib/agent-plan"
-import type { AgentType, ConnectionStatus, MessageTurn } from "@/lib/types"
+import type {
+  AgentType,
+  AvailableCommandInfo,
+  ConnectionStatus,
+  MessageTurn,
+} from "@/lib/types"
 import { copyTextToClipboard } from "@/lib/utils"
 import { VirtualizedMessageThread } from "@/components/message/virtualized-message-thread"
 import { SelectionActionBubble } from "@/components/message/selection-action-bubble"
@@ -80,8 +88,11 @@ import {
   type MessageNavEntry,
 } from "@/components/message/conversation-message-nav"
 import type { MessageScrollContextValue } from "@/components/message/message-scroll-context"
-import { extractSessionFilesGrouped } from "@/lib/session-files"
+import { buildMessageNavEntries } from "@/components/message/message-nav-entries"
+import { useMessageNavJump } from "@/components/message/use-message-nav-jump"
+import { useConversationOutline } from "@/hooks/use-conversation-outline"
 import { useModelLabels } from "@/hooks/use-model-labels"
+import { useChatAnimationsEnabled } from "@/hooks/use-appearance"
 import { usePageHandoffName } from "@/lib/browser/use-page-handoff-name"
 import { unescapeComposerText } from "@/lib/composer-copy-text"
 import { useStickToBottomContext } from "use-stick-to-bottom"
@@ -93,6 +104,24 @@ interface MessageListViewProps {
   /** This transcript's working directory, including new-chat drafts. */
   imageRoot?: string | null
   agentType: AgentType
+  /**
+   * The slash commands this transcript's agent advertises right now (the same
+   * list behind the composer's `/` menu). A bare `/word` in a sent user message
+   * is shown as a command badge only when it names one of these (or, for Codex,
+   * one of its `$` skills).
+   *
+   * `null`/`undefined` while the agent has not advertised (no connection, or
+   * one still coming up): the transcript then badges what this agent last
+   * advertised in this folder, and no command if it never has. `[]` is an
+   * answer, not that gap: the agent offers no commands, so only Codex's disk
+   * skills can badge.
+   *
+   * Required, though it may be null: a surface that left it out would badge
+   * from whatever this agent last advertised in the folder, on any
+   * connection, instead of from its own connection's list, so every surface
+   * mounting a transcript must decide.
+   */
+  availableCommands: readonly AvailableCommandInfo[] | null | undefined
   connStatus?: ConnectionStatus | null
   isActive?: boolean
   sendSignal?: number
@@ -527,6 +556,16 @@ function isEmptyTurnItem(item: ThreadRenderItem): boolean {
   return true
 }
 
+/** A `system` group that is nothing but a failed turn's line
+ *  (`TurnErrorPart`): the parsers write one per failed round, and so does the
+ *  live stream. */
+export function isTurnErrorGroup(group: ResolvedMessageGroup): boolean {
+  return (
+    group.parts.length > 0 &&
+    group.parts.every((part) => part.type === "turn-error")
+  )
+}
+
 /**
  * When a resolved group's ONLY meaningful content is a single context-compaction
  * tool-call part, return that part's `_meta`, retained summary and call id (so
@@ -876,6 +915,10 @@ export function markThreadTail(items: ThreadRenderItem[]): void {
   for (let idx = items.length - 1; idx >= 0; idx--) {
     const item = items[idx]
     if (item.kind === "turn" && isEmptyTurnItem(item)) continue
+    // Nor is a failed round's closing line where a fork lands: a tail fork
+    // keeps everything up to the reply before it — the failure is nothing the
+    // agent carries on from — so that reply is still the thread's tail.
+    if (item.kind === "turn" && isTurnErrorGroup(item.group)) continue
     if (item.kind === "turn") item.isThreadTail = true
     break
   }
@@ -940,6 +983,11 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
   isThreadTail?: boolean
 }) {
   if (group.role === "system") {
+    // A failed turn's line is the agent's account of the failure, not a
+    // message the system sent: it closes the round in place, unboxed.
+    if (isTurnErrorGroup(group)) {
+      return <ContentPartsRenderer parts={group.parts} role="system" />
+    }
     return <CollapsibleSystemMessage parts={group.parts} />
   }
 
@@ -1041,20 +1089,24 @@ const AutoScrollOnSend = memo(function AutoScrollOnSend({
   signal: number
 }) {
   const { scrollToBottom } = useStickToBottomContext()
+  const chatAnimations = useChatAnimationsEnabled()
   const lastSignalRef = useRef(signal)
 
   useEffect(() => {
     if (signal === lastSignalRef.current) return
     lastSignalRef.current = signal
 
-    scrollToBottom()
+    const options = chatAnimations
+      ? undefined
+      : { animation: "instant" as const }
+    scrollToBottom(options)
     const rafId = requestAnimationFrame(() => {
-      scrollToBottom()
+      scrollToBottom(options)
     })
     return () => {
       cancelAnimationFrame(rafId)
     }
-  }, [scrollToBottom, signal])
+  }, [scrollToBottom, signal, chatAnimations])
 
   return null
 })
@@ -1063,6 +1115,7 @@ export function MessageListView({
   conversationId,
   imageRoot,
   agentType,
+  availableCommands,
   connStatus,
   isActive = true,
   sendSignal = 0,
@@ -1106,9 +1159,21 @@ export function MessageListView({
     (s) =>
       s.allFolders.find((folder) => folder.id === imageFolderId)?.path ?? null
   )
+  const resolvedImageRoot =
+    imageRoot === undefined ? storedImageRoot : imageRoot
+  // What a bare `/word`·`$word` in a user bubble has to be on to render as a
+  // command badge: what the composer's menu offers this agent (or, until its
+  // connection advertises, what it last advertised in this folder), so the
+  // bubble never claims a command for a path or a word in prose.
+  const knownInvocations = useTranscriptKnownInvocations(
+    agentType,
+    availableCommands,
+    resolvedImageRoot
+  )
   const hasOlderTurns = isWindowedDetail(detail) && detail.turns_offset > 0
   const loadingOlderTurns = session?.loadingOlderTurns ?? false
-  const { loadOlderTurns, refetchDetail } = useConversationRuntimeActions()
+  const { loadOlderTurns, loadOlderTurnsThrough, refetchDetail } =
+    useConversationRuntimeActions()
   const handleLoadOlder = useCallback(() => {
     loadOlderTurns(conversationId)
   }, [loadOlderTurns, conversationId])
@@ -1126,6 +1191,7 @@ export function MessageListView({
     refetchDetail(conversationId, { preserveLive: true })
   }, [refetchDetail, conversationId])
 
+  const chatAnimations = useChatAnimationsEnabled()
   const shouldUseSmoothResize = !(
     isActive &&
     !detailLoading &&
@@ -1504,63 +1570,74 @@ export function MessageListView({
   // never overlaps the composer or the tab strip.
   const selectionBoxRef = useRef<HTMLDivElement | null>(null)
 
-  // Cheap user-message tally for the collapsed chip — counts user turns without
-  // parsing any file diffs.
-  const userMessageCount = useMemo(() => {
-    if (!showMessageNav) return 0
+  // The loaded user messages: how many, and where each renders. Cheap — no
+  // diff parsing — so the collapsed chip and the jumps can use it while
+  // streaming.
+  const loadedUserMessages = useMemo(() => {
+    const threadIndexByTurnId = new Map<string, number>()
     let count = 0
-    for (const item of threadItems) {
-      if (item.kind === "turn" && item.group.role === "user") count += 1
-    }
-    return count
-  }, [showMessageNav, threadItems])
-
-  // One entry per user message — including ones with no edits (placeholders).
-  // Computed lazily: only while the panel is expanded, since
-  // `extractSessionFilesGrouped` parses every turn's diffs. Collapsed (the
-  // default) it stays EMPTY, keeping the streaming hot path free of diff parsing.
-  //
-  // Windowed loading caveat (accepted degradation): counts, ordinals and file
-  // summaries cover only the LOADED window — paging in older history extends
-  // them. Nav targets are recomputed with the items on every prepend, so the
-  // indices themselves never go stale.
-  const navEntries = useMemo<MessageNavEntry[]>(() => {
-    if (!showMessageNav || !navExpanded) return EMPTY_NAV_ENTRIES
-    const turns = timelineTurns.map((item) => item.turn)
-    const groups = extractSessionFilesGrouped(turns, { includeEmpty: true })
-    if (groups.length === 0) return EMPTY_NAV_ENTRIES
-
-    const indexByTurnId = new Map<string, number>()
+    if (!showMessageNav) return { count, threadIndexByTurnId }
     for (let i = 0; i < threadItems.length; i++) {
       const item = threadItems[i]
       if (item.kind === "turn" && item.group.role === "user") {
-        indexByTurnId.set(item.group.id, i)
+        count += 1
+        threadIndexByTurnId.set(item.group.id, i)
       }
     }
+    return { count, threadIndexByTurnId }
+  }, [showMessageNav, threadItems])
 
-    const entries: MessageNavEntry[] = []
-    for (const group of groups) {
-      const threadIndex = indexByTurnId.get(group.userTurnId)
-      if (threadIndex == null) continue
-      let additions = 0
-      let deletions = 0
-      for (const file of group.files) {
-        additions += file.additions
-        deletions += file.deletions
-      }
-      entries.push({
-        threadIndex,
-        turnId: group.userTurnId,
-        ordinal: entries.length + 1,
-        label: group.userMessage,
-        additions,
-        deletions,
-        files: group.files,
-        hasChanges: group.files.length > 0,
-      })
-    }
+  // A long conversation is loaded a window at a time (reverse infinite
+  // scroll), but the navigator covers all of it: the window reports how many
+  // user messages lie above it, and their outline is fetched while the panel
+  // is open. A server that doesn't report the count predates the outline too;
+  // the navigator then covers the loaded window only.
+  const windowedDetail = isWindowedDetail(detail) ? detail : null
+  const earlierUserCount = showMessageNav
+    ? (windowedDetail?.user_turns_before_offset ?? 0)
+    : 0
+  const userMessageCount = earlierUserCount + loadedUserMessages.count
+  const earlierOutline = useConversationOutline({
+    fetchId: session?.dbConversationId ?? conversationId,
+    offset: windowedDetail?.turns_offset ?? 0,
+    prefixHash: windowedDetail?.prefix_hash ?? null,
+    enabled: navExpanded && earlierUserCount > 0,
+  })
+  const earlierOutlineState = earlierOutline.state
+
+  // One entry per user message — including ones with no edits (placeholders).
+  // Computed lazily: only while the panel is expanded, since grouping parses
+  // every turn's diffs. Collapsed (the default) it stays EMPTY, keeping the
+  // streaming hot path free of diff parsing. Thread indices are recomputed
+  // with the items on every prepend, so the jump targets never go stale.
+  const navEntries = useMemo<MessageNavEntry[]>(() => {
+    if (!showMessageNav || !navExpanded) return EMPTY_NAV_ENTRIES
+    const entries = buildMessageNavEntries({
+      earlierTurns:
+        earlierOutlineState.status === "ready"
+          ? earlierOutlineState.turns
+          : null,
+      earlierUserCount,
+      loadedTurns: timelineTurns.map((item) => item.turn),
+      threadIndexByTurnId: loadedUserMessages.threadIndexByTurnId,
+    })
     return entries.length > 0 ? entries : EMPTY_NAV_ENTRIES
-  }, [showMessageNav, navExpanded, timelineTurns, threadItems])
+  }, [
+    showMessageNav,
+    navExpanded,
+    earlierOutlineState,
+    earlierUserCount,
+    timelineTurns,
+    loadedUserMessages,
+  ])
+
+  const navJump = useMessageNavJump({
+    conversationId,
+    threadIndexByTurnId: loadedUserMessages.threadIndexByTurnId,
+    scrollApiRef,
+    smooth: chatAnimations,
+    loadOlderTurnsThrough,
+  })
 
   const hasRenderableContent = threadItems.length > 0 || Boolean(liveMessage)
 
@@ -1643,11 +1720,17 @@ export function MessageListView({
     <SessionViewerHost>
       <div
         ref={selectionBoxRef}
-        className="relative flex h-full min-h-0 flex-col"
+        className="chat-motion-scope relative flex h-full min-h-0 flex-col"
       >
         <MessageThread
           className="flex-1 min-h-0"
-          resize={shouldUseSmoothResize ? "smooth" : undefined}
+          resize={
+            !chatAnimations
+              ? "instant"
+              : shouldUseSmoothResize
+                ? "smooth"
+                : undefined
+          }
         >
           <AutoScrollOnSend signal={sendSignal} />
           <VirtualizedMessageThread
@@ -1710,7 +1793,15 @@ export function MessageListView({
               expanded={navExpanded}
               onToggle={setNavExpanded}
               entries={navEntries}
-              scrollApiRef={scrollApiRef}
+              onSelect={navJump.select}
+              revealingTurnId={navJump.revealingTurnId}
+              earlier={
+                earlierOutlineState.status === "loading" ||
+                earlierOutlineState.status === "error"
+                  ? earlierOutlineState.status
+                  : null
+              }
+              onRetryEarlier={earlierOutline.retry}
             />
           )}
           <AgentPlanOverlay
@@ -1738,10 +1829,12 @@ export function MessageListView({
   )
 
   return (
-    <MarkdownImageProvider
-      rootPath={imageRoot === undefined ? storedImageRoot : imageRoot}
-    >
-      <ModelLabelProvider value={modelLabel}>{thread}</ModelLabelProvider>
+    <MarkdownImageProvider rootPath={resolvedImageRoot}>
+      <ModelLabelProvider value={modelLabel}>
+        <KnownInvocationsProvider value={knownInvocations}>
+          {thread}
+        </KnownInvocationsProvider>
+      </ModelLabelProvider>
     </MarkdownImageProvider>
   )
 }

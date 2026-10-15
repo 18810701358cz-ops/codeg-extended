@@ -4,6 +4,13 @@
 //! and `experts.rs` (`~/.codeg/skills/`). New features that need a
 //! user-scoped persistent directory should call into this module instead of
 //! re-deriving `dirs::home_dir().join(".codeg")` themselves.
+//!
+//! The `codeg_*_root` data directories resolve `$CODEG_HOME`, then
+//! `$CODEG_DATA_DIR`, then `~/.codeg`. Both binaries export `CODEG_DATA_DIR`
+//! before anything reads it — the desktop app from [`desktop_data_dir`] at the
+//! top of `run()`, `codeg-server` in `main` — so the data directory is what
+//! they resolve to, and `~/.codeg` only serves a process started without
+//! either variable.
 
 use std::path::{Path, PathBuf};
 
@@ -33,9 +40,8 @@ pub fn codeg_home_dir() -> PathBuf {
 ///
 /// Resolution order:
 /// 1. `$CODEG_HOME/pets` (explicit override, used in tests and custom installs)
-/// 2. `$CODEG_DATA_DIR/pets` (server-mode data directory, populated by
-///    `codeg-server` from the corresponding env var)
-/// 3. `~/.codeg/pets` (default for the desktop app)
+/// 2. `$CODEG_DATA_DIR/pets` (the data directory, see the module docs)
+/// 3. `~/.codeg/pets` (neither set)
 pub fn codeg_pets_root() -> PathBuf {
     if let Some(custom) = std::env::var_os("CODEG_HOME").filter(|s| !s.is_empty()) {
         return PathBuf::from(custom).join(PETS_DIR_NAME);
@@ -69,8 +75,8 @@ pub fn codeg_browser_profiles_root() -> PathBuf {
 ///
 /// Resolution order matches `codeg_pets_root()`:
 /// 1. `$CODEG_HOME/uploads`
-/// 2. `$CODEG_DATA_DIR/uploads` (server-mode data directory)
-/// 3. `~/.codeg/uploads` (desktop default)
+/// 2. `$CODEG_DATA_DIR/uploads` (the data directory, see the module docs)
+/// 3. `~/.codeg/uploads` (neither set)
 ///
 /// Files in this directory are not garbage-collected by codeg itself —
 /// later conversations may still reference them via `file://` URIs
@@ -105,8 +111,8 @@ pub fn codeg_uploads_root() -> PathBuf {
 ///
 /// Resolution mirrors [`codeg_pets_root`] exactly:
 /// 1. `$CODEG_HOME/backgrounds` (explicit override)
-/// 2. `$CODEG_DATA_DIR/backgrounds` (server-mode data directory)
-/// 3. `~/.codeg/backgrounds` (desktop default)
+/// 2. `$CODEG_DATA_DIR/backgrounds` (the data directory, see the module docs)
+/// 3. `~/.codeg/backgrounds` (neither set)
 pub fn codeg_backgrounds_root() -> PathBuf {
     if let Some(custom) = std::env::var_os("CODEG_HOME").filter(|s| !s.is_empty()) {
         return PathBuf::from(custom).join(BACKGROUNDS_DIR_NAME);
@@ -125,12 +131,14 @@ pub fn codeg_backgrounds_root() -> PathBuf {
 /// Resolution mirrors [`codeg_uploads_root`] exactly so logs land on the same
 /// filesystem root as uploads/pets/the database:
 /// 1. `$CODEG_HOME/logs` (explicit override)
-/// 2. `$CODEG_DATA_DIR/logs` (server-mode data directory)
-/// 3. `~/.codeg/logs` (default for the desktop app)
+/// 2. `$CODEG_DATA_DIR/logs` (the data directory, see the module docs)
+/// 3. `~/.codeg/logs` (neither set)
 ///
 /// Pure env + `dirs::home_dir()`, so it is callable at the very start of a
 /// process — before the database (or, in `codeg-server`, the tokio runtime)
-/// exists — which is exactly when the subscriber must be installed.
+/// exists — which is exactly when the subscriber must be installed. Both
+/// binaries export the data directory before that point, so the logs sit
+/// beside the database however the process was started.
 pub fn codeg_logs_root() -> PathBuf {
     if let Some(custom) = std::env::var_os("CODEG_HOME").filter(|s| !s.is_empty()) {
         return PathBuf::from(custom).join(LOGS_DIR_NAME);
@@ -151,8 +159,8 @@ pub fn codeg_logs_root() -> PathBuf {
 ///
 /// Resolution mirrors [`codeg_uploads_root`]:
 /// 1. `$CODEG_HOME/turn-timings`
-/// 2. `$CODEG_DATA_DIR/turn-timings` (server-mode data directory)
-/// 3. `~/.codeg/turn-timings` (desktop default)
+/// 2. `$CODEG_DATA_DIR/turn-timings` (the data directory, see the module docs)
+/// 3. `~/.codeg/turn-timings` (neither set)
 pub fn codeg_turn_timings_root() -> PathBuf {
     if let Some(custom) = std::env::var_os("CODEG_HOME").filter(|s| !s.is_empty()) {
         return PathBuf::from(custom).join(TURN_TIMINGS_DIR_NAME);
@@ -173,8 +181,8 @@ pub fn codeg_turn_timings_root() -> PathBuf {
 ///
 /// Resolution mirrors [`codeg_turn_timings_root`]:
 /// 1. `$CODEG_HOME/acp-transcripts`
-/// 2. `$CODEG_DATA_DIR/acp-transcripts` (server-mode data directory)
-/// 3. `~/.codeg/acp-transcripts` (desktop default)
+/// 2. `$CODEG_DATA_DIR/acp-transcripts` (the data directory, see the module docs)
+/// 3. `~/.codeg/acp-transcripts` (neither set)
 pub fn codeg_acp_transcripts_root() -> PathBuf {
     if let Some(custom) = std::env::var_os("CODEG_HOME").filter(|s| !s.is_empty()) {
         return PathBuf::from(custom).join(ACP_TRANSCRIPTS_DIR_NAME);
@@ -185,6 +193,31 @@ pub fn codeg_acp_transcripts_root() -> PathBuf {
     dirs::home_dir()
         .map(|h| h.join(CODEG_DIR_NAME).join(ACP_TRANSCRIPTS_DIR_NAME))
         .unwrap_or_else(|| PathBuf::from(CODEG_DIR_NAME).join(ACP_TRANSCRIPTS_DIR_NAME))
+}
+
+/// The data directory the desktop app exports as `CODEG_DATA_DIR` at the top
+/// of `run()`, before the logging init or anything else reads it: a preset
+/// `CODEG_DATA_DIR` (the operator's, or inherited from the codeg that launched
+/// this one), else the platform data directory joined with the bundle
+/// identifier — exactly what Tauri's `app_data_dir()` returns, which is not
+/// available until `setup`. Absolutized either way, like
+/// [`resolve_effective_data_dir`]; `None` when there is no platform data
+/// directory, where `setup` fails on `app_data_dir()` all the same.
+///
+/// Exporting it only in `setup`, as the desktop app used to, left the log
+/// directory to depend on how the process was started: a launch from the
+/// Start menu or the Dock wrote to `~/.codeg/logs`, while an instance codeg
+/// restarted (after an update) inherited the variable and wrote beside the
+/// database — and the Settings page always opened the latter.
+pub fn desktop_data_dir(
+    preset: Option<&std::ffi::OsStr>,
+    platform_data_dir: Option<&Path>,
+    identifier: &str,
+) -> Option<PathBuf> {
+    if let Some(custom) = preset.filter(|s| !s.is_empty()) {
+        return Some(crate::git_credential::absolutize(Path::new(custom)));
+    }
+    platform_data_dir.map(|dir| crate::git_credential::absolutize(&dir.join(identifier)))
 }
 
 /// Single source of truth for "where does the database live, and where
@@ -272,6 +305,38 @@ fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The desktop app's data directory, decided before anything reads it: a
+    /// preset `CODEG_DATA_DIR` wins, else the platform data directory joined
+    /// with the bundle identifier — Tauri's `app_data_dir()`. Absolute either
+    /// way, since it is exported to every subprocess.
+    #[test]
+    fn the_desktop_data_dir_is_the_preset_else_the_identifier_dir() {
+        let platform = std::env::temp_dir().join("platform-data");
+        let preset = std::env::temp_dir().join("preset-data");
+        assert_eq!(
+            desktop_data_dir(None, Some(&platform), "app.codeg"),
+            Some(platform.join("app.codeg"))
+        );
+        assert_eq!(
+            desktop_data_dir(Some(std::ffi::OsStr::new("")), Some(&platform), "app.codeg"),
+            Some(platform.join("app.codeg")),
+            "an empty preset is no preset"
+        );
+        assert_eq!(
+            desktop_data_dir(Some(preset.as_os_str()), Some(&platform), "app.codeg"),
+            Some(preset.clone())
+        );
+        assert_eq!(
+            desktop_data_dir(Some(preset.as_os_str()), None, "app.codeg"),
+            Some(preset)
+        );
+        assert_eq!(desktop_data_dir(None, None, "app.codeg"), None);
+        let relative = desktop_data_dir(Some(std::ffi::OsStr::new("data")), None, "app.codeg")
+            .expect("a relative preset");
+        assert!(relative.is_absolute(), "{}", relative.display());
+        assert!(relative.ends_with("data"));
+    }
 
     /// The shape `fs::canonicalize` hands back on Windows, and the one that
     /// broke image attachments in issue #392.

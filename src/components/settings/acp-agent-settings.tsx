@@ -8414,8 +8414,8 @@ export function AcpAgentSettings() {
                         className={cn(
                           "inline-block h-4 w-4 rounded-full bg-background shadow-sm transition-transform",
                           selectedDraft.enabled
-                            ? "translate-x-4"
-                            : "translate-x-0.5"
+                            ? "translate-x-4 rtl:-translate-x-4"
+                            : "translate-x-0.5 rtl:-translate-x-0.5"
                         )}
                       />
                     </button>
@@ -12167,7 +12167,7 @@ supports_websockets = true`}
                                   event.target.value
                                 )
                               }}
-                              placeholder="claude-haiku-4-5"
+                              placeholder="claude-haiku-5-5"
                             />
                           </div>
                           <div className="space-y-1.5">

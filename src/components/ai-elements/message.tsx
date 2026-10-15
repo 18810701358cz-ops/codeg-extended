@@ -29,8 +29,8 @@ import {
   defaultRemarkPlugins,
 } from "streamdown"
 import { markdownLinkComponents } from "./markdown-link"
+import { messageBlockComponents } from "./json-render-pre"
 import { maskLiteralSpans } from "./markdown-mask"
-import { mermaidComponents } from "./mermaid-block"
 import { rehypePluginsAllowingCodeg } from "./rehype-allow-codeg"
 import { remarkTrimCjkAutolinkTail } from "./remark-cjk-autolink-tail"
 import { withRelativeFileLinks } from "./rehype-relative-file-links"
@@ -581,12 +581,12 @@ function MessageResponseImpl({
       {...props}
       // Merge after spreading props so a caller can still override other
       // elements, but the link icon + safety routing on `a` — and the diagram
-      // block on `pre` — always win.
+      // and json-render blocks on `pre` — always win.
       components={{
         ...props.components,
         ...markdownLinkComponents,
         ...markdownLocalImageComponents,
-        ...mermaidComponents,
+        ...messageBlockComponents,
       }}
     >
       {normalized}

@@ -16,8 +16,17 @@ pub mod chat_channel;
 /// path validation and URI encoding stay compiled in every mode so their tests
 /// run without the tauri stack.
 pub mod clipboard;
+/// Computer use: sharing windows, the helper, the agent reads — the desktop
+/// app's, and codeg-server's where it is let share the screen it runs on.
+pub mod computer;
+/// The computer-use switches. Like `browser_tools`, compiled in both runtimes:
+/// the shared codeg-mcp plumbing reads them.
+pub mod computer_tools;
 pub mod config_sync;
+pub mod conversation_tags;
 pub mod conversations;
+/// "New folder" in the directory browser (both runtimes).
+pub mod create_directory;
 pub mod custom_agents;
 pub mod custom_skills;
 pub mod deepseek_settings;
@@ -30,6 +39,8 @@ pub mod folder_commands;
 pub mod folder_links;
 pub mod folders;
 pub mod forge;
+/// The `ui-render` skill and the agents it is enabled for (Skill Packs > UI).
+pub mod generative_ui;
 pub mod logging;
 pub mod mcp;
 pub mod mcp_service;

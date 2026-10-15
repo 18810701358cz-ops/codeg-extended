@@ -4,6 +4,7 @@ import type { AgentSkillItem, AvailableCommandInfo } from "@/lib/types"
 
 import {
   buildKnownInvocations,
+  commandInputHint,
   commandInvocationToken,
   commandToReference,
   skillToReference,
@@ -106,5 +107,20 @@ describe("buildKnownInvocations", () => {
   it("is empty for an agent that has advertised nothing yet", () => {
     expect(buildKnownInvocations(null).size).toBe(0)
     expect(buildKnownInvocations([]).size).toBe(0)
+  })
+})
+
+describe("commandInputHint", () => {
+  it("returns the agent's argument hint, trimmed", () => {
+    expect(
+      commandInputHint({ ...cmd("review-branch"), input_hint: " branch name " })
+    ).toBe("branch name")
+  })
+
+  it("is null when the command advertises nothing to type after it", () => {
+    expect(commandInputHint(cmd("compact"))).toBeNull()
+    expect(commandInputHint({ ...cmd("compact"), input_hint: null })).toBeNull()
+    // The backend maps an input kind it does not know to an empty hint.
+    expect(commandInputHint({ ...cmd("compact"), input_hint: "  " })).toBeNull()
   })
 })

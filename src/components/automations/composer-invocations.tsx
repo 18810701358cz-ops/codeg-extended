@@ -19,10 +19,10 @@ import {
 } from "@/components/chat/composer/suggestion/popup-position"
 import {
   buildKnownInvocations,
-  commandInvocationToken,
   commandToReference,
   skillToReference,
 } from "@/components/chat/composer/invocation-reference"
+import { CommandOptionLabel } from "@/components/chat/composer/command-option-label"
 import type { ReferenceAttrs } from "@/components/chat/composer/types"
 import { useAgentSkills } from "@/hooks/use-agent-skills"
 import { rankByTextMatch } from "@/lib/fuzzy-text-match"
@@ -396,12 +396,7 @@ export function ComposerInvocationsPopup({
               inv.selectCommand(cmd)
             }}
           >
-            <span className="shrink-0 font-mono text-primary">
-              {commandInvocationToken(cmd.name)}
-            </span>
-            <span className="truncate text-xs text-muted-foreground">
-              {cmd.description}
-            </span>
+            <CommandOptionLabel command={cmd} />
           </button>
         ))}
         {inv.skills.map((skill, i) => {

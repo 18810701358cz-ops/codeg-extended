@@ -1,5 +1,6 @@
 import { act, render, screen } from "@testing-library/react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { useEffect } from "react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   WorkspaceProvider,
   useWorkspaceActions,
@@ -7,6 +8,7 @@ import {
   useWorkspaceExternalConflict,
   useWorkspaceFileTabs,
   useWorkspaceView,
+  type FileWorkspaceTab,
 } from "@/contexts/workspace-context"
 import * as api from "@/lib/api"
 import {
@@ -32,6 +34,7 @@ import {
   resetAppWorkspaceStore,
   useAppWorkspaceStore,
 } from "@/stores/app-workspace-store"
+import { resetTabStore, useTabStore, type TabItem } from "@/stores/tab-store"
 
 vi.mock("next-intl", () => {
   // Return a STABLE function instance across renders, mirroring next-intl's
@@ -511,6 +514,268 @@ describe("WorkspaceProvider files-maximized", () => {
     expect(screen.getByTestId("active-file-tab")).toHaveTextContent(
       activeBefore
     )
+  })
+})
+
+// An open conversation tab, seeded straight into the real tab store: the
+// provider only asks whether the conversation strip has any tab.
+const seededConversationTab: TabItem = {
+  id: "conv-1-claude_code-5",
+  kind: "conversation",
+  folderId: 1,
+  conversationId: 5,
+  agentType: "claude_code",
+  title: "Conversation",
+  isPinned: false,
+}
+
+function seedConversationTabs(tabs: TabItem[]) {
+  useTabStore.setState({ rawTabs: tabs, tabs })
+}
+
+function MaximizeProbe() {
+  const {
+    mode,
+    activePane,
+    fileTabs,
+    activeFileTabId,
+    filesMaximized,
+    conversationMaximized,
+    openSessionFileDiff,
+    closeFileTab,
+    closeAllFileTabs,
+    switchFileTab,
+    toggleFilesMaximized,
+    toggleConversationMaximized,
+    activateConversationPane,
+    openBrowserTab,
+  } = useWorkspaceContext()
+
+  return (
+    <div>
+      <output data-testid="mode">{mode}</output>
+      <output data-testid="active-pane">{activePane}</output>
+      <output data-testid="file-tab-count">{fileTabs.length}</output>
+      <output data-testid="active-file-tab">{activeFileTabId ?? "none"}</output>
+      <output data-testid="files-maximized">{String(filesMaximized)}</output>
+      <output data-testid="conversation-maximized">
+        {String(conversationMaximized)}
+      </output>
+      <button
+        type="button"
+        onClick={() =>
+          openSessionFileDiff("src/app.ts", "diff --git", "Turn 1")
+        }
+      >
+        Open diff
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          openSessionFileDiff("src/other.ts", "diff --git", "Turn 1")
+        }
+      >
+        Open diff 2
+      </button>
+      <button
+        type="button"
+        onClick={() => fileTabs[0] && switchFileTab(fileTabs[0].id)}
+      >
+        Switch to first file
+      </button>
+      <button
+        type="button"
+        onClick={() => activeFileTabId && closeFileTab(activeFileTabId)}
+      >
+        Close active
+      </button>
+      <button type="button" onClick={closeAllFileTabs}>
+        Close all
+      </button>
+      <button type="button" onClick={toggleFilesMaximized}>
+        Toggle files maximize
+      </button>
+      <button type="button" onClick={toggleConversationMaximized}>
+        Toggle conversation maximize
+      </button>
+      <button type="button" onClick={activateConversationPane}>
+        Activate conversation
+      </button>
+      {/* A local server coming up: its page is selected in the strip without
+          bringing the files pane forward. */}
+      <button
+        type="button"
+        onClick={() =>
+          openBrowserTab("http://localhost:4000/", { activate: "tab" })
+        }
+      >
+        Open page in place
+      </button>
+    </div>
+  )
+}
+
+describe("WorkspaceProvider conversation-maximized", () => {
+  beforeEach(() => {
+    resetTabStore()
+    resetBrowserTabStoreForTests()
+    resetBrowserPrefsForTests()
+    resetClosedTabStackForTests()
+    seedConversationTabs([seededConversationTab])
+  })
+  afterEach(() => {
+    resetTabStore()
+  })
+
+  const click = (name: string) =>
+    act(() => {
+      screen.getByRole("button", { name }).click()
+    })
+  const conversationMaximized = () =>
+    screen.getByTestId("conversation-maximized").textContent
+
+  function renderMaximizeProbe() {
+    return render(
+      <WorkspaceProvider>
+        <MaximizeProbe />
+      </WorkspaceProvider>
+    )
+  }
+
+  it("toggles only beside a file column", () => {
+    renderMaximizeProbe()
+
+    // No file column to cover: the toggle does not take.
+    click("Toggle conversation maximize")
+    expect(conversationMaximized()).toBe("false")
+
+    click("Open diff")
+    expect(screen.getByTestId("mode")).toHaveTextContent("fusion")
+    expect(conversationMaximized()).toBe("false")
+
+    click("Toggle conversation maximize")
+    expect(conversationMaximized()).toBe("true")
+    click("Toggle conversation maximize")
+    expect(conversationMaximized()).toBe("false")
+  })
+
+  it("never has both columns maximized", () => {
+    renderMaximizeProbe()
+    click("Open diff")
+
+    click("Toggle files maximize")
+    expect(screen.getByTestId("files-maximized")).toHaveTextContent("true")
+
+    click("Toggle conversation maximize")
+    expect(conversationMaximized()).toBe("true")
+    expect(screen.getByTestId("files-maximized")).toHaveTextContent("false")
+
+    click("Toggle files maximize")
+    expect(screen.getByTestId("files-maximized")).toHaveTextContent("true")
+    expect(conversationMaximized()).toBe("false")
+  })
+
+  it("leaves the active pane alone on toggle", () => {
+    renderMaximizeProbe()
+    click("Open diff")
+    expect(screen.getByTestId("active-pane")).toHaveTextContent("files")
+
+    click("Toggle conversation maximize")
+    expect(conversationMaximized()).toBe("true")
+    expect(screen.getByTestId("active-pane")).toHaveTextContent("files")
+
+    click("Toggle conversation maximize")
+    expect(screen.getByTestId("active-pane")).toHaveTextContent("files")
+  })
+
+  // Every session opened from the sidebar activates the conversation pane;
+  // that releases a maximized FILES pane, and must keep this one.
+  it("stays maximized when the conversation pane activates", () => {
+    renderMaximizeProbe()
+    click("Open diff")
+    click("Toggle conversation maximize")
+
+    click("Activate conversation")
+    expect(conversationMaximized()).toBe("true")
+    expect(screen.getByTestId("active-pane")).toHaveTextContent("conversation")
+  })
+
+  it("comes out from under a file opened or switched to", () => {
+    renderMaximizeProbe()
+    click("Open diff")
+    click("Toggle conversation maximize")
+
+    click("Open diff 2")
+    expect(conversationMaximized()).toBe("false")
+    expect(screen.getByTestId("active-pane")).toHaveTextContent("files")
+    expect(screen.getByTestId("file-tab-count")).toHaveTextContent("2")
+
+    click("Toggle conversation maximize")
+    expect(conversationMaximized()).toBe("true")
+    click("Switch to first file")
+    expect(conversationMaximized()).toBe("false")
+    expect(screen.getByTestId("mode")).toHaveTextContent("fusion")
+  })
+
+  // With the file strip hidden, a close of the active file tab comes from
+  // elsewhere — an agent closing its page, a page closing itself — and must
+  // not pull the hidden column back out or move the pane into it.
+  it("stays maximized when the active file tab closes behind it", () => {
+    renderMaximizeProbe()
+    click("Open diff")
+    const firstTabId = screen.getByTestId("active-file-tab").textContent
+    click("Open diff 2")
+    expect(screen.getByTestId("active-file-tab").textContent).not.toBe(
+      firstTabId
+    )
+    click("Activate conversation")
+    click("Toggle conversation maximize")
+    expect(conversationMaximized()).toBe("true")
+
+    click("Close active")
+    expect(screen.getByTestId("file-tab-count")).toHaveTextContent("1")
+    // The selection still moves to the neighbour, as it does unmaximized.
+    expect(screen.getByTestId("active-file-tab")).toHaveTextContent(
+      firstTabId ?? ""
+    )
+    expect(conversationMaximized()).toBe("true")
+    expect(screen.getByTestId("active-pane")).toHaveTextContent("conversation")
+  })
+
+  it("resets once the file column empties, and does not come back with the next file", () => {
+    renderMaximizeProbe()
+    click("Open diff")
+    click("Toggle conversation maximize")
+
+    click("Close all")
+    expect(screen.getByTestId("mode")).toHaveTextContent("conversation")
+    expect(conversationMaximized()).toBe("false")
+
+    // Reopened WITHOUT bringing the files pane forward, so nothing on the way
+    // back in releases a maximize — only the reset can have. (Any ordinary
+    // open activates the file pane, which would release it by itself.)
+    click("Open page in place")
+    expect(screen.getByTestId("mode")).toHaveTextContent("fusion")
+    expect(screen.getByTestId("active-pane")).toHaveTextContent("conversation")
+    expect(conversationMaximized()).toBe("false")
+  })
+
+  // The column would be an empty pane over the files with no strip — and so
+  // no restore button — left to bring them back.
+  it("resets once the conversation strip empties", () => {
+    renderMaximizeProbe()
+    click("Open diff")
+    click("Toggle conversation maximize")
+    expect(conversationMaximized()).toBe("true")
+
+    act(() => seedConversationTabs([]))
+    expect(conversationMaximized()).toBe("false")
+
+    // Released, not merely hidden: a tab coming back does not re-cover the
+    // files.
+    act(() => seedConversationTabs([seededConversationTab]))
+    expect(conversationMaximized()).toBe("false")
+    expect(screen.getByTestId("file-tab-count")).toHaveTextContent("1")
   })
 })
 
@@ -3946,6 +4211,187 @@ describe("browser tabs", () => {
   // Restored records carry their stored title and folder, are appended in
   // order, and none is activated: the surface of a restored tab is created
   // when it is first shown, not at startup.
+  function DeviceProbe({
+    onTabs,
+  }: {
+    /** Told of every new tab list, so a no-op can be seen to be one. */
+    onTabs?: (tabs: readonly unknown[]) => void
+  }) {
+    const { openBrowserTab, restoreBrowserTabs, setBrowserTabDevice } =
+      useWorkspaceActions()
+    const { fileTabs } = useWorkspaceFileTabs()
+    const first = fileTabs.find((t) => t.kind === "browser")
+    useEffect(() => {
+      onTabs?.(fileTabs)
+    }, [fileTabs, onTabs])
+    return (
+      <div>
+        <button onClick={() => openBrowserTab("http://localhost:3000/")}>
+          open
+        </button>
+        <button
+          onClick={() =>
+            openBrowserTab("http://localhost:4000/", { device: "tablet" })
+          }
+        >
+          open-tablet
+        </button>
+        <button
+          onClick={() =>
+            openBrowserTab("http://localhost:3000/", { device: "tablet" })
+          }
+        >
+          open-again-as-tablet
+        </button>
+        <button onClick={() => first && setBrowserTabDevice(first.id, "phone")}>
+          phone
+        </button>
+        <button
+          onClick={() => first && setBrowserTabDevice(first.id, "desktop")}
+        >
+          desktop
+        </button>
+        <button onClick={() => setBrowserTabDevice("browser:gone", "phone")}>
+          phone-unknown
+        </button>
+        <button
+          onClick={() =>
+            first && setBrowserTabDevice(first.id, { width: 1440, height: 900 })
+          }
+        >
+          custom
+        </button>
+        <button
+          onClick={() =>
+            first && setBrowserTabDevice(first.id, { width: 20, height: 900 })
+          }
+        >
+          custom-out-of-range
+        </button>
+        <button
+          onClick={() =>
+            openBrowserTab("http://localhost:5000/", {
+              device: { width: 1024, height: 600 },
+            })
+          }
+        >
+          open-custom
+        </button>
+        <button
+          onClick={() =>
+            restoreBrowserTabs([
+              {
+                url: "https://restored.example/",
+                title: "",
+                folderId: null,
+                profile: "default",
+                device: "phone",
+              },
+            ])
+          }
+        >
+          restore
+        </button>
+        <pre data-testid="devices">
+          {JSON.stringify(
+            fileTabs.flatMap((t) =>
+              t.kind === "browser"
+                ? [
+                    {
+                      url: t.browser.initialUrl,
+                      keyed: "device" in t.browser,
+                      device: t.browser.device ?? null,
+                    },
+                  ]
+                : []
+            )
+          )}
+        </pre>
+      </div>
+    )
+  }
+
+  function readDevices(): Array<{
+    url: string
+    keyed: boolean
+    device: string | { width: number; height: number } | null
+  }> {
+    return JSON.parse(screen.getByTestId("devices").textContent ?? "[]")
+  }
+
+  it("switches a tab's device, with the desktop as no device at all", () => {
+    render(
+      <WorkspaceProvider>
+        <DeviceProbe />
+      </WorkspaceProvider>
+    )
+    act(() => screen.getByText("open").click())
+    expect(readDevices()).toEqual([
+      { url: "http://localhost:3000/", keyed: false, device: null },
+    ])
+    act(() => screen.getByText("phone").click())
+    expect(readDevices()[0].device).toBe("phone")
+    // Back on the desktop the record is the one it was before: the key is
+    // gone, not set to a value meaning "none".
+    act(() => screen.getByText("desktop").click())
+    expect(readDevices()[0]).toEqual({
+      url: "http://localhost:3000/",
+      keyed: false,
+      device: null,
+    })
+    act(() => screen.getByText("phone-unknown").click())
+    expect(readDevices()).toHaveLength(1)
+  })
+
+  it("gives a tab a custom device as its size, and changes nothing for the same size or one out of range", () => {
+    const lists: unknown[] = []
+    const onTabs = (tabs: readonly unknown[]) => lists.push(tabs)
+    render(
+      <WorkspaceProvider>
+        <DeviceProbe onTabs={onTabs} />
+      </WorkspaceProvider>
+    )
+    act(() => screen.getByText("open").click())
+    act(() => screen.getByText("custom").click())
+    expect(readDevices()[0]).toEqual({
+      url: "http://localhost:3000/",
+      keyed: true,
+      device: { width: 1440, height: 900 },
+    })
+    const seen = lists.length
+    // The same size, asked for again in an object of its own.
+    act(() => screen.getByText("custom").click())
+    // A size no device can have: neither that nor the desktop.
+    act(() => screen.getByText("custom-out-of-range").click())
+    expect(lists.length).toBe(seen)
+    expect(readDevices()[0].device).toEqual({ width: 1440, height: 900 })
+    act(() => screen.getByText("open-custom").click())
+    expect(readDevices()[1].device).toEqual({ width: 1024, height: 600 })
+  })
+
+  it("opens and restores a tab as the device it was, and leaves an open one its own", () => {
+    render(
+      <WorkspaceProvider>
+        <DeviceProbe />
+      </WorkspaceProvider>
+    )
+    act(() => screen.getByText("open").click())
+    act(() => screen.getByText("open-tablet").click())
+    act(() => screen.getByText("restore").click())
+    expect(readDevices().map((t) => t.device)).toEqual([
+      null,
+      "tablet",
+      "phone",
+    ])
+    // The page is already open: that tab is the answer, as it is.
+    act(() => screen.getByText("open-again-as-tablet").click())
+    expect(readDevices().map((t) => t.device)).toEqual([
+      null,
+      "tablet",
+      "phone",
+    ])
+  })
+
   it("restores stored tabs as inactive records, skipping unusable addresses", () => {
     render(
       <WorkspaceProvider>
@@ -4660,5 +5106,153 @@ describe("reopening a closed file tab", () => {
       fileTabId("/repo/b.ts"),
       fileTabId("/repo/c.ts"),
     ])
+  })
+})
+
+describe("PDF file tabs", () => {
+  const mockedReadBase64 = api.readFileBase64 as unknown as ReturnType<
+    typeof vi.fn
+  >
+
+  beforeEach(() => {
+    mockedApi.readFileForEdit.mockReset()
+    mockedApi.gitIsTracked.mockReset()
+    mockedApi.gitShowFile.mockReset()
+    mockedReadBase64.mockReset()
+    mockedApi.gitIsTracked.mockResolvedValue(true)
+    mockedApi.gitShowFile.mockResolvedValue("")
+    // "%PDF-1" in base64.
+    mockedReadBase64.mockResolvedValue("JVBERi0x")
+  })
+
+  function PdfProbe({
+    onCapture,
+  }: {
+    onCapture: (tabs: FileWorkspaceTab[]) => void
+  }) {
+    const { openFilePreview, fileTabs } = useWorkspaceContext()
+    onCapture(fileTabs)
+    return (
+      <div>
+        <button onClick={() => void openFilePreview("docs/report.pdf")}>
+          open-pdf
+        </button>
+        <button onClick={() => void openFilePreview("Scan.PDF")}>
+          open-upper-pdf
+        </button>
+        <button onClick={() => void openFilePreview("pic.png")}>
+          open-png
+        </button>
+      </div>
+    )
+  }
+
+  function renderPdfProbe() {
+    let tabs: FileWorkspaceTab[] = []
+    render(
+      <WorkspaceProvider>
+        <PdfProbe onCapture={(next) => (tabs = next)} />
+      </WorkspaceProvider>
+    )
+    return () => tabs
+  }
+
+  it("opens a PDF as bytes at the backend's read ceiling, never as text", async () => {
+    const tabs = renderPdfProbe()
+
+    await act(async () => {
+      screen.getByText("open-pdf").click()
+    })
+
+    expect(mockedReadBase64).toHaveBeenCalledWith(
+      "/repo/docs/report.pdf",
+      100_000_000
+    )
+    expect(mockedApi.readFileForEdit).not.toHaveBeenCalled()
+    // Binary: no git base for a gutter that does not exist.
+    expect(mockedApi.gitIsTracked).not.toHaveBeenCalled()
+    expect(tabs()).toHaveLength(1)
+    expect(tabs()[0]).toMatchObject({
+      id: fileTabId("/repo/docs/report.pdf"),
+      kind: "file",
+      language: "pdf",
+      content: "data:application/pdf;base64,JVBERi0x",
+      readonly: true,
+      loading: false,
+      saveState: "idle",
+    })
+  })
+
+  it("recognises the extension in any case", async () => {
+    const tabs = renderPdfProbe()
+
+    await act(async () => {
+      screen.getByText("open-upper-pdf").click()
+    })
+
+    expect(tabs()[0]).toMatchObject({
+      language: "pdf",
+      content: "data:application/pdf;base64,JVBERi0x",
+    })
+    expect(mockedApi.readFileForEdit).not.toHaveBeenCalled()
+  })
+
+  it("leaves images on the default read cap", async () => {
+    const tabs = renderPdfProbe()
+
+    await act(async () => {
+      screen.getByText("open-png").click()
+    })
+
+    expect(mockedReadBase64).toHaveBeenCalledWith("/repo/pic.png")
+    expect(tabs()[0]).toMatchObject({
+      language: "image",
+      content: "data:image/png;base64,JVBERi0x",
+    })
+  })
+
+  it("keeps a failed read on the tab instead of retrying it as text", async () => {
+    mockedReadBase64.mockRejectedValueOnce(
+      new Error("File is too large to attach")
+    )
+    const tabs = renderPdfProbe()
+
+    await act(async () => {
+      screen.getByText("open-pdf").click()
+    })
+
+    expect(mockedApi.readFileForEdit).not.toHaveBeenCalled()
+    expect(tabs()[0]).toMatchObject({
+      language: "pdf",
+      loading: false,
+      saveState: "error",
+      content: 'unableLoadContent:{"message":"File is too large to attach"}',
+    })
+  })
+
+  it("re-reads the bytes when the active PDF changes on disk", async () => {
+    const tabs = renderPdfProbe()
+
+    await act(async () => {
+      screen.getByText("open-pdf").click()
+    })
+    mockedReadBase64.mockResolvedValueOnce("JVBERi0y")
+
+    await act(async () => {
+      workspaceStoreMock.emitRoot("/repo", ["docs/report.pdf"])
+    })
+
+    expect(mockedReadBase64).toHaveBeenCalledTimes(2)
+    expect(mockedReadBase64).toHaveBeenLastCalledWith(
+      "/repo/docs/report.pdf",
+      100_000_000
+    )
+    // The text resolver would reject the bytes and put the tab in error.
+    expect(mockedApi.readFileForEdit).not.toHaveBeenCalled()
+    expect(tabs()[0]).toMatchObject({
+      content: "data:application/pdf;base64,JVBERi0y",
+      saveState: "idle",
+      loading: false,
+    })
   })
 })

@@ -4,6 +4,7 @@ import type { WorkTask } from "@/lib/types"
 
 const listMock = vi.fn()
 const notifyMock = vi.fn()
+const attentionMock = vi.fn()
 let changedHandler: (() => void) | null = null
 let reconnectHandler: (() => void) | null = null
 
@@ -12,6 +13,9 @@ vi.mock("@/lib/api", () => ({
 }))
 vi.mock("@/lib/desktop-notification", () => ({
   notifyDesktop: (...args: unknown[]) => notifyMock(...args),
+}))
+vi.mock("@/lib/window-attention", () => ({
+  requestWindowAttention: (...args: unknown[]) => attentionMock(...args),
 }))
 // Stable t — a fresh function per render loops the notification effect.
 const stableT = (key: string, values?: Record<string, unknown>) =>
@@ -89,6 +93,7 @@ function Probe() {
 beforeEach(() => {
   listMock.mockReset()
   notifyMock.mockReset()
+  attentionMock.mockReset()
   changedHandler = null
   reconnectHandler = null
 })
@@ -154,6 +159,7 @@ describe("TasksViewProvider", () => {
     )
     // Pre-existing review task = history, not news.
     expect(notifyMock).not.toHaveBeenCalled()
+    expect(attentionMock).not.toHaveBeenCalled()
 
     listMock.mockResolvedValueOnce([sample(1, "review"), sample(2, "failed")])
     await act(async () => {
@@ -166,5 +172,31 @@ describe("TasksViewProvider", () => {
       // Carries the task title, so it needs a variant that doesn't.
       redactedBody: "notifyFailedRedacted",
     })
+    // The taskbar / Dock nudge rides along, under the same event.
+    expect(attentionMock).toHaveBeenCalledTimes(1)
+    expect(attentionMock).toHaveBeenCalledWith("work_task")
+  })
+
+  it("asks for attention when a task is ready for review, too", async () => {
+    listMock.mockResolvedValueOnce([sample(1, "running")])
+    render(
+      <TasksViewProvider>
+        <Probe />
+      </TasksViewProvider>
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId("count").textContent).toBe("1")
+    )
+
+    listMock.mockResolvedValueOnce([sample(1, "review")])
+    await act(async () => {
+      changedHandler?.()
+    })
+    await waitFor(() => expect(attentionMock).toHaveBeenCalledTimes(1))
+    expect(attentionMock).toHaveBeenCalledWith("work_task")
+    expect(notifyMock).toHaveBeenCalledWith(
+      "work_task",
+      expect.objectContaining({ body: expect.stringContaining("notifyReview") })
+    )
   })
 })

@@ -53,7 +53,8 @@
       "office_tools": "办公工具",
       "skill_packs": "技能包",
       "collaboration": "协作",
-      "browser": "浏览器",
+      "browser": "浏览器操作",
+      "computer_use": "电脑操作",
       "quick_messages": "快捷消息",
       "logs": "运行日志"
     }
@@ -174,6 +175,19 @@
       "sectionTitle": "模式选择区域",
       "sectionDescription": "新会话页面输入框上方显示的「代码开发 / 日常办公」快捷卡片区域。",
       "showQuickActions": "在新会话页面显示"
+    },
+    "chatAnimations": {
+      "sectionTitle": "聊天区域动画",
+      "sectionDescription": "会话区域内的折叠/展开、工具调用、工作状态等动画，以及平滑滚动。关闭后界面立即更新、不再有过渡动画；加载转圈图标仍会旋转。",
+      "enable": "启用聊天区域动画"
+    },
+    "chatWidth": {
+      "sectionTitle": "聊天区域宽度",
+      "sectionDescription": "会话列与输入框的最大宽度。也可以直接拖动聊天区域左右两侧的边缘来调整。",
+      "label": "内容宽度",
+      "default": "默认（{width}px）",
+      "hint": "数值按 100% 窗口缩放计，随缩放等比变化；过宽的值会按窗口大小自动限制。",
+      "reset": "恢复默认"
     },
     "workspaceBackground": {
       "sectionTitle": "工作区背景",
@@ -1747,7 +1761,7 @@
   "GeneralSettings": {
     "loading": "加载中...",
     "sectionTitle": "常规",
-    "sectionDescription": "集中管理默认终端、渲染加速、关闭行为、通知与提示音等通用偏好。",
+    "sectionDescription": "集中管理默认终端、渲染加速、@ 提及面板、关闭行为、通知与提示音等通用偏好。",
     "terminalTitle": "默认终端",
     "terminalDescription": "选择 codeg 打开新终端标签页、以及代智能体执行整条命令行时使用的 Shell。自带 Shell 的智能体（如 Codex、Claude Code）在自己进程内执行命令，不受此设置影响。",
     "terminalSystemDefault": "系统默认",
@@ -1772,6 +1786,15 @@
     "restartNow": "立即重启",
     "restartFailed": "重启失败：{message}",
     "loadFailed": "加载失败：{message}"
+  },
+  "MentionPanelSettings": {
+    "title": "提及面板",
+    "description": "选择输入框中 @ 提及面板显示哪些标签页，并拖动调整它们的顺序。面板打开时会定位到第一个有匹配结果的标签页。「文件」标签页始终显示。",
+    "tabsLabel": "提及面板标签页",
+    "reset": "恢复默认",
+    "alwaysShown": "始终显示",
+    "moveTab": "移动「{name}」：拖动，或按上下方向键",
+    "showTab": "显示「{name}」标签页"
   },
   "CollaborationSettings": {
     "sectionTitle": "协作",
@@ -2080,7 +2103,8 @@
         "assistant": "助手",
         "system": "系统",
         "toolResult": "结果",
-        "toolError": "错误"
+        "toolError": "错误",
+        "turnFailed": "本轮失败"
       },
       "moreActions": "更多操作"
     },
@@ -2122,6 +2146,8 @@
     "conversationCard": {
       "untitledConversation": "未命名会话",
       "newConversation": "新建会话",
+      "maximize": "最大化",
+      "restore": "还原",
       "attachToCurrentSession": "添加到会话",
       "rename": "重命名",
       "status": "状态",
@@ -2312,6 +2338,9 @@
       "closeAll": "关闭所有",
       "hideTerminal": "隐藏终端（{shortcut}）",
       "openFolderFirst": "请先打开一个文件夹",
+      "processExited": "进程已退出",
+      "processExitedWithCode": "进程已退出（代码 {code}）",
+      "unavailable": "终端会话不可用；它可能已结束，或后端已重启。",
       "keybar": {
         "label": "终端虚拟键",
         "show": "显示虚拟键",
@@ -2425,6 +2454,22 @@
       "imageZoomIn": "放大",
       "imageZoomOut": "缩小",
       "imageZoomReset": "重置缩放",
+      "pdfDocument": "PDF 文档",
+      "pdfZoomIn": "放大",
+      "pdfZoomOut": "缩小",
+      "pdfZoomReset": "重置缩放",
+      "pdfFitWidth": "适合宽度",
+      "pdfPageNumber": "页码",
+      "pdfFind": "在文档中查找",
+      "pdfFindPrevious": "上一个匹配项",
+      "pdfFindNext": "下一个匹配项",
+      "pdfFindNoMatches": "无匹配项",
+      "pdfPasswordPrompt": "此 PDF 受密码保护，请输入密码以打开。",
+      "pdfPasswordIncorrect": "密码错误，请重试。",
+      "pdfPassword": "密码",
+      "pdfPasswordSubmit": "打开",
+      "pdfInvalid": "此文件不是有效的 PDF，或已损坏。",
+      "pdfLoadFailed": "无法显示此 PDF：{message}",
       "htmlPreviewTitle": "HTML 预览",
       "htmlPreviewTrustHint": "运行此文件的脚本并允许网络访问。仅对可信任的文件启用。",
       "officePreviewTitle": "办公文档预览",
@@ -3061,7 +3106,7 @@
           "downloadFailed": "{agent} 下载失败：{message}",
           "sessionLoadResourceNotFound": "{agent} 会话加载失败，可重新加载重试，或开始新会话。",
           "sessionLoadUnavailable": "{agent} 无法恢复此会话，它可能已结束或 agent 已停止。可重新加载重试，或开始新会话。",
-          "sessionLoadBusy": "这份历史正被从它分叉出来的会话占用。关掉那个会话，再重新加载即可打开。",
+          "sessionLoadBusy": "这个会话正在别处打开。如果是另一个 {agent} 客户端（桌面应用、CLI 或 IDE 扩展）开着它，先在那边关闭它或退出那个客户端，再重新加载；如果刚从它分叉过，约一分钟后重新加载即可。",
           "sessionArchived": "原会话已在 {agent} 侧归档，可在终端运行 {command} 找回历史后重载，或直接开始新会话。",
           "turnFailedRefusal": "{agent} 拒绝继续本轮回复，通常意味着后端或网关出错，请检查代理日志。",
           "turnFailedMaxTokens": "{agent} 已达到本轮回复的最大 Token 限制。",
@@ -3086,6 +3131,7 @@
         "notificationTurnComplete": "{agent} 已完成响应",
         "notificationError": "{agent} 错误：{message}",
         "notificationQuestion": "{agent} 正在等你回答",
+        "notificationPlanApproval": "{agent} 正在等你审批计划",
         "notificationErrorRedacted": "{agent} 遇到错误",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -3405,10 +3451,12 @@
         "downloadSvg": "下载为 SVG",
         "downloadPng": "下载为 PNG",
         "downloadMmd": "下载源码（.mmd）",
+        "downloadPuml": "下载源码（.puml）",
         "downloadFailed": "图表保存失败",
         "copySource": "复制源码",
         "copied": "已复制",
         "renderFailed": "Mermaid 错误：{message}",
+        "plantumlRenderFailed": "PlantUML 错误：{message}",
         "showSource": "查看源码",
         "retry": "重试"
       },
@@ -3446,6 +3494,7 @@
         "errorActionCommandCopied": "已复制",
         "emptyConversation": "当前会话暂无消息。",
         "systemMessage": "系统消息",
+        "turnFailed": "本轮失败：{message}",
         "copyMessage": "复制",
         "forkFromHere": "从此处分叉",
         "forkBusy": "当前有回合正在进行，暂不可分叉",
@@ -3482,7 +3531,8 @@
         "completedAt": "完成时间",
         "jumpToPreviousUserMessage": "跳转到上一条用户消息",
         "showMore": "展开",
-        "showLess": "收起"
+        "showLess": "收起",
+        "resizeWidth": "拖动调整聊天区域宽度 · 双击恢复默认"
       },
       "liveTurnStats": {
         "thinking": "思考中...",
@@ -3577,6 +3627,7 @@
         "offset": "偏移：{offset}",
         "limit": "限制：{limit}",
         "pages": "页码：{pages}",
+        "allowLarge": "超出大小限制",
         "mode": "模式：{mode}",
         "cell": "单元：{cell}",
         "shellSession": "会话 {id}",
@@ -3592,8 +3643,12 @@
         "nameLabel": "名称：",
         "agentPromptLabel": "提示词",
         "agentModelLabel": "模型",
+        "agentEffortLabel": "思考强度",
         "agentRunning": "运行中...",
         "agentLiveTranscript": "实时活动",
+        "agentProcessCount": "子智能体活动 · {count} 步",
+        "agentProcessDuration": "子智能体活动 · {duration}",
+        "agentRecoveredNote": "子智能体实际已完成，以下产出因回合中断未送达主会话：",
         "agentProgressTools": "{count} 次工具调用",
         "agentProgressTurns": "{count} 轮",
         "agentProgressContext": "上下文 {pct}%",
@@ -3759,6 +3814,8 @@
       "messageNav": {
         "title": "消息导航",
         "collapse": "收起消息导航",
+        "loadingEarlier": "正在加载更早的消息…",
+        "loadEarlier": "加载更早的消息",
         "collapsedSummary": "消息 {count}",
         "fileCount": "{count} 个文件",
         "remove": "移除",
@@ -4123,7 +4180,25 @@
     "loading": "加载中...",
     "emptyDirectory": "此目录为空",
     "errorLoadingDir": "加载目录失败",
-    "permissionDenied": "权限不足"
+    "permissionDenied": "权限不足",
+    "newFolder": {
+      "button": "新建文件夹",
+      "placeholder": "文件夹名称",
+      "create": "创建文件夹",
+      "location": "位于 {path}",
+      "errors": {
+        "empty": "请输入文件夹名称。",
+        "reservedName": "“{name}”不能用作文件夹名称。",
+        "separator": "文件夹名称不能包含 / 或 \\。",
+        "controlCharacter": "文件夹名称不能包含控制字符或换行符。",
+        "reservedCharacter": "文件夹名称不能包含 {character}。",
+        "invalidParent": "无法在 {path} 中创建文件夹。",
+        "parentNotFound": "{path} 已不存在。",
+        "alreadyExists": "“{name}”已存在。",
+        "permissionDenied": "没有在此处创建文件夹的权限。",
+        "failed": "无法创建文件夹：{reason}"
+      }
+    }
   },
   "ServerFileBrowser": {
     "title": "选择服务端文件",
@@ -4525,6 +4600,7 @@
       "experts": "专家",
       "science": "科学研究",
       "office": "办公工具",
+      "ui": "界面",
       "custom": "自定义"
     },
     "actions": {
@@ -4533,6 +4609,25 @@
     },
     "toasts": {
       "openFolderFailed": "打开目录失败"
+    }
+  },
+  "GenerativeUiSettings": {
+    "loading": "加载中…",
+    "category": "生成式界面",
+    "skillName": "界面渲染",
+    "skillDescription": "让智能体在 Codeg 的聊天里用可交互的卡片、表格和图表回复。",
+    "usage": "输入 /ui-render 加需求，例如 /ui-render 用表格列出这次改动的文件；Codex 用 $ui-render。也可以直接让智能体用卡片、表格或图表展示。启用后新建的会话里才有这个技能。",
+    "conflict": "中央目录里已有你自己的 ui-render 技能。在「自定义」页给它改个名，才能用 Codeg 内置的版本。",
+    "notReadyHint": "你自己的 ui-render 技能占用了这个名字，请在「自定义」页改名。",
+    "badges": {
+      "nameTaken": "名称被占用"
+    },
+    "states": {
+      "not_linked": "未启用",
+      "linked_to_codeg": "已启用",
+      "linked_elsewhere": "冲突 — 已有其他链接",
+      "blocked_by_real_directory": "冲突 — 已有同名的自定义 skill 占用",
+      "broken": "链接损坏"
     }
   },
   "QuickMessagesSettings": {
@@ -4571,6 +4666,97 @@
       "created": "已创建快捷消息",
       "saved": "已保存快捷消息",
       "deleted": "已删除快捷消息"
+    }
+  },
+  "ConversationTags": {
+    "tags": "标签",
+    "moreTags": "另有 {count} 个标签",
+    "addTags": "添加标签",
+    "editTags": "编辑标签",
+    "global": "全局",
+    "noTagsYet": "还没有标签",
+    "newTag": "新建标签…",
+    "manageTags": "管理标签…",
+    "branchChip": "分支：{branch}",
+    "picker": {
+      "searchPlaceholder": "搜索或新建标签…",
+      "noResults": "没有匹配的标签",
+      "empty": "还没有标签，输入名称即可新建。",
+      "createGlobal": "新建全局标签“{name}”",
+      "createInFolder": "在 {folder} 中新建“{name}”",
+      "otherFolders": "其他文件夹"
+    },
+    "form": {
+      "createTitle": "新建标签",
+      "editTitle": "编辑标签",
+      "name": "名称",
+      "namePlaceholder": "例如：bug、待评审、灵感",
+      "color": "颜色",
+      "customColor": "自定义颜色",
+      "scope": "可用范围",
+      "scopeGlobal": "所有会话",
+      "scopeFolder": "仅 {folder}",
+      "create": "创建",
+      "save": "保存",
+      "cancel": "取消"
+    },
+    "editor": {
+      "empty": "这里还没有标签。",
+      "add": "新建标签",
+      "edit": "编辑标签“{name}”",
+      "delete": "删除标签“{name}”",
+      "dragToReorder": "拖动以调整“{name}”的顺序",
+      "deleteTitle": "删除这个标签？",
+      "deleteDescription": "“{name}”将从所有带有它的会话上移除，且无法撤销。",
+      "deleteConfirm": "删除",
+      "deleteCancel": "取消",
+      "loadFailed": "无法加载标签"
+    },
+    "manager": {
+      "title": "管理标签",
+      "description": "用彩色标签标记会话，再在侧边栏按标签筛选。",
+      "branchTitle": "分支标签",
+      "branchDescription": "把每个会话创建时所在的 git 分支作为标签，显示在会话标题后面。",
+      "branchShow": "显示",
+      "branchLoadFailed": "无法加载分支标签设置",
+      "globalTitle": "全局标签",
+      "globalDescription": "可用于所有会话，包括聊天模式。",
+      "folderTitle": "文件夹标签",
+      "folderDescription": "仅可用于所选文件夹的会话，包括其工作树中的会话。",
+      "folderPlaceholder": "选择文件夹",
+      "noFolders": "还没有文件夹。在工作区中打开一个文件夹后即可为它设置专属标签。"
+    },
+    "filter": {
+      "button": "按标签筛选",
+      "searchPlaceholder": "搜索标签…",
+      "match": "匹配",
+      "matchAny": "任一",
+      "matchAll": "全部",
+      "matchAnyHint": "带有任一所选标签的会话",
+      "matchAllHint": "带有全部所选标签的会话",
+      "modeAll": "全部匹配",
+      "modeAny": "任一匹配",
+      "clear": "清除筛选",
+      "noTags": "还没有标签。可以在会话的菜单中添加。",
+      "noResults": "没有匹配的标签",
+      "active": "已按标签筛选",
+      "noMatches": "没有带这些标签的会话",
+      "remove": "从筛选中移除“{name}”"
+    },
+    "toasts": {
+      "assignFailed": "无法更新会话的标签",
+      "createFailed": "无法创建标签",
+      "deleteFailed": "无法删除标签",
+      "reorderFailed": "无法保存标签顺序",
+      "branchTagFailed": "无法保存分支标签"
+    },
+    "errors": {
+      "emptyName": "请输入标签名称",
+      "duplicateName": "这里已有名为“{name}”的标签",
+      "invalidColor": "请选择有效的颜色",
+      "folderNotTaggable": "此文件夹不能拥有专属标签",
+      "notApplicable": "该标签属于其他文件夹",
+      "tagNotFound": "该标签已不存在"
     }
   },
   "Pet": {
@@ -4697,10 +4883,13 @@
     }
   },
   "RemoteWorkspace": {
+    "openLocalWorkspace": "打开本地工作区",
+    "openLocalFailed": "打开本地工作区失败",
     "openRemoteWorkspace": "打开远端工作区",
     "manage": "管理远端工作区",
     "manageTitle": "远端工作区连接",
     "empty": "暂无远端连接",
+    "noMatches": "没有匹配的远端连接",
     "searchPlaceholder": "搜索远端工作区",
     "orderFailed": "保存远端工作区排序失败",
     "dragSort": "拖拽排序",
@@ -5033,6 +5222,11 @@
       "short": "在你共享的页面上运行它自己写的代码，默认不询问。",
       "hint": "允许智能体在你共享的页面上运行它自己写的 JavaScript。默认关闭，并且需要先打开上面那个开关。打开它就意味着代码不经询问直接运行，所以决定权就在这个开关上；如果想逐段过目，可在「设置 → 内置浏览器」里改成每次都问你。"
     },
+    "computer": {
+      "label": "查看和操作桌面窗口",
+      "short": "列出应用和窗口，读取你共享的窗口，操作你允许的窗口。",
+      "hint": "让智能体列出桌面上的应用和窗口，读取你共享给它的窗口——截图、窗口内容、以及是否已出现预期的状态——并在你允许操作的窗口里点击、输入和按键。在你从状态栏的「电脑操作」面板共享某个窗口之前，任何窗口都不可读；除非你还允许操作，否则任何窗口都不能被操作。窗口关闭、闲置一段时间或你停止共享时，共享即结束；面板里的「停止智能体」会立即停下所有智能体。输入在后台送达窗口；遇到后台收不到输入的应用，智能体可以把窗口切到前台完成操作，可在电脑操作设置里关闭。仅限桌面版；在 macOS 上需要为 codeg-computer-helper 授予权限。预览功能。"
+    },
     "automations": {
       "label": "创建自动化",
       "short": "创建和管理定时自动化。",
@@ -5079,9 +5273,22 @@
     "hideBody": "隐藏通知内容",
     "hideBodyHint": "用一句通用文案代替智能体输出。通知中心会把内容保留在应用之外，会话关掉了也还在。标题仍会显示文件夹名，好让你知道该回到哪个窗口。",
     "eventsTitle": "事件",
-    "eventsHint": "关掉不想被打断的事件。同一事件在数秒内重复触发时只通知一次。",
+    "eventsHint": "关掉不想被打断的事件。同一事件在数秒内重复触发时只通知一次。权限请求包含计划审批。",
     "eventBackgroundTask": "后台任务",
     "eventWorkTask": "待办任务"
+  },
+  "WindowAttentionSettings": {
+    "title": "任务栏 / Dock 提醒",
+    "descriptionMac": "你在其它应用里时，智能体需要你就让 Dock 图标跳动。",
+    "descriptionWindows": "窗口未聚焦时，智能体需要你就让它的任务栏按钮闪烁。",
+    "descriptionLinux": "窗口未聚焦时，智能体需要你就把它标记为紧急。具体效果取决于桌面环境。",
+    "eventsTitle": "事件",
+    "eventsHintMac": "「短暂」让图标跳一下；「直到切回」会一直跳，直到你切回 Codeg。权限请求包含计划审批。",
+    "eventsHintWindows": "「短暂」闪烁几下后保持高亮；「直到切回」会一直闪烁，直到你切回窗口。权限请求包含计划审批。",
+    "eventsHintLinux": "Linux 只有一种紧急标记，两档效果相同：窗口会一直带着标记，直到你切回。权限请求包含计划审批。",
+    "levelOff": "关闭",
+    "levelInformational": "短暂",
+    "levelCritical": "直到切回"
   },
   "NotificationSoundSettings": {
     "title": "提示音",
@@ -5195,6 +5402,249 @@
     "clearConfirmDescriptionProfile": "将删除配置文件 {name} 的 Cookie、缓存和站点存储。已打开的标签页会保留，但各网站的登录状态会失效。",
     "signInUaTitle": "Google 登录兼容",
     "signInUaHint": "Google 拒绝在内嵌浏览器中登录。开启后，标签页只对 Google 的登录页面（accounts.google.com）呈现 Firefox 身份；其他地方一律以自身所在引擎的身份示人，不会冒充 Firefox。仅对嵌入式标签页生效，独立窗口不适用；登录页把你跳转到别的站点时，到那里的第一个请求仍带着登录身份。"
+  },
+  "ComputerUse": {
+    "title": "电脑操作",
+    "preview": "预览",
+    "refresh": "刷新",
+    "tooltipShared": "电脑操作 · {count, plural, other {已共享 # 个窗口}}",
+    "stop": "停止共享",
+    "stopHint": "立即停止共享所有窗口，并中断智能体正在进行的操作。之后需要时，再重新共享窗口即可。",
+    "indicator": {
+      "actOne": "智能体可操作「{app}」",
+      "actMany": "智能体可操作 {count, plural, other {# 个窗口}}",
+      "readOne": "智能体可查看「{app}」",
+      "readMany": "智能体可查看 {count, plural, other {# 个窗口}}",
+      "readScreen": "智能体可查看整个屏幕",
+      "actScreen": "智能体可操作整个屏幕",
+      "recent": "{app}：{action}",
+      "stop": "停止共享",
+      "stopWithKey": "停止共享所有窗口（{key}）"
+    },
+    "codegGranted": "codeg 本身拥有「辅助功能」或「屏幕录制」权限，智能体的命令行可以不经共享直接使用它。如非必要，请在系统设置中为 codeg 关闭。",
+    "backend": {
+      "idle": "未启动",
+      "downloading": "正在下载驱动…",
+      "starting": "正在启动 helper…",
+      "ready": "就绪",
+      "failed": "失败"
+    },
+    "driver": "cua-driver {version}",
+    "devBuild": "开发版：helper 不校验调用它的程序。",
+    "devTag": "开发版",
+    "permissions": {
+      "accessibility": "辅助功能",
+      "screenRecording": "屏幕录制",
+      "granted": "已授权",
+      "request": "去授权",
+      "why": "请在系统设置中打开 codeg-computer-helper 的开关（不是 codeg）。「屏幕录制」用于查看窗口画面，「辅助功能」用于读取和操作窗口。",
+      "devRebuild": "每次重新编译 helper，旧授权都会失效：请先从列表中删掉旧的 codeg-computer-helper，再重新授权。",
+      "notListed": "如果列表里没有 codeg-computer-helper，可以从访达把它拖进去：",
+      "reveal": "在访达中显示"
+    },
+    "shared": {
+      "title": "{count, plural, =0 {未共享窗口} other {已共享 # 个窗口}}",
+      "empty": "智能体能列出你的窗口，但在你共享之前读不到任何一个。",
+      "stop": "停止",
+      "wholeApp": "整个应用 · {count, plural, =0 {没有打开的窗口} other {# 个窗口}}",
+      "screen": "整个屏幕",
+      "screenWindows": "{count, plural, =0 {暂无窗口} other {# 个窗口}}"
+    },
+    "level": {
+      "read": "可读取",
+      "control": "可操作",
+      "readLong": "仅读取",
+      "controlLong": "读取并操作",
+      "change": "更改智能体可做的事"
+    },
+    "activity": {
+      "title": "最近活动",
+      "clear": "清空最近活动",
+      "capture": "截图",
+      "snapshot": "读取",
+      "verify": "检查",
+      "click": "点击",
+      "drag": "拖拽",
+      "scroll": "滚动",
+      "type": "输入",
+      "key": "按键",
+      "hold-key": "按住按键",
+      "set-value": "设值",
+      "restore": "恢复窗口",
+      "menu": "菜单",
+      "set-frame": "移动窗口",
+      "launch": "打开应用",
+      "clipboard-read": "读取剪贴板",
+      "clipboard-write": "写入剪贴板",
+      "outcome": {
+        "done": "完成",
+        "refused": "被拒",
+        "failed": "失败"
+      }
+    },
+    "share": "共享窗口…",
+    "openSettings": "打开详细设置",
+    "picker": {
+      "title": "把窗口共享给智能体",
+      "description": "所有对话中的智能体都能读取你共享的窗口，并在你允许操作的窗口里点击和输入。你停止共享、窗口关闭，或闲置超过设置中的时长后，共享即结束。",
+      "count": "{count, plural, other {# 个窗口}}",
+      "sharedCount": "{count, plural, other {已共享 # 个}}",
+      "loading": "正在加载窗口…",
+      "refresh": "刷新",
+      "empty": "没有找到窗口。如果应该有，请检查「电脑操作」面板中的权限。",
+      "noScreenRecording": "codeg-computer-helper 还没有「屏幕录制」权限：看不到窗口标题和画面，智能体也读不了窗口。",
+      "unnamedApp": "未知应用",
+      "untitled": "无标题窗口",
+      "minimized": "已最小化",
+      "hidden": "已隐藏",
+      "notGrantable": {
+        "codeg": "codeg 的窗口",
+        "blocklisted": "在永不共享名单中",
+        "unidentified": "无法识别所属应用"
+      },
+      "shareRead": "允许智能体读取",
+      "shareControl": "允许智能体读取并操作",
+      "stopSharing": "停止共享",
+      "levelNone": "不共享",
+      "levelRead": "可读取",
+      "levelControl": "可操作",
+      "levelLabel": "智能体对 {app} 的权限",
+      "wholeApp": "整个应用",
+      "wholeAppHint": "{app} 的所有窗口（包括之后打开的），以及它的菜单和快捷键",
+      "appLevelLabel": "智能体对整个 {app} 的权限",
+      "viaApp": "随应用共享",
+      "screenTitle": "整个屏幕",
+      "screenHint": "所有可共享的窗口（包括之后打开的），以及桌面本身的快捷键。codeg 自己的窗口和永不共享名单中的应用始终会被遮盖。",
+      "screenLevelLabel": "智能体对整个屏幕的权限",
+      "viaScreen": "随屏幕共享",
+      "shareAll": "全部共享",
+      "shareAllRead": "全部允许读取",
+      "shareAllControl": "全部允许读取并操作",
+      "stopSharingAll": "全部停止共享",
+      "skipped": "{count, plural, other {有 # 个窗口没能共享，可能已经关闭。}}",
+      "unshareable": "{count, plural, other {# 个窗口不能共享}}",
+      "noneShareable": "这些窗口都不能共享。",
+      "codegWhy": "codeg 的窗口永远不能共享：能操作 codeg 的智能体可以替自己批准请求，或给自己共享更多窗口。其他 codeg 实例的窗口也一样。"
+    },
+    "settings": {
+      "pageTitle": "电脑操作",
+      "pageDescription": "让智能体查看并操作你共享给它的桌面窗口。",
+      "switch": {
+        "label": "启用电脑操作",
+        "hint": "开启后，智能体可以列出应用和窗口，读取你共享的窗口，并在你允许操作的窗口里点击和输入。你从状态栏共享之前，任何窗口都不可读。",
+        "failed": "切换电脑操作失败"
+      },
+      "driver": {
+        "title": "驱动",
+        "description": "电脑操作通过开源的 cua-driver 读取和操作窗口。codeg 只运行经过核对的 {version} 版本，首次需要时自动下载。",
+        "loading": "正在检查…",
+        "unsupported": "cua-driver 没有适用于此平台的版本。",
+        "installing": "正在安装…",
+        "downloadingOf": "正在下载… {done} / {total} MB",
+        "downloadingSoFar": "正在下载… {done} MB",
+        "uninstalling": "正在卸载…",
+        "installed": "已安装 · {version}",
+        "outdated": "已安装 {installed}，当前 codeg 使用 {version}。",
+        "notInstalled": "未安装。首次使用电脑操作时会自动下载，也可以现在安装。",
+        "install": "安装",
+        "upgrade": "升级到 {version}",
+        "uninstall": "卸载",
+        "installDone": "cua-driver 已安装",
+        "uninstallDone": "cua-driver 已卸载",
+        "confirmTitle": "卸载 cua-driver？",
+        "confirmDescription": "电脑操作会被关闭，所有窗口停止共享。重新开启时会再次下载驱动。",
+        "cancel": "取消"
+      },
+      "permissions": {
+        "title": "系统权限",
+        "description": "macOS 需要为 codeg-computer-helper 授权。在系统设置里授权后回到这里，状态会自动更新。",
+        "off": "开启电脑操作后，可以在这里查看和授予权限。",
+        "accessibilityHint": "读取窗口内容并操作窗口。",
+        "screenRecordingHint": "截图和读取窗口标题。"
+      },
+      "title": "共享、输入与停止",
+      "description": "共享的窗口多久后停止共享、哪些应用永不共享、随时停止所有共享的快捷键和悬浮停止条，以及智能体能否把窗口切到前台来操作。",
+      "ttl": {
+        "label": "窗口闲置多久后停止共享",
+        "hint": "共享的窗口在这么长时间内没有被任何智能体读取，就会停止共享。",
+        "minutes": "{minutes} 分钟",
+        "never": "永不（直到我停止）"
+      },
+      "blocklist": {
+        "label": "永不共享的应用",
+        "hint": "这些应用的窗口不能共享给智能体。不需要的默认项可以移除，也可以按 bundle 标识（com.example.app）、可执行文件名（app.exe）或完整路径添加应用。",
+        "placeholder": "com.example.app",
+        "add": "添加",
+        "remove": "移除 {name}",
+        "restore": "恢复默认",
+        "restoreConfirmTitle": "恢复默认名单？",
+        "restoreConfirmAdded": "{count, plural, other {你添加的 # 个应用会从名单中移除。}}",
+        "restoreConfirmRemoved": "{count, plural, other {你移除的 # 个默认应用会重新加回名单。}}",
+        "restoreConfirmSave": "保存后生效。",
+        "cancel": "取消",
+        "custom": "你添加的",
+        "duplicate": "已经在名单里了。",
+        "removedCount": "{count, plural, other {已移除 # 个默认应用。}}",
+        "items": {
+          "systemSettings": "系统设置",
+          "credentialPrompts": "系统密码与授权弹窗",
+          "keychain": "钥匙串访问",
+          "passwords": "密码"
+        }
+      },
+      "stopKey": {
+        "label": "停止快捷键",
+        "hint": "在任何应用中按下即可停止共享所有窗口，效果同「停止共享」按钮。电脑操作开启时这组按键归 codeg 使用，请选一组别处不用的组合。",
+        "recording": "请按下按键…",
+        "recordHint": "按住 Ctrl 和另一个修饰键（Alt 或 Shift），再按一个键。按 Esc 取消。",
+        "recordHintMac": "按住 ⌃ 或 ⌘ 和另一个修饰键，再按一个键。按 Esc 取消。",
+        "off": "已关闭",
+        "useDefault": "默认",
+        "turnOff": "关闭",
+        "statusActive": "已生效：在任何地方按下即可停止共享所有窗口。",
+        "statusIdle": "开启电脑操作后生效。",
+        "statusOff": "已关闭：只能用「停止共享」按钮停止共享。",
+        "statusFailed": "未生效：这组按键可能已被其他应用占用，请换一组。",
+        "problem": {
+          "unsupportedKey": "不能使用这个键。请选择字母、数字、F1–F12、Esc 或标点键。",
+          "weakModifiers": "至少按住两个修饰键，其中一个是 Ctrl（Mac 上也可以是 ⌘）。",
+          "metaOffMac": "不能包含 Windows 键。"
+        }
+      },
+      "strip": {
+        "label": "悬浮停止条",
+        "hint": "共享窗口期间，在所有窗口上方悬浮一条提示条，写明智能体能做什么，并带「停止共享」按钮。关闭后，仍可在状态栏的「电脑操作」气泡里或用停止快捷键停止共享。"
+      },
+      "foreground": {
+        "label": "允许智能体把窗口切到前台",
+        "hint": "有些应用在后台收不到按键和打字——在 Windows 上，凡是基于 Chromium 的应用都是如此，比如 Edge、Chrome 和 VS Code。开启后，智能体可以把你允许它操作的窗口切到前台完成一次操作，再切回你原来所在的窗口（在 Linux 上窗口会留在前台）。你会看到窗口跳到前面；那一刻你敲的字可能会进到这个窗口，点击也可能移动你的鼠标指针。"
+      },
+      "delivery": {
+        "label": "默认操作方式",
+        "hint": "智能体没有指定时，点击、滚动、打字和按键如何送达窗口。后台：窗口留在原处，鼠标和键盘仍归你用；前台：每次操作都把窗口切到前台。",
+        "hintOff": "不允许把窗口切到前台时，始终为后台。",
+        "background": "后台",
+        "foreground": "前台"
+      },
+      "launch": {
+        "label": "允许智能体打开应用和移动窗口",
+        "hint": "开启后，智能体可以在后台启动已安装的应用（codeg 和永不共享的应用除外），也可以移动你允许它操作的窗口或调整其大小。启动应用不会共享它的任何窗口，是否共享仍由你决定。"
+      },
+      "clipboard": {
+        "label": "允许智能体使用剪贴板",
+        "hint": "开启后，智能体可以把文本放到剪贴板上再粘贴，也可以读回它自己从你共享的窗口中复制的内容。你自己复制的内容永远不会读给智能体，智能体也只能粘贴它自己放到剪贴板上的内容。"
+      },
+      "screen": {
+        "label": "允许共享整个屏幕",
+        "hint": "开启后，共享选择器中会出现「整个屏幕」：智能体能看到整屏画面并在任意位置点击，所有可共享的窗口也随之共享，连同桌面本身的快捷键。codeg 自己的窗口和永不共享名单中的应用始终会被遮盖。关闭此项会结束整个屏幕的共享。"
+      },
+      "boundary": "在 macOS 上，权限授予 codeg-computer-helper，只有 codeg 能使用，智能体的命令行用不了。Windows 和 Linux 没有这层隔离：这里的设置决定的是智能体通过 codeg 能拿到什么，而不是电脑上的程序能做什么。",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "电脑操作设置已保存",
+      "saveFailed": "保存电脑操作设置失败",
+      "loadFailed": "加载失败：{detail}"
+    }
   },
   "LogsSettings": {
     "loading": "加载中…",
@@ -5393,6 +5843,10 @@
     "viewSwitchToList": "切换到列表视图",
     "statusFilter": "状态",
     "statusFilterAll": "全部状态",
+    "searchPlaceholder": "搜索任务",
+    "clearSearch": "清除搜索",
+    "searchEmptyColumn": "无匹配",
+    "searchNoResults": "没有与“{query}”匹配的任务",
     "listEmpty": "没有符合当前筛选条件的任务",
     "listColStatus": "状态",
     "listColTask": "任务",
@@ -5625,6 +6079,10 @@
     "deleteWorktreeConfirmTitle": "删除 worktree？",
     "deleteWorktreeConfirmBody": "worktree 目录及其工作分支将被彻底删除。任务仍留在看板上，其会话会移到项目文件夹下。",
     "eventCreated": "已创建",
+    "eventCreatedAuto": "由自动处理创建",
+    "eventAutoSchedule": "定时扫描",
+    "eventAutoWebhook": "Webhook",
+    "eventAutoManual": "手动扫描",
     "eventStatusChanged": "状态变更",
     "eventConfigEffective": "启动配置",
     "eventInitCommand": "初始化命令",
@@ -6001,7 +6459,10 @@
     "emptyHint": "codeg 直接从各智能体自己的会话记录里读取 Token 数。点一下刷新，把本机已有的会话统计进来。",
     "emptyAction": "统计我的会话",
     "loadFailed": "用量加载失败",
-    "truncatedNotice": "该范围过大 —— 下面的数字只覆盖了其中最近的一段。"
+    "truncatedNotice": "该范围过大 —— 下面的数字只覆盖了其中最近的一段。",
+    "apiListEstimate": "≈ {amount} API 标价",
+    "apiListEstimatePartial": "≈ {amount} API 标价 · {percent}% 的 token",
+    "apiListEstimateHint": "来自 models.dev 的公开 API 基础标价，含缓存读写，不含长上下文和推理加价。订阅套餐的计费方式不同。"
   },
   "Forge": {
     "title": "仓库面板",
@@ -6170,9 +6631,9 @@
     "viewExisting": "查看既有任务",
     "scenarioLabel": "处理方式",
     "scenarioFix": "直接修复 / 实现",
-    "scenarioFixHint": "智能体先在工作树里确认问题真实存在，再动手修复；确认不了就如实回报，不会硬改代码。",
+    "scenarioFixHint": "智能体先判断报告是否属实，属实才动手修复；不属实（复现不了、按设计如此、已修复……）就提前终止、不改任何代码，带着结论回来等你处理。",
     "scenarioPlanFirst": "先出方案",
-    "scenarioPlanFirstHint": "先确认问题真实存在，再产出实施方案就停——你确认后退回任务，在同一工作树里实施。",
+    "scenarioPlanFirstHint": "智能体先判断报告是否属实，属实才产出实施方案并停下；不属实就提前终止、不出方案，带着结论回来等你处理。方案确认后退回任务，在同一工作树里实施。",
     "scenarioReviewFix": "评审并修复",
     "scenarioReviewFixHint": "智能体先判断方案本身是否合理，合理才在其上修复问题；不合理就不提交任何代码，带着评审回来等你处理。验收后修复提交推回原分支。",
     "scenarioReviewOnly": "仅评审",
@@ -6199,6 +6660,79 @@
     "settingsPromptAllHint": "这个面板创建的每个任务都会带上，不分场景。",
     "settingsPromptScenarioHint": "只有这个场景创建的任务才会带上。",
     "settingsPromptPlaceholder": "例如：用中文回复；完成前先跑一遍项目的测试。",
+    "settingsSections": "面板设置分区",
+    "settingsTabGeneral": "常规",
+    "settingsTabAuto": "自动处理",
+    "autoIntro": "无需点击开始，自动把匹配的 Issue 和 PR 转成任务。每个条目最多处理一次——只要它有过任务（哪怕已被你删除），就不会再被处理。",
+    "autoGlobalNote": "这些规则适用于所有跟随全局设置的项目文件夹。",
+    "autoSchedule": "定时扫描",
+    "autoScheduleHint": "按固定间隔扫描仓库中符合规则的条目。",
+    "autoInterval": "扫描间隔",
+    "autoIntervalMinutes": "{count, plural, other {# 分钟}}",
+    "autoIntervalHours": "{count, plural, other {# 小时}}",
+    "autoWebhook": "事件触发（Webhook）",
+    "autoWebhookHint": "仓库平台通知有 Issue 或 PR 变化时立即扫描。",
+    "autoWebhookUrl": "Payload URL",
+    "autoWebhookUrlUnavailable": "桌面端只有在 Web 服务运行时才能接收 Webhook——请先在 设置 → Web 服务 中启动。",
+    "autoWebhookSecret": "密钥",
+    "autoWebhookSecretPending": "保存时会自动生成密钥。",
+    "autoWebhookShowSecret": "显示密钥",
+    "autoWebhookHideSecret": "隐藏密钥",
+    "autoWebhookRegenerate": "重新生成密钥",
+    "autoWebhookSetup": "在仓库的 Webhook 设置中填入上面的 URL，内容类型选 application/json，填入此密钥，并勾选 Issue 和 PR 相关事件（GitLab：勾选 Issues 与 Merge request 事件，密钥填在 Secret token）。仓库平台必须能访问到该地址——访问不到时请改用定时扫描。",
+    "autoCopy": "复制",
+    "autoCopied": "已复制",
+    "autoIssues": "Issue",
+    "autoIssuesHint": "处理未关闭的 Issue。",
+    "autoPulls": "PR / MR",
+    "autoPullsHint": "处理未关闭的 Pull / Merge Request。",
+    "autoHandleWith": "处理方式",
+    "autoIssueScenario": "自动处理 Issue 时的处理方式",
+    "autoPrScenario": "自动处理 PR / MR 时的处理方式",
+    "autoSkipDrafts": "跳过草稿，等它就绪再处理",
+    "autoIncludeExisting": "包含开启前已存在的条目",
+    "autoIncludeExistingHint": "关闭时：只处理开启自动处理之后新建或有更新的条目。想处理旧条目，给它打个标签即可。",
+    "autoIncludeExistingOnHint": "所有符合规则的未关闭条目都会被处理，包括开启自动处理之前就已存在的。",
+    "autoSinceHint": "关闭时：只处理 {time}（开启自动处理时）之后新建或有更新的条目。想处理旧条目，给它打个标签即可。",
+    "autoRulesHint": "规则不区分大小写，* 匹配任意字符：area/* 表示所有以 area/ 开头的标签，*[bot] 表示所有机器人账号。条目必须通过每一个已填写的列表，「不处理」列表始终优先；留空的列表不做筛选。",
+    "autoIncludeLabels": "只处理带这些标签之一的条目",
+    "autoExcludeLabels": "不处理带这些标签的条目",
+    "autoIncludeAuthors": "只处理这些人创建的条目",
+    "autoExcludeAuthors": "不处理这些人创建的条目",
+    "autoLabelPlaceholder": "输入标签或模式，回车添加",
+    "autoAuthorPlaceholder": "输入用户名或模式，回车添加",
+    "autoRemovePattern": "移除 {pattern}",
+    "autoAutoStart": "立即开始",
+    "autoAutoStartHint": "新任务创建后立即排队，何时运行由任务设置里的并发上限决定。关闭时：任务留在待办中。",
+    "autoWriteback": "完成后回帖",
+    "autoWritebackHint": "任务完成时，在条目下发布与发起对话框中「回帖」开关相同的简短状态评论。",
+    "autoActivity": "运行情况",
+    "autoScanNow": "立即扫描",
+    "autoScanNowOff": "开启一种触发方式并保存后才能扫描。",
+    "autoScanNowDirty": "请先保存——扫描使用的是已保存的规则。",
+    "autoStatusUnavailable": "该数据目录的任务看板由另一个 codeg 进程运行，自动处理也在那里执行，不在这里。",
+    "autoStatusNever": "尚未扫描。",
+    "autoStatusScanning": "扫描中…",
+    "autoStatusLast": "上次扫描 {time}（{trigger}）：",
+    "autoStatusCounts": "列出 {examined} · 匹配 {matched} · 已有任务 {handled} · 新建 {created}。",
+    "autoStatusError": "上次扫描 {time}（{trigger}）中止：{error}",
+    "autoStatusCreated": "新任务：{items}",
+    "autoStatusSkipped": "跳过：{list}",
+    "autoStatusFailed": "未能创建：{items}",
+    "autoStatusStartFailed": "已创建但未开始：{error}",
+    "autoStatusTruncated": "列表被截断——下次扫描会重新读取同一时间窗口。",
+    "autoStatusNext": "下次定时扫描：{time}",
+    "autoStatusDelivery": "最近一次 Webhook 推送：{time}",
+    "autoTriggerSchedule": "定时",
+    "autoTriggerWebhook": "Webhook",
+    "autoTriggerManual": "手动",
+    "autoSkipKind": "类型不符",
+    "autoSkipNotOpen": "未开启",
+    "autoSkipDraft": "草稿",
+    "autoSkipExcludedLabel": "标签被排除",
+    "autoSkipExcludedAuthor": "作者被排除",
+    "autoSkipMissingLabel": "无匹配标签",
+    "autoSkipAuthorNotIncluded": "作者不在名单",
     "save": "保存"
   },
   "Canvas": {
@@ -6337,7 +6871,17 @@
       "invalidUrl": "不是有效的地址",
       "profile": "配置文件：{name}",
       "profileMenuLabel": "在其他配置文件中打开此页",
-      "profileDefault": "默认"
+      "profileDefault": "默认",
+      "device": "设备：{name}",
+      "deviceMenuLabel": "设备类型",
+      "deviceDesktop": "桌面",
+      "deviceTablet": "平板",
+      "devicePhone": "手机",
+      "deviceFill": "铺满面板",
+      "deviceCustom": "自定义",
+      "deviceWidth": "宽度",
+      "deviceHeight": "高度",
+      "deviceLaidOut": "面板太小：按 {size} 排版"
     },
     "status": {
       "popupDenied": "已拦截弹窗：{host}",

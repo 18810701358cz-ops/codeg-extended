@@ -1,7 +1,7 @@
-//! Embedded surface for macOS / Windows: a wry child webview built straight
-//! through tauri-runtime-wry's re-exported `wry` (`build_as_child` on the
-//! owner window — the same call tauri-runtime-wry makes for its own child
-//! webviews). tauri never learns about the view, so the workspace window stays
+//! Embedded surface for macOS / Windows / Linux: a wry child webview built straight
+//! through tauri-runtime-wry's re-exported `wry`: `build_as_child` on macOS /
+//! Windows, `build_gtk` into a root overlay on Linux. Tauri never registers
+//! these as its own child views, so the workspace window stays
 //! an ordinary `WebviewWindow` (see the `browser-child` note in Cargo.toml).
 //!
 //! wry's `WebView` is not `Send`; every instance lives in a thread-local on
@@ -30,6 +30,8 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, Url, WebviewWindow};
 #[cfg(target_os = "windows")]
 use tauri_runtime_wry::wry::WebContext;
+#[cfg(target_os = "linux")]
+use tauri_runtime_wry::wry::WebViewBuilderExtUnix;
 use tauri_runtime_wry::wry::{
     self, dpi, NewWindowFeatures, NewWindowResponse, PageLoadEvent, Rect, WebViewBuilder,
 };
@@ -41,11 +43,13 @@ use super::hooks;
 use super::policy::{self, BrowserPolicy};
 use super::profile;
 use super::registry::{BrowserRegistry, BrowserTab};
-use super::surface::BrowserSurface;
+use super::surface::{page_zoom_to_apply, BrowserSurface};
 use super::types::{
     Bounds, BrowserOpenRequestPayload, BrowserPopupPayload, BrowserTabState, ChannelKind,
     NavigationBlockReason, PopupPresentation, SurfaceKind, TabKind,
 };
+#[cfg(target_os = "linux")]
+use super::shim::linux_child as shim;
 #[cfg(target_os = "macos")]
 use super::shim::macos as shim;
 #[cfg(target_os = "windows")]
@@ -101,6 +105,32 @@ fn rect(bounds: Bounds) -> Rect {
     }
 }
 
+/// GTK must retain geometry across allocation passes; other platforms use Wry.
+fn set_webview_bounds(webview: &wry::WebView, bounds: Bounds) -> wry::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        shim::set_bounds(webview, bounds)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        webview.set_bounds(rect(bounds))
+    }
+}
+
+/// Whether the engine can zoom a page: always on Windows, and on macOS from 11
+/// (`shim::supports_page_zoom`). Without it a tab emulating a device in a slot
+/// smaller than the device lays its page out at the frame's width instead.
+fn page_zoom_supported() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        shim::supports_page_zoom()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 /// Main thread only: which tab owns the platform webview behind `pointer`
 /// (see `channel::MessageSink`).
 fn tab_id_for_webview(pointer: usize) -> Option<String> {
@@ -142,6 +172,11 @@ fn attach_engine_hooks(app: &AppHandle, tab_id: &str, kind: &ChildKind, webview:
         let _ = kind;
         shim::install_navigation_delegate(webview, hooks::navigation_sink(app, tab_id))
     };
+    #[cfg(target_os = "linux")]
+    let installed = {
+        let _ = kind;
+        shim::install_navigation_hooks(webview, hooks::navigation_sink(app, tab_id))
+    };
     #[cfg(target_os = "windows")]
     let installed = shim::install_navigation_hooks(
         webview,
@@ -160,6 +195,13 @@ fn attach_engine_hooks(app: &AppHandle, tab_id: &str, kind: &ChildKind, webview:
     if let Err(err) = shim::install_page_close_hook(webview, hooks::page_close_sink(app, tab_id)) {
         tracing::warn!(
             "[browser] tab {tab_id}: window.close() not hooked ({err}); a page closing its own window is ignored"
+        );
+    }
+    #[cfg(target_os = "linux")]
+    if matches!(kind, ChildKind::Page) {
+        super::shim::linux::install_download_handlers(
+            &tauri_runtime_wry::wry::WebViewExtUnix::webview(webview),
+            super::downloads::linux_handlers(app, tab_id),
         );
     }
 }
@@ -307,7 +349,15 @@ impl ChildHandle {
     ) -> Result<R, ChildError> {
         let id = self.tab_id.clone();
         run_on_main(&self.app, move || {
-            SURFACES.with(|s| s.borrow().get(&id).map(f))
+            SURFACES.with(|s| {
+                let surfaces = s.borrow();
+                let webview = surfaces.get(&id)?;
+                #[cfg(target_os = "linux")]
+                if shim::is_destroyed(webview) {
+                    return None;
+                }
+                Some(f(webview))
+            })
         })?
         .ok_or_else(|| ChildError::Gone(self.tab_id.clone()))
     }
@@ -357,7 +407,7 @@ impl ChildHandle {
     }
 
     pub fn set_bounds(&self, bounds: Bounds) -> Result<(), ChildError> {
-        self.op(move |wv| wv.set_bounds(rect(bounds)))
+        self.op(move |wv| set_webview_bounds(wv, bounds))
     }
 
     pub fn set_visible(&self, visible: bool) -> Result<(), ChildError> {
@@ -368,8 +418,78 @@ impl ChildHandle {
         self.op(|wv| wv.focus())
     }
 
+    /// Linux: give the keyboard to the workspace if this page holds it, ahead
+    /// of a hide that makes way for an overlay (see `shim::release_focus`).
+    #[cfg(target_os = "linux")]
+    pub fn release_focus(&self) -> Result<(), ChildError> {
+        self.with(shim::release_focus)
+    }
+
     pub fn zoom(&self, factor: f64) -> Result<(), ChildError> {
+        if !page_zoom_supported() {
+            return Ok(());
+        }
         self.op(move |wv| wv.zoom(factor))
+    }
+
+    /// Apply the geometry the registry holds for this tab — its bounds while
+    /// it is visible, and its page zoom (`page_zoom_to_apply`) — as it stands
+    /// when this runs on the main thread, not as it stood when the caller
+    /// asked.
+    ///
+    /// Requests are recorded on whatever thread their command runs on and
+    /// reach the main thread in no guaranteed order. Carrying values, an
+    /// overtaken request would land last and leave the page at its stale size
+    /// or zoom, with the newer one already spent; reading the newest record
+    /// here means whichever pass runs last applies the newest request. Bounds
+    /// and zoom go in the same turn, so no frame is ever drawn with one
+    /// applied and not the other — they change together when a tab emulating
+    /// a device is fitted into a different slot.
+    pub fn sync_geometry(&self) -> Result<(), ChildError> {
+        let app = self.app.clone();
+        let tab_id = self.tab_id.clone();
+        self.op(move |wv| {
+            let Some(registry) = app.try_state::<BrowserRegistry>() else {
+                return Ok(());
+            };
+            // Until the record holds still: a request recorded while this
+            // pass was applying may have skipped a pass of its own, having
+            // read `zoom_applied` from before this one published it (a hidden
+            // tab passes only when the zoom has to change). So the publish
+            // looks again, in the same lock, and goes round once more if the
+            // zoom asked for moved on meanwhile.
+            loop {
+                let Some((bounds, visible, wanted, applied)) = registry.update(&tab_id, |tab| {
+                    (
+                        tab.last_bounds,
+                        tab.visible,
+                        tab.zoom_wanted,
+                        tab.zoom_applied,
+                    )
+                }) else {
+                    return Ok(());
+                };
+                let zoom = page_zoom_to_apply(wanted, applied).filter(|_| page_zoom_supported());
+                if let Some(factor) = zoom {
+                    wv.zoom(factor)?;
+                }
+                if visible {
+                    set_webview_bounds(wv, bounds)?;
+                }
+                let settled = registry
+                    .update(&tab_id, |tab| {
+                        if zoom.is_some() {
+                            tab.zoom_applied = wanted;
+                            tab.state.zoom = wanted.unwrap_or(1.0);
+                        }
+                        tab.zoom_wanted == wanted
+                    })
+                    .unwrap_or(true);
+                if settled {
+                    return Ok(());
+                }
+            }
+        })
     }
 
     /// Through the shim, not `wry::WebView::open_devtools()`: the platforms
@@ -407,7 +527,7 @@ impl ChildHandle {
     fn install_channel_inner(&self, adopted: bool) -> Result<bool, ChildError> {
         let sink = message_sink(&self.app);
         let _ = adopted;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             self.with(move |wv| {
                 shim::install_world(
@@ -556,6 +676,8 @@ impl ChildHandle {
 /// new window be created from on Windows.
 #[cfg(target_os = "macos")]
 type OpenerConfiguration = objc2::rc::Retained<objc2_web_kit::WKWebViewConfiguration>;
+#[cfg(target_os = "linux")]
+type OpenerConfiguration = webkit2gtk::WebView;
 #[cfg(target_os = "windows")]
 type OpenerConfiguration = webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment;
 
@@ -566,6 +688,7 @@ type OpenerConfiguration = webview2_com::Microsoft::Web::WebView2::Win32::ICoreW
 #[derive(Clone)]
 pub enum ChildKind {
     Page,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     Document(Arc<DocGrant>),
 }
 
@@ -664,7 +787,33 @@ fn build_child(
             .map_err(|e| e.to_string())
         })
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        let fixed = shim::container(owner)?;
+        // A popup is related to its real opener; a regular view to a fresh
+        // view in the profile's context, which owned browser windows share
+        // (see `linux_context`). Either way it lands in that context.
+        let related = match configuration {
+            Some(opener) => opener,
+            None => super::shim::linux_context::related_view(profile)?,
+        };
+        configure_child(
+            WebViewBuilder::new(),
+            app,
+            owner,
+            tab_id,
+            label,
+            bounds,
+            visible,
+            devtools,
+            Some(related),
+            kind,
+            profile,
+        )?
+        .build_gtk(&fixed)
+        .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "macos")]
     {
         configure_child(
             WebViewBuilder::new(),
@@ -816,7 +965,7 @@ fn configure_child<'a>(
                 policy::subframe_navigation_allowed(&parsed)
             };
             if !scheme_ok {
-                if main_frame {
+                if policy::report_scheme_denial(&parsed, main_frame) {
                     hooks::navigation_blocked(&nav_app, &nav_id, &url, NavigationBlockReason::Scheme);
                 } else {
                     tracing::debug!("[browser] tab {nav_id} blocked frame navigation to {url}");
@@ -895,7 +1044,9 @@ fn configure_child<'a>(
             move |title| hooks::title_changed(&app, &id, title)
         });
     builder = match kind {
-        ChildKind::Page => builder
+        ChildKind::Page => {
+            #[cfg(not(target_os = "linux"))]
+            let builder = builder
             // The engine transfers the file; the host only decides where it
             // may land (`downloads::requested` rewrites the path) and
             // reports it.
@@ -909,8 +1060,9 @@ fn configure_child<'a>(
                 move |url: String, path, success| {
                     super::downloads::finished(&app, &url, path, success)
                 }
-            })
-            .with_new_window_req_handler(new_window_handler(app.clone(), owner.clone(), tab_id.to_string(), profile.to_string())),
+            });
+            builder.with_new_window_req_handler(new_window_handler(app.clone(), owner.clone(), tab_id.to_string(), profile.to_string()))
+        },
         ChildKind::Document(grant) => builder
             // A document does not download and does not open windows: both
             // are refused and reported, and a web address a `window.open`
@@ -980,8 +1132,14 @@ fn configure_child<'a>(
             builder = builder.with_incognito(true);
         }
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let _ = configuration;
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(opener) = configuration {
+            builder = builder.with_related_view(opener);
+        }
+        // The proxy belongs to the shared native context, configured before
+        // this view is built; wry's temporary builder context is not its store.
+    }
     Ok(builder)
 }
 
@@ -1022,6 +1180,7 @@ pub fn create(
 /// Build the child webview for a document guest: the same surface as a tab,
 /// with the guest's policy and the handler that serves `grant`'s files. The
 /// caller navigates to the document once the page ↔ host channel is in.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[allow(clippy::too_many_arguments)]
 pub fn create_document(
     app: &AppHandle,
@@ -1132,6 +1291,8 @@ fn new_window_handler(
             let configuration = features.opener.target_configuration.clone();
             #[cfg(target_os = "windows")]
             let configuration = features.opener.environment.clone();
+            #[cfg(target_os = "linux")]
+            let configuration = features.opener.webview.clone();
             let profile = opener_profile.clone();
             // Held until the popup is registered: a deletion of the profile
             // that has begun refuses it, and one that begins now waits.
@@ -1153,6 +1314,8 @@ fn new_window_handler(
             );
             #[cfg(target_os = "windows")]
             let platform = tauri_runtime_wry::wry::WebViewExtWindows::webview(&webview);
+            #[cfg(target_os = "linux")]
+            let platform = tauri_runtime_wry::wry::WebViewExtUnix::webview(&webview);
             attach_engine_hooks(&app, &tab_id, &kind, &webview);
             SURFACES.with(|s| s.borrow_mut().insert(tab_id.clone(), webview));
             let handle = ChildHandle {

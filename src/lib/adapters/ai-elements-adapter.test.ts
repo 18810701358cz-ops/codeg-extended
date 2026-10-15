@@ -14,7 +14,9 @@ import {
   type AdaptedToolCallPart,
 } from "./ai-elements-adapter"
 import type { PageHandoffBlock } from "@/lib/browser/page-handoff-block"
+import type { ContentBlock } from "@/lib/types"
 import { CODEX_SEARCH_ACTION_META_KEY } from "@/lib/codex-command-action"
+import { buildStreamingTurnsFromLiveMessage } from "@/stores/conversation-runtime-store"
 
 /** What `usePageHandoffName` answers with the English messages. */
 function pageHandoffName(handoff: PageHandoffBlock): string {
@@ -466,6 +468,99 @@ describe("dropEmptyInFlightToolCalls", () => {
     if (group.type !== "tool-group") throw new Error("expected a tool-group")
     expect(group.items).toHaveLength(1)
     expect(group.items[0].toolCallId).toBe("tc-real")
+  })
+})
+
+describe("adaptMessageTurn — agent timeline passthrough", () => {
+  type ToolResultBlock = Extract<ContentBlock, { type: "tool_result" }>
+  const adaptAgentTurn = (result: Partial<ToolResultBlock>) =>
+    adaptMessageTurn(
+      {
+        id: "agent-turn",
+        role: "assistant" as const,
+        timestamp: "2026-07-23T00:00:00.000Z",
+        blocks: [
+          {
+            type: "tool_use" as const,
+            tool_use_id: "tc-agent",
+            tool_name: "Agent",
+            input_preview: "{}",
+          },
+          {
+            type: "tool_result" as const,
+            tool_use_id: "tc-agent",
+            output_preview: null,
+            is_error: false,
+            ...result,
+          },
+        ],
+      },
+      {
+        attachedResources: "Attached resources",
+        toolCallFailed: "Tool failed",
+        pageHandoffName,
+      },
+      false
+    )
+
+  const timeline = [
+    { type: "thinking", text: "Reading first." },
+    { type: "tool_call", childIndex: 0 },
+    { type: "text", text: "Report" },
+  ] as const
+
+  it("falls back to agent_stats.timeline when no live transcript is attached", () => {
+    const adapted = adaptAgentTurn({
+      output_preview: "done",
+      is_error: false,
+      agent_stats: {
+        total_tokens: 42,
+        tool_calls: [{ tool_name: "Read", is_error: false }],
+        timeline: [...timeline],
+      },
+    })
+    const part = adapted.content[0]
+    expect(part.type).toBe("tool-call")
+    if (part.type !== "tool-call") throw new Error("expected a tool-call")
+    expect(part.agentTranscript).toEqual(timeline)
+  })
+
+  it("prefers the live transcript over the parsed historical timeline", () => {
+    const adapted = adaptAgentTurn({
+      output_preview: "done",
+      is_error: false,
+      agent_stats: {
+        tool_calls: [{ tool_name: "Read", is_error: false }],
+        timeline: [...timeline],
+      },
+      agent_transcript: [{ type: "text", text: "live entry" }],
+    })
+    const part = adapted.content[0]
+    if (part.type !== "tool-call") throw new Error("expected a tool-call")
+    expect(part.agentTranscript).toEqual([{ type: "text", text: "live entry" }])
+  })
+
+  it("keeps old stats without a timeline untouched", () => {
+    const adapted = adaptAgentTurn({
+      output_preview: "done",
+      is_error: false,
+      agent_stats: {
+        tool_calls: [{ tool_name: "Read", is_error: false }],
+      },
+    })
+    const part = adapted.content[0]
+    if (part.type !== "tool-call") throw new Error("expected a tool-call")
+    expect(part.agentTranscript).toBeUndefined()
+    expect(part.agentStats).toMatchObject({
+      tool_calls: [{ tool_name: "Read" }],
+    })
+  })
+
+  it("never fabricates a timeline for a result with neither transcript nor stats", () => {
+    const content = adaptAgentTurn({}).content
+    const part = content[0]
+    if (part.type !== "tool-call") throw new Error("expected a tool-call")
+    expect(part.agentTranscript).toBeUndefined()
   })
 })
 
@@ -1675,6 +1770,191 @@ describe("adaptMessageTurn — Codex grep no-match results", () => {
       const part = adaptSearchResult({ toolName, output, status, meta })
 
       expect(part.state).toBe("output-error")
+    }
+  )
+})
+
+// codex makes a grep card only of a command it reduces to ONE search action.
+// `rg --files … | rg …` is a list-files action plus a search action, so it
+// arrives as an ordinary shell call (#877): `bash`, `rawInput.command` wrapped
+// in the login shell, `failed` for rg's exit 1, and — having printed nothing —
+// no output but the exit line the backend appends. These are the records the
+// live store builds from what codex-acp 2.0.1 and 2.1.1 send.
+describe("adaptMessageTurn — a search pipeline on a shell card", () => {
+  const msgText = {
+    attachedResources: "Attached resources",
+    toolCallFailed: "Tool failed",
+    pageHandoffName,
+  }
+  const pipeline =
+    "rg --files scripts src/grapal/phonics tests | rg 'sequence_(nested|rerank_candidate)'"
+  const exitOne = "[terminal exited: exit code: 1]"
+  const shellInput = (script: string) =>
+    JSON.stringify({ command: `/bin/zsh -lc "${script}"`, cwd: "/repo" })
+
+  function onlyToolCall(content: AdaptedContentPart[]): AdaptedToolCallPart {
+    const calls = content.flatMap((part) =>
+      part.type === "tool-group"
+        ? part.items
+        : part.type === "tool-call"
+          ? [part]
+          : []
+    )
+    if (calls.length !== 1) throw new Error("expected one tool call")
+    return calls[0]
+  }
+
+  function adaptShellResult({
+    script = pipeline,
+    output = exitOne,
+    pairing = "id",
+  }: {
+    script?: string
+    output?: string
+    pairing?: "id" | "position"
+  } = {}): AdaptedToolCallPart {
+    const toolUseId = pairing === "id" ? "exec-1" : null
+    return onlyToolCall(
+      adaptMessageTurn(
+        {
+          id: `codex-shell-${pairing}`,
+          role: "assistant",
+          timestamp: "2026-10-02T00:00:00.000Z",
+          blocks: [
+            {
+              type: "tool_use",
+              tool_use_id: toolUseId,
+              tool_name: "bash",
+              input_preview: shellInput(script),
+              status: "failed",
+            },
+            {
+              type: "tool_result",
+              tool_use_id: toolUseId,
+              output_preview: output,
+              is_error: true,
+            },
+          ],
+        },
+        msgText
+      ).content
+    )
+  }
+
+  it.each([["id"], ["position"]] as const)(
+    "shows a search pipeline that matched nothing as completed (%s pairing)",
+    (pairing) => {
+      const part = adaptShellResult({ pairing })
+
+      expect(part.state).toBe("output-available")
+      expect(part.errorText).toBeUndefined()
+      // The raw exit code stays on the card.
+      expect(part.output).toBe(exitOne)
+    }
+  )
+
+  it("covers a read piped into grep", () => {
+    const part = adaptShellResult({
+      script: "cat README.md | grep -n '__definitely_absent_token__'",
+    })
+
+    expect(part.state).toBe("output-available")
+  })
+
+  it.each([
+    [
+      "a diagnostic from an earlier stage",
+      "rg --files no_such_dir | rg 'sequence_'",
+      `rg: no_such_dir: IO error for operation on no_such_dir: No such file or directory (os error 2)\n${exitOne}`,
+    ],
+    [
+      "a real rg error",
+      "rg 'unclosed(' README.md",
+      "rg: regex parse error:\n    (?:unclosed()\n    ^\nerror: unclosed group\n[terminal exited: exit code: 2]",
+    ],
+    ["a command that is not a search", "make test", exitOne],
+    [
+      "a status that may not be the search's",
+      "grep -q needle f && test -d out",
+      exitOne,
+    ],
+    // Each of these exits 1 printing nothing, and no search came up empty.
+    [
+      "a redirection the shell failed to open",
+      "cat /dev/null | grep needle 2>/dev/null </dev/null/codeg-877",
+      exitOne,
+    ],
+    [
+      "a command word that expands into another program",
+      "${IFS:+false$IFS}/grep needle",
+      exitOne,
+    ],
+    [
+      "git grep, whose status can be its pager's",
+      "git grep --no-index --open-files-in-pager=false x -- f",
+      exitOne,
+    ],
+  ])("keeps %s on the error path", (_label, script, output) => {
+    const part = adaptShellResult({ script, output })
+
+    expect(part.state).toBe("output-error")
+    expect(part.errorText).toBe(output)
+  })
+
+  it.each([
+    ["matched nothing", exitOne, "output-available"],
+    [
+      "failed on a missing path",
+      `rg: no_such_dir: IO error for operation on no_such_dir: No such file or directory (os error 2)\n${exitOne}`,
+      "output-error",
+    ],
+  ] as const)(
+    "reads the live tool call the store holds: a pipeline that %s",
+    (_label, output, state) => {
+      const built = buildStreamingTurnsFromLiveMessage(1, {
+        id: "lm-877",
+        role: "assistant",
+        startedAt: 0,
+        content: [
+          {
+            type: "tool_call",
+            info: {
+              tool_call_id: "call_c7147e5130a5",
+              title: `"${pipeline}"`,
+              kind: "execute",
+              status: "failed",
+              content: null,
+              raw_input: shellInput(pipeline),
+              raw_output_chunks: [output],
+              raw_output_total_bytes: output.length,
+              locations: null,
+              meta: {
+                terminal_info: {
+                  cwd: "/repo",
+                  terminal_id: "call_c7147e5130a5",
+                },
+                terminal_exit: {
+                  exit_code: 1,
+                  signal: null,
+                  terminal_id: "call_c7147e5130a5",
+                },
+              },
+              images: [],
+            },
+          },
+        ],
+      })
+      const part = onlyToolCall(
+        adaptMessageTurn(
+          built.turns[0],
+          msgText,
+          true,
+          built.inProgressToolCallIds
+        ).content
+      )
+
+      expect(part.toolName).toBe("bash")
+      expect(part.state).toBe(state)
     }
   )
 })

@@ -53,7 +53,8 @@
       "office_tools": "Outils bureautiques",
       "skill_packs": "Packs de compétences",
       "collaboration": "Collaboration",
-      "browser": "Navigateur",
+      "browser": "Utilisation du navigateur",
+      "computer_use": "Utilisation de l'ordinateur",
       "quick_messages": "Messages rapides",
       "logs": "Journaux d'exécution"
     }
@@ -174,6 +175,19 @@
       "sectionTitle": "Zone de sélection du mode",
       "sectionDescription": "Les cartes de raccourci « Développement / Bureautique » affichées au-dessus du champ de saisie sur la page de nouvelle conversation.",
       "showQuickActions": "Afficher sur la page de nouvelle conversation"
+    },
+    "chatAnimations": {
+      "sectionTitle": "Animations du chat",
+      "sectionDescription": "Animations de pliage/dépliage, d'appels d'outils et d'état de travail dans la zone de conversation, ainsi que le défilement fluide. Désactivez-les pour des mises à jour instantanées. Les indicateurs de chargement continuent de tourner.",
+      "enable": "Activer les animations du chat"
+    },
+    "chatWidth": {
+      "sectionTitle": "Largeur du chat",
+      "sectionDescription": "Largeur maximale de la colonne de conversation et de la zone de saisie. Vous pouvez aussi faire glisser les bords du chat pour l'ajuster.",
+      "label": "Largeur du contenu",
+      "default": "Par défaut ({width}px)",
+      "hint": "Mesurée avec un zoom de la fenêtre à 100% et mise à l'échelle avec lui. Les valeurs très grandes sont limitées pour tenir dans la fenêtre.",
+      "reset": "Réinitialiser"
     },
     "workspaceBackground": {
       "sectionTitle": "Arrière-plan de l'espace de travail",
@@ -1747,7 +1761,7 @@
   "GeneralSettings": {
     "loading": "Chargement...",
     "sectionTitle": "Général",
-    "sectionDescription": "Préférences centralisées pour le terminal par défaut, l’accélération du rendu, le comportement à la fermeture de la fenêtre, les notifications et les sons.",
+    "sectionDescription": "Préférences centralisées pour le terminal par défaut, l’accélération du rendu, le panneau de mentions @, le comportement à la fermeture de la fenêtre, les notifications et les sons.",
     "terminalTitle": "Terminal par défaut",
     "terminalDescription": "Choisissez le shell que codeg lance pour les nouveaux onglets de terminal et pour les lignes de commande complètes qu’un agent lui demande d’exécuter. Les agents dotés de leur propre shell (Codex, Claude Code) exécutent les commandes dans leur propre processus : ce réglage ne les atteint pas.",
     "terminalSystemDefault": "Par défaut système",
@@ -1772,6 +1786,15 @@
     "restartNow": "Redémarrer maintenant",
     "restartFailed": "Échec du redémarrage : {message}",
     "loadFailed": "Échec du chargement : {message}"
+  },
+  "MentionPanelSettings": {
+    "title": "Panneau de mentions",
+    "description": "Choisissez les onglets qu'affiche le panneau @ de la zone de saisie et faites-les glisser dans l'ordre voulu. Le panneau s'ouvre sur le premier onglet qui contient des résultats. L'onglet Fichiers est toujours affiché.",
+    "tabsLabel": "Onglets du panneau de mentions",
+    "reset": "Réinitialiser",
+    "alwaysShown": "Toujours affiché",
+    "moveTab": "Déplacer « {name} » : faites glisser ou appuyez sur les flèches haut et bas",
+    "showTab": "Afficher l'onglet « {name} »"
   },
   "CollaborationSettings": {
     "sectionTitle": "Collaboration",
@@ -2080,7 +2103,8 @@
         "assistant": "Assistant",
         "system": "Système",
         "toolResult": "Résultat",
-        "toolError": "Erreur"
+        "toolError": "Erreur",
+        "turnFailed": "Échec du tour"
       },
       "moreActions": "Plus d’actions"
     },
@@ -2122,6 +2146,8 @@
     "conversationCard": {
       "untitledConversation": "Conversation sans titre",
       "newConversation": "Nouvelle conversation",
+      "maximize": "Agrandir",
+      "restore": "Restaurer",
       "attachToCurrentSession": "Ajouter à la session",
       "rename": "Renommer",
       "status": "Statut",
@@ -2312,6 +2338,9 @@
       "closeAll": "Tout fermer",
       "hideTerminal": "Masquer le terminal ({shortcut})",
       "openFolderFirst": "Ouvrez d'abord un dossier",
+      "processExited": "Processus terminé",
+      "processExitedWithCode": "Processus terminé (code {code})",
+      "unavailable": "Session de terminal indisponible. Elle s'est peut-être terminée ou le serveur a redémarré.",
       "keybar": {
         "label": "Touches virtuelles du terminal",
         "show": "Afficher les touches virtuelles",
@@ -2425,6 +2454,22 @@
       "imageZoomIn": "Agrandir",
       "imageZoomOut": "Réduire",
       "imageZoomReset": "Réinitialiser le zoom",
+      "pdfDocument": "Document PDF",
+      "pdfZoomIn": "Agrandir",
+      "pdfZoomOut": "Réduire",
+      "pdfZoomReset": "Réinitialiser le zoom",
+      "pdfFitWidth": "Ajuster à la largeur",
+      "pdfPageNumber": "Numéro de page",
+      "pdfFind": "Rechercher dans le document",
+      "pdfFindPrevious": "Occurrence précédente",
+      "pdfFindNext": "Occurrence suivante",
+      "pdfFindNoMatches": "Aucune occurrence",
+      "pdfPasswordPrompt": "Ce PDF est protégé par un mot de passe. Saisissez le mot de passe pour l'ouvrir.",
+      "pdfPasswordIncorrect": "Mot de passe incorrect. Réessayez.",
+      "pdfPassword": "Mot de passe",
+      "pdfPasswordSubmit": "Ouvrir",
+      "pdfInvalid": "Ce fichier n'est pas un PDF valide, ou il est endommagé.",
+      "pdfLoadFailed": "Impossible d'afficher ce PDF : {message}",
       "htmlPreviewTitle": "Aperçu HTML",
       "htmlPreviewTrustHint": "Exécuter les scripts de ce fichier et autoriser l'accès réseau. À activer uniquement pour les fichiers de confiance.",
       "officePreviewTitle": "Aperçu du document Office",
@@ -3061,7 +3106,7 @@
           "downloadFailed": "Échec du téléchargement de {agent} : {message}",
           "sessionLoadResourceNotFound": "Échec du chargement de la session de {agent}. Rechargez pour réessayer ou démarrez une nouvelle conversation.",
           "sessionLoadUnavailable": "{agent} n'a pas pu restaurer cette session ; elle a peut-être pris fin ou l'agent s'est arrêté. Rechargez pour réessayer ou démarrez une nouvelle conversation.",
-          "sessionLoadBusy": "Cet historique est occupé par la session qui en a été dérivée. Fermez cette session, puis rechargez pour l'ouvrir.",
+          "sessionLoadBusy": "Cette session est ouverte ailleurs. Si un autre client {agent} (l'application, la CLI ou une extension d'IDE) l'a ouverte, fermez-la là-bas ou quittez ce client, puis rechargez. Si vous venez de la bifurquer, rechargez dans une minute environ.",
           "sessionArchived": "La session précédente a été archivée côté {agent}. Exécutez {command} dans un terminal pour la restaurer et la recharger, ou démarrez une nouvelle conversation.",
           "turnFailedRefusal": "{agent} a refusé de poursuivre ce tour. Cela indique souvent une erreur de backend ou de passerelle. Vérifiez les journaux de l'agent.",
           "turnFailedMaxTokens": "{agent} a atteint la limite maximale de jetons pour ce tour.",
@@ -3086,6 +3131,7 @@
         "notificationTurnComplete": "{agent} a terminé de répondre",
         "notificationError": "{agent} erreur : {message}",
         "notificationQuestion": "{agent} attend votre réponse",
+        "notificationPlanApproval": "{agent} attend que vous approuviez son plan",
         "notificationErrorRedacted": "{agent} a rencontré une erreur",
         "claudeApiRetry": {
           "fallbackError": "authentication_failed",
@@ -3405,10 +3451,12 @@
         "downloadSvg": "Télécharger en SVG",
         "downloadPng": "Télécharger en PNG",
         "downloadMmd": "Télécharger la source (.mmd)",
+        "downloadPuml": "Télécharger la source (.puml)",
         "downloadFailed": "Impossible d'enregistrer le diagramme",
         "copySource": "Copier la source",
         "copied": "Copié",
         "renderFailed": "Erreur Mermaid : {message}",
+        "plantumlRenderFailed": "Erreur PlantUML : {message}",
         "showSource": "Afficher la source",
         "retry": "Réessayer"
       },
@@ -3446,6 +3494,7 @@
         "errorActionCommandCopied": "Copié",
         "emptyConversation": "Aucun message dans cette conversation.",
         "systemMessage": "Message système",
+        "turnFailed": "Échec du tour : {message}",
         "copyMessage": "Copier",
         "forkFromHere": "Bifurquer d'ici",
         "forkBusy": "Impossible de bifurquer pendant qu'un tour est en cours",
@@ -3482,7 +3531,8 @@
         "completedAt": "Terminé à",
         "jumpToPreviousUserMessage": "Aller au message utilisateur",
         "showMore": "Afficher plus",
-        "showLess": "Afficher moins"
+        "showLess": "Afficher moins",
+        "resizeWidth": "Faites glisser pour ajuster la largeur du chat · double-clic pour réinitialiser"
       },
       "liveTurnStats": {
         "thinking": "Réflexion...",
@@ -3577,6 +3627,7 @@
         "offset": "Décalage : {offset}",
         "limit": "Limite : {limit}",
         "pages": "Pages : {pages}",
+        "allowLarge": "Au-delà de la limite de taille",
         "mode": "Mode : {mode}",
         "cell": "Cellule : {cell}",
         "shellSession": "Session {id}",
@@ -3592,8 +3643,12 @@
         "nameLabel": "Nom :",
         "agentPromptLabel": "Instruction",
         "agentModelLabel": "Modèle",
+        "agentEffortLabel": "Effort",
         "agentRunning": "En cours...",
         "agentLiveTranscript": "Activité en direct",
+        "agentProcessCount": "{count, plural, one {Activité du sous-agent · # étape} other {Activité du sous-agent · # étapes}}",
+        "agentProcessDuration": "Activité du sous-agent · {duration}",
+        "agentRecoveredNote": "Le sous-agent a en réalité terminé ; son résultat n'a jamais été livré car le tour s'est interrompu :",
         "agentProgressTools": "{count} appels d'outils",
         "agentProgressTurns": "{count} tours",
         "agentProgressContext": "contexte {pct}%",
@@ -3759,6 +3814,8 @@
       "messageNav": {
         "title": "Navigation des messages",
         "collapse": "Réduire la navigation des messages",
+        "loadingEarlier": "Chargement des messages précédents…",
+        "loadEarlier": "Charger les messages précédents",
         "collapsedSummary": "Messages {count}",
         "fileCount": "{count, plural, one {# fichier} other {# fichiers}}",
         "remove": "Retirer",
@@ -4123,7 +4180,25 @@
     "loading": "Chargement...",
     "emptyDirectory": "Ce répertoire est vide",
     "errorLoadingDir": "Échec du chargement du répertoire",
-    "permissionDenied": "Permission refusée"
+    "permissionDenied": "Permission refusée",
+    "newFolder": {
+      "button": "Nouveau dossier",
+      "placeholder": "Nom du dossier",
+      "create": "Créer le dossier",
+      "location": "Dans {path}",
+      "errors": {
+        "empty": "Saisissez un nom pour le dossier.",
+        "reservedName": "« {name} » ne peut pas servir de nom de dossier.",
+        "separator": "Un nom de dossier ne peut contenir ni / ni \\.",
+        "controlCharacter": "Un nom de dossier ne peut contenir ni caractères de contrôle ni sauts de ligne.",
+        "reservedCharacter": "Un nom de dossier ne peut pas contenir {character}.",
+        "invalidParent": "Impossible de créer un dossier dans {path}.",
+        "parentNotFound": "{path} n’existe plus.",
+        "alreadyExists": "« {name} » existe déjà ici.",
+        "permissionDenied": "Vous n’avez pas l’autorisation de créer un dossier ici.",
+        "failed": "Impossible de créer le dossier : {reason}"
+      }
+    }
   },
   "ChatChannelSettings": {
     "loading": "Chargement...",
@@ -4505,6 +4580,7 @@
       "experts": "Experts",
       "science": "Science",
       "office": "Outils bureautiques",
+      "ui": "Interface",
       "custom": "Personnalisées"
     },
     "actions": {
@@ -4513,6 +4589,25 @@
     },
     "toasts": {
       "openFolderFailed": "Échec de l'ouverture du dossier"
+    }
+  },
+  "GenerativeUiSettings": {
+    "loading": "Chargement…",
+    "category": "Interface générative",
+    "skillName": "Rendu d'interface",
+    "skillDescription": "Permet à l'agent de répondre avec des cartes, des tableaux et des graphiques interactifs dans le chat de Codeg.",
+    "usage": "Tapez /ui-render suivi de votre demande, par exemple /ui-render présente dans un tableau les fichiers modifiés. Dans Codex, utilisez $ui-render. Vous pouvez aussi simplement demander à l'agent de présenter le résultat en cartes, en tableau ou en graphique. La compétence est disponible dans les conversations démarrées après l'activation.",
+    "conflict": "Votre dossier central contient déjà une compétence personnelle nommée ui-render. Renommez-la dans l'onglet Personnalisées pour utiliser la version intégrée.",
+    "notReadyHint": "Une compétence personnelle nommée ui-render occupe ce nom. Renommez-la dans l'onglet Personnalisées.",
+    "badges": {
+      "nameTaken": "Nom déjà pris"
+    },
+    "states": {
+      "not_linked": "Non activé",
+      "linked_to_codeg": "Activé",
+      "linked_elsewhere": "Bloqué — un autre lien existe",
+      "blocked_by_real_directory": "Bloqué — une compétence personnalisée occupe ce nom",
+      "broken": "Lien cassé"
     }
   },
   "QuickMessagesSettings": {
@@ -4551,6 +4646,97 @@
       "created": "Message rapide créé",
       "saved": "Message rapide enregistré",
       "deleted": "Message rapide supprimé"
+    }
+  },
+  "ConversationTags": {
+    "tags": "Étiquettes",
+    "moreTags": "{count, plural, one {# étiquette de plus} other {# étiquettes de plus}}",
+    "addTags": "Ajouter des étiquettes",
+    "editTags": "Modifier les étiquettes",
+    "global": "Globales",
+    "noTagsYet": "Aucune étiquette pour l’instant",
+    "newTag": "Nouvelle étiquette…",
+    "manageTags": "Gérer les étiquettes…",
+    "branchChip": "Branche : {branch}",
+    "picker": {
+      "searchPlaceholder": "Rechercher ou créer une étiquette…",
+      "noResults": "Aucune étiquette correspondante",
+      "empty": "Aucune étiquette pour l’instant. Saisissez un nom pour en créer une.",
+      "createGlobal": "Créer l’étiquette globale « {name} »",
+      "createInFolder": "Créer « {name} » dans {folder}",
+      "otherFolders": "Autres dossiers"
+    },
+    "form": {
+      "createTitle": "Nouvelle étiquette",
+      "editTitle": "Modifier l’étiquette",
+      "name": "Nom",
+      "namePlaceholder": "p. ex. bug, relecture, idée",
+      "color": "Couleur",
+      "customColor": "Couleur personnalisée",
+      "scope": "Disponible dans",
+      "scopeGlobal": "Toutes les conversations",
+      "scopeFolder": "{folder} uniquement",
+      "create": "Créer",
+      "save": "Enregistrer",
+      "cancel": "Annuler"
+    },
+    "editor": {
+      "empty": "Aucune étiquette ici pour l’instant.",
+      "add": "Nouvelle étiquette",
+      "edit": "Modifier l’étiquette « {name} »",
+      "delete": "Supprimer l’étiquette « {name} »",
+      "dragToReorder": "Faire glisser pour réordonner « {name} »",
+      "deleteTitle": "Supprimer cette étiquette ?",
+      "deleteDescription": "« {name} » sera retirée de toutes les conversations qui la portent. Cette action est irréversible.",
+      "deleteConfirm": "Supprimer",
+      "deleteCancel": "Annuler",
+      "loadFailed": "Impossible de charger les étiquettes"
+    },
+    "manager": {
+      "title": "Gérer les étiquettes",
+      "description": "Marquez les conversations avec des étiquettes de couleur, puis filtrez la barre latérale par étiquette.",
+      "branchTitle": "Étiquette de branche",
+      "branchDescription": "Affiche la branche Git sur laquelle chaque conversation a commencé, sous forme d’étiquette après son titre.",
+      "branchShow": "Afficher",
+      "branchLoadFailed": "Impossible de charger l’étiquette de branche",
+      "globalTitle": "Étiquettes globales",
+      "globalDescription": "Disponibles dans toutes les conversations, mode discussion compris.",
+      "folderTitle": "Étiquettes de dossier",
+      "folderDescription": "Disponibles uniquement dans les conversations du dossier choisi, worktrees compris.",
+      "folderPlaceholder": "Choisir un dossier",
+      "noFolders": "Aucun dossier pour l’instant. Ouvrez-en un dans l’espace de travail pour lui donner ses propres étiquettes."
+    },
+    "filter": {
+      "button": "Filtrer par étiquettes",
+      "searchPlaceholder": "Rechercher des étiquettes…",
+      "match": "Correspondance",
+      "matchAny": "Au moins une",
+      "matchAll": "Toutes",
+      "matchAnyHint": "Conversations portant au moins une des étiquettes choisies",
+      "matchAllHint": "Conversations portant toutes les étiquettes choisies",
+      "modeAll": "Toutes à la fois",
+      "modeAny": "Au moins une",
+      "clear": "Effacer le filtre",
+      "noTags": "Aucune étiquette pour l’instant. Ajoutez-en une depuis le menu d’une conversation.",
+      "noResults": "Aucune étiquette correspondante",
+      "active": "Filtré par étiquettes",
+      "noMatches": "Aucune conversation avec ces étiquettes",
+      "remove": "Retirer « {name} » du filtre"
+    },
+    "toasts": {
+      "assignFailed": "Impossible de mettre à jour les étiquettes de la conversation",
+      "createFailed": "Impossible de créer l’étiquette",
+      "deleteFailed": "Impossible de supprimer l’étiquette",
+      "reorderFailed": "Impossible d’enregistrer l’ordre des étiquettes",
+      "branchTagFailed": "Impossible d’enregistrer l’étiquette de branche"
+    },
+    "errors": {
+      "emptyName": "Saisissez un nom d’étiquette",
+      "duplicateName": "Une étiquette nommée « {name} » existe déjà ici",
+      "invalidColor": "Choisissez une couleur valide",
+      "folderNotTaggable": "Ce dossier ne peut pas avoir ses propres étiquettes",
+      "notApplicable": "Cette étiquette appartient à un autre dossier",
+      "tagNotFound": "Cette étiquette n’existe plus"
     }
   },
   "Pet": {
@@ -4677,10 +4863,13 @@
     }
   },
   "RemoteWorkspace": {
+    "openLocalWorkspace": "Ouvrir l’espace de travail local",
+    "openLocalFailed": "Impossible d’ouvrir l’espace de travail local",
     "openRemoteWorkspace": "Ouvrir l’espace de travail distant",
     "manage": "Gérer l’espace de travail distant",
     "manageTitle": "Connexions à l’espace de travail distant",
     "empty": "Aucune connexion distante",
+    "noMatches": "Aucune connexion distante correspondante",
     "searchPlaceholder": "Rechercher un espace de travail distant",
     "orderFailed": "Échec de l’enregistrement de l’ordre des espaces de travail distants",
     "dragSort": "Glisser pour trier",
@@ -5033,6 +5222,11 @@
       "short": "Exécute son propre code sur une page partagée — sans rien demander.",
       "hint": "Autorise les agents à exécuter leur propre JavaScript sur une page que vous avez partagée. Désactivé par défaut, et nécessite l’interrupteur ci-dessus. L’activer signifie que les extraits s’exécutent sans demande : la décision se prend donc ici ; Réglages → Navigateur intégré permet de vous faire montrer chaque extrait à la place."
     },
+    "computer": {
+      "label": "Voir et utiliser les fenêtres du bureau",
+      "short": "Lister les apps et fenêtres ; lire celles que vous partagez, agir sur celles que vous autorisez.",
+      "hint": "Permet à un agent de lister les applications et fenêtres de votre bureau, de lire les fenêtres que vous lui partagez — une capture, son contenu, si elle affiche ce qui est attendu — et de cliquer, taper et appuyer sur des touches dans celles que vous partagez pour agir. Rien n'est lisible tant que vous ne partagez pas une fenêtre depuis le panneau Utilisation de l'ordinateur de la barre d'état, et on ne peut agir sur aucune sans votre accord en plus ; le partage prend fin quand la fenêtre se ferme, après un moment sans utilisation ou quand vous l'arrêtez, et Arrêter les agents dans ce panneau les arrête tous d'un coup. Les saisies arrivent à la fenêtre en arrière-plan ; pour une action qui ne passe pas en arrière-plan, un agent peut mettre la fenêtre au premier plan, ce que vous pouvez désactiver dans les réglages d'Utilisation de l'ordinateur. Application de bureau uniquement ; sous macOS, des autorisations doivent être accordées à codeg-computer-helper. Aperçu."
+    },
     "automations": {
       "label": "Créer des automatisations",
       "short": "Crée et gère des automatisations planifiées.",
@@ -5079,9 +5273,22 @@
     "hideBody": "Masquer le contenu",
     "hideBodyHint": "Affiche une ligne générique au lieu de la sortie de l'agent. Le centre de notifications conserve le contenu hors de l'application, même après la fermeture de la conversation. Le titre nomme toujours le dossier, pour que vous sachiez à quelle fenêtre revenir.",
     "eventsTitle": "Événements",
-    "eventsHint": "Désactivez les événements qui ne doivent pas vous interrompre. Les répétitions d'un même événement en quelques secondes sont regroupées en une seule notification.",
+    "eventsHint": "Désactivez les événements qui ne doivent pas vous interrompre. Les répétitions d'un même événement en quelques secondes sont regroupées en une seule notification. Les demandes d'autorisation incluent les validations de plan.",
     "eventBackgroundTask": "Tâche en arrière-plan",
     "eventWorkTask": "Tâche de travail"
+  },
+  "WindowAttentionSettings": {
+    "title": "Alertes de la barre des tâches et du Dock",
+    "descriptionMac": "Fait rebondir l'icône du Dock quand un agent a besoin de vous pendant que vous êtes dans une autre app.",
+    "descriptionWindows": "Fait clignoter le bouton de la fenêtre dans la barre des tâches quand un agent a besoin de vous et que la fenêtre n'est pas active.",
+    "descriptionLinux": "Marque la fenêtre comme urgente quand un agent a besoin de vous et qu'elle n'est pas active. Le rendu dépend de votre environnement de bureau.",
+    "eventsTitle": "Événements",
+    "eventsHintMac": "« Brièvement » fait rebondir l'icône une fois. « Jusqu'à votre retour » la fait rebondir jusqu'à ce que vous reveniez dans Codeg. Les demandes d'autorisation incluent les validations de plan.",
+    "eventsHintWindows": "« Brièvement » fait clignoter le bouton quelques fois puis le laisse en surbrillance. « Jusqu'à votre retour » le fait clignoter jusqu'à ce que vous reveniez à la fenêtre. Les demandes d'autorisation incluent les validations de plan.",
+    "eventsHintLinux": "Linux n'a qu'une seule marque d'urgence : aux deux niveaux, la fenêtre reste marquée jusqu'à ce que vous y reveniez. Les demandes d'autorisation incluent les validations de plan.",
+    "levelOff": "Désactivé",
+    "levelInformational": "Brièvement",
+    "levelCritical": "Jusqu'à votre retour"
   },
   "NotificationSoundSettings": {
     "title": "Sons de notification",
@@ -5195,6 +5402,249 @@
     "clearConfirmDescriptionProfile": "Les cookies, caches et données de site du profil {name} seront supprimés. Les onglets ouverts restent ouverts, mais vous serez déconnecté des sites.",
     "signInUaTitle": "Compatibilité avec la connexion Google",
     "signInUaHint": "Google refuse la connexion depuis les navigateurs intégrés. Si activé, les onglets se présentent comme Firefox uniquement aux pages de connexion de Google (accounts.google.com) ; partout ailleurs, ils se présentent comme le moteur dans lequel ils s'exécutent, jamais comme Firefox. Onglets intégrés uniquement, pas la fenêtre séparée ; lorsqu'une page de connexion vous redirige vers un autre site, la première requête vers celui-ci porte encore l'identité de connexion."
+  },
+  "ComputerUse": {
+    "title": "Utilisation de l'ordinateur",
+    "preview": "Aperçu",
+    "refresh": "Actualiser",
+    "tooltipShared": "Utilisation de l'ordinateur · {count, plural, one {# fenêtre partagée} other {# fenêtres partagées}}",
+    "stop": "Arrêter le partage",
+    "stopHint": "Arrête immédiatement le partage de toutes les fenêtres et interrompt ce que font les agents. Partagez à nouveau une fenêtre quand vous voulez qu'ils reprennent.",
+    "indicator": {
+      "actOne": "Les agents peuvent agir sur {app}",
+      "actMany": "Les agents peuvent agir sur {count, plural, one {# fenêtre} other {# fenêtres}}",
+      "readOne": "Les agents peuvent voir {app}",
+      "readMany": "Les agents peuvent voir {count, plural, one {# fenêtre} other {# fenêtres}}",
+      "readScreen": "Les agents peuvent voir l'écran entier",
+      "actScreen": "Les agents peuvent agir sur l'écran entier",
+      "recent": "{action} dans {app}",
+      "stop": "Arrêter le partage",
+      "stopWithKey": "Arrêter le partage de toutes les fenêtres ({key})"
+    },
+    "codegGranted": "codeg lui-même dispose d'Accessibilité ou d'Enregistrement de l'écran : le shell des agents peut s'en servir sans rien partager. Si vous n'en avez pas besoin, désactivez-le pour codeg dans Réglages Système.",
+    "backend": {
+      "idle": "Non démarré",
+      "downloading": "Téléchargement du pilote…",
+      "starting": "Démarrage de l'assistant…",
+      "ready": "Prêt",
+      "failed": "Échec"
+    },
+    "driver": "cua-driver {version}",
+    "devBuild": "Version de développement : l'assistant ne vérifie pas quel programme l'appelle.",
+    "devTag": "version de développement",
+    "permissions": {
+      "accessibility": "Accessibilité",
+      "screenRecording": "Enregistrement de l'écran",
+      "granted": "Accordé",
+      "request": "Autoriser…",
+      "why": "Activez codeg-computer-helper dans Réglages Système, et non codeg. L'Enregistrement de l'écran lui permet de voir les fenêtres ; l'Accessibilité, de les lire et d'agir dessus.",
+      "devRebuild": "Chaque recompilation de l'assistant annule son autorisation précédente : retirez d'abord l'ancien codeg-computer-helper de la liste, puis autorisez-le à nouveau.",
+      "notListed": "Si codeg-computer-helper n'apparaît pas dans la liste, faites-le glisser depuis le Finder :",
+      "reveal": "Afficher dans le Finder"
+    },
+    "shared": {
+      "title": "{count, plural, =0 {Aucune fenêtre partagée} one {# fenêtre partagée} other {# fenêtres partagées}}",
+      "empty": "Les agents peuvent lister vos fenêtres, mais n'en lire aucune tant que vous n'en partagez pas une.",
+      "stop": "Arrêter",
+      "wholeApp": "Toute l'app · {count, plural, =0 {aucune fenêtre ouverte} one {# fenêtre} other {# fenêtres}}",
+      "screen": "Écran entier",
+      "screenWindows": "{count, plural, =0 {aucune fenêtre pour l'instant} one {# fenêtre} other {# fenêtres}}"
+    },
+    "level": {
+      "read": "Peut lire",
+      "control": "Peut agir",
+      "readLong": "Lecture seule",
+      "controlLong": "Lire et agir",
+      "change": "Changer ce que les agents peuvent faire"
+    },
+    "activity": {
+      "title": "Activité récente",
+      "clear": "Effacer l'activité récente",
+      "capture": "Capture",
+      "snapshot": "Lecture",
+      "verify": "Vérification",
+      "click": "Clic",
+      "drag": "Glisser",
+      "scroll": "Défilement",
+      "type": "Saisie",
+      "key": "Touche",
+      "hold-key": "Touche maintenue",
+      "set-value": "Valeur",
+      "restore": "Restaurer",
+      "menu": "Menu",
+      "set-frame": "Déplacer la fenêtre",
+      "launch": "Ouvrir l'application",
+      "clipboard-read": "Lire le presse-papiers",
+      "clipboard-write": "Écrire dans le presse-papiers",
+      "outcome": {
+        "done": "fait",
+        "refused": "refusé",
+        "failed": "échec"
+      }
+    },
+    "share": "Partager une fenêtre…",
+    "openSettings": "Ouvrir les réglages détaillés",
+    "picker": {
+      "title": "Partager une fenêtre avec les agents",
+      "description": "Les agents de toutes les conversations peuvent lire les fenêtres que vous partagez, et cliquer et taper dans celles où vous les laissez agir. Le partage prend fin quand vous l'arrêtez, que la fenêtre se ferme ou qu'elle reste inutilisée pendant la durée définie dans les réglages.",
+      "count": "{count, plural, one {# fenêtre} other {# fenêtres}}",
+      "sharedCount": "{count, plural, one {# partagée} other {# partagées}}",
+      "loading": "Chargement des fenêtres…",
+      "refresh": "Actualiser",
+      "empty": "Aucune fenêtre trouvée. S'il devrait y en avoir, vérifiez les autorisations dans le panneau Utilisation de l'ordinateur.",
+      "noScreenRecording": "codeg-computer-helper n'a pas encore l'Enregistrement de l'écran : les titres et les images des fenêtres ne peuvent pas s'afficher, et les agents ne peuvent pas lire les fenêtres.",
+      "unnamedApp": "App inconnue",
+      "untitled": "Fenêtre sans titre",
+      "minimized": "Réduite",
+      "hidden": "Masquée",
+      "notGrantable": {
+        "codeg": "Fenêtre de codeg",
+        "blocklisted": "Dans la liste des exclusions",
+        "unidentified": "Application non identifiable"
+      },
+      "shareRead": "Laisser les agents la lire",
+      "shareControl": "Laisser les agents la lire et agir dessus",
+      "stopSharing": "Arrêter le partage",
+      "levelNone": "Non",
+      "levelRead": "Lire",
+      "levelControl": "Agir",
+      "levelLabel": "Ce que les agents peuvent faire avec {app}",
+      "wholeApp": "Toute l'app",
+      "wholeAppHint": "Toutes les fenêtres de {app}, y compris celles ouvertes plus tard, ainsi que ses menus et raccourcis",
+      "appLevelLabel": "Ce que les agents peuvent faire avec tout {app}",
+      "viaApp": "Avec l'app",
+      "screenTitle": "Écran entier",
+      "screenHint": "Toutes les fenêtres que vous pouvez partager, y compris celles ouvertes plus tard, et les raccourcis propres au bureau. Les fenêtres de codeg et la liste des exclusions restent masquées.",
+      "screenLevelLabel": "Ce que les agents peuvent faire avec l'écran entier",
+      "viaScreen": "Avec l'écran",
+      "shareAll": "Tout partager",
+      "shareAllRead": "Laisser les agents toutes les lire",
+      "shareAllControl": "Laisser les agents toutes les lire et agir dessus",
+      "stopSharingAll": "Arrêter tous les partages",
+      "skipped": "{count, plural, one {# fenêtre n'a pas pu être partagée ; elle a peut-être été fermée.} other {# fenêtres n'ont pas pu être partagées ; elles ont peut-être été fermées.}}",
+      "unshareable": "{count, plural, one {# fenêtre ne peut pas être partagée} other {# fenêtres ne peuvent pas être partagées}}",
+      "noneShareable": "Aucune de ces fenêtres ne peut être partagée.",
+      "codegWhy": "Les fenêtres de codeg ne sont jamais partagées : un agent capable de manipuler codeg pourrait approuver ses propres demandes ou se partager d'autres fenêtres. Il en va de même pour les autres instances de codeg."
+    },
+    "settings": {
+      "pageTitle": "Utilisation de l'ordinateur",
+      "pageDescription": "Laissez les agents voir et utiliser les fenêtres du bureau que vous partagez avec eux.",
+      "switch": {
+        "label": "Activer l'utilisation de l'ordinateur",
+        "hint": "Les agents peuvent lister vos applications et fenêtres, lire les fenêtres que vous partagez, et cliquer et taper dans celles où vous les laissez agir. Aucune fenêtre n'est lisible avant que vous la partagiez depuis la barre d'état.",
+        "failed": "Impossible de changer l'utilisation de l'ordinateur"
+      },
+      "driver": {
+        "title": "Pilote",
+        "description": "L'utilisation de l'ordinateur lit les fenêtres et agit dessus via cua-driver, un programme open source. codeg n'exécute que la version qu'il a vérifiée, {version}, et la télécharge la première fois qu'elle est nécessaire.",
+        "loading": "Vérification…",
+        "unsupported": "cua-driver n'a pas de version pour cette plateforme.",
+        "installing": "Installation…",
+        "downloadingOf": "Téléchargement… {done} / {total} Mo",
+        "downloadingSoFar": "Téléchargement… {done} Mo",
+        "uninstalling": "Désinstallation…",
+        "installed": "Installé · {version}",
+        "outdated": "La version {installed} est installée ; ce codeg utilise la {version}.",
+        "notInstalled": "Non installé. Il est téléchargé la première fois que l'utilisation de l'ordinateur en a besoin, ou vous pouvez l'installer maintenant.",
+        "install": "Installer",
+        "upgrade": "Mettre à jour vers {version}",
+        "uninstall": "Désinstaller",
+        "installDone": "cua-driver installé",
+        "uninstallDone": "cua-driver désinstallé",
+        "confirmTitle": "Désinstaller cua-driver ?",
+        "confirmDescription": "L'utilisation de l'ordinateur sera désactivée et toutes les fenêtres cesseront d'être partagées. La réactiver téléchargera à nouveau le pilote.",
+        "cancel": "Annuler"
+      },
+      "permissions": {
+        "title": "Autorisations",
+        "description": "macOS les demande pour codeg-computer-helper. Accordez-en une dans Réglages Système puis revenez : l'affichage se met à jour tout seul.",
+        "off": "Activez l'utilisation de l'ordinateur pour vérifier et accorder les autorisations.",
+        "accessibilityHint": "Lire le contenu des fenêtres et agir dessus.",
+        "screenRecordingHint": "Faire des captures et lire les titres des fenêtres."
+      },
+      "title": "Partage, saisie et arrêt",
+      "description": "Combien de temps une fenêtre reste partagée, quelles applications ne sont jamais partagées, le raccourci et la barre flottante qui arrêtent tout le partage d'un coup, et si les agents peuvent mettre une fenêtre au premier plan pour y agir.",
+      "ttl": {
+        "label": "Arrêter le partage des fenêtres inutilisées après",
+        "hint": "Une fenêtre partagée cesse de l'être quand aucun agent ne l'a lue pendant cette durée.",
+        "minutes": "{minutes} minutes",
+        "never": "Jamais (jusqu'à ce que je l'arrête)"
+      },
+      "blocklist": {
+        "label": "Applications jamais partagées",
+        "hint": "Leurs fenêtres ne peuvent pas être partagées avec les agents. Retirez les entrées par défaut inutiles ou ajoutez une application par identifiant de paquet (com.example.app), nom d'exécutable (app.exe) ou chemin complet.",
+        "placeholder": "com.example.app",
+        "add": "Ajouter",
+        "remove": "Retirer {name}",
+        "restore": "Rétablir les valeurs par défaut",
+        "restoreConfirmTitle": "Rétablir la liste par défaut ?",
+        "restoreConfirmAdded": "{count, plural, one {L'application que vous avez ajoutée est retirée de la liste.} other {Les # applications que vous avez ajoutées sont retirées de la liste.}}",
+        "restoreConfirmRemoved": "{count, plural, one {L'application par défaut que vous avez retirée revient dans la liste.} other {Les # applications par défaut que vous avez retirées reviennent dans la liste.}}",
+        "restoreConfirmSave": "Le changement s'applique à l'enregistrement.",
+        "cancel": "Annuler",
+        "custom": "Ajoutée par vous",
+        "duplicate": "Déjà dans la liste.",
+        "removedCount": "{count, plural, one {# application par défaut retirée.} other {# applications par défaut retirées.}}",
+        "items": {
+          "systemSettings": "Réglages Système",
+          "credentialPrompts": "Invites de mot de passe et d'autorisation du système",
+          "keychain": "Trousseaux d'accès",
+          "passwords": "Mots de passe"
+        }
+      },
+      "stopKey": {
+        "label": "Raccourci d'arrêt",
+        "hint": "Arrête le partage de toutes les fenêtres depuis n'importe quelle application, comme le bouton Arrêter le partage. Tant que l'utilisation de l'ordinateur est activée, ces touches appartiennent à codeg : choisissez-en que vous n'utilisez pas ailleurs.",
+        "recording": "Appuyez sur les touches…",
+        "recordHint": "Maintenez Ctrl et un autre modificateur (Alt ou Maj), puis appuyez sur une touche. Échap annule.",
+        "recordHintMac": "Maintenez ⌃ ou ⌘ et un autre modificateur, puis appuyez sur une touche. Échap annule.",
+        "off": "Désactivé",
+        "useDefault": "Par défaut",
+        "turnOff": "Désactiver",
+        "statusActive": "Actif : appuyez n'importe où pour arrêter le partage de toutes les fenêtres.",
+        "statusIdle": "Prend effet quand l'utilisation de l'ordinateur est activée.",
+        "statusOff": "Désactivé : seuls les boutons Arrêter le partage arrêtent le partage.",
+        "statusFailed": "Inactif : une autre application utilise sans doute ces touches. Choisissez-en d'autres.",
+        "problem": {
+          "unsupportedKey": "Cette touche ne peut pas servir. Choisissez une lettre, un chiffre, F1–F12, Échap ou une touche de ponctuation.",
+          "weakModifiers": "Maintenez au moins deux modificateurs, dont Ctrl (ou ⌘ sur un Mac).",
+          "metaOffMac": "La touche Windows ne peut pas en faire partie."
+        }
+      },
+      "strip": {
+        "label": "Barre d'arrêt flottante",
+        "hint": "Tant qu'une fenêtre est partagée, une barre flotte au-dessus de toutes les fenêtres pour indiquer ce que les agents peuvent faire, avec un bouton Arrêter le partage. Désactivée, vous pouvez toujours arrêter le partage depuis le panneau Utilisation de l'ordinateur de la barre d'état ou avec le raccourci d'arrêt."
+      },
+      "foreground": {
+        "label": "Autoriser les agents à mettre des fenêtres au premier plan",
+        "hint": "Certaines applications n'acceptent ni touches ni saisie tant qu'elles sont en arrière-plan — sous Windows, toutes celles construites sur Chromium, comme Edge, Chrome et VS Code. Avec cette option, un agent peut mettre au premier plan, le temps d'une action, une fenêtre sur laquelle vous le laissez agir, puis revenir à la fenêtre où vous étiez (sous Linux, la fenêtre reste au premier plan). Vous verrez la fenêtre passer devant ; ce que vous tapez à ce moment peut y arriver, et un clic peut déplacer le pointeur de la souris."
+      },
+      "delivery": {
+        "label": "Mode de saisie par défaut",
+        "hint": "Comment les clics, le défilement, la saisie et les touches des agents atteignent une fenêtre quand ils ne demandent ni l'un ni l'autre. Arrière-plan laisse la fenêtre où elle est, et le pointeur et le clavier à vous ; Premier plan met la fenêtre devant à chaque action.",
+        "hintOff": "Toujours Arrière-plan tant que les agents ne peuvent pas mettre de fenêtres au premier plan.",
+        "background": "Arrière-plan",
+        "foreground": "Premier plan"
+      },
+      "launch": {
+        "label": "Autoriser les agents à ouvrir des applications et à déplacer des fenêtres",
+        "hint": "Avec cette option, un agent peut lancer en arrière-plan une application installée — jamais codeg ni une des applications jamais partagées — et déplacer ou redimensionner une fenêtre sur laquelle vous le laissez agir. Lancer une application ne partage aucune de ses fenêtres : cela reste votre décision."
+      },
+      "clipboard": {
+        "label": "Autoriser les agents à utiliser le presse-papiers",
+        "hint": "Avec cette option, un agent peut placer du texte dans le presse-papiers pour le coller, et relire ce qu'il a copié depuis une fenêtre que vous lui avez partagée. Ce que vous copiez vous-même n'est jamais lu pour un agent, et un agent ne peut coller que ce qu'il y a placé lui-même."
+      },
+      "screen": {
+        "label": "Proposer l'écran entier",
+        "hint": "Avec cette option, le sélecteur de partage propose l'écran entier : les agents en voient une seule image et peuvent cliquer n'importe où, et toutes les fenêtres que vous pouvez partager l'accompagnent, ainsi que les raccourcis propres au bureau. Les fenêtres de codeg et la liste des exclusions restent masquées. La désactiver met fin au partage de l'écran."
+      },
+      "boundary": "Sous macOS, les autorisations vont à codeg-computer-helper, que seul codeg peut utiliser : le shell des agents ne le peut pas. Windows et Linux n'ont pas cette séparation : là, ces réglages décident de ce que les agents obtiennent via codeg, pas de ce que les programmes de votre ordinateur peuvent faire.",
+      "save": "Enregistrer",
+      "saving": "Enregistrement…",
+      "saved": "Réglages d'utilisation de l'ordinateur enregistrés",
+      "saveFailed": "Impossible d'enregistrer les réglages d'utilisation de l'ordinateur",
+      "loadFailed": "Échec du chargement : {detail}"
+    }
   },
   "LogsSettings": {
     "loading": "Chargement…",
@@ -5393,6 +5843,10 @@
     "viewSwitchToList": "Passer à la vue liste",
     "statusFilter": "Statut",
     "statusFilterAll": "Tous les statuts",
+    "searchPlaceholder": "Rechercher des tâches",
+    "clearSearch": "Effacer la recherche",
+    "searchEmptyColumn": "Aucun résultat",
+    "searchNoResults": "Aucune tâche ne correspond à « {query} »",
     "listEmpty": "Aucune tâche ne correspond aux filtres actuels",
     "listColStatus": "Statut",
     "listColTask": "Tâche",
@@ -5625,6 +6079,10 @@
     "deleteWorktreeConfirmTitle": "Supprimer le worktree ?",
     "deleteWorktreeConfirmBody": "Le répertoire du worktree et sa branche de travail sont supprimés définitivement. La tâche reste sur le tableau et sa conversation est déplacée vers le dossier du projet.",
     "eventCreated": "Créée",
+    "eventCreatedAuto": "Créée par le traitement automatique",
+    "eventAutoSchedule": "analyse planifiée",
+    "eventAutoWebhook": "webhook",
+    "eventAutoManual": "analyse manuelle",
     "eventStatusChanged": "Changement d’état",
     "eventConfigEffective": "Configuration de lancement",
     "eventInitCommand": "Commande d'initialisation",
@@ -6001,7 +6459,10 @@
     "emptyHint": "Codeg lit les tokens directement dans la transcription de chaque agent. Actualisez pour compter ce qui est déjà sur cette machine.",
     "emptyAction": "Compter mes sessions",
     "loadFailed": "Impossible de charger la consommation",
-    "truncatedNotice": "Cette période est très large — les chiffres ne couvrent que sa portion la plus récente."
+    "truncatedNotice": "Cette période est très large — les chiffres ne couvrent que sa portion la plus récente.",
+    "apiListEstimate": "≈ {amount} tarif API",
+    "apiListEstimatePartial": "≈ {amount} tarif API · {percent}% des jetons",
+    "apiListEstimateHint": "Tarifs de base publics API issus de models.dev, lectures et écritures de cache comprises, hors majorations pour contexte long ou raisonnement. Les abonnements facturent autrement."
   },
   "Forge": {
     "title": "Panneau du dépôt",
@@ -6170,9 +6631,9 @@
     "viewExisting": "Voir la tâche existante",
     "scenarioLabel": "Mode de traitement",
     "scenarioFix": "Corriger / implémenter",
-    "scenarioFixHint": "L'agent confirme d'abord dans son worktree que le problème existe vraiment, puis le corrige ; s'il ne peut pas le confirmer, il le signale au lieu de modifier le code.",
+    "scenarioFixHint": "L'agent juge d'abord si le rapport tient, et ne corrige qu'ensuite ; s'il ne tient pas (non reproductible, comportement voulu, déjà corrigé…), il ne touche à rien, s'arrête tôt et vous rend sa conclusion pour que vous décidiez.",
     "scenarioPlanFirst": "Planifier d'abord",
-    "scenarioPlanFirstHint": "L'agent confirme que le problème existe vraiment, livre un plan d'implémentation puis s'arrête — validez-le en renvoyant la tâche pour l'implémentation.",
+    "scenarioPlanFirstHint": "L'agent juge d'abord si le rapport tient, puis livre un plan d'implémentation et s'arrête ; s'il ne tient pas, il s'arrête tôt sans plan et vous rend sa conclusion. Validez un plan en renvoyant la tâche pour l'implémentation.",
     "scenarioReviewFix": "Revue et correction",
     "scenarioReviewFixHint": "L'agent juge d'abord si l'approche elle-même tient, et ne corrige les problèmes qu'ensuite ; sinon, il ne committe rien et vous rend la revue pour que vous décidiez. À l'acceptation, les correctifs repartent sur la branche.",
     "scenarioReviewOnly": "Revue seule",
@@ -6199,6 +6660,79 @@
     "settingsPromptAllHint": "Envoyé avec chaque tâche créée par ce panneau, quel que soit le scénario.",
     "settingsPromptScenarioHint": "Envoyé uniquement avec les tâches créées dans ce scénario.",
     "settingsPromptPlaceholder": "ex. : Réponds en français. Lance les tests du projet avant de terminer.",
+    "settingsSections": "Sections des réglages du panneau",
+    "settingsTabGeneral": "Général",
+    "settingsTabAuto": "Traitement automatique",
+    "autoIntro": "Transforme en tâches les issues et pull requests correspondants, sans cliquer sur Démarrer. Chaque élément est traité au plus une fois : un élément qui a déjà eu une tâche, même supprimée, est laissé de côté.",
+    "autoGlobalNote": "Ces règles s'appliquent à chaque dossier de projet qui suit les réglages globaux.",
+    "autoSchedule": "Analyser à intervalle régulier",
+    "autoScheduleHint": "Parcourt le dépôt à la recherche d'éléments correspondants à intervalle fixe.",
+    "autoInterval": "Analyser toutes les",
+    "autoIntervalMinutes": "{count, plural, one {# minute} other {# minutes}}",
+    "autoIntervalHours": "{count, plural, one {# heure} other {# heures}}",
+    "autoWebhook": "Analyser sur événement webhook",
+    "autoWebhookHint": "Analyse dès que la forge signale qu'un issue ou une pull request a changé.",
+    "autoWebhookUrl": "URL de payload",
+    "autoWebhookUrlUnavailable": "L'application de bureau ne reçoit les webhooks que lorsque son service web tourne — démarrez-le dans Réglages → Service web.",
+    "autoWebhookSecret": "Secret",
+    "autoWebhookSecretPending": "Un secret est généré à l'enregistrement.",
+    "autoWebhookShowSecret": "Afficher le secret",
+    "autoWebhookHideSecret": "Masquer le secret",
+    "autoWebhookRegenerate": "Générer un nouveau secret",
+    "autoWebhookSetup": "Dans les réglages de webhook du dépôt, saisissez cette URL avec le type de contenu application/json et ce secret, puis choisissez les événements d'issues et de pull requests (sur GitLab : événements Issues et Merge request, avec le secret comme secret token). La forge doit pouvoir joindre cette adresse ; sinon, utilisez l'analyse régulière.",
+    "autoCopy": "Copier",
+    "autoCopied": "Copié",
+    "autoIssues": "Issues",
+    "autoIssuesHint": "Traiter les issues ouverts.",
+    "autoPulls": "Pull / merge requests",
+    "autoPullsHint": "Traiter les pull ou merge requests ouvertes.",
+    "autoHandleWith": "Traiter en",
+    "autoIssueScenario": "Traitement des tâches automatiques d'issues",
+    "autoPrScenario": "Traitement des tâches automatiques de pull / merge requests",
+    "autoSkipDrafts": "Ignorer les brouillons jusqu'à ce qu'ils soient prêts",
+    "autoIncludeExisting": "Inclure les éléments déjà ouverts",
+    "autoIncludeExistingHint": "Désactivé : seuls les éléments ouverts ou mis à jour après l'activation du traitement automatique sont pris. Ajoutez un label à un élément plus ancien pour l'inclure.",
+    "autoIncludeExistingOnHint": "Tout élément ouvert correspondant est pris, y compris ceux ouverts avant l'activation du traitement automatique.",
+    "autoSinceHint": "Désactivé : seuls les éléments ouverts ou mis à jour depuis {time}, moment de l'activation du traitement automatique, sont pris. Ajoutez un label à un élément plus ancien pour l'inclure.",
+    "autoRulesHint": "Les motifs ignorent la casse et * correspond à n'importe quoi : area/* désigne tout label commençant par area/, *[bot] tout compte de bot. Un élément doit satisfaire chaque liste renseignée, et les listes « jamais » l'emportent toujours. Une liste vide ne filtre rien.",
+    "autoIncludeLabels": "Seulement les éléments avec l'un de ces labels",
+    "autoExcludeLabels": "Jamais les éléments avec l'un de ces labels",
+    "autoIncludeAuthors": "Seulement les éléments ouverts par",
+    "autoExcludeAuthors": "Jamais les éléments ouverts par",
+    "autoLabelPlaceholder": "Label ou motif, puis Entrée",
+    "autoAuthorPlaceholder": "Utilisateur ou motif, puis Entrée",
+    "autoRemovePattern": "Retirer {pattern}",
+    "autoAutoStart": "Démarrer tout de suite",
+    "autoAutoStartHint": "Met chaque nouvelle tâche en file aussitôt ; la limite de concurrence de vos réglages de tâches décide quand elle s'exécute. Désactivé : elle attend dans À faire.",
+    "autoWriteback": "Commenter le résultat",
+    "autoWritebackHint": "À la fin de la tâche, publie le même court commentaire d'état que l'interrupteur de la boîte de lancement.",
+    "autoActivity": "Activité",
+    "autoScanNow": "Analyser maintenant",
+    "autoScanNowOff": "Activez un déclencheur et enregistrez pour analyser.",
+    "autoScanNowDirty": "Enregistrez d'abord : l'analyse utilise les règles enregistrées.",
+    "autoStatusUnavailable": "Un autre processus codeg gère le tableau des tâches de ce répertoire de données ; le traitement automatique s'exécute donc là-bas, pas ici.",
+    "autoStatusNever": "Pas encore analysé.",
+    "autoStatusScanning": "Analyse…",
+    "autoStatusLast": "Dernière analyse {time} ({trigger}) :",
+    "autoStatusCounts": "{examined} listés · {matched} correspondants · {handled} avaient déjà une tâche · {created} créés.",
+    "autoStatusError": "La dernière analyse {time} ({trigger}) s'est arrêtée : {error}",
+    "autoStatusCreated": "Nouvelles tâches : {items}",
+    "autoStatusSkipped": "Ignorés : {list}",
+    "autoStatusFailed": "Création impossible : {items}",
+    "autoStatusStartFailed": "Créée mais non démarrée : {error}",
+    "autoStatusTruncated": "La liste a été tronquée : la prochaine analyse relit la même période.",
+    "autoStatusNext": "Prochaine analyse planifiée : {time}",
+    "autoStatusDelivery": "Dernière livraison de webhook : {time}",
+    "autoTriggerSchedule": "planifiée",
+    "autoTriggerWebhook": "webhook",
+    "autoTriggerManual": "manuelle",
+    "autoSkipKind": "autre type",
+    "autoSkipNotOpen": "non ouvert",
+    "autoSkipDraft": "brouillon",
+    "autoSkipExcludedLabel": "label exclu",
+    "autoSkipExcludedAuthor": "auteur exclu",
+    "autoSkipMissingLabel": "aucun label correspondant",
+    "autoSkipAuthorNotIncluded": "auteur non listé",
     "save": "Enregistrer"
   },
   "Canvas": {
@@ -6337,7 +6871,17 @@
       "invalidUrl": "Adresse non valide",
       "profile": "Profil : {name}",
       "profileMenuLabel": "Ouvrir cette page dans un autre profil",
-      "profileDefault": "Par défaut"
+      "profileDefault": "Par défaut",
+      "device": "Appareil : {name}",
+      "deviceMenuLabel": "Afficher comme",
+      "deviceDesktop": "Ordinateur",
+      "deviceTablet": "Tablette",
+      "devicePhone": "Téléphone",
+      "deviceFill": "Tout le volet",
+      "deviceCustom": "Personnalisé",
+      "deviceWidth": "Largeur",
+      "deviceHeight": "Hauteur",
+      "deviceLaidOut": "Volet trop petit : mise en page en {size}"
     },
     "status": {
       "popupDenied": "Fenêtre contextuelle bloquée : {host}",

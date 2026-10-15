@@ -39,6 +39,7 @@ import {
   Settings,
   SquarePen,
   Tag,
+  Tags,
   XCircle,
 } from "lucide-react"
 import { useActiveFolder } from "@/contexts/active-folder-context"
@@ -143,6 +144,13 @@ import { useSubsessionSync } from "@/hooks/use-subsession-sync"
 import { SidebarSectionHeader } from "./sidebar-section-header"
 import { SidebarFolderGroupHeader } from "./sidebar-folder-group-header"
 import { ConversationManageDialog } from "./conversation-manage-dialog"
+import { openConversationTagsManager } from "./conversation-tags-manager"
+import {
+  EMPTY_TAG_FILTER,
+  isTagFilterActive,
+  matchesTagFilter,
+  type TagFilter,
+} from "@/lib/conversation-tags"
 import { CloneDialog } from "@/components/layout/clone-dialog"
 import { RemoteWorkspaceManageDialog } from "@/components/layout/remote-workspace-manage-dialog"
 import { WorkspaceFolderDialog } from "@/components/layout/workspace-folder-dialog"
@@ -216,6 +224,7 @@ const FolderHeader = memo(function FolderHeader({
   onImport,
   onManageConversations,
   onManageLinks,
+  onManageTags,
   onChangeColor,
   onSetAlias,
   onSetDefaultAgent,
@@ -266,6 +275,9 @@ const FolderHeader = memo(function FolderHeader({
   onImport: (folderId: number) => void
   onManageConversations: (folderId: number) => void
   onManageLinks: (folderId: number) => void
+  /** Open the tag manager on this folder's own tags (its repo's, for a
+   *  worktree). */
+  onManageTags: (folderId: number) => void
   onChangeColor: (folderId: number, color: FolderThemeColor) => void
   onSetAlias: (folderId: number, alias: string | null) => void
   onSetDefaultAgent: (folderId: number, agentType: AgentType | null) => void
@@ -335,6 +347,7 @@ const FolderHeader = memo(function FolderHeader({
   // returns a fresh `t` on every parent render, so passing it down would defeat
   // this component's memo and re-render every header on each status event.
   const t = useTranslations("Folder.sidebar")
+  const tTags = useTranslations("ConversationTags")
   const ime = useImeGuard()
   // Only flag a stale default once the live list is known; before fresh,
   // `availableAgents` is the localStorage seed and may legitimately omit a
@@ -638,6 +651,10 @@ const FolderHeader = memo(function FolderHeader({
             <Link2 className="h-4 w-4" />
             {t("folderHeaderMenu.manageLinks")}
           </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onManageTags(folderId)}>
+            <Tags className="h-4 w-4" />
+            {tTags("manageTags")}
+          </ContextMenuItem>
           <ContextMenuSub>
             <ContextMenuSubTrigger>
               <Bot className="h-4 w-4" />
@@ -875,6 +892,10 @@ export interface SidebarConversationListProps {
    *  `sectionOrder`. Defaults to off here; the Sidebar passes the user's
    *  preference, whose product default is ON. */
   showRecent?: boolean
+  /** Narrow every section to conversations carrying these tags (see
+   *  `matchesTagFilter`). Must be referentially stable — it feeds the bucket
+   *  memos. Defaults to no filter. */
+  tagFilter?: TagFilter
 }
 
 export function SidebarConversationList({
@@ -884,11 +905,13 @@ export function SidebarConversationList({
   sectionOrder = DEFAULT_SECTION_ORDER,
   showWorktrees = false,
   showRecent = false,
+  tagFilter = EMPTY_TAG_FILTER,
 }: SidebarConversationListProps & {
   ref?: Ref<SidebarConversationListHandle>
 }) {
   const t = useTranslations("Folder.sidebar")
   const tCommon = useTranslations("Folder.common")
+  const tTags = useTranslations("ConversationTags")
   const tFolderDropdown = useTranslations("Folder.folderNameDropdown")
   const tFileTree = useTranslations("Folder.fileTreeTab")
   const tRemote = useTranslations("RemoteWorkspace")
@@ -1305,16 +1328,30 @@ export function SidebarConversationList({
     return () => clearInterval(interval)
   }, [])
 
+  // The tag filter narrows what every section DRAWS — pinned, folders, chats
+  // and recent all bucket from this. It never touches the per-folder counts
+  // further down (`folderTotalCounts`, `folderRunningCounts`): a folder's
+  // running badge answers "is work under way in there", filter or not. With no
+  // filter this is `conversations` itself, so nothing downstream changes.
+  const tagFilterActive = isTagFilterActive(tagFilter)
+  const shownConversations = useMemo(
+    () =>
+      tagFilterActive
+        ? conversations.filter((c) => matchesTagFilter(c, tagFilter))
+        : conversations,
+    [conversations, tagFilter, tagFilterActive]
+  )
+
   // Folder grouping source: pinned conversations are surfaced in the dedicated
   // Pinned section, and folderless chat conversations in the dedicated Chat
   // section, so exclude both here; then apply the completed filter as before.
   const folderConversations = useMemo(() => {
-    const base = conversations.filter(
+    const base = shownConversations.filter(
       (c) => c.pinned_at == null && c.kind !== "chat"
     )
     if (showCompleted) return base
     return base.filter((c) => c.status !== "completed")
-  }, [conversations, showCompleted])
+  }, [shownConversations, showCompleted])
 
   // Flat "Chat" bucket: folderless chat-mode conversations, most-recently-updated
   // first, with reference reuse (so an unrelated status event doesn't rebuild it
@@ -1322,23 +1359,23 @@ export function SidebarConversationList({
   const chatConvsRef = useRef<DbConversationSummary[]>([])
   const chatConversations = useMemo(() => {
     const next = selectChatConversationsWithReuse(
-      conversations,
+      shownConversations,
       showCompleted,
       chatConvsRef.current
     )
     chatConvsRef.current = next
     return next
-  }, [conversations, showCompleted])
+  }, [shownConversations, showCompleted])
 
   // Pinned bucket: the FULL conversation list (ignores "Show completed" — a
   // pinned conversation stays visible regardless), sorted most-recently-pinned
   // first, with reference reuse so an unrelated status event doesn't rebuild it.
   const pinnedRef = useRef<DbConversationSummary[]>([])
   const pinned = useMemo(() => {
-    const next = selectPinnedWithReuse(conversations, pinnedRef.current)
+    const next = selectPinnedWithReuse(shownConversations, pinnedRef.current)
     pinnedRef.current = next
     return next
-  }, [conversations])
+  }, [shownConversations])
 
   // Every folder currently open in the workspace (repos and their worktree
   // children alike). Depends only on `folders`, so status events never rebuild
@@ -1355,7 +1392,7 @@ export function SidebarConversationList({
   const recentConvsRef = useRef<DbConversationSummary[]>([])
   const recentConversations = useMemo(() => {
     const next = selectRecentConversationsWithReuse(
-      conversations,
+      shownConversations,
       showCompleted,
       sortMode,
       openFolderIds,
@@ -1364,7 +1401,7 @@ export function SidebarConversationList({
     )
     recentConvsRef.current = next
     return next
-  }, [conversations, showCompleted, sortMode, openFolderIds, recentFilter])
+  }, [shownConversations, showCompleted, sortMode, openFolderIds, recentFilter])
 
   // Maps each open worktree child folder → its (open) root folder. A child is
   // only redirected when its parent is also open, so a worktree whose root was
@@ -1541,6 +1578,7 @@ export function SidebarConversationList({
         rootGroupCollapsed,
         layout,
         groupExpanded: folderGroupExpanded,
+        hideEmptyFolders: tagFilterActive,
       }),
     [
       pinned,
@@ -1564,6 +1602,7 @@ export function SidebarConversationList({
       rootGroupCollapsed,
       layout,
       folderGroupExpanded,
+      tagFilterActive,
     ]
   )
 
@@ -2008,6 +2047,10 @@ export function SidebarConversationList({
 
   const handleManageConversations = useCallback((folderId: number) => {
     setManageFolderId(folderId)
+  }, [])
+
+  const handleManageFolderTags = useCallback((folderId: number) => {
+    openConversationTagsManager({ folderId })
   }, [])
 
   const handleManageFolderLinks = useCallback(
@@ -2705,6 +2748,7 @@ export function SidebarConversationList({
         onImport={handleImportForFolder}
         onManageConversations={handleManageConversations}
         onManageLinks={handleManageFolderLinks}
+        onManageTags={handleManageFolderTags}
         onChangeColor={handleChangeFolderColor}
         onSetAlias={handleSetFolderAlias}
         onSetDefaultAgent={handleChangeFolderDefaultAgent}
@@ -2889,7 +2933,7 @@ export function SidebarConversationList({
       // section header's text inset (px-[0.5rem]) rather than the folder rail.
       return (
         <div className="px-[0.5rem] py-[0.375rem] text-[0.75rem] text-muted-foreground/70">
-          {t("noChats")}
+          {tagFilterActive ? tTags("filter.noMatches") : t("noChats")}
         </div>
       )
     }
@@ -2897,9 +2941,10 @@ export function SidebarConversationList({
       // Empty "Folders" section hint — mirrors chats-empty (folderless, no rail,
       // aligned with the section header's text inset). The header's own hover
       // actions (Open Folder / Clone / Import) are how you add the first folder.
+      // Under a tag filter it means no folder has a match, which says so.
       return (
         <div className="px-[0.5rem] py-[0.375rem] text-[0.75rem] text-muted-foreground/70">
-          {t("noFolders")}
+          {tagFilterActive ? tTags("filter.noMatches") : t("noFolders")}
         </div>
       )
     }
@@ -2911,11 +2956,13 @@ export function SidebarConversationList({
       // filter so the user knows what to undo.
       return (
         <div className="px-[0.5rem] py-[0.375rem] text-[0.75rem] text-muted-foreground/70">
-          {recentFilter === "chats"
-            ? t("noRecentChats")
-            : recentFilter === "folders"
-              ? t("noRecentFolders")
-              : t("noRecent")}
+          {tagFilterActive
+            ? tTags("filter.noMatches")
+            : recentFilter === "chats"
+              ? t("noRecentChats")
+              : recentFilter === "folders"
+                ? t("noRecentFolders")
+                : t("noRecent")}
         </div>
       )
     }
