@@ -4843,6 +4843,7 @@
     "manage": "Gérer l’espace de travail distant",
     "manageTitle": "Connexions à l’espace de travail distant",
     "empty": "Aucune connexion distante",
+    "noMatches": "Aucune connexion distante correspondante",
     "searchPlaceholder": "Rechercher un espace de travail distant",
     "orderFailed": "Échec de l’enregistrement de l’ordre des espaces de travail distants",
     "dragSort": "Glisser pour trier",

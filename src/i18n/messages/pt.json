@@ -4843,6 +4843,7 @@
     "manage": "Gerenciar espaço de trabalho remoto",
     "manageTitle": "Conexões com espaços de trabalho remotos",
     "empty": "Nenhuma conexão remota",
+    "noMatches": "Nenhuma conexão remota correspondente",
     "searchPlaceholder": "Pesquisar espaços de trabalho remotos",
     "orderFailed": "Não foi possível salvar a ordem dos espaços de trabalho remotos",
     "dragSort": "Arraste para reordenar",

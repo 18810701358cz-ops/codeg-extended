@@ -4843,6 +4843,7 @@
     "manage": "Remote-Arbeitsbereich verwalten",
     "manageTitle": "Verbindungen zu Remote-Arbeitsbereichen",
     "empty": "Keine Remote-Verbindungen",
+    "noMatches": "Keine passenden Remote-Verbindungen",
     "searchPlaceholder": "Remote-Arbeitsbereiche durchsuchen",
     "orderFailed": "Reihenfolge der Remote-Arbeitsbereiche konnte nicht gespeichert werden",
     "dragSort": "Zum Neuordnen ziehen",

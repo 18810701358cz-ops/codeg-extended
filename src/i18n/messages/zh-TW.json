@@ -4843,6 +4843,7 @@
     "manage": "管理遠端工作區",
     "manageTitle": "遠端工作區連線",
     "empty": "尚無遠端連線",
+    "noMatches": "沒有符合的遠端連線",
     "searchPlaceholder": "搜尋遠端工作區",
     "orderFailed": "無法儲存遠端工作區的排序",
     "dragSort": "拖拽排序",

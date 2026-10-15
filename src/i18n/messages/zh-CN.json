@@ -4863,6 +4863,7 @@
     "manage": "管理远端工作区",
     "manageTitle": "远端工作区连接",
     "empty": "暂无远端连接",
+    "noMatches": "没有匹配的远端连接",
     "searchPlaceholder": "搜索远端工作区",
     "orderFailed": "保存远端工作区排序失败",
     "dragSort": "拖拽排序",

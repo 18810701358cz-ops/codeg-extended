@@ -4843,6 +4843,7 @@
     "manage": "원격 워크스페이스 관리",
     "manageTitle": "원격 워크스페이스 연결",
     "empty": "원격 연결이 없습니다",
+    "noMatches": "일치하는 원격 연결이 없습니다",
     "searchPlaceholder": "원격 워크스페이스 검색",
     "orderFailed": "원격 워크스페이스 순서를 저장하지 못했습니다",
     "dragSort": "드래그하여 순서 변경",

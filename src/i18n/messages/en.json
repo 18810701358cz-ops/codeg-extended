@@ -4863,6 +4863,7 @@
     "manage": "Manage remote workspace",
     "manageTitle": "Remote Workspace connections",
     "empty": "No remote connections",
+    "noMatches": "No matching remote connections",
     "searchPlaceholder": "Search remote workspaces",
     "orderFailed": "Failed to save remote workspace order",
     "dragSort": "Drag to sort",
