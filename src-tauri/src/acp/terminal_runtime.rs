@@ -703,7 +703,16 @@ impl TerminalRuntime {
         }
 
         if !handles.is_empty() {
-            terminal.reader_handles.lock().await.extend(handles);
+            // Without awaiting: from the spawn above to the owner below, this
+            // future must not yield — dropped there (its connection shutting
+            // down mid-request), it would drop `child`, which tokio does not
+            // kill. Nothing else holds this lock yet; its only other user is the
+            // owner task.
+            terminal
+                .reader_handles
+                .try_lock()
+                .expect("a new terminal's reader handles are not shared yet")
+                .extend(handles);
         }
 
         // Hand the child to its owner task only AFTER the reader handles are
@@ -712,10 +721,12 @@ impl TerminalRuntime {
         // list and leave the readers running past the published completion.
         tokio::spawn(own_terminal_process(terminal.clone(), child));
 
+        let unregistered = KillUnlessRegistered(Some(Arc::clone(&terminal)));
         self.terminals
             .lock()
             .await
             .insert(terminal_id.clone(), terminal);
+        unregistered.registered();
 
         Ok(CreateTerminalResponse::new(terminal_id))
     }
@@ -877,6 +888,26 @@ impl TerminalRuntime {
         }
 
         Ok(terminal)
+    }
+}
+
+/// Kills a new terminal if `create_terminal` is dropped before the terminal is
+/// in the map, which is where every later release looks for it — dropped, say,
+/// while waiting for the map as its connection shuts down mid-request. Its
+/// owner task does the killing, as for any other kill.
+struct KillUnlessRegistered(Option<Arc<TerminalInstance>>);
+
+impl KillUnlessRegistered {
+    fn registered(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for KillUnlessRegistered {
+    fn drop(&mut self) {
+        if let Some(terminal) = self.0.take() {
+            terminal.kill.notify_one();
+        }
     }
 }
 
@@ -2067,7 +2098,7 @@ mod tests {
         let mut pids = Vec::new();
         for session in ["first-session", "second-session"] {
             let pid_file = dir.path().join(format!("{session}.pid"));
-            let command = format!("sh -c 'echo $$ > {}; exec sleep 30'", pid_file.display());
+            let command = format!("sh -c 'echo $$ > {}; exec sleep 120'", pid_file.display());
             runtime
                 .create_terminal(CreateTerminalRequest::new(
                     SessionId::new(session.to_string()),
@@ -2087,6 +2118,12 @@ mod tests {
             }
             pids.push(pid.expect("the terminal announced its pid"));
         }
+        for &pid in &pids {
+            assert!(
+                pid_is_alive(pid),
+                "terminal process {pid} exited on its own"
+            );
+        }
 
         runtime.release_all().await;
 
@@ -2096,6 +2133,53 @@ mod tests {
                 "terminal process {pid} outlived release_all"
             );
         }
+        assert!(runtime.terminals.lock().await.is_empty());
+    }
+
+    /// Until a new terminal is in the map, nothing that releases terminals can
+    /// find it. A `create_terminal` dropped while it waits to put it there — its
+    /// connection shutting down mid-request — must not leave the command
+    /// running for good.
+    #[tokio::test]
+    async fn a_terminal_whose_creation_is_dropped_before_registering_is_ended() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pid_file = dir.path().join("terminal.pid");
+        let runtime = Arc::new(TerminalRuntime::with_base_env(BTreeMap::new()));
+        // Holding the map makes the creation wait right where it registers.
+        let map = runtime.terminals.lock().await;
+        let creating = tokio::spawn({
+            let runtime = Arc::clone(&runtime);
+            let command = format!("sh -c 'echo $$ > {}; exec sleep 120'", pid_file.display());
+            async move {
+                runtime
+                    .create_terminal(CreateTerminalRequest::new(
+                        SessionId::new("dropped-creation".to_string()),
+                        command,
+                    ))
+                    .await
+            }
+        });
+        let mut pid = None;
+        for _ in 0..200 {
+            pid = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u32>().ok());
+            if pid.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let pid = pid.expect("the terminal announced its pid");
+        assert!(pid_is_alive(pid), "the command exited on its own");
+
+        creating.abort();
+        assert!(creating.await.is_err_and(|e| e.is_cancelled()));
+        drop(map);
+
+        assert!(
+            wait_until_pid_gone(pid, Duration::from_secs(10)).await,
+            "terminal process {pid} outlived its dropped creation"
+        );
         assert!(runtime.terminals.lock().await.is_empty());
     }
 

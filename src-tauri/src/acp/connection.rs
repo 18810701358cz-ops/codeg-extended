@@ -25943,7 +25943,7 @@ mod tests {
             agent_end,
             HandshakeScript {
                 terminal: Some(format!(
-                    "sh -c 'echo $$ > {}; exec sleep 60'",
+                    "sh -c 'echo $$ > {}; exec sleep 120'",
                     pid_file.display()
                 )),
                 fail_session_new,
@@ -25958,6 +25958,13 @@ mod tests {
                 .ok()
                 .and_then(|raw| raw.trim().parse::<i32>().ok())
             {
+                // Running, so whatever ends it later is the teardown under test.
+                // SAFETY: signal 0 only probes for existence; it sends no signal.
+                assert_eq!(
+                    unsafe { libc::kill(pid, 0) },
+                    0,
+                    "the terminal exited on its own"
+                );
                 return (agent, pid);
             }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
