@@ -1140,13 +1140,14 @@ mod tests {
         }
     }
 
-    /// A pid that is positively dead: a child we spawned and reaped.
+    /// A pid that is positively dead with no reuse window: past the largest
+    /// `pid_max` Linux allows (2^22) and macOS's 99999, so no process can ever
+    /// hold it. A spawned-and-reaped child would not do — its number can be
+    /// handed to another process before the sweep gets to probe it.
     #[cfg(unix)]
     fn a_dead_pid() -> u32 {
-        let mut child = std::process::Command::new("true").spawn().expect("spawn");
-        let pid = child.id();
-        child.wait().expect("reap");
-        assert_eq!(probe_pid(pid), PidState::Dead, "pid {pid} was reused already");
+        let pid = 999_999_999;
+        assert_eq!(probe_pid(pid), PidState::Dead);
         pid
     }
 
