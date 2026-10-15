@@ -30,13 +30,14 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::util::MatchDispatch;
 use agent_client_protocol::{
-    on_receive_notification, on_receive_request, Agent, Client, ConnectionTo, Dispatch,
+    on_receive_notification, on_receive_request, Agent, Client, ConnectTo, ConnectionTo, Dispatch,
     HandleDispatchFrom, Handled, JsonRpcRequest, RequestCancellation, Responder, Role,
     UntypedMessage,
 };
 use crate::acp::agent_process::AcpAgent;
 use crate::acp::agent_session::AgentSession;
 use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use crate::acp::agent_mentions::append_agent_routes;
 use crate::acp::background_watch;
@@ -1252,6 +1253,25 @@ pub enum ConnectionCommand {
 /// by the outer `.map_err(...)` in `run_connection`.
 const INIT_TIMEOUT_SENTINEL: &str = "__codeg_init_timeout__";
 
+/// Sentinel a step of the handshake fails with once the manager has cancelled
+/// it ([`AgentConnection::handshake`]), so the outer match in `run_connection`
+/// can end the connection quietly: the connection was let go, it did not fail.
+/// Same trick as [`INIT_TIMEOUT_SENTINEL`].
+const HANDSHAKE_CANCELLED_SENTINEL: &str = "__codeg_handshake_cancelled__";
+
+/// Wait on the agent for `step` of the session's establishment, unless the
+/// handshake is cancelled first. Then the step is dropped and this fails with
+/// [`HANDSHAKE_CANCELLED_SENTINEL`], which `?` carries out of the handshake.
+async fn unless_cancelled<T>(
+    handshake: &CancellationToken,
+    step: impl std::future::Future<Output = T>,
+) -> Result<T, agent_client_protocol::Error> {
+    handshake
+        .run_until_cancelled(step)
+        .await
+        .ok_or_else(|| agent_client_protocol::util::internal_error(HANDSHAKE_CANCELLED_SENTINEL))
+}
+
 /// Sentinel appended to a `session/new` failure when codeg had just forwarded
 /// MCP servers to a *custom* agent, so the outer `.map_err(...)` can raise
 /// `AcpError::McpRejectedByAgent` and point the user at the `supports_mcp`
@@ -1381,6 +1401,16 @@ pub struct AgentConnection {
     pub status: ConnectionStatus,
     pub owner_window_label: String,
     pub cmd_tx: mpsc::Sender<ConnectionCommand>,
+    /// Cancelled by every manager path that ends this connection, before it
+    /// sends `Disconnect` on `cmd_tx`. Only the conversation loop reads that
+    /// channel, and the loop starts once the session is established — so a
+    /// connection let go during its handshake (Initialize, which may wait 60 s,
+    /// then opening or restoring the session) would otherwise finish the
+    /// handshake first, its agent process running for nobody all the while, as
+    /// with the agent a draft switches away from mid-connect. The handshake
+    /// cannot read `cmd_tx` itself: prompts sent before the session is up wait
+    /// there for the loop.
+    pub handshake: CancellationToken,
     /// 后端权威的会话状态。所有 `emit_with_state` 写入此状态并自增 seq。
     /// 使用 `Arc<RwLock<_>>` 让 spawn 出的连接 task 与外部 snapshot 读取共享。
     pub state: Arc<RwLock<SessionState>>,
@@ -2476,6 +2506,7 @@ pub async fn spawn_agent_connection(
     prepend_officecli_path(&mut terminal_base_env);
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<ConnectionCommand>(32);
+    let handshake = CancellationToken::new();
     let conn_id = connection_id.clone();
     let emitter_clone = emitter.clone();
     let cleanup_connections = connections.clone();
@@ -2500,6 +2531,7 @@ pub async fn spawn_agent_connection(
             status: ConnectionStatus::Connecting,
             owner_window_label,
             cmd_tx,
+            handshake: handshake.clone(),
             state: Arc::clone(&session_state),
             emitter: emitter.clone(),
             prompt_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -2541,6 +2573,7 @@ pub async fn spawn_agent_connection(
             working_dir,
             session_id,
             cmd_rx,
+            handshake,
             emitter_clone.clone(),
             Arc::clone(&state_clone),
             terminal_base_env,
@@ -5868,12 +5901,16 @@ fn canonical_spec_to_mcp_server(name: &str, spec: &serde_json::Value) -> Result<
     )
 )]
 async fn run_connection(
-    agent: AcpAgent,
+    // The launched agent process; any transport to an agent in tests.
+    agent: impl ConnectTo<Client>,
     connection_id: String,
     agent_type: AgentType,
     working_dir: Option<String>,
     session_id: Option<String>,
     mut cmd_rx: mpsc::Receiver<ConnectionCommand>,
+    // `AgentConnection::handshake`: once cancelled, every wait on the agent
+    // that establishes the session gives up.
+    handshake: CancellationToken,
     emitter: EventEmitter,
     state: Arc<RwLock<SessionState>>,
     terminal_base_env: BTreeMap<String, String>,
@@ -5990,7 +6027,7 @@ async fn run_connection(
         Arc::clone(&prompt_ledger),
     );
 
-    Client
+    let ended = Client
         .builder()
         .name("codeg")
         // First in the chain on purpose: it has to claim a null-`sessionId`
@@ -6353,11 +6390,14 @@ async fn run_connection(
                 ProtocolVersion::V1
             );
             let init_started = std::time::Instant::now();
-            let init_resp = match tokio::time::timeout(
-                std::time::Duration::from_secs(60),
-                cx.send_request_to(Agent, init_request).block_task(),
+            let init_resp = match unless_cancelled(
+                &handshake,
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    cx.send_request_to(Agent, init_request).block_task(),
+                ),
             )
-            .await
+            .await?
             {
                 Ok(Ok(resp)) => {
                     tracing::info!(
@@ -6630,7 +6670,7 @@ async fn run_connection(
                         &cwd,
                         mcp_servers.clone(),
                     );
-                    match send_resume_session(&cx, resume_req).await {
+                    match unless_cancelled(&handshake, send_resume_session(&cx, resume_req)).await? {
                         Ok((resume_resp, grok_models_raw)) => {
                             let initial_config_options = resume_resp.config_options.clone();
                             let new_resp = NewSessionResponse::new(SessionId::new(sid.clone()))
@@ -6663,19 +6703,22 @@ async fn run_connection(
                             )
                             .await;
                             emit_session_modes(&state, &emitter_clone, session.modes()).await;
-                            apply_and_emit_session_config_options(
-                                &cx,
-                                &mut session,
-                                &state,
-                                &emitter_clone,
-                                agent_type,
-                                grok_meta.as_ref(),
-                                grok_model_specs.as_ref(),
-                                preferred_mode_id.as_deref(),
-                                &preferred_config_values,
-                                initial_config_options.unwrap_or_default(),
+                            unless_cancelled(
+                                &handshake,
+                                apply_and_emit_session_config_options(
+                                    &cx,
+                                    &mut session,
+                                    &state,
+                                    &emitter_clone,
+                                    agent_type,
+                                    grok_meta.as_ref(),
+                                    grok_model_specs.as_ref(),
+                                    preferred_mode_id.as_deref(),
+                                    &preferred_config_values,
+                                    initial_config_options.unwrap_or_default(),
+                                ),
                             )
-                            .await;
+                            .await?;
                             emit_selectors_ready(&state, &emitter_clone).await;
 
                             let loop_result = run_conversation_loop(
@@ -6764,7 +6807,8 @@ async fn run_connection(
                         &cwd,
                         mcp_servers.clone(),
                     );
-                    cx.send_request_to(Agent, load_req).block_task().await
+                    unless_cancelled(&handshake, cx.send_request_to(Agent, load_req).block_task())
+                        .await?
                 } else {
                     Err(agent_client_protocol::Error::method_not_found()
                         .data("agent does not advertise the loadSession capability"))
@@ -6813,6 +6857,13 @@ async fn run_connection(
                         // usable until the replay is consumed) but records
                         // nothing more, so the transcript ends at a line
                         // boundary instead of growing holes.
+                        //
+                        // Unlike the requests around it, the drain does not give
+                        // way to a cancelled handshake: the agent sends the
+                        // replay before it answers the load, so there is little
+                        // left to wait for, and stopping partway would leave a
+                        // hydrated transcript cut short for good — once it has
+                        // history, the next load never hydrates it again.
                         let mut recording = hydrate_from_replay;
                         while let Ok(Ok(dispatch)) = tokio::time::timeout(
                             std::time::Duration::from_millis(100),
@@ -6930,21 +6981,24 @@ async fn run_connection(
                         )
                         .await;
                         emit_session_modes(&state, &emitter_clone, session.modes()).await;
-                        apply_and_emit_session_config_options(
-                            &cx,
-                            &mut session,
-                            &state,
-                            &emitter_clone,
-                            agent_type,
-                            grok_meta.as_ref(),
-                            // `session/load` is a typed send with no raw `models`
-                            // capture, so effort stays on the flat fallback.
-                            None,
-                            preferred_mode_id.as_deref(),
-                            &preferred_config_values,
-                            initial_config_options.unwrap_or_default(),
+                        unless_cancelled(
+                            &handshake,
+                            apply_and_emit_session_config_options(
+                                &cx,
+                                &mut session,
+                                &state,
+                                &emitter_clone,
+                                agent_type,
+                                grok_meta.as_ref(),
+                                // `session/load` is a typed send with no raw `models`
+                                // capture, so effort stays on the flat fallback.
+                                None,
+                                preferred_mode_id.as_deref(),
+                                &preferred_config_values,
+                                initial_config_options.unwrap_or_default(),
+                            ),
                         )
-                        .await;
+                        .await?;
                         emit_selectors_ready(&state, &emitter_clone).await;
 
                         let loop_result = run_conversation_loop(
@@ -7085,11 +7139,14 @@ async fn run_connection(
                             )
                             .await;
                         }
-                        let (new_resp, grok_models_raw) = send_new_session_capturing_models(
-                            &cx,
-                            build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
+                        let (new_resp, grok_models_raw) = unless_cancelled(
+                            &handshake,
+                            send_new_session_capturing_models(
+                                &cx,
+                                build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
+                            ),
                         )
-                        .await
+                        .await?
                         .map_err(|e| tag_new_session_failure(e, agent_type, &mcp_servers))?;
                         let fallback_sid = new_resp.session_id.0.to_string();
                         let initial_config_options = new_resp.config_options.clone();
@@ -7127,19 +7184,22 @@ async fn run_connection(
                         )
                         .await;
                         emit_session_modes(&state, &emitter_clone, session.modes()).await;
-                        apply_and_emit_session_config_options(
-                            &cx,
-                            &mut session,
-                            &state,
-                            &emitter_clone,
-                            agent_type,
-                            grok_meta.as_ref(),
-                            grok_model_specs.as_ref(),
-                            preferred_mode_id.as_deref(),
-                            &preferred_config_values,
-                            initial_config_options.unwrap_or_default(),
+                        unless_cancelled(
+                            &handshake,
+                            apply_and_emit_session_config_options(
+                                &cx,
+                                &mut session,
+                                &state,
+                                &emitter_clone,
+                                agent_type,
+                                grok_meta.as_ref(),
+                                grok_model_specs.as_ref(),
+                                preferred_mode_id.as_deref(),
+                                &preferred_config_values,
+                                initial_config_options.unwrap_or_default(),
+                            ),
                         )
-                        .await;
+                        .await?;
                         emit_selectors_ready(&state, &emitter_clone).await;
 
                         let loop_result = run_conversation_loop(
@@ -7185,11 +7245,14 @@ async fn run_connection(
                 }
             } else {
                 // Create new session
-                let (new_resp, grok_models_raw) = send_new_session_capturing_models(
-                    &cx,
-                    build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
+                let (new_resp, grok_models_raw) = unless_cancelled(
+                    &handshake,
+                    send_new_session_capturing_models(
+                        &cx,
+                        build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
+                    ),
                 )
-                .await
+                .await?
                 .map_err(|e| tag_new_session_failure(e, agent_type, &mcp_servers))?;
                 let sid = new_resp.session_id.0.to_string();
                 let initial_config_options = new_resp.config_options.clone();
@@ -7214,19 +7277,22 @@ async fn run_connection(
                 )
                 .await;
                 emit_session_modes(&state, &emitter_clone, session.modes()).await;
-                apply_and_emit_session_config_options(
-                    &cx,
-                    &mut session,
-                    &state,
-                    &emitter_clone,
-                    agent_type,
-                    grok_meta.as_ref(),
-                    grok_model_specs.as_ref(),
-                    preferred_mode_id.as_deref(),
-                    &preferred_config_values,
-                    initial_config_options.unwrap_or_default(),
+                unless_cancelled(
+                    &handshake,
+                    apply_and_emit_session_config_options(
+                        &cx,
+                        &mut session,
+                        &state,
+                        &emitter_clone,
+                        agent_type,
+                        grok_meta.as_ref(),
+                        grok_model_specs.as_ref(),
+                        preferred_mode_id.as_deref(),
+                        &preferred_config_values,
+                        initial_config_options.unwrap_or_default(),
+                    ),
                 )
-                .await;
+                .await?;
                 emit_selectors_ready(&state, &emitter_clone).await;
 
                 let loop_result = run_conversation_loop(
@@ -7268,8 +7334,17 @@ async fn run_connection(
                 .await
             }
         })
-        .await
-        .map_err(connection_failure)
+        .await;
+    match ended {
+        // Let go before its session was up. Leaving the closure above has
+        // already shut the connection down, and dropping its transport stops
+        // the agent process.
+        Err(err) if err.to_string().contains(HANDSHAKE_CANCELLED_SENTINEL) => {
+            tracing::info!("[ACP] disconnected during the handshake; stopped it there");
+            Ok(())
+        }
+        ended => ended.map_err(connection_failure),
+    }
 }
 
 /// The codeg error a failed connection ends with: the sentinel an inner step
@@ -25528,6 +25603,282 @@ mod tests {
         let error = ended.expect_err("the connection ends in an error");
         assert!(error.to_string().contains("Process exited"), "{error}");
         agent.await.unwrap();
+    }
+
+    /// An in-process agent for `run_connection`'s handshake. It reports each
+    /// request it receives (a prompt with its text), answers Initialize unless
+    /// told to stall there, holds session/new until `open_session` is notified,
+    /// and ends every prompt at once. `closed` fires when codeg's end of the
+    /// connection goes away.
+    struct HandshakeAgent {
+        seen: mpsc::UnboundedReceiver<String>,
+        open_session: Arc<tokio::sync::Notify>,
+        closed: oneshot::Receiver<()>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl HandshakeAgent {
+        fn start(agent_end: agent_client_protocol::Channel, stall_initialize: bool) -> Self {
+            use agent_client_protocol::schema::v1::{InitializeResponse, PromptResponse};
+
+            let (seen_tx, seen) = mpsc::unbounded_channel();
+            let (init_seen, new_seen, prompt_seen) = (seen_tx.clone(), seen_tx.clone(), seen_tx);
+            let open_session = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::clone(&open_session);
+            let (closed_tx, closed) = oneshot::channel();
+            let task = tokio::spawn(async move {
+                let _ = Agent
+                    .builder()
+                    .on_receive_request(
+                        async move |_req: InitializeRequest,
+                                    responder: Responder<InitializeResponse>,
+                                    _cx: ConnectionTo<Client>| {
+                            let _ = init_seen.send("initialize".to_string());
+                            if stall_initialize {
+                                // Kept, never answered: dropping it would answer.
+                                tokio::spawn(async move {
+                                    std::future::pending::<()>().await;
+                                    drop(responder);
+                                });
+                                return Ok(());
+                            }
+                            responder.respond(InitializeResponse::new(ProtocolVersion::V1))
+                        },
+                        on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |_req: NewSessionRequest,
+                                    responder: Responder<NewSessionResponse>,
+                                    _cx: ConnectionTo<Client>| {
+                            let _ = new_seen.send("session/new".to_string());
+                            let release = Arc::clone(&release);
+                            // Off the handler, so the held answer doesn't hold
+                            // up the agent's other incoming messages.
+                            tokio::spawn(async move {
+                                release.notified().await;
+                                responder.respond(NewSessionResponse::new(SessionId::new("s1")))
+                            });
+                            Ok(())
+                        },
+                        on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |req: PromptRequest,
+                                    responder: Responder<PromptResponse>,
+                                    _cx: ConnectionTo<Client>| {
+                            let text: String = req
+                                .prompt
+                                .iter()
+                                .filter_map(|block| match block {
+                                    ContentBlock::Text(text) => Some(text.text.as_str()),
+                                    _ => None,
+                                })
+                                .collect();
+                            let _ = prompt_seen.send(format!("session/prompt: {text}"));
+                            responder.respond(PromptResponse::new(StopReason::EndTurn))
+                        },
+                        on_receive_request!(),
+                    )
+                    .connect_with(agent_end, async move |cx: ConnectionTo<Client>| {
+                        cx.incoming_closed().await;
+                        let _ = closed_tx.send(());
+                        Ok(())
+                    })
+                    .await;
+            });
+            Self {
+                seen,
+                open_session,
+                closed,
+                task,
+            }
+        }
+
+        async fn next_request(&mut self) -> String {
+            tokio::time::timeout(std::time::Duration::from_secs(10), self.seen.recv())
+                .await
+                .expect("codeg sends the agent its next request")
+                .expect("the agent is running")
+        }
+
+        /// Wait for codeg's end of the connection to go away.
+        async fn closed(self) {
+            tokio::time::timeout(std::time::Duration::from_secs(5), self.closed)
+                .await
+                .expect("codeg closes its end of the connection")
+                .expect("the agent saw it close");
+            self.task.abort();
+        }
+    }
+
+    /// `run_connection` on the other end of a [`HandshakeAgent`], driven the way
+    /// `spawn_agent_connection` drives it: on a thread of its own with the
+    /// connection's stack, since a debug build's frame for it does not fit a
+    /// test thread's.
+    struct HandshakeRun {
+        cmd_tx: mpsc::Sender<ConnectionCommand>,
+        handshake: CancellationToken,
+        state: Arc<RwLock<SessionState>>,
+        events: tokio::sync::broadcast::Receiver<Arc<crate::acp::types::EventEnvelope>>,
+        ended: oneshot::Receiver<Result<(), AcpError>>,
+        _dir: tempfile::TempDir,
+    }
+
+    impl HandshakeRun {
+        async fn start(client_end: agent_client_protocol::Channel) -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let cwd = dir.path().to_path_buf();
+            // An agent codeg forwards no MCP servers to, so the handshake reads
+            // no MCP config from the machine running the test.
+            let agent_type = AgentType::OpenClaw;
+            let state = Arc::new(RwLock::new(SessionState::new(
+                "conn-handshake".to_string(),
+                agent_type,
+                Some(cwd.clone()),
+                "test-window".to_string(),
+                None,
+            )));
+            let events = state.read().await.event_stream().subscribe();
+            let (cmd_tx, cmd_rx) = mpsc::channel(32);
+            let handshake = CancellationToken::new();
+            let (ended_tx, ended) = oneshot::channel();
+            let runtime = tokio::runtime::Handle::current();
+            let (run_state, run_handshake) = (Arc::clone(&state), handshake.clone());
+            std::thread::Builder::new()
+                .name("acp-conn-handshake-test".to_string())
+                .stack_size(ACP_CONNECTION_STACK_SIZE)
+                .spawn(move || {
+                    let ended = runtime.block_on(run_connection(
+                        client_end,
+                        "conn-handshake".to_string(),
+                        agent_type,
+                        Some(cwd.to_string_lossy().into_owned()),
+                        None,
+                        cmd_rx,
+                        run_handshake,
+                        EventEmitter::Noop,
+                        run_state,
+                        BTreeMap::new(),
+                        TerminalShellRuntimeConfig::new(),
+                        None,
+                        BTreeMap::new(),
+                        None,
+                        FsAccessPolicy::from_env(&cwd, agent_type, &BTreeMap::new()),
+                        HostToolsPolicy::from_env(&BTreeMap::new()),
+                        Arc::new(StderrTail::new()),
+                    ));
+                    let _ = ended_tx.send(ended);
+                })
+                .expect("connection thread");
+            Self {
+                cmd_tx,
+                handshake,
+                state,
+                events,
+                ended,
+                _dir: dir,
+            }
+        }
+
+        /// Admit a prompt the way `send_prompt_inner` does, then hand it over.
+        async fn prompt(&self, text: &str) {
+            self.state.write().await.turn_in_flight = true;
+            self.cmd_tx
+                .send(ConnectionCommand::Prompt {
+                    blocks: vec![PromptInputBlock::Text { text: text.into() }],
+                    user_message: None,
+                })
+                .await
+                .expect("the connection is running");
+        }
+
+        /// How the connection ended — which has to be soon — and what it
+        /// emitted on the way.
+        async fn ended(mut self) -> (Result<(), AcpError>, Vec<AcpEvent>) {
+            let ended = tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.ended)
+                .await
+                .expect("the connection ends promptly")
+                .expect("the connection thread reports how it ended");
+            let mut emitted = Vec::new();
+            loop {
+                match self.events.try_recv() {
+                    Ok(envelope) => emitted.push(envelope.payload.clone()),
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+            (ended, emitted)
+        }
+    }
+
+    /// A connection let go while its agent has not answered Initialize stops
+    /// there. The `Disconnect` command goes unread until the conversation loop
+    /// starts and Initialize waits up to 60 s, so it used to sit that wait out
+    /// — with the agent process kept running for nobody.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cancelled_handshake_stops_waiting_for_initialize() {
+        let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+        let mut agent = HandshakeAgent::start(agent_end, true);
+        let run = HandshakeRun::start(client_end).await;
+        assert_eq!(agent.next_request().await, "initialize");
+
+        run.handshake.cancel();
+
+        let (ended, emitted) = run.ended().await;
+        assert!(ended.is_ok(), "being let go is not a failure: {ended:?}");
+        assert!(
+            !emitted.iter().any(|e| matches!(e, AcpEvent::Error { .. })),
+            "{emitted:#?}"
+        );
+        agent.closed().await;
+    }
+
+    /// The same once Initialize is answered and the agent is opening the
+    /// session — the longer wait for an agent that starts its CLI and its MCP
+    /// servers there.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cancelled_handshake_stops_waiting_for_the_session() {
+        let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+        let mut agent = HandshakeAgent::start(agent_end, false);
+        let run = HandshakeRun::start(client_end).await;
+        assert_eq!(agent.next_request().await, "initialize");
+        assert_eq!(agent.next_request().await, "session/new");
+
+        run.handshake.cancel();
+
+        let (ended, emitted) = run.ended().await;
+        assert!(ended.is_ok(), "being let go is not a failure: {ended:?}");
+        assert!(
+            !emitted
+                .iter()
+                .any(|e| matches!(e, AcpEvent::SessionStarted { .. } | AcpEvent::Error { .. })),
+            "{emitted:#?}"
+        );
+        agent.closed().await;
+    }
+
+    /// Why the handshake has a signal of its own rather than reading the
+    /// command channel: a prompt sent before the session is up waits in that
+    /// channel, and has to reach the agent once the session is.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_prompt_sent_during_the_handshake_reaches_the_agent() {
+        let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+        let mut agent = HandshakeAgent::start(agent_end, false);
+        let run = HandshakeRun::start(client_end).await;
+        assert_eq!(agent.next_request().await, "initialize");
+        assert_eq!(agent.next_request().await, "session/new");
+
+        run.prompt("hello").await;
+        agent.open_session.notify_one();
+
+        assert_eq!(agent.next_request().await, "session/prompt: hello");
+        run.cmd_tx
+            .send(ConnectionCommand::Disconnect)
+            .await
+            .expect("the connection is running");
+        let (ended, _) = run.ended().await;
+        assert!(ended.is_ok(), "{ended:?}");
+        agent.closed().await;
     }
 
     #[test]
