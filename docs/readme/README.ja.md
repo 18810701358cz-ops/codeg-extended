@@ -101,9 +101,9 @@
 
 ### すべてのエージェントを、ひとつのインターフェースで
 
-15 種のエージェントを内蔵し、ほかの ACP エージェントも公開レジストリまたはその distribution JSON から加えられます。Codeg はそのすべてと Agent Client Protocol で通信するので、どれも目を凝らして読むターミナルではなく、同じリッチな会話 — ツールカード、ライブ diff、計画、権限の確認 — として表示されます。
+15 種のエージェントを内蔵し、ほかの ACP エージェントも公開レジストリまたはその distribution JSON から加えられます。Codeg はそのすべてと Agent Client Protocol で通信するので、どれも目を凝らして読むターミナルではなく、同じリッチな会話 — ツールカード、ライブ diff、計画、権限の確認 — として表示されます。エージェントで UI レンダリングを有効にすると、インタラクティブなカードや表、グラフで答えられるようになります。
 
-[ドキュメント →](https://docs.codeg.app/guide/supported-agents) · [カスタムエージェント →](https://docs.codeg.app/guide/custom-agents)
+[ドキュメント →](https://docs.codeg.app/guide/supported-agents) · [カスタムエージェント →](https://docs.codeg.app/guide/custom-agents) · [UI レンダリング →](https://docs.codeg.app/guide/skills#cards-tables-and-charts-in-replies)
 
 </td>
 <td width="50%">
@@ -118,9 +118,9 @@
 
 ### すべてのセッションを、検索可能に
 
-Codeg は各エージェント CLI がディスクに残す履歴を読み取ります：ワンクリックでインポートし、すべてを検索し、どのセッションも止まったところから再開できます。古いセッションを `@` で指名すれば、いま話しているエージェントがそれを読めます — 別のエージェントが書いたものでも構いません。
+Codeg は各エージェント CLI がディスクに残す履歴を読み取ります：ワンクリックでインポートし、すべてを検索し、どのセッションも止まったところから再開できます。古いセッションを `@` で指名すれば、いま話しているエージェントがそれを読めます — 別のエージェントが書いたものでも構いません。会話には色付きのタグを付けられます。全体共通にもフォルダー専用にもでき、サイドバーをタグで絞り込めます。
 
-[ドキュメント →](https://docs.codeg.app/guide/aggregation)
+[ドキュメント →](https://docs.codeg.app/guide/aggregation) · [タグ →](https://docs.codeg.app/guide/workspace#tag-conversations)
 
 </td>
 <td width="50%">
@@ -152,9 +152,9 @@ Codeg は各エージェント CLI がディスクに残す履歴を読み取り
 
 ### 無人で進む ToDo タスク
 
-仕事を書き留めたら、あとは席を外すだけ。ToDo タスクはそれぞれ専用の git ワークツリーとブランチを持ち、すぐに、または予約した時刻に始まり、そのあと「レビュー」で待ちます。diff を受け入れるとエージェントが取り込み、Codeg は git を確かめてから完了とします。
+仕事を書き留めたら、あとは席を外すだけ。ToDo タスクはそれぞれ専用の git ワークツリーとブランチを持ち、すぐに、または予約した時刻に始まり、そのあとあなたのレビューを待ちます。diff を受け入れるとエージェントが取り込み、Codeg は git を確かめてから完了とします。リポジトリパネルに任せれば、ラベルや作成者で選んだイシューとプルリクエストを、定期的に、または Webhook が届いたときに ToDo として追加してくれます。
 
-[ドキュメント →](https://docs.codeg.app/guide/tasks)
+[ドキュメント →](https://docs.codeg.app/guide/tasks) · [自動処理 →](https://docs.codeg.app/guide/repository#let-it-pick-items-up-by-itself)
 
 </td>
 <td width="50%">
@@ -186,9 +186,9 @@ Codeg は各エージェント CLI がディスクに残す履歴を読み取り
 
 ### デスクトップ・サーバー・モバイル・チャット
 
-Codeg はデスクトップアプリとしても、任意のブラウザで開けるセルフホストのサーバーとしても、ひとつの Docker コンテナとしても動かせます。ネイティブの iPhone・iPad・Android クライアント — さらに Telegram、Lark、WeChat のチャットチャンネル — でエージェントにいつでも手が届き、その間もファイルとセッションはあなた自身のマシンにとどまります。
+Codeg はデスクトップアプリとしても、任意のブラウザで開けるセルフホストのサーバーとしても、ひとつの Docker コンテナとしても動かせます。デスクトップアプリからは、リモートのサーバーを専用のワークスペースウィンドウで開くこともできます。ネイティブの iPhone・iPad・Android クライアント — さらに Telegram、Lark、WeChat のチャットチャンネル — でエージェントにいつでも手が届き、その間もファイルとセッションはあなたが管理するマシンにとどまります。
 
-[ドキュメント →](https://docs.codeg.app/getting-started/deployment) · [モバイルアプリ →](https://docs.codeg.app/getting-started/installation#mobile-apps) · [チャットチャンネル →](https://docs.codeg.app/guide/chat-channels)
+[ドキュメント →](https://docs.codeg.app/getting-started/deployment) · [リモートワークスペース →](https://docs.codeg.app/guide/workspace#desktop-and-browser) · [モバイルアプリ →](https://docs.codeg.app/getting-started/installation#mobile-apps) · [チャットチャンネル →](https://docs.codeg.app/guide/chat-channels)
 
 </td>
 <td width="50%">
@@ -203,7 +203,7 @@ Codeg はデスクトップアプリとしても、任意のブラウザで開�
 
 ### Office ドキュメントと科学研究
 
-スライドでも、レポートでも、表計算でも、頼めば本物の `.pptx`、`.docx`、`.xlsx` が会話の隣でリアルタイムに描画されていく様子を見られます。同梱の研究スキル — 仮説生成、実験計画、統計、文献検索 — はどのエージェントでも使えます。
+スライドでも、レポートでも、表計算でも、頼めば本物の `.pptx`、`.docx`、`.xlsx` が会話の隣でリアルタイムに描画されていく様子を見られます。PDF も専用のビューアーで開けます。同梱の研究スキル — 仮説生成、実験計画、統計、文献検索 — はどのエージェントでも使えます。
 
 [ドキュメント →](https://docs.codeg.app/guide/office) · [科学研究 →](https://docs.codeg.app/guide/research)
 
@@ -220,7 +220,7 @@ Codeg はデスクトップアプリとしても、任意のブラウザで開�
 
 ### ブラウザとコンピューター操作
 
-デスクトップアプリでは、リンクはファイルの隣の内蔵ブラウザで開きます：ページ、要素、スクリーンショット、コンソールエラーをエージェントに渡すことも、共有したページをエージェントに操作させることもできます。プレビュー版の機能として、共有したウィンドウをエージェントが見て操作することもできます — 停止はいつでもワンクリックです。
+デスクトップアプリでは、リンクはファイルの隣の内蔵ブラウザで開き、タブレットやスマートフォンのサイズでも表示できます：ページ、要素、スクリーンショット、コンソールエラーをエージェントに渡すことも、共有したページをエージェントに操作させることもできます。プレビュー版の機能として、共有したウィンドウをエージェントが見て操作することもできます — 停止はいつでもワンクリックです。
 
 [ドキュメント →](https://docs.codeg.app/guide/browser) · [コンピューター操作 →](https://docs.codeg.app/guide/computer-use)
 
@@ -255,11 +255,12 @@ Codeg はデスクトップアプリとしても、任意のブラウザで開�
 
 - **[リポジトリパネル](https://docs.codeg.app/guide/repository)** — GitHub、GitLab、Gitea、Forgejo のイシュー、プルリクエスト、チェック、マージ。どのイシューや PR も ToDo タスクにできます
 - **[オートメーション](https://docs.codeg.app/guide/automations)** — 設定済みの入力欄を保存し、cron スケジュールまたは任意のタイミングでヘッドレス実行
-- **[トークン使用量](https://docs.codeg.app/guide/token-usage)** — 推移、キャッシュヒット率、アクティビティのヒートマップ、フォルダー・エージェント・モデル・セッション別の使用量
+- **[トークン使用量](https://docs.codeg.app/guide/token-usage)** — 推移、キャッシュヒット率、アクティビティのヒートマップ、フォルダー・エージェント・モデル・セッション別の使用量、API の定価で見積もったコスト
 - **[分岐とステアリング](https://docs.codeg.app/guide/workspace#follow-along-%E2%80%94-the-conversation)** — 対応しているエージェントでは、完了した返信から会話を分岐させたり、まだ実行中のターンにメッセージを送り込んだりできます
 - **[スキル](https://docs.codeg.app/guide/skills) と [MCP](https://docs.codeg.app/guide/mcp)** — エージェントごとのスキルパック、ローカルの MCP スキャン、レジストリの検索とインストール
 - **[プロジェクトブート](https://docs.codeg.app/guide/project-boot)** — ライブプレビュー付きで新規プロジェクトを視覚的に構築
-- **[自分好みに](https://docs.codeg.app/reference/settings/appearance)** — カラートークン単位で塗り替えられる 12 のテーマ、壁紙、角丸、カスタム CSS — インターフェースは 10 言語に対応
+- **[通知](https://docs.codeg.app/reference/settings/general#desktop-notifications)** — ターンが終わったときやエージェントに呼ばれたときに、デスクトップ通知と通知音、タスクバーボタンの点滅や Dock アイコンのバウンドで知らせます
+- **[自分好みに](https://docs.codeg.app/reference/settings/appearance)** — カラートークン単位で塗り替えられる 12 のテーマ、壁紙、角丸、チャット幅、カスタム CSS、デスクトップペット — インターフェースは 10 言語に対応
 - **[バックアップと同期](https://docs.codeg.app/reference/settings/system#backup-restore)** — 暗号化バックアップと、ファイルまたは自分の WebDAV サーバーを介したマシン間の設定同期
 - **[URL スキーム](../../docs/url-scheme.md)** — `codeg://session/<id>` で別のアプリから会話を開けます（デスクトップ）
 - **まだまだあります** — ほぼすべてのリリースで何かが加わります。全リストは [リリースノート](https://github.com/spacering-net/codeg/releases) で確認できます
@@ -313,6 +314,8 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg-server\web"; codeg-server
 docker run -d -p 3080:3080 -v codeg-data:/data ghcr.io/spacering-net/codeg:latest
 ```
 
+どちらの場合も、ブラウザで `http://<host>:3080` を開き、サーバーが起動時に出力するアクセストークンを入力します（コンテナでは `docker logs` で確認できます）。`CODEG_TOKEN` で自分で決めることもできます。
+
 **モバイル** — [iOS アプリ](https://apps.apple.com/app/codeg-client/id6785199071) または [Android APK](https://github.com/xintaofei/codeg-android/releases/latest) をインストールし、デスクトップアプリの **Webサービス**か自分の `codeg-server` を指定するだけ：アドレスとトークンを入れれば完了です。接続手順は [モバイルアプリ](https://docs.codeg.app/getting-started/installation#mobile-apps)。
 
 Compose、ビルド済みバイナリ、ソースからのビルド、その場での更新は [デプロイ](https://docs.codeg.app/getting-started/deployment) に、環境変数は [設定](https://docs.codeg.app/getting-started/configuration) にあります。
@@ -355,6 +358,8 @@ Compose、ビルド済みバイナリ、ソースからのビルド、その場�
 - [Superpowers](https://github.com/obra/superpowers) — Codeg のエキスパートスキルモジュールを支えるプロジェクト
 - [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) — Codeg の Office ドキュメントワークフローを支えるプロジェクト
 - [scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) — Codeg の科学研究スキルを支えるプロジェクト（MIT ライセンスのサブセット）
+- [json-render](https://github.com/vercel-labs/json-render) — Codeg の UI レンダリング（カード・表・グラフ）を支えるプロジェクト
+- [cua-driver](https://github.com/trycua/cua) — Codeg のコンピューター操作を支えるプロジェクト
 
 ## 📜 ライセンス
 

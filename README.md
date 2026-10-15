@@ -101,9 +101,9 @@
 
 ### One Interface for Every Agent
 
-Fifteen agents come built in, and any other ACP agent can join from the public registry or its distribution JSON. Codeg speaks the Agent Client Protocol to every one of them, so they all get the same rich conversation — tool cards, live diffs, plans, and permission prompts — instead of a terminal to squint at.
+Fifteen agents come built in, and any other ACP agent can join from the public registry or its distribution JSON. Codeg speaks the Agent Client Protocol to every one of them, so they all get the same rich conversation — tool cards, live diffs, plans, and permission prompts — instead of a terminal to squint at. Enable UI Render for an agent and it can answer with interactive cards, tables, and charts.
 
-[Docs →](https://docs.codeg.app/guide/supported-agents) · [Custom agents →](https://docs.codeg.app/guide/custom-agents)
+[Docs →](https://docs.codeg.app/guide/supported-agents) · [Custom agents →](https://docs.codeg.app/guide/custom-agents) · [UI Render →](https://docs.codeg.app/guide/skills#cards-tables-and-charts-in-replies)
 
 </td>
 <td width="50%">
@@ -118,9 +118,9 @@ Fifteen agents come built in, and any other ACP agent can join from the public r
 
 ### Every Session, Searchable
 
-Codeg reads the history every agent CLI keeps on disk: import it in one click, search all of it, and resume any session where it stopped. `@`-mention an old session and the agent you're talking to can read it — even one a different agent wrote.
+Codeg reads the history every agent CLI keeps on disk: import it in one click, search all of it, and resume any session where it stopped. `@`-mention an old session and the agent you're talking to can read it — even one a different agent wrote. Give conversations colored tags, global or per folder, and filter the sidebar by them.
 
-[Docs →](https://docs.codeg.app/guide/aggregation)
+[Docs →](https://docs.codeg.app/guide/aggregation) · [Tags →](https://docs.codeg.app/guide/workspace#tag-conversations)
 
 </td>
 <td width="50%">
@@ -152,9 +152,9 @@ Type `@`, pick an agent, send. Each mentioned agent runs as its own session, sid
 
 ### To-dos That Run Unattended
 
-Write a job down and walk away. Each to-do gets its own git worktree and branch, starts now or on a schedule, and waits in Review; accept the diff and the agent lands it, and Codeg checks git before calling it done.
+Write a job down and walk away. Each to-do gets its own git worktree and branch, starts now or on a schedule, and then waits for your review; accept the diff and the agent lands it, and Codeg checks git before calling it done. The repository panel can add them for you, too: it picks up issues and pull requests by label and author, on a schedule or when a webhook fires.
 
-[Docs →](https://docs.codeg.app/guide/tasks)
+[Docs →](https://docs.codeg.app/guide/tasks) · [Auto-processing →](https://docs.codeg.app/guide/repository#let-it-pick-items-up-by-itself)
 
 </td>
 <td width="50%">
@@ -186,9 +186,9 @@ Lay your work out in space: conversations, files, terminals, and notes become ca
 
 ### Desktop, Server, Mobile & Chat
 
-Run Codeg as a desktop app, a self-hosted server you open in any browser, or a single Docker container. Native iPhone, iPad, and Android clients — plus Telegram, Lark, and WeChat channels — keep your agents in reach, while your files and sessions stay on your own machine.
+Run Codeg as a desktop app, a self-hosted server you open in any browser, or a single Docker container, and open a remote server from the desktop app in a workspace window of its own. Native iPhone, iPad, and Android clients — plus Telegram, Lark, and WeChat channels — keep your agents in reach, while your files and sessions stay on machines you control.
 
-[Docs →](https://docs.codeg.app/getting-started/deployment) · [Mobile apps →](https://docs.codeg.app/getting-started/installation#mobile-apps) · [Chat channels →](https://docs.codeg.app/guide/chat-channels)
+[Docs →](https://docs.codeg.app/getting-started/deployment) · [Remote workspaces →](https://docs.codeg.app/guide/workspace#desktop-and-browser) · [Mobile apps →](https://docs.codeg.app/getting-started/installation#mobile-apps) · [Chat channels →](https://docs.codeg.app/guide/chat-channels)
 
 </td>
 <td width="50%">
@@ -203,7 +203,7 @@ Run Codeg as a desktop app, a self-hosted server you open in any browser, or a s
 
 ### Office Documents & Research
 
-Ask for a deck, a report, or a workbook and watch the real `.pptx`, `.docx`, or `.xlsx` render live beside the conversation. Bundled research skills — hypotheses, experimental design, statistics, literature search — work with any agent.
+Ask for a deck, a report, or a workbook and watch the real `.pptx`, `.docx`, or `.xlsx` render live beside the conversation; PDFs get a viewer of their own. Bundled research skills — hypotheses, experimental design, statistics, literature search — work with any agent.
 
 [Docs →](https://docs.codeg.app/guide/office) · [Research →](https://docs.codeg.app/guide/research)
 
@@ -220,7 +220,7 @@ Ask for a deck, a report, or a workbook and watch the real `.pptx`, `.docx`, or 
 
 ### Browser & Computer Use
 
-In the desktop app, links open in a built-in browser beside your files: hand the agent a page, an element, a screenshot, or a console error, or let it drive a page you share. In preview, agents can also see and operate the windows you share — and Stop is one click away.
+In the desktop app, links open in a built-in browser beside your files, at desktop, tablet, or phone size: hand the agent a page, an element, a screenshot, or a console error, or let it drive a page you share. In preview, agents can also see and operate the windows you share — and Stop is one click away.
 
 [Docs →](https://docs.codeg.app/guide/browser) · [Computer Use →](https://docs.codeg.app/guide/computer-use)
 
@@ -255,11 +255,12 @@ An editor, live and side-by-side diffs, a full git client with a three-pane merg
 
 - **[Repository Panel](https://docs.codeg.app/guide/repository)** — issues, pull requests, checks, and merges for GitHub, GitLab, Gitea, and Forgejo; any issue or PR can become a to-do
 - **[Automations](https://docs.codeg.app/guide/automations)** — save a configured composer and run it headlessly, on a cron schedule or on demand
-- **[Token Usage](https://docs.codeg.app/guide/token-usage)** — trends, cache hit rate, an activity heatmap, and usage by folder, agent, model, and session
+- **[Token Usage](https://docs.codeg.app/guide/token-usage)** — trends, cache hit rate, an activity heatmap, usage by folder, agent, model, and session, and what it would cost at API list prices
 - **[Fork & Steer](https://docs.codeg.app/guide/workspace#follow-along-%E2%80%94-the-conversation)** — fork a conversation from a finished reply, or send a message into a turn that is still running, on agents that support it
 - **[Skills](https://docs.codeg.app/guide/skills) & [MCP](https://docs.codeg.app/guide/mcp)** — skill packs per agent, a local MCP scan, and registry search and install
 - **[Project Boot](https://docs.codeg.app/guide/project-boot)** — scaffold a new project visually, with a live preview
-- **[Make It Yours](https://docs.codeg.app/reference/settings/appearance)** — twelve themes you can recolor token by token, wallpapers, corner radius, and custom CSS — in any of ten interface languages
+- **[Notifications](https://docs.codeg.app/reference/settings/general#desktop-notifications)** — desktop notifications, sounds, and a flashing taskbar button or bouncing Dock icon when a turn ends or an agent needs you
+- **[Make It Yours](https://docs.codeg.app/reference/settings/appearance)** — twelve themes you can recolor token by token, wallpapers, corner radius, chat width, custom CSS, and a desktop pet — in any of ten interface languages
 - **[Backup & Sync](https://docs.codeg.app/reference/settings/system#backup-restore)** — encrypted backups, and configuration sync between machines through a file or your own WebDAV server
 - **[URL Scheme](./docs/url-scheme.md)** — `codeg://session/<id>` opens a conversation from another app (desktop)
 - **And more** — nearly every release adds something; the [release notes](https://github.com/spacering-net/codeg/releases) are the full list
@@ -313,6 +314,8 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg-server\web"; codeg-server
 docker run -d -p 3080:3080 -v codeg-data:/data ghcr.io/spacering-net/codeg:latest
 ```
 
+Either way, open `http://<host>:3080` in a browser and enter the access token the server prints when it starts (`docker logs` shows it for the container), or set `CODEG_TOKEN` to choose your own.
+
 **Mobile** — install the [iOS app](https://apps.apple.com/app/codeg-client/id6785199071) or the [Android APK](https://github.com/xintaofei/codeg-android/releases/latest), then point it at the **Web Service** of your desktop app or at your own `codeg-server`: URL, token, done. Pairing steps in [Mobile apps](https://docs.codeg.app/getting-started/installation#mobile-apps).
 
 Compose, prebuilt binaries, source builds, and in-place updates are covered in [Deployment](https://docs.codeg.app/getting-started/deployment); environment variables in [Configuration](https://docs.codeg.app/getting-started/configuration).
@@ -355,6 +358,8 @@ Issues and pull requests are welcome. To build Codeg yourself, start with [Devel
 - [Superpowers](https://github.com/obra/superpowers) — powers Codeg's expert skills module
 - [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) — powers Codeg's Office documents workflow
 - [scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) — powers Codeg's Scientific Research skills (MIT-licensed subset)
+- [json-render](https://github.com/vercel-labs/json-render) — powers Codeg's UI Render cards, tables, and charts
+- [cua-driver](https://github.com/trycua/cua) — powers Codeg's Computer Use
 
 ## 📜 License
 

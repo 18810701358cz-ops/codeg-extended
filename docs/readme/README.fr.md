@@ -101,9 +101,9 @@
 
 ### Une interface pour tous les agents
 
-Quinze agents sont intégrés, et tout autre agent ACP peut les rejoindre depuis le registre public ou via son JSON de distribution. Codeg parle l'Agent Client Protocol avec chacun d'eux : tous bénéficient donc de la même conversation riche — cartes d'outils, diffs en direct, plans et demandes d'autorisation — au lieu d'un terminal à déchiffrer en plissant les yeux.
+Quinze agents sont intégrés, et tout autre agent ACP peut les rejoindre depuis le registre public ou via son JSON de distribution. Codeg parle l'Agent Client Protocol avec chacun d'eux : tous bénéficient donc de la même conversation riche — cartes d'outils, diffs en direct, plans et demandes d'autorisation — au lieu d'un terminal à déchiffrer en plissant les yeux. Activez le Rendu d'interface pour un agent et il pourra répondre avec des cartes, des tableaux et des graphiques interactifs.
 
-[Documentation →](https://docs.codeg.app/guide/supported-agents) · [Agents personnalisés →](https://docs.codeg.app/guide/custom-agents)
+[Documentation →](https://docs.codeg.app/guide/supported-agents) · [Agents personnalisés →](https://docs.codeg.app/guide/custom-agents) · [Rendu d'interface →](https://docs.codeg.app/guide/skills#cards-tables-and-charts-in-replies)
 
 </td>
 <td width="50%">
@@ -118,9 +118,9 @@ Quinze agents sont intégrés, et tout autre agent ACP peut les rejoindre depuis
 
 ### Chaque session, à portée de recherche
 
-Codeg lit l'historique que chaque CLI d'agent conserve sur le disque : importez-le en un clic, cherchez dans l'ensemble et reprenez n'importe quelle session là où elle s'était arrêtée. Mentionnez une ancienne session avec `@` et l'agent auquel vous parlez peut la lire — même si un autre agent l'a écrite.
+Codeg lit l'historique que chaque CLI d'agent conserve sur le disque : importez-le en un clic, cherchez dans l'ensemble et reprenez n'importe quelle session là où elle s'était arrêtée. Mentionnez une ancienne session avec `@` et l'agent auquel vous parlez peut la lire — même si un autre agent l'a écrite. Donnez aux conversations des étiquettes de couleur, globales ou propres à un dossier, et filtrez la barre latérale avec elles.
 
-[Documentation →](https://docs.codeg.app/guide/aggregation)
+[Documentation →](https://docs.codeg.app/guide/aggregation) · [Étiquettes →](https://docs.codeg.app/guide/workspace#tag-conversations)
 
 </td>
 <td width="50%">
@@ -152,9 +152,9 @@ Tapez `@`, choisissez un agent, envoyez. Chaque agent mentionné tourne dans sa 
 
 ### Des tâches à faire exécutées sans surveillance
 
-Notez un travail et passez à autre chose. Chaque tâche à faire obtient son propre worktree git et sa propre branche, démarre tout de suite ou selon une planification, puis attend d'être validée ; acceptez le diff et l'agent la fait atterrir, et Codeg vérifie git avant de la déclarer terminée.
+Notez un travail et passez à autre chose. Chaque tâche à faire obtient son propre worktree git et sa propre branche, démarre tout de suite ou selon une planification, puis attend d'être validée ; acceptez le diff et l'agent la fait atterrir, et Codeg vérifie git avant de la déclarer terminée. Le panneau du dépôt peut même les créer pour vous : il reprend les issues et les pull requests selon leurs étiquettes et leur auteur, à intervalles réguliers ou dès qu'un webhook arrive.
 
-[Documentation →](https://docs.codeg.app/guide/tasks)
+[Documentation →](https://docs.codeg.app/guide/tasks) · [Traitement automatique →](https://docs.codeg.app/guide/repository#let-it-pick-items-up-by-itself)
 
 </td>
 <td width="50%">
@@ -186,9 +186,9 @@ Organisez votre travail dans l'espace : conversations, fichiers, terminaux et no
 
 ### Bureau, serveur, mobile et chat
 
-Faites tourner Codeg en application de bureau, en serveur auto-hébergé que vous ouvrez dans n'importe quel navigateur, ou dans un seul conteneur Docker. Des clients natifs pour iPhone, iPad et Android — ainsi que des canaux Telegram, Lark et WeChat — gardent vos agents à portée de main, tandis que vos fichiers et vos sessions restent sur votre propre machine.
+Faites tourner Codeg en application de bureau, en serveur auto-hébergé que vous ouvrez dans n'importe quel navigateur, ou dans un seul conteneur Docker, et ouvrez un serveur distant depuis l'application de bureau dans sa propre fenêtre d'espace de travail. Des clients natifs pour iPhone, iPad et Android — ainsi que des canaux Telegram, Lark et WeChat — gardent vos agents à portée de main, tandis que vos fichiers et vos sessions restent sur des machines que vous contrôlez.
 
-[Documentation →](https://docs.codeg.app/getting-started/deployment) · [Applications mobiles →](https://docs.codeg.app/getting-started/installation#mobile-apps) · [Canaux de chat →](https://docs.codeg.app/guide/chat-channels)
+[Documentation →](https://docs.codeg.app/getting-started/deployment) · [Espaces de travail distants →](https://docs.codeg.app/guide/workspace#desktop-and-browser) · [Applications mobiles →](https://docs.codeg.app/getting-started/installation#mobile-apps) · [Canaux de chat →](https://docs.codeg.app/guide/chat-channels)
 
 </td>
 <td width="50%">
@@ -203,7 +203,7 @@ Faites tourner Codeg en application de bureau, en serveur auto-hébergé que vou
 
 ### Documents Office et recherche
 
-Demandez une présentation, un rapport ou un classeur, et regardez le vrai `.pptx`, `.docx` ou `.xlsx` s'afficher en direct à côté de la conversation. Les compétences de recherche intégrées — hypothèses, plan d'expérience, statistiques, recherche bibliographique — fonctionnent avec n'importe quel agent.
+Demandez une présentation, un rapport ou un classeur, et regardez le vrai `.pptx`, `.docx` ou `.xlsx` s'afficher en direct à côté de la conversation ; les PDF s'ouvrent dans leur propre visionneuse. Les compétences de recherche intégrées — hypothèses, plan d'expérience, statistiques, recherche bibliographique — fonctionnent avec n'importe quel agent.
 
 [Documentation →](https://docs.codeg.app/guide/office) · [Recherche →](https://docs.codeg.app/guide/research)
 
@@ -220,7 +220,7 @@ Demandez une présentation, un rapport ou un classeur, et regardez le vrai `.ppt
 
 ### Utilisation du navigateur et de l'ordinateur
 
-Dans l'application de bureau, les liens s'ouvrent dans un navigateur intégré à côté de vos fichiers : confiez à l'agent une page, un élément, une capture d'écran ou une erreur de console, ou laissez-le piloter une page que vous partagez. En préversion, les agents peuvent aussi voir et manipuler les fenêtres que vous partagez — et le bouton Arrêter n'est qu'à un clic.
+Dans l'application de bureau, les liens s'ouvrent dans un navigateur intégré à côté de vos fichiers, au format ordinateur, tablette ou téléphone : confiez à l'agent une page, un élément, une capture d'écran ou une erreur de console, ou laissez-le piloter une page que vous partagez. En préversion, les agents peuvent aussi voir et manipuler les fenêtres que vous partagez — et le bouton Arrêter n'est qu'à un clic.
 
 [Documentation →](https://docs.codeg.app/guide/browser) · [Utilisation de l'ordinateur →](https://docs.codeg.app/guide/computer-use)
 
@@ -255,11 +255,12 @@ Un éditeur, des diffs en direct et côte à côte, un client git complet avec u
 
 - **[Panneau du dépôt](https://docs.codeg.app/guide/repository)** — issues, pull requests, vérifications et fusions pour GitHub, GitLab, Gitea et Forgejo ; toute issue ou PR peut devenir une tâche à faire
 - **[Automatisations](https://docs.codeg.app/guide/automations)** — enregistrez une zone de saisie configurée et exécutez-la sans interface, selon une planification cron ou à la demande
-- **[Utilisation des tokens](https://docs.codeg.app/guide/token-usage)** — tendances, taux de succès du cache, carte de chaleur d'activité et utilisation par dossier, agent, modèle et session
+- **[Utilisation des tokens](https://docs.codeg.app/guide/token-usage)** — tendances, taux de succès du cache, carte de chaleur d'activité, utilisation par dossier, agent, modèle et session, et ce que cela coûterait aux prix catalogue de l'API
 - **[Bifurquer et réorienter](https://docs.codeg.app/guide/workspace#follow-along-%E2%80%94-the-conversation)** — sur les agents qui le prennent en charge, faites bifurquer une conversation depuis une réponse terminée, ou envoyez un message dans un tour encore en cours
 - **[Compétences](https://docs.codeg.app/guide/skills) et [MCP](https://docs.codeg.app/guide/mcp)** — packs de compétences par agent, scan MCP local, recherche et installation depuis le registre
 - **[Lanceur de projet](https://docs.codeg.app/guide/project-boot)** — créez visuellement le squelette d'un nouveau projet, avec un aperçu en direct
-- **[À votre image](https://docs.codeg.app/reference/settings/appearance)** — douze thèmes que vous pouvez recolorer token par token, fonds d'écran, rayon des coins et CSS personnalisé — dans n'importe laquelle des dix langues de l'interface
+- **[Notifications](https://docs.codeg.app/reference/settings/general#desktop-notifications)** — notifications du bureau, sons, et un bouton de barre des tâches qui clignote ou une icône du Dock qui rebondit quand un tour se termine ou qu'un agent a besoin de vous
+- **[À votre image](https://docs.codeg.app/reference/settings/appearance)** — douze thèmes que vous pouvez recolorer token par token, fonds d'écran, rayon des coins, largeur du chat, CSS personnalisé et une mascotte de bureau — dans n'importe laquelle des dix langues de l'interface
 - **[Sauvegarde et synchronisation](https://docs.codeg.app/reference/settings/system#backup-restore)** — sauvegardes chiffrées et synchronisation de la configuration entre machines, via un fichier ou votre propre serveur WebDAV
 - **[Schéma d'URL](../../docs/url-scheme.md)** — `codeg://session/<id>` ouvre une conversation depuis une autre application (bureau)
 - **Et plus encore** — presque chaque version apporte du nouveau ; les [notes de version](https://github.com/spacering-net/codeg/releases) en donnent la liste complète
@@ -313,6 +314,8 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg-server\web"; codeg-server
 docker run -d -p 3080:3080 -v codeg-data:/data ghcr.io/spacering-net/codeg:latest
 ```
 
+Dans les deux cas, ouvrez `http://<host>:3080` dans un navigateur et saisissez le jeton d'accès que le serveur affiche au démarrage (pour le conteneur, `docker logs` le montre), ou définissez `CODEG_TOKEN` pour choisir le vôtre.
+
 **Mobile** — installez l'[app iOS](https://apps.apple.com/app/codeg-client/id6785199071) ou l'[APK Android](https://github.com/xintaofei/codeg-android/releases/latest), puis pointez-la vers le **Service Web** de votre application de bureau ou vers votre propre `codeg-server` : URL, jeton, c'est prêt. Les étapes d'appairage sont dans [Applications mobiles](https://docs.codeg.app/getting-started/installation#mobile-apps).
 
 Compose, binaires précompilés, compilation depuis les sources et mises à jour sur place sont traités dans [Déploiement](https://docs.codeg.app/getting-started/deployment) ; les variables d'environnement dans [Configuration](https://docs.codeg.app/getting-started/configuration).
@@ -355,6 +358,8 @@ Les issues et les pull requests sont les bienvenues. Pour compiler Codeg vous-m�
 - [Superpowers](https://github.com/obra/superpowers) — alimente le module de compétences d'experts de Codeg
 - [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) — alimente le flux de travail des documents Office de Codeg
 - [scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) — alimente les compétences de Recherche scientifique de Codeg (sous-ensemble sous licence MIT)
+- [json-render](https://github.com/vercel-labs/json-render) — alimente les cartes, tableaux et graphiques du Rendu d'interface de Codeg
+- [cua-driver](https://github.com/trycua/cua) — alimente l'Utilisation de l'ordinateur de Codeg
 
 ## 📜 Licence
 
