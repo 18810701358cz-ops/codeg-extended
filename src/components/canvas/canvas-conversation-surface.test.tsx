@@ -70,6 +70,7 @@ vi.mock("@/contexts/acp-connections-context", () => {
 const lifecycle = vi.hoisted(() => ({
   conn: {} as Record<string, unknown>,
   handleSend: vi.fn(),
+  handleSetConfigOption: vi.fn(),
 }))
 vi.mock("@/hooks/use-connection-lifecycle", () => ({
   useConnectionLifecycle: () => ({
@@ -80,7 +81,7 @@ vi.mock("@/hooks/use-connection-lifecycle", () => ({
     autoConnectError: null,
     handleFocus: vi.fn(),
     handleSend: lifecycle.handleSend,
-    handleSetConfigOption: vi.fn(),
+    handleSetConfigOption: lifecycle.handleSetConfigOption,
     handleCancel: vi.fn(),
     handleRespondPermission: vi.fn(),
   }),
@@ -142,6 +143,18 @@ const CODEX_MODES = {
   current_mode_id: "auto",
   available_modes: [{ id: "auto", name: "Auto" }],
 }
+const CODEX_CONFIG = [
+  {
+    id: "model",
+    name: "Model",
+    type: "select",
+    current_value: "gpt-5.5",
+    options: [
+      { value: "gpt-5.5", name: "GPT-5.5" },
+      { value: "gpt-5.4", name: "GPT-5.4" },
+    ],
+  },
+]
 
 function agent(
   agentType: string,
@@ -216,13 +229,21 @@ describe("a draft card whose connection still belongs to the previous agent", ()
 
   it("presents the switch as still connecting, with the picked agent's chips", () => {
     // Codex is installed, so its connect is on its way and will replace this.
-    cachedSelectors.set("codex", { modes: CODEX_MODES, configOptions: null })
+    cachedSelectors.set("codex", {
+      modes: CODEX_MODES,
+      configOptions: CODEX_CONFIG,
+    })
     lifecycle.conn = connection("claude_code", "connected")
     renderDraftCard()
 
     expect(shell.props?.status).toBe("connecting")
     expect(shell.props?.modes).toEqual(CODEX_MODES.available_modes)
-    expect(shell.props?.configOptions).toEqual([])
+    // Codex's own list, not Claude's. An edit to it is kept off Claude's
+    // connection by the lifecycle hook (use-connection-lifecycle.agent-switch).
+    expect(shell.props?.configOptions).toEqual(CODEX_CONFIG)
+    expect(shell.props?.onConfigOptionChange).toBe(
+      lifecycle.handleSetConfigOption
+    )
     expect(shell.props?.selectedModeId).toBe("auto")
     expect(shell.props?.availableCommands).toEqual([])
   })

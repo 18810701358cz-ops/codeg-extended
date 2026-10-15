@@ -538,12 +538,19 @@ export function useConnectionLifecycle({
 
   const handleSetConfigOption = useCallback(
     (configId: string, valueId: string) => {
+      // The connection here still belongs to another agent (a draft mid-switch,
+      // or one whose new pick could not connect), so the options on screen are
+      // the selected agent's cached ones. Applying the edit would hand the
+      // other agent a value from a list that isn't its own, and file it under
+      // that agent's saved preferences. Dropped, as an edit is when there is
+      // no connection here at all.
+      if (connAgentType != null && connAgentType !== agentType) return
       touchActivity(contextKey)
       connSetConfigOption(configId, valueId).catch((e: unknown) =>
         console.error("[ConnLifecycle] setConfigOption:", e)
       )
     },
-    [connSetConfigOption, contextKey, touchActivity]
+    [agentType, connAgentType, connSetConfigOption, contextKey, touchActivity]
   )
 
   const handleRespondPermission = useCallback(
