@@ -417,7 +417,7 @@ pub fn build_agent_parser(agent_type: AgentType, env: &AgentEnv) -> Box<dyn Agen
         AgentType::DeepSeek => Box::new(deepseek::DeepSeekParser::for_env(env)),
         AgentType::Qoder => Box::new(qoder::QoderParser::for_env(env)),
         AgentType::Antigravity => Box::new(antigravity::AntigravityParser::for_env(env)),
-        AgentType::Kiro => Box::new(kiro::KiroParser::new()),
+        AgentType::Kiro => Box::new(kiro::KiroParser::for_env(env)),
         // Custom ACP agents have no native store to reverse-engineer; their
         // history is codeg's own ACP transcript.
         AgentType::Custom(_) => Box::new(acp_native::AcpNativeParser::new(agent_type)),

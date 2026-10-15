@@ -2203,7 +2203,7 @@ mod tests {
         type Resolver = fn(&AgentEnv) -> PathBuf;
         // `(agent, resolver its history parser is built from, slot index,
         // where under that slot's root the resolver points)`.
-        let cases: [(AgentType, Resolver, usize, &[&str]); 16] = [
+        let cases: [(AgentType, Resolver, usize, &[&str]); 17] = [
             (
                 AgentType::Grok,
                 parsers::grok::resolve_grok_home_dir_for_env,
@@ -2221,6 +2221,12 @@ mod tests {
                 parsers::antigravity::resolve_antigravity_sessions_dir_for_env,
                 0,
                 &["antigravity-acp", "conversations"],
+            ),
+            (
+                AgentType::Kiro,
+                parsers::kiro::resolve_kiro_home_dir_for_env,
+                0,
+                &[],
             ),
             (
                 AgentType::ClaudeCode,

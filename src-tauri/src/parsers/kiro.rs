@@ -42,7 +42,7 @@ use crate::parsers::{
     backfill_turn_durations, compute_session_stats, folder_name_from_path,
     infer_context_window_max_tokens, is_safe_subagent_id, merge_context_window_stats,
     relocate_orphaned_tool_results, title_from_user_text, with_reported_context_percent,
-    AgentParser, ParseError,
+    AgentEnv, AgentParser, ParseError,
 };
 
 /// `KIRO_HOME` if set (and non-empty), else `~/.kiro`.
@@ -54,7 +54,12 @@ use crate::parsers::{
 /// and `/tmp/kh/settings/cli.json`. The value is taken verbatim (no `~`
 /// expansion), which is what the file-system runtime's root slot mirrors.
 pub(crate) fn resolve_kiro_home_dir() -> PathBuf {
-    resolve_kiro_home_dir_from(std::env::var_os("KIRO_HOME"), dirs::home_dir())
+    resolve_kiro_home_dir_for_env(&AgentEnv::inherited())
+}
+
+/// The `.kiro` directory of the Kiro launched with `env`.
+pub(crate) fn resolve_kiro_home_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_kiro_home_dir_from(env.var_os("KIRO_HOME"), dirs::home_dir())
 }
 
 fn resolve_kiro_home_dir_from(kiro_home: Option<OsString>, home: Option<PathBuf>) -> PathBuf {
@@ -75,8 +80,15 @@ pub struct KiroParser {
 
 impl KiroParser {
     pub fn new() -> Self {
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Kiro launched with `env`.
+    pub fn for_env(env: &AgentEnv) -> Self {
         Self {
-            sessions_dir: resolve_kiro_sessions_root().join("cli"),
+            sessions_dir: resolve_kiro_home_dir_for_env(env)
+                .join("sessions")
+                .join("cli"),
         }
     }
 
@@ -1081,6 +1093,17 @@ mod tests {
         assert_eq!(
             resolve_kiro_home_dir_from(None, Some("/home/u".into())),
             PathBuf::from("/home/u/.kiro")
+        );
+    }
+
+    /// Built with an agent's launch env, the parser reads where THAT env puts
+    /// Kiro's sessions, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_home_of_the_launch_env() {
+        let env = AgentEnv::with_overrides(&[("KIRO_HOME", "/relocated/kiro")]);
+        assert_eq!(
+            KiroParser::for_env(&env).sessions_dir,
+            PathBuf::from("/relocated/kiro").join("sessions").join("cli")
         );
     }
 
