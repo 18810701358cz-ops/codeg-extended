@@ -4838,7 +4838,7 @@ mod tests {
                         // Nothing cached under this id, so the launch falls
                         // back to `sleep` on PATH.
                         cmd: "sleep".into(),
-                        args: vec!["30".into()],
+                        args: vec!["120".into()],
                         env: BTreeMap::new(),
                         sha256: None,
                     },
@@ -4880,10 +4880,22 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert_ne!(pid, 0, "the agent process never started");
+        // Up and still waiting to be answered, so whatever ends it below is
+        // the disconnect and not the agent leaving on its own.
+        assert!(is_alive(pid as i32), "the agent exited on its own");
 
         mgr.disconnect(&id).await.unwrap();
 
-        let gone = wait_until_dead(pid as i32).await;
+        // Longer than `wait_until_dead` allows, for a loaded CI machine; the
+        // handshake used to hold on for up to 60 s.
+        let mut gone = false;
+        for _ in 0..500 {
+            if !is_alive(pid as i32) {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         hydrate(&[]);
         assert!(
             gone,

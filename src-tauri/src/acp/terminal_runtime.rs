@@ -839,15 +839,22 @@ impl TerminalRuntime {
             removed
         };
 
-        // Kill concurrently. Sequentially, a session holding N terminals would
-        // cost up to N * KILL_REPORT_BUDGET to tear down, and this runs on the
-        // cancel path where the user is waiting.
-        futures::future::join_all(removed.into_iter().map(|terminal| async move {
-            if let Err(err) = terminal.kill_command().await {
-                tracing::error!("[ACP] Failed to release terminal during cleanup: {err:?}");
-            }
-        }))
-        .await;
+        kill_released(removed).await;
+    }
+
+    /// Kill every terminal still held here, whatever session it was started
+    /// for. For a connection that is ending: these are codeg's own children,
+    /// so ending the agent does not end them, and nothing else will once the
+    /// connection is gone.
+    pub async fn release_all(&self) {
+        let removed: Vec<_> = self
+            .terminals
+            .lock()
+            .await
+            .drain()
+            .map(|(_, terminal)| terminal)
+            .collect();
+        kill_released(removed).await;
     }
 
     async fn find_terminal(
@@ -871,6 +878,18 @@ impl TerminalRuntime {
 
         Ok(terminal)
     }
+}
+
+/// Kill terminals taken out of the map, concurrently. Sequentially, N terminals
+/// would cost up to N * KILL_REPORT_BUDGET to tear down, and this runs on the
+/// cancel path where the user is waiting.
+async fn kill_released(removed: Vec<Arc<TerminalInstance>>) {
+    futures::future::join_all(removed.into_iter().map(|terminal| async move {
+        if let Err(err) = terminal.kill_command().await {
+            tracing::error!("[ACP] Failed to release terminal during cleanup: {err:?}");
+        }
+    }))
+    .await;
 }
 
 async fn read_stream<R>(mut reader: R, terminal: Arc<TerminalInstance>)
@@ -2036,6 +2055,48 @@ mod tests {
              concurrent kills should cost roughly one {KILL_ESCALATE_GRACE:?} grace, \
              so this suggests they ran sequentially"
         );
+    }
+
+    /// An ending connection ends every terminal it still holds, whatever
+    /// session each was started for — including the ones a handshake that
+    /// stopped early never got to release by session.
+    #[tokio::test]
+    async fn release_all_ends_every_terminal_whatever_its_session() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let runtime = Arc::new(TerminalRuntime::with_base_env(BTreeMap::new()));
+        let mut pids = Vec::new();
+        for session in ["first-session", "second-session"] {
+            let pid_file = dir.path().join(format!("{session}.pid"));
+            let command = format!("sh -c 'echo $$ > {}; exec sleep 30'", pid_file.display());
+            runtime
+                .create_terminal(CreateTerminalRequest::new(
+                    SessionId::new(session.to_string()),
+                    command,
+                ))
+                .await
+                .expect("create terminal");
+            let mut pid = None;
+            for _ in 0..200 {
+                pid = std::fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|raw| raw.trim().parse::<u32>().ok());
+                if pid.is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            pids.push(pid.expect("the terminal announced its pid"));
+        }
+
+        runtime.release_all().await;
+
+        for pid in pids {
+            assert!(
+                wait_until_pid_gone(pid, Duration::from_secs(5)).await,
+                "terminal process {pid} outlived release_all"
+            );
+        }
+        assert!(runtime.terminals.lock().await.is_empty());
     }
 
     /// Output is readable while the command is still running — the snapshot is

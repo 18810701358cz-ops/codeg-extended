@@ -6027,6 +6027,9 @@ async fn run_connection(
         Arc::clone(&prompt_ledger),
     );
 
+    // For after the connection ends; the closure below takes the originals.
+    let terminals = Arc::clone(&terminal_runtime);
+    let handshake_token = handshake.clone();
     let ended = Client
         .builder()
         .name("codeg")
@@ -6859,11 +6862,11 @@ async fn run_connection(
                         // boundary instead of growing holes.
                         //
                         // Unlike the requests around it, the drain does not give
-                        // way to a cancelled handshake: the agent sends the
-                        // replay before it answers the load, so there is little
-                        // left to wait for, and stopping partway would leave a
-                        // hydrated transcript cut short for good — once it has
-                        // history, the next load never hydrates it again.
+                        // way to a cancelled handshake: the agent sends the whole
+                        // replay before it answers the load, so the drain reads
+                        // what has already arrived, and stopping partway would
+                        // leave a hydrated transcript cut short for good — once
+                        // it has history, the next load never hydrates it again.
                         let mut recording = hydrate_from_replay;
                         while let Ok(Ok(dispatch)) = tokio::time::timeout(
                             std::time::Duration::from_millis(100),
@@ -7335,11 +7338,19 @@ async fn run_connection(
             }
         })
         .await;
+    // Nothing the connection started may outlive it. The conversation loop
+    // releases its session's terminals on the way out, but a handshake that
+    // stopped early — cancelled, or failed — never reaches the loop.
+    terminals.release_all().await;
     match ended {
         // Let go before its session was up. Leaving the closure above has
         // already shut the connection down, and dropping its transport stops
-        // the agent process.
-        Err(err) if err.to_string().contains(HANDSHAKE_CANCELLED_SENTINEL) => {
+        // the agent process. The token has to agree: an error the agent sent
+        // could carry the same text.
+        Err(err)
+            if handshake_token.is_cancelled()
+                && err.to_string().contains(HANDSHAKE_CANCELLED_SENTINEL) =>
+        {
             tracing::info!("[ACP] disconnected during the handshake; stopped it there");
             Ok(())
         }
@@ -25605,11 +25616,23 @@ mod tests {
         agent.await.unwrap();
     }
 
+    /// What a [`HandshakeAgent`] does with the requests that establish a session.
+    #[derive(Clone, Default)]
+    struct HandshakeScript {
+        /// Never answer Initialize.
+        stall_initialize: bool,
+        /// While opening the session, have codeg run this command line in a
+        /// terminal it hosts, and report "terminal started" once it has.
+        terminal: Option<String>,
+        /// Refuse session/new, once released, instead of opening a session.
+        fail_session_new: bool,
+    }
+
     /// An in-process agent for `run_connection`'s handshake. It reports each
     /// request it receives (a prompt with its text), answers Initialize unless
-    /// told to stall there, holds session/new until `open_session` is notified,
-    /// and ends every prompt at once. `closed` fires when codeg's end of the
-    /// connection goes away.
+    /// its script stalls there, holds session/new until `open_session` is
+    /// notified, and ends every prompt at once. `closed` fires when codeg's end
+    /// of the connection goes away.
     struct HandshakeAgent {
         seen: mpsc::UnboundedReceiver<String>,
         open_session: Arc<tokio::sync::Notify>,
@@ -25618,9 +25641,14 @@ mod tests {
     }
 
     impl HandshakeAgent {
-        fn start(agent_end: agent_client_protocol::Channel, stall_initialize: bool) -> Self {
+        fn start(agent_end: agent_client_protocol::Channel, script: HandshakeScript) -> Self {
             use agent_client_protocol::schema::v1::{InitializeResponse, PromptResponse};
 
+            let HandshakeScript {
+                stall_initialize,
+                terminal,
+                fail_session_new,
+            } = script;
             let (seen_tx, seen) = mpsc::unbounded_channel();
             let (init_seen, new_seen, prompt_seen) = (seen_tx.clone(), seen_tx.clone(), seen_tx);
             let open_session = Arc::new(tokio::sync::Notify::new());
@@ -25649,13 +25677,29 @@ mod tests {
                     .on_receive_request(
                         async move |_req: NewSessionRequest,
                                     responder: Responder<NewSessionResponse>,
-                                    _cx: ConnectionTo<Client>| {
+                                    cx: ConnectionTo<Client>| {
                             let _ = new_seen.send("session/new".to_string());
-                            let release = Arc::clone(&release);
+                            let (seen, release) = (new_seen.clone(), Arc::clone(&release));
+                            let terminal = terminal.clone();
                             // Off the handler, so the held answer doesn't hold
                             // up the agent's other incoming messages.
                             tokio::spawn(async move {
+                                if let Some(command) = terminal {
+                                    cx.send_request_to(
+                                        Client,
+                                        CreateTerminalRequest::new(SessionId::new("s1"), command),
+                                    )
+                                    .block_task()
+                                    .await?;
+                                    let _ = seen.send("terminal started".to_string());
+                                }
                                 release.notified().await;
+                                if fail_session_new {
+                                    return responder.respond_with_error(
+                                        agent_client_protocol::Error::internal_error()
+                                            .data("scripted session/new failure"),
+                                    );
+                                }
                                 responder.respond(NewSessionResponse::new(SessionId::new("s1")))
                             });
                             Ok(())
@@ -25818,7 +25862,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_cancelled_handshake_stops_waiting_for_initialize() {
         let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
-        let mut agent = HandshakeAgent::start(agent_end, true);
+        let mut agent = HandshakeAgent::start(
+            agent_end,
+            HandshakeScript {
+                stall_initialize: true,
+                ..Default::default()
+            },
+        );
         let run = HandshakeRun::start(client_end).await;
         assert_eq!(agent.next_request().await, "initialize");
 
@@ -25839,7 +25889,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_cancelled_handshake_stops_waiting_for_the_session() {
         let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
-        let mut agent = HandshakeAgent::start(agent_end, false);
+        let mut agent = HandshakeAgent::start(agent_end, HandshakeScript::default());
         let run = HandshakeRun::start(client_end).await;
         assert_eq!(agent.next_request().await, "initialize");
         assert_eq!(agent.next_request().await, "session/new");
@@ -25863,7 +25913,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_prompt_sent_during_the_handshake_reaches_the_agent() {
         let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
-        let mut agent = HandshakeAgent::start(agent_end, false);
+        let mut agent = HandshakeAgent::start(agent_end, HandshakeScript::default());
         let run = HandshakeRun::start(client_end).await;
         assert_eq!(agent.next_request().await, "initialize");
         assert_eq!(agent.next_request().await, "session/new");
@@ -25878,6 +25928,99 @@ mod tests {
             .expect("the connection is running");
         let (ended, _) = run.ended().await;
         assert!(ended.is_ok(), "{ended:?}");
+        agent.closed().await;
+    }
+
+    /// A [`HandshakeAgent`] that starts a terminal while opening the session,
+    /// and the pid the terminal's command reports once it runs.
+    #[cfg(unix)]
+    async fn agent_with_a_terminal(
+        agent_end: agent_client_protocol::Channel,
+        pid_file: &std::path::Path,
+        fail_session_new: bool,
+    ) -> (HandshakeAgent, i32) {
+        let mut agent = HandshakeAgent::start(
+            agent_end,
+            HandshakeScript {
+                terminal: Some(format!(
+                    "sh -c 'echo $$ > {}; exec sleep 60'",
+                    pid_file.display()
+                )),
+                fail_session_new,
+                ..Default::default()
+            },
+        );
+        assert_eq!(agent.next_request().await, "initialize");
+        assert_eq!(agent.next_request().await, "session/new");
+        assert_eq!(agent.next_request().await, "terminal started");
+        for _ in 0..200 {
+            if let Some(pid) = std::fs::read_to_string(pid_file)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<i32>().ok())
+            {
+                return (agent, pid);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("the terminal never reported its pid");
+    }
+
+    /// Whether `pid` is gone within a few seconds.
+    #[cfg(unix)]
+    async fn process_ends(pid: i32) -> bool {
+        for _ in 0..200 {
+            // SAFETY: signal 0 only probes for existence; it sends no signal.
+            if unsafe { libc::kill(pid, 0) } != 0 {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        false
+    }
+
+    /// A terminal the agent starts while the session is being opened is
+    /// codeg's own child, not the agent's: stopping the agent leaves it running.
+    /// The conversation loop releases a session's terminals on its way out, but
+    /// a cancelled handshake never reaches the loop.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cancelled_handshake_ends_the_terminals_it_started() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+        let run = HandshakeRun::start(client_end).await;
+        let (agent, pid) =
+            agent_with_a_terminal(agent_end, &dir.path().join("terminal.pid"), false).await;
+
+        run.handshake.cancel();
+
+        let (ended, _) = run.ended().await;
+        assert!(ended.is_ok(), "{ended:?}");
+        assert!(
+            process_ends(pid).await,
+            "terminal process {pid} outlived its connection"
+        );
+        agent.closed().await;
+    }
+
+    /// The same when the handshake fails instead: the agent refuses the session
+    /// after starting a terminal for it.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_handshake_ends_the_terminals_it_started() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+        let run = HandshakeRun::start(client_end).await;
+        let (agent, pid) =
+            agent_with_a_terminal(agent_end, &dir.path().join("terminal.pid"), true).await;
+
+        agent.open_session.notify_one();
+
+        let (ended, _) = run.ended().await;
+        assert!(ended.is_err(), "the agent refused the session");
+        assert!(
+            process_ends(pid).await,
+            "terminal process {pid} outlived its connection"
+        );
         agent.closed().await;
     }
 
