@@ -630,7 +630,12 @@ pub(crate) fn apply_to_env(env: &mut std::collections::BTreeMap<String, String>,
 /// Exact set arithmetic, no heuristic: a live launch is in the registry by
 /// construction (invariant 1), so it can never appear in the diff.
 pub fn sweep_own_orphans() {
-    let roots = sweep_roots();
+    sweep_own_orphans_in(&sweep_roots(), &std::env::temp_dir());
+}
+
+/// [`sweep_own_orphans`] over explicit roots, so tests can point it somewhere
+/// other than the machine's real scratch roots.
+fn sweep_own_orphans_in(roots: &[PathBuf], temp_dir: &Path) {
     let our_pid = std::process::id();
 
     // INVARIANT 3: enumerate + diff under the lock...
@@ -652,6 +657,9 @@ pub fn sweep_own_orphans() {
     };
     // ...delete outside it.
     for path in claimed {
+        if holds_temp_dir(&path, temp_dir) {
+            continue;
+        }
         if remove_dir_robust(&path).is_ok() {
             tracing::info!("[ACP][scratch] reclaimed orphan {}", path.display());
         }
@@ -665,8 +673,14 @@ pub fn sweep_own_orphans() {
 /// see [`probe_pid`] for why "the probe failed" must not be read as "the owner
 /// is gone".
 pub fn sweep_foreign_orphans() {
+    sweep_foreign_orphans_in(&sweep_roots(), &std::env::temp_dir());
+}
+
+/// [`sweep_foreign_orphans`] over explicit roots, so tests can point it
+/// somewhere other than the machine's real scratch roots.
+fn sweep_foreign_orphans_in(roots: &[PathBuf], temp_dir: &Path) {
     let our_pid = std::process::id();
-    for entry in sweep_roots()
+    for entry in roots
         .iter()
         .filter_map(|root| std::fs::read_dir(root).ok())
         .flatten()
@@ -685,12 +699,48 @@ pub fn sweep_foreign_orphans() {
             continue;
         }
         let path = entry.path();
+        if holds_temp_dir(&path, temp_dir) {
+            tracing::info!(
+                "[ACP][scratch] leaving orphan {} from dead pid {pid} in place: \
+                 this process's own temp dir {} is inside it",
+                path.display(),
+                temp_dir.display()
+            );
+            continue;
+        }
         if remove_dir_robust(&path).is_ok() {
             tracing::info!(
                 "[ACP][scratch] reclaimed orphan {} from dead pid {pid}",
                 path.display()
             );
         }
+    }
+}
+
+/// Whether reclaiming `dir` would delete `temp_dir`, this process's own temp
+/// directory, along with it.
+///
+/// A codeg launched from inside an agent session inherits that session's
+/// scratch `TMPDIR` — another codeg's `<pid>-<8 hex>` launch dir — and adopts
+/// it as its own `std::env::temp_dir()`. Once that owner is dead it is an
+/// orphan by every rule above, and on macOS it sits under the short root this
+/// process sweeps as well, so the startup sweep would delete the temp directory
+/// the process has just started using: the parent of its broker socket, the
+/// directory a pi catalog query creates, the `TMPDIR` its terminals inherit.
+/// It is adopted, not orphaned. A sweep from a process that does not live in it
+/// reclaims it later.
+///
+/// Literal first, then resolved: the sweeps enumerate roots as written, while
+/// `TMPDIR` may spell the same directory another way (`/private/tmp` for
+/// `/tmp`). Only ever consulted to SKIP a delete, so a resolution that fails or
+/// surprises can cost a reclaim but never widen one.
+fn holds_temp_dir(dir: &Path, temp_dir: &Path) -> bool {
+    if temp_dir.starts_with(dir) {
+        return true;
+    }
+    match (std::fs::canonicalize(dir), std::fs::canonicalize(temp_dir)) {
+        (Ok(dir), Ok(temp_dir)) => temp_dir.starts_with(dir),
+        _ => false,
     }
 }
 
@@ -1079,6 +1129,70 @@ mod tests {
         ] {
             assert!(!is_inside_sweep_scope(Path::new(path)), "{path} is not");
         }
+    }
+
+    /// A pid that is positively dead: a child we spawned and reaped.
+    #[cfg(unix)]
+    fn a_dead_pid() -> u32 {
+        let mut child = std::process::Command::new("true").spawn().expect("spawn");
+        let pid = child.id();
+        child.wait().expect("reap");
+        assert_eq!(probe_pid(pid), PidState::Dead, "pid {pid} was reused already");
+        pid
+    }
+
+    /// A codeg launched from inside an agent session lives in that session's
+    /// launch dir. Its owner being dead makes that dir an orphan by name, but
+    /// reclaiming it would delete this process's own temp directory — the
+    /// startup sweep must leave it, and only it.
+    ///
+    /// The temp dir is handed over RESOLVED while the root is enumerated as
+    /// written, the way a `/private/tmp` `TMPDIR` meets the literal `/tmp`
+    /// short root on macOS; where nothing in the path is a symlink the two are
+    /// the same and the literal comparison carries it.
+    #[cfg(unix)]
+    #[test]
+    fn a_startup_sweep_leaves_the_launch_dir_this_process_lives_in() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dead = a_dead_pid();
+        let adopted = root.path().join(format!("{dead}-0000feed"));
+        let orphan = root.path().join(format!("{dead}-0000dead"));
+        for dir in [&adopted, &orphan] {
+            std::fs::create_dir(dir).expect("create");
+        }
+        let temp_dir = adopted.canonicalize().expect("resolve");
+
+        sweep_foreign_orphans_in(&[root.path().to_path_buf()], &temp_dir);
+
+        assert!(adopted.exists(), "the dir this process lives in must survive");
+        assert!(
+            !orphan.exists(),
+            "and the guard must not cost a real orphan its reclaim"
+        );
+    }
+
+    /// The in-session sweep gets the same guard. Only a recycled pid can put
+    /// this process inside a dir named for its own pid, but that sweep runs
+    /// every few minutes for the life of the process.
+    #[test]
+    fn the_in_session_sweep_leaves_the_launch_dir_this_process_lives_in() {
+        let root = tempfile::tempdir().expect("tempdir");
+        // Never registered, so both are orphans to `sweep_own_orphans`.
+        let adopted = root.path().join(new_dir_name(std::process::id()));
+        let orphan = root.path().join(new_dir_name(std::process::id()));
+        for dir in [&adopted, &orphan] {
+            std::fs::create_dir(dir).expect("create");
+        }
+        let temp_dir = adopted.join("nested");
+        std::fs::create_dir(&temp_dir).expect("create");
+
+        sweep_own_orphans_in(&[root.path().to_path_buf()], &temp_dir);
+
+        assert!(adopted.exists(), "the dir this process lives in must survive");
+        assert!(
+            !orphan.exists(),
+            "and the guard must not cost a real orphan its reclaim"
+        );
     }
 
     #[test]
