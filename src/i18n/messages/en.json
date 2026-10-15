@@ -3427,10 +3427,12 @@
         "downloadSvg": "Download as SVG",
         "downloadPng": "Download as PNG",
         "downloadMmd": "Download source (.mmd)",
+        "downloadPuml": "Download source (.puml)",
         "downloadFailed": "Could not save the diagram",
         "copySource": "Copy source",
         "copied": "Copied",
         "renderFailed": "Mermaid error: {message}",
+        "plantumlRenderFailed": "PlantUML error: {message}",
         "showSource": "Show source",
         "retry": "Retry"
       },

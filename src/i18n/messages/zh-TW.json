@@ -3427,10 +3427,12 @@
         "downloadSvg": "下載為 SVG",
         "downloadPng": "下載為 PNG",
         "downloadMmd": "下載原始碼（.mmd）",
+        "downloadPuml": "下載原始碼（.puml）",
         "downloadFailed": "圖表儲存失敗",
         "copySource": "複製原始碼",
         "copied": "已複製",
         "renderFailed": "Mermaid 錯誤：{message}",
+        "plantumlRenderFailed": "PlantUML 錯誤：{message}",
         "showSource": "檢視原始碼",
         "retry": "重試"
       },

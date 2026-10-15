@@ -3427,10 +3427,12 @@
         "downloadSvg": "Descargar como SVG",
         "downloadPng": "Descargar como PNG",
         "downloadMmd": "Descargar el código (.mmd)",
+        "downloadPuml": "Descargar el código (.puml)",
         "downloadFailed": "No se pudo guardar el diagrama",
         "copySource": "Copiar el código",
         "copied": "Copiado",
         "renderFailed": "Error de Mermaid: {message}",
+        "plantumlRenderFailed": "Error de PlantUML: {message}",
         "showSource": "Ver el código",
         "retry": "Reintentar"
       },

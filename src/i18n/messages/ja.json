@@ -3427,10 +3427,12 @@
         "downloadSvg": "SVG でダウンロード",
         "downloadPng": "PNG でダウンロード",
         "downloadMmd": "ソースをダウンロード（.mmd）",
+        "downloadPuml": "ソースをダウンロード（.puml）",
         "downloadFailed": "図を保存できませんでした",
         "copySource": "ソースをコピー",
         "copied": "コピーしました",
         "renderFailed": "Mermaid エラー: {message}",
+        "plantumlRenderFailed": "PlantUML エラー: {message}",
         "showSource": "ソースを表示",
         "retry": "再試行"
       },
