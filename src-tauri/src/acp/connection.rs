@@ -5375,6 +5375,12 @@ async fn apply_and_emit_session_config_options(
                 .filter(|(id, _)| !KIRO_SYNTHESIZED_OPTION_IDS.contains(&id.as_str()))
                 .map(|(id, value)| (id.clone(), value.clone()))
                 .collect();
+            // What the agent picked on its own, read before either replay
+            // below rewrites it (see `SessionState::agent_chosen_config_values`):
+            // the config options it advertised, and the agent and model
+            // selectors built from its handshake.
+            let mut agent_chosen =
+                current_config_option_values(&map_session_config_options(&initial_config_options));
             let updated = apply_preferred_session_options(
                 cx,
                 session,
@@ -5394,6 +5400,8 @@ async fn apply_and_emit_session_config_options(
                 synthesized.push(mode);
             }
             synthesized.push(model);
+            agent_chosen.extend(current_config_option_values(&synthesized));
+            state.write().await.agent_chosen_config_values = agent_chosen;
             let preferred_mode = preferred_config_values
                 .get(KIRO_MODE_OPTION_ID)
                 .map(String::as_str)
@@ -18458,6 +18466,106 @@ mod kiro_ext_tests {
             "win".to_string(),
             None,
         )))
+    }
+
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+    #[request(method = "session/set_mode", response = serde_json::Value)]
+    #[serde(transparent)]
+    struct FakeKiroSetMode(serde_json::Value);
+
+    /// The options probe reports, for an option it applied, what the agent runs
+    /// when that option is left unset (`SessionState::agent_chosen_config_values`).
+    /// Kiro's agent and model selectors are built from its handshake rather
+    /// than listed as config options, so its establishment records them itself:
+    /// as Kiro opened the session, before the saved picks replace them.
+    #[tokio::test]
+    async fn kiro_establishment_records_the_agents_own_picks() {
+        use agent_client_protocol::Channel;
+
+        let (client_end, agent_end) = Channel::duplex();
+        let agent = tokio::spawn(
+            Agent
+                .builder()
+                .on_receive_request(
+                    async |_req: FakeKiroSetModel,
+                           responder: Responder<serde_json::Value>,
+                           _cx: ConnectionTo<Client>| {
+                        responder.respond(serde_json::json!({}))
+                    },
+                    on_receive_request!(),
+                )
+                .on_receive_request(
+                    async |_req: FakeKiroSetMode,
+                           responder: Responder<serde_json::Value>,
+                           _cx: ConnectionTo<Client>| {
+                        responder.respond(serde_json::json!({}))
+                    },
+                    on_receive_request!(),
+                )
+                .connect_with(agent_end, async |_cx: ConnectionTo<Client>| {
+                    std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                }),
+        );
+        let state = kiro_state();
+        let establishment_state = Arc::clone(&state);
+        Client
+            .builder()
+            .connect_with(client_end, async move |cx: ConnectionTo<Agent>| {
+                let modes: SessionModeState = serde_json::from_value(serde_json::json!({
+                    "currentModeId": "kiro_default",
+                    "availableModes": [
+                        {"id": "kiro_default", "name": "kiro_default"},
+                        {"id": "kiro_planner", "name": "kiro_planner"}
+                    ]
+                }))
+                .expect("modes");
+                let response = NewSessionResponse::new(SessionId::new("s1")).modes(modes);
+                let mut session = AgentSession::attach(&cx, response)?;
+                let models = kiro_models();
+                let prefs = BTreeMap::from([
+                    ("model".to_string(), "claude-sonnet-5".to_string()),
+                    ("mode".to_string(), "kiro_planner".to_string()),
+                ]);
+                apply_and_emit_session_config_options(
+                    &cx,
+                    &mut session,
+                    &establishment_state,
+                    &EventEmitter::Noop,
+                    AgentType::Kiro,
+                    None,
+                    None,
+                    Some(&models),
+                    None,
+                    &prefs,
+                    Vec::new(),
+                )
+                .await;
+                Ok(())
+            })
+            .await
+            .expect("the establishment runs");
+        agent.abort();
+
+        let state = state.read().await;
+        assert_eq!(
+            state.agent_chosen_config_values,
+            BTreeMap::from([
+                ("mode".to_string(), "kiro_default".to_string()),
+                ("model".to_string(), "claude-opus-5.5".to_string()),
+            ]),
+            "Kiro's own picks, from before the replay"
+        );
+        // …while the session itself runs the saved picks.
+        let current =
+            current_config_option_values(state.config_options.as_deref().unwrap_or_default());
+        assert_eq!(
+            current.get("model").map(String::as_str),
+            Some("claude-sonnet-5")
+        );
+        assert_eq!(
+            current.get("mode").map(String::as_str),
+            Some("kiro_planner")
+        );
     }
 
     // The session opens on Kiro's default `auto`, whose metadata (no effort,
