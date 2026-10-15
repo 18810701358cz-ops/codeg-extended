@@ -3782,9 +3782,71 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // `kimi-k3`'s output cap but leaves every `moonshotai` context
             // window as it was, so the `infer_context_window_max_tokens`
             // mirror still holds.
+            //
+            // 2.2.0 leaves the ACP server alone: `packages/acp-server` differs
+            // from 2.1.1 only in its changelog and version. The mandated check
+            // passes verbatim (byte-identical converter body with
+            // `runtime_id: "local"`, the same three entry points,
+            // `session/fork` still ignoring `mcpServers`, neither
+            // `acpMcpServersToConfigs` nor the runtime-identity throw in the
+            // bundle). `engines.node` (>=22.19.0) and the runtime dependencies
+            // are unmoved. So are the sources of everything else codeg mirrors:
+            // config.toml's provider/model schemas, `KIMI_MODEL_*`, the skill
+            // roots, the auth gate, the bundled models.dev rows and the
+            // `wire.jsonl` writer. A live A/B against 2.1.1, driven with
+            // codeg's config.toml block, gate token and client capabilities,
+            // matched on `initialize`, `session/new` (modes, config options,
+            // slash commands), the `session/update` kinds and the wire record
+            // types. A stdio server handed over on `session/new` is spawned,
+            // listed and called, and 2.2.0 resumes and loads a session that
+            // 2.1.1 wrote.
+            //
+            // Four engine changes still reach codeg:
+            //
+            // - `UserPromptSubmit` hook output is folded into the prompt
+            //   message, tagged `meta.source = "user prompt submit hook"`,
+            //   instead of a separate `hook_result` message. It now sits in
+            //   `turn.prompt`'s input ahead of the typed text, so
+            //   `parsers/kimi_code.rs` projects that record the way Kimi does
+            //   (`prompt_display`).
+            // - The stdio MCP `executor` enum drops the never-implemented
+            //   `kaos`. An entry still naming it now fails the whole `mcp.json`
+            //   at load, where 2.1.1 refused only that server, so
+            //   `commands/mcp.rs` drops it from any entry it saves. An entry
+            //   codeg does not touch stays as written: failing the file is
+            //   upstream's choice, and quietly turning a `kaos` server into a
+            //   local launch is not codeg's to make.
+            // - The output cap no longer comes from the declared context size
+            //   for a model with no output limit of its own. An `openai` /
+            //   `openai_responses` provider then sends no cap at all, a `kimi`
+            //   one caps output at the window minus what is in use, and
+            //   `anthropic` keeps a default that drops from 128000 to 64000 for
+            //   a model Kimi does not recognize. 2.1.1 used codeg's declared
+            //   `max_context_size` (`llm.request.maxTokens = 262144`), which an
+            //   OpenAI-compatible server rejects when it is above the model's
+            //   own output limit. See `KIMI_DEFAULT_MAX_CONTEXT_SIZE`.
+            // - `WaitFor`, on by default, caps a wait at 90 s and tells the
+            //   model to move on instead of waiting again. More replies
+            //   therefore land in a turn Kimi opens itself when a background
+            //   task finishes. ACP never forwards such a turn; the parser keeps
+            //   its reply and does not show the task `<notification>` as a user
+            //   message.
+            //
+            // One new lever stays unused. `KIMI_CODE_TRUST_WORKSPACE=1` marks
+            // the workspace trusted, and trust is what loads a repository's own
+            // `.mcp.json` and `.kimi-code/mcp.json`, i.e. commands the
+            // repository chooses. Set from codeg, it would start them on the
+            // next session with nobody approving them, the hole codeg's old
+            // seeding of pi's trust opened (see
+            // `commands::acp::pi_project_trust_launch_block`). A user who wants
+            // it sets it in the agent's environment. The rest is inert for
+            // codeg. NotifyUser now also needs a host that declares the
+            // `update_panel` UI capability, which ACP never does. Tower mode,
+            // `kimi app`, the TUI work and the opt-in
+            // `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` do not touch `kimi acp`.
             distribution: AgentDistribution::Npx {
-                version: "2.1.1",
-                package: "@moonshot-ai/kimi-code@2.1.1",
+                version: "2.2.0",
+                package: "@moonshot-ai/kimi-code@2.2.0",
                 cmd: "kimi",
                 args: &["acp"],
                 env: &[],
@@ -4757,8 +4819,8 @@ mod tests {
         // range dies on the codeg-mcp stdio entry (see the registry entry).
         assert_npx_version(
             AgentType::KimiCode,
-            "2.1.1",
-            "@moonshot-ai/kimi-code@2.1.1",
+            "2.2.0",
+            "@moonshot-ai/kimi-code@2.2.0",
             Some("22.19.0"),
         );
         assert_npx_version(

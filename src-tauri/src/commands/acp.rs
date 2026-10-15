@@ -5004,10 +5004,14 @@ const KIMI_SYNTHETIC_TOKEN_ACCESS: &str = "codeg-local-gate";
 /// past session's model id to draw a gauge, while this one is the budget codeg DECLARES
 /// for a bring-your-own provider whose model is unknown — the managed block routes to
 /// any of the six interface types, so the model behind it may be GPT or Claude, not a
-/// Kimi model at all. Kimi spends the declared number rather than checking it (a live
-/// run with this default emits `llm.request.maxTokens = 262144` and
-/// `usage_update {size: 262144}`), so it is the compaction budget, not a fact about the
-/// model. Users on a bigger window raise it in the config panel.
+/// Kimi model at all. Kimi spends the declared number rather than checking it: a live
+/// run with this default reports `usage_update {size: 262144}`, so it is the
+/// compaction budget, not a fact about the model. Up to 2.1.1 Kimi also turned it
+/// into the request's output cap (`llm.request.maxTokens = 262144`), which an
+/// OpenAI-compatible server rejects when it is above the model's own output limit.
+/// From 2.2.0 it no longer sets the cap: an `openai` / `openai_responses` block
+/// sends none, and a `kimi` block caps output at this window minus the context in
+/// use. Users on a bigger window raise it in the config panel.
 const KIMI_DEFAULT_MAX_CONTEXT_SIZE: i64 = 262_144;
 /// The six native provider `type` values Kimi accepts in `[providers.<name>]`.
 const KIMI_INTERFACE_TYPES: &[&str] = &[

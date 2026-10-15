@@ -3318,9 +3318,10 @@ fn read_kimi_code_servers() -> Result<BTreeMap<String, Value>, AppCommandError> 
 /// (Kimi ignores it). `transport` is then dropped from the canonical spec so it
 /// can't leak into another agent's config on a cross-agent sync. See issue #325.
 ///
-/// Schema last checked against 0.42.0: unchanged since 0.23.3 apart from the
-/// optional `runtime_id` stdio field 0.38.0 added. 0.42.0 rewrote the agent
-/// loop but left `mcpCore/config-schema.ts` byte-identical.
+/// Schema last checked against 2.2.0: unchanged since 0.23.3 apart from the
+/// optional `runtime_id` stdio field 0.38.0 added and 2.2.0 narrowing the stdio
+/// `executor` enum to `local` (see `is_kimi_extension_field`). 0.42.0 rewrote
+/// the agent loop but left `mcpCore/config-schema.ts` byte-identical.
 fn kimi_code_entry_to_canonical(spec: &Value, id: &str) -> Result<Value, AppCommandError> {
     let Some(obj) = spec.as_object() else {
         return canonicalize_spec(spec, "Kimi Code config");
@@ -3438,7 +3439,15 @@ fn is_kimi_extension_field(key: &str, value: &Value, stdio: bool) -> bool {
         // stdio: which runtime executes the command. `runtime_id` arrived in
         // Kimi 0.38.0 alongside the runtime-binding rework.
         "runtime_id" => stdio && is_non_empty_str(value),
-        "executor" => stdio && matches!(value.as_str(), Some("local") | Some("kaos")),
+        // `local` is the only executor left. Kimi 2.2.0 deleted the
+        // never-implemented `kaos` from the enum, and one entry still naming
+        // it now fails the whole file at load ("mcp config initial load
+        // failed"), taking every other server in it down too. 2.1.1 only
+        // refused to start that one server. So codeg drops `kaos` from any
+        // entry it saves. Entries it does not touch keep it: upstream chose to
+        // fail them, and turning a `kaos` server into a local launch is not
+        // codeg's call.
+        "executor" => stdio && value.as_str() == Some("local"),
         // http/sse: OAuth is the only literal Kimi accepts for `auth`.
         "auth" => !stdio && value.as_str() == Some("oauth"),
         "bearerTokenEnvVar" => !stdio && is_non_empty_str(value),
@@ -3534,8 +3543,8 @@ fn canonical_to_kimi_code_entry(spec: &Value) -> Result<Value, AppCommandError> 
     // `is_kimi_extension_field` covers the keys Kimi models but codeg has no UI
     // for. They exist on disk when the user set them through Kimi's own
     // `/mcp-config`, and dropping them would quietly break that server — an
-    // OAuth'd remote losing its `auth`, or a `runtime_id`/`executor` entry
-    // falling back to the local runtime. `upsert_kimi_code_server_at` reads the
+    // OAuth'd remote losing its `auth`, or a `runtime_id` entry falling back
+    // to the local runtime. `upsert_kimi_code_server_at` reads the
     // rest back off disk; this only forwards what the caller's spec carries.
     let mut out = Map::new();
     for (key, value) in obj {
@@ -7720,7 +7729,7 @@ mod tests {
             "command": "npx",
             "args": ["-y", "server"],
             "runtime_id": "remote-box",       // Kimi 0.38.0+
-            "executor": "kaos",
+            "executor": "local",
             "startupTimeoutMs": 30_000,
             "toolTimeoutMs": 120_000,
             "enabledTools": ["a", "b"],
@@ -7730,7 +7739,7 @@ mod tests {
         let written = canonical_to_kimi_code_entry(&canonical).expect("write");
         let obj = written.as_object().expect("object");
         assert_eq!(obj.get("runtime_id").and_then(Value::as_str), Some("remote-box"));
-        assert_eq!(obj.get("executor").and_then(Value::as_str), Some("kaos"));
+        assert_eq!(obj.get("executor").and_then(Value::as_str), Some("local"));
         assert_eq!(obj.get("startupTimeoutMs").and_then(Value::as_i64), Some(30_000));
         assert_eq!(obj.get("toolTimeoutMs").and_then(Value::as_i64), Some(120_000));
         assert_eq!(obj.get("enabledTools"), Some(&json!(["a", "b"])));
@@ -7762,7 +7771,7 @@ mod tests {
             "type": "stdio",
             "command": "npx",
             "runtime_id": "remote-box",
-            "executor": "kaos",
+            "executor": "local",
             "toolTimeoutMs": 120_000,
             "disabledTools": ["danger"],
         });
@@ -7772,7 +7781,7 @@ mod tests {
         merge_kimi_extension_fields(&mut canonical, &kimi, &none);
         let obj = canonical.as_object().expect("object");
         assert_eq!(obj.get("runtime_id").and_then(Value::as_str), Some("remote-box"));
-        assert_eq!(obj.get("executor").and_then(Value::as_str), Some("kaos"));
+        assert_eq!(obj.get("executor").and_then(Value::as_str), Some("local"));
         assert_eq!(obj.get("toolTimeoutMs").and_then(Value::as_i64), Some(120_000));
         assert_eq!(obj.get("disabledTools"), Some(&json!(["danger"])));
         // The winning spec still owns every key it already had.
@@ -7873,7 +7882,7 @@ mod tests {
         let sample = |key: &str| -> (Value, bool) {
             match key {
                 "runtime_id" => (json!("local"), true),
-                "executor" => (json!("kaos"), true),
+                "executor" => (json!("local"), true),
                 "auth" => (json!("oauth"), false),
                 "bearerTokenEnvVar" => (json!("TOKEN"), false),
                 "startupTimeoutMs" | "toolTimeoutMs" => (json!(1_000), true),
@@ -7947,7 +7956,7 @@ mod tests {
             "type": "stdio",
             "command": "npx",
             "runtime_id": "",              // schema wants min length 1
-            "executor": "podman",          // not one of local | kaos
+            "executor": "podman",          // not `local`
             "startupTimeoutMs": 0,         // schema wants >= 1
             "toolTimeoutMs": "30000",      // string, not int
             "enabledTools": ["a", 7],      // not all strings
@@ -7969,6 +7978,63 @@ mod tests {
         }))
         .expect("http entry");
         assert!(!bad_auth.as_object().expect("object").contains_key("auth"));
+    }
+
+    #[test]
+    fn kimi_code_retired_kaos_executor_is_never_written_back() {
+        // Kimi 2.2.0 narrowed the stdio `executor` enum to `local`, and one
+        // entry still naming `kaos` fails the whole `mcp.json` at load — every
+        // other server in the file stops starting too. So `kaos` is dropped on
+        // every path that could write it: the writer itself...
+        let written = canonical_to_kimi_code_entry(&json!({
+            "type": "stdio", "command": "npx", "executor": "kaos",
+        }))
+        .expect("stdio entry");
+        assert!(!written
+            .as_object()
+            .expect("object")
+            .contains_key("executor"));
+
+        // ...the scan fold, so the editor never offers it back...
+        let mut canonical = json!({"type": "stdio", "command": "npx"});
+        merge_kimi_extension_fields(
+            &mut canonical,
+            &json!({"type": "stdio", "command": "npx", "executor": "kaos"}),
+            &Map::new(),
+        );
+        assert!(!canonical
+            .as_object()
+            .expect("object")
+            .contains_key("executor"));
+
+        // ...and a save of a server whose on-disk entry still carries it, which
+        // heals that entry and leaves its neighbour alone.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&json!({"mcpServers": {
+                "stale": {"command": "npx", "args": ["-y", "a"], "executor": "kaos"},
+                "other": {"command": "npx", "args": ["-y", "b"], "executor": "local"},
+            }}))
+            .expect("serialize"),
+        )
+        .expect("seed");
+        let servers = read_kimi_code_servers_at(&path).expect("read");
+        upsert_kimi_code_server_at(&path, "stale", &servers["stale"]).expect("save");
+        let on_disk: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("reread")).expect("json");
+        let stale = &on_disk["mcpServers"]["stale"];
+        assert!(
+            stale.get("executor").is_none(),
+            "the saved entry drops `kaos`"
+        );
+        assert_eq!(stale["args"], json!(["-y", "a"]));
+        assert_eq!(
+            on_disk["mcpServers"]["other"]["executor"].as_str(),
+            Some("local"),
+            "an untouched neighbour keeps its own valid executor"
+        );
     }
 
     #[test]

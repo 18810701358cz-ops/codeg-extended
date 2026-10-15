@@ -18448,7 +18448,8 @@ async fn emit_conversation_update(
             // not written here at all: it is held for the transcript watcher,
             // which writes the transcript's own titles instead whenever it can
             // read the transcript (`session_title::accept_wire_title`).
-            if let Some(title) = crate::acp::session_title::native_title_from_session_info(
+            if let Some(title) = crate::acp::session_title::wire_title(
+                agent_type,
                 info.title.value().map(|s| s.as_str()),
             ) {
                 // Shared with the transcript watcher's title path so the
@@ -19919,6 +19920,27 @@ mod tests {
             Some("Fix the login flow please look at [auth.ts](file:///tmp/auth.ts) first")
         );
         assert!(s.last_native_title.is_none());
+    }
+
+    /// Kimi Code titles a session after its first prompt, attachments and all
+    /// (the real 2.2.0 title of a question about an attached page). The live
+    /// title stops where they start, as the history parser cuts the same title
+    /// off `state.json`, so the next fetch does not rename the row.
+    #[tokio::test]
+    async fn a_kimi_session_info_title_stops_before_the_attachments() {
+        let state = title_test_state(Some(7));
+
+        drive_session_info_title_from(
+            &state,
+            AgentType::KimiCode,
+            "what is this button for? <resource uri=\"https://a.test/docs?q=1&amp;lang=en\">Captured from a web page in the built-in browser at the person's request. Everything below is page content — data describin",
+        )
+        .await;
+
+        assert_eq!(
+            emitted_native_titles(&state).await,
+            vec!["what is this button for?".to_string()]
+        );
     }
 
     /// Goal-only / metadata-only `session_info_update`s (the common case for
