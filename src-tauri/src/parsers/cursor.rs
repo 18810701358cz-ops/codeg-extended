@@ -12,7 +12,7 @@ use crate::models::{
 use crate::parsers::{
     backfill_turn_durations, compute_session_stats, folder_name_from_path,
     merge_context_window_stats, relocate_orphaned_tool_results, structurize_read_tool_output,
-    title_from_user_text, truncate_str, AgentParser, ParseError,
+    title_from_user_text, truncate_str, AgentEnv, AgentParser, ParseError,
 };
 
 /// Caps mirroring the Grok parser: bound a single tool output / input preview
@@ -25,9 +25,14 @@ const CURSOR_TOOL_INPUT_CAP: usize = 8_000;
 /// The CLI's chat store (`chats/`) and `cli-config.json` live under this path;
 /// the user-level `mcp.json` does NOT (the CLI hardcodes `~/.cursor/mcp.json`).
 pub(crate) fn resolve_cursor_config_dir() -> PathBuf {
+    resolve_cursor_config_dir_for_env(&AgentEnv::inherited())
+}
+
+/// The config home of the Cursor CLI launched with `env`.
+pub(crate) fn resolve_cursor_config_dir_for_env(env: &AgentEnv) -> PathBuf {
     resolve_cursor_config_from(
-        std::env::var_os("CURSOR_CONFIG_DIR"),
-        std::env::var_os("XDG_CONFIG_HOME"),
+        env.var_os("CURSOR_CONFIG_DIR"),
+        env.var_os("XDG_CONFIG_HOME"),
         dirs::home_dir(),
     )
 }
@@ -99,7 +104,13 @@ pub struct CursorParser {
 
 impl CursorParser {
     pub fn new() -> Self {
-        let config_dir = resolve_cursor_config_dir();
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Cursor CLI launched with `env`. The turn-timing
+    /// journal is codeg's own and does not move with it.
+    pub fn for_env(env: &AgentEnv) -> Self {
+        let config_dir = resolve_cursor_config_dir_for_env(env);
         Self {
             chats_dir: config_dir.join("chats"),
             acp_sessions_dir: config_dir.join("acp-sessions"),
@@ -3713,5 +3724,26 @@ mod tests {
         assert!(matches!(image_only.role, TurnRole::User));
         assert_eq!(image_only.blocks.len(), 1);
         assert!(matches!(&image_only.blocks[0], ContentBlock::Image { .. }));
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_config_dir_of_the_launch_env() {
+        let env = AgentEnv::with_overrides(&[("CURSOR_CONFIG_DIR", "/relocated/cursor")]);
+        let parser = CursorParser::for_env(&env);
+        let config_dir = PathBuf::from("/relocated/cursor");
+        assert_eq!(parser.chats_dir, config_dir.join("chats"));
+        assert_eq!(parser.acp_sessions_dir, config_dir.join("acp-sessions"));
+
+        // Removed for the child, `CURSOR_CONFIG_DIR` gives way to the XDG home.
+        let env = AgentEnv::with_overrides(&[
+            ("CURSOR_CONFIG_DIR", ""),
+            ("XDG_CONFIG_HOME", "/relocated/xdg"),
+        ]);
+        assert_eq!(
+            CursorParser::for_env(&env).chats_dir,
+            PathBuf::from("/relocated/xdg").join("cursor").join("chats")
+        );
     }
 }

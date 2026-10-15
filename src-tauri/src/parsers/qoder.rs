@@ -20,7 +20,7 @@ use crate::parsers::{
     backfill_turn_durations, compute_session_stats, folder_name_from_path,
     infer_context_window_max_tokens, latest_turn_prompt_usage_tokens, merge_context_window_stats,
     relocate_orphaned_tool_results, resolve_patch_line_numbers, structurize_read_tool_output,
-    title_from_user_text, with_reported_context_percent, AgentParser, ParseError,
+    title_from_user_text, with_reported_context_percent, AgentEnv, AgentParser, ParseError,
 };
 
 /// Resolve Qoder's global config dir the way Qoder itself does.
@@ -57,10 +57,16 @@ use crate::parsers::{
 /// passes, and the `QODERCN_*` twin, which belongs to the separate `.qoder-cn`
 /// distribution rather than the `@qoder-ai/qodercli` package pinned here.
 pub(crate) fn resolve_qoder_config_dir() -> PathBuf {
+    resolve_qoder_config_dir_for_env(&AgentEnv::inherited())
+}
+
+/// [`resolve_qoder_config_dir`] for the Qoder launched with `env`.
+pub(crate) fn resolve_qoder_config_dir_for_env(env: &AgentEnv) -> PathBuf {
     resolve_qoder_config_dir_from(
-        std::env::var_os("QODER_CONFIG_DIR"),
-        std::env::var_os("QODER_CLI_HOME").or_else(|| std::env::var_os("GEMINI_CLI_HOME")),
-        std::env::var_os("QODER_CONFIG_DIR_NAME"),
+        env.var_os("QODER_CONFIG_DIR"),
+        env.var_os("QODER_CLI_HOME")
+            .or_else(|| env.var_os("GEMINI_CLI_HOME")),
+        env.var_os("QODER_CONFIG_DIR_NAME"),
         dirs::home_dir(),
     )
 }
@@ -156,8 +162,13 @@ pub struct QoderParser {
 
 impl QoderParser {
     pub fn new() -> Self {
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Qoder launched with `env`.
+    pub fn for_env(env: &AgentEnv) -> Self {
         Self {
-            base_dir: resolve_qoder_config_dir().join("projects"),
+            base_dir: resolve_qoder_config_dir_for_env(env).join("projects"),
         }
     }
 
@@ -3479,6 +3490,43 @@ mod tests {
         assert!(
             QoderAskQuestion::list_from(Some(&serde_json::json!([{"header": "No text"}])))
                 .is_none()
+        );
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_config_dir_of_the_launch_env() {
+        let env = AgentEnv::with_overrides(&[("QODER_CONFIG_DIR", "/relocated/qoder")]);
+        assert_eq!(
+            QoderParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/qoder").join("projects")
+        );
+
+        // No config-dir override: the home keys, in order, and the dir name.
+        let env = AgentEnv::with_overrides(&[
+            ("QODER_CONFIG_DIR", ""),
+            ("QODER_CLI_HOME", "/relocated/qoder-home"),
+            ("GEMINI_CLI_HOME", "/relocated/unused"),
+            ("QODER_CONFIG_DIR_NAME", ".qoder-alt"),
+        ]);
+        assert_eq!(
+            QoderParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/qoder-home")
+                .join(".qoder-alt")
+                .join("projects")
+        );
+        let env = AgentEnv::with_overrides(&[
+            ("QODER_CONFIG_DIR", ""),
+            ("QODER_CLI_HOME", ""),
+            ("GEMINI_CLI_HOME", "/relocated/gemini-home"),
+            ("QODER_CONFIG_DIR_NAME", ""),
+        ]);
+        assert_eq!(
+            QoderParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/gemini-home")
+                .join(".qoder")
+                .join("projects")
         );
     }
 }

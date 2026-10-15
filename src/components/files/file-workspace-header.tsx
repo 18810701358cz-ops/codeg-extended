@@ -67,7 +67,7 @@ import { cn, copyTextFromMenu } from "@/lib/utils"
  * the address and its own buttons in a row of the same shape.
  *
  * Sits above every `FileWorkspacePanel` render branch (editor / preview /
- * diff / image / office), so it wraps them all uniformly.
+ * diff / image / PDF / office), so it wraps them all uniformly.
  */
 export function FileWorkspaceHeader() {
   const t = useTranslations("Folder.fileWorkspace")

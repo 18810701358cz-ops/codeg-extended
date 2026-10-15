@@ -59,13 +59,6 @@
   </tr>
   <tr>
     <td align="center" width="220">
-      <a href="https://console.lqapi.xyz/sign-up?aff=KPy9" target="_blank"><img src="./docs/images/lq-router.png" alt="LQ router" width="160" /></a><br/>
-      <strong><a href="https://console.lqapi.xyz/sign-up?aff=KPy9">LQ router</a></strong>
-    </td>
-    <td>Thanks to LQ router 中转站 for sponsoring this project! LQ router is a professional, enterprise-grade AI relay service that gives businesses and individual developers stable, efficient, and low-cost access to AI model APIs. The platform supports leading models including GPT, Claude, Grok, and Gemini, with GPT Pro rate multipliers as low as 0.1x. <a href="https://console.lqapi.xyz/sign-up?aff=KPy9">Join the group through the official website to receive $1 in trial credit</a>.</td>
-  </tr>
-  <tr>
-    <td align="center" width="220">
       <a href="https://go.apimart.ai/gh-codeg" target="_blank"><img src="./docs/images/apimart-ai.png" alt="APIMart" width="200" /></a><br/>
       <strong><a href="https://go.apimart.ai/gh-codeg">APIMart</a></strong>
     </td>
@@ -84,10 +77,10 @@
   </tr>
   <tr>
     <td align="center" width="220">
-      <a href="https://fluxionai.space/register?source=github&campaign=github-codeg-202609&promo=CODEG" target="_blank"><img src="./docs/images/fluxion-ai.png" alt="Fluxion AI" width="160" /></a><br/>
-      <strong><a href="https://fluxionai.space/register?source=github&campaign=github-codeg-202609&promo=CODEG">Fluxion AI</a></strong>
+      <a href="https://fluxionai.space/register?source=github&campaign=github-sidrune-codeg&promo=SDRCODEG" target="_blank"><img src="./docs/images/sidrune-ai.png" alt="Sidrune AI" width="200" /></a><br/>
+      <strong><a href="https://fluxionai.space/register?source=github&campaign=github-sidrune-codeg&promo=SDRCODEG">Sidrune AI</a></strong>
     </td>
-    <td>Thanks to Fluxion AI for sponsoring this project! Fluxion AI provides fast, reliable, and cost-efficient API access to GPT, Claude, Gemini, and other leading AI models through one unified API. New users can receive $3 in API credits through <a href="https://fluxionai.space/register?source=github&campaign=github-codeg-202609&promo=CODEG">our dedicated link</a>.</td>
+    <td>Thanks to Sidrune AI for sponsoring this project! Sidrune AI gives you access to GPT, Claude, and other major AI models through a single API. New users who sign up through <a href="https://fluxionai.space/register?source=github&campaign=github-sidrune-codeg&promo=SDRCODEG">our dedicated link</a> with promo code <code>SDRCODEG</code> get $3 in API credits.</td>
   </tr>
   <tr>
     <td align="center" width="220">

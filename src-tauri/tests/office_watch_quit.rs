@@ -14,7 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
-use codeg_lib::office_watch::{start_office_watch_core, stop_all_office_watches};
+use codeg_lib::office_watch::{start_office_watch_core, stop_all_office_watches, WatchHolder};
 
 /// An `officecli` that records its pid and then never announces readiness.
 const FAKE_OFFICECLI: &str = "#!/bin/sh\necho $$ > \"$0.pid\"\nexec sleep 600\n";
@@ -57,7 +57,11 @@ async fn quitting_kills_a_watch_that_is_still_starting() {
     let pid_file = bin.path().join("officecli.pid");
 
     temp_env::async_with_vars([("PATH", Some(path))], async {
-        let start = tokio::spawn(start_office_watch_core(root, "report.docx".into()));
+        let start = tokio::spawn(start_office_watch_core(
+            root,
+            "report.docx".into(),
+            WatchHolder::Web,
+        ));
         let pid = wait_for_pid(&pid_file).await;
         assert!(is_running(pid));
 
@@ -77,6 +81,7 @@ async fn quitting_kills_a_watch_that_is_still_starting() {
             start_office_watch_core(
                 docs.path().to_string_lossy().to_string(),
                 "report.docx".into(),
+                WatchHolder::Web,
             ),
         )
         .await

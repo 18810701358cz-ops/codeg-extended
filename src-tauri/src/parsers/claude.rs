@@ -8,8 +8,8 @@ use regex::Regex;
 
 use crate::models::*;
 use crate::parsers::{
-    folder_name_from_path, is_safe_subagent_id, title_from_user_text, truncate_str, AgentParser,
-    ParseError,
+    folder_name_from_path, is_safe_subagent_id, title_from_user_text, truncate_str, AgentEnv,
+    AgentParser, ParseError,
 };
 
 /// Regex that matches Claude Code system-injected XML tags and their content.
@@ -1161,8 +1161,14 @@ impl Default for ClaudeParser {
 
 impl ClaudeParser {
     pub fn new() -> Self {
-        let base_dir = resolve_claude_config_dir().join("projects");
-        Self { base_dir }
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Claude launched with `env`.
+    pub fn for_env(env: &AgentEnv) -> Self {
+        Self {
+            base_dir: resolve_claude_projects_dir_for_env(env),
+        }
     }
 
     /// Test-only constructor that lets callers point the parser at a fixture
@@ -1177,18 +1183,15 @@ impl ClaudeParser {
     }
 }
 
-/// Locate `<session_id>.jsonl` under any project directory of the Claude
-/// config dir. Used by the background watcher (`crate::acp::background_watch`)
-/// to arm its transcript tail; mirrors `get_conversation`'s discovery scan
-/// (Claude offers no forward cwd→project-dir encoding, so discovery is by
-/// session-id filename).
-pub(crate) fn find_session_file(session_id: &str) -> Option<PathBuf> {
-    find_session_file_in(&resolve_claude_config_dir().join("projects"), session_id)
-}
-
-/// `find_session_file` against an explicit base dir (test seam). `session_id`
-/// is embedded in a filename, so path-traversal shapes are rejected outright
-/// (`is_safe_subagent_id`: separators, `..`, drive colon, NUL).
+/// Locate `<session_id>.jsonl` under any project directory of `base_dir` —
+/// the `projects` dir of the launch's Claude config dir
+/// ([`resolve_claude_projects_dir_for_env`]). Used by the background watcher
+/// (`crate::acp::background_watch`) to arm its transcript tail; mirrors
+/// `get_conversation`'s discovery scan (Claude offers no forward
+/// cwd→project-dir encoding, so discovery is by session-id filename).
+/// `session_id` is embedded in a filename, so path-traversal shapes are
+/// rejected outright (`is_safe_subagent_id`: separators, `..`, drive colon,
+/// NUL).
 pub(crate) fn find_session_file_in(base_dir: &Path, session_id: &str) -> Option<PathBuf> {
     if session_id.is_empty() || !is_safe_subagent_id(session_id) {
         return None;
@@ -1561,7 +1564,19 @@ impl ClaudeParser {
 }
 
 pub(crate) fn resolve_claude_config_dir() -> PathBuf {
-    resolve_claude_config_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+    resolve_claude_config_dir_for_env(&AgentEnv::inherited())
+}
+
+/// The config dir of the Claude launched with `env`: its `CLAUDE_CONFIG_DIR`,
+/// else `~/.claude`.
+pub(crate) fn resolve_claude_config_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_claude_config_dir_from(env.var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+}
+
+/// Where the Claude launched with `env` keeps its transcripts:
+/// `<config dir>/projects/<encoded cwd>/<session id>.jsonl`.
+pub(crate) fn resolve_claude_projects_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_claude_config_dir_for_env(env).join("projects")
 }
 
 fn resolve_claude_config_dir_from(
@@ -2983,7 +2998,10 @@ fn parse_data_uri_image(raw: &str) -> Option<(String, String)> {
 ///   `old_string`, `new_str` → `new_string`, and `replace_name` →
 ///   `replace_all` (true only for `true` / `"true"`).
 /// * `Grep` (2.1.292, read out of the 2.1.293 binary): the other way round,
-///   see [`canonical_grep_input`].
+///   see [`canonical_grep_input`], which since 2.1.295 also reads grep's own
+///   `-l` / `-c` / `-r` flags.
+/// * `Bash` (2.1.295, read out of the 2.1.296 binary): `command_description` →
+///   `description`, and `timeout_ms` → `timeout`, see [`canonical_bash_input`].
 ///
 /// Each rename fills a canonical key the input left ABSENT, and only from a
 /// string, so an input that already uses the canonical names — the common
@@ -3004,6 +3022,7 @@ pub(crate) fn canonical_file_tool_input(
         "Write" => (true, &["path", "file_text", "file_content"]),
         "Edit" => (false, &["path", "old_str", "new_str", "replace_name"]),
         "Grep" => return canonical_grep_input(input),
+        "Bash" => return canonical_bash_input(input),
         _ => return None,
     };
     let args = input.as_object()?;
@@ -3042,30 +3061,115 @@ pub(crate) fn canonical_file_tool_input(
     changed.then_some(serde_json::Value::Object(args))
 }
 
-/// Grep's one alias, the way the CLI repairs it: a non-empty `file_path` is
-/// read as `path` when `path` is absent, and dropped when it repeats `path`.
-/// Beside a different `path` it is left alone, as the CLI leaves it, and so is
-/// an empty one. The CLI also appends a note on the rename to the result
-/// ("Note: Grep's parameter for where to search is named `path`. …"), which
-/// the search card's output parser keeps as a note line.
+/// Grep's aliases, the way the CLI repairs them (`coerceInput`, read out of the
+/// 2.1.296 binary), in its order:
+///
+/// * `file_path` (2.1.292): a non-empty one is read as `path` when `path` is
+///   absent, and dropped when it repeats `path`. Beside a different `path` it
+///   is left alone, as the CLI leaves it, and so is an empty one.
+/// * grep's own flags (2.1.295): `-l` is read as `output_mode:
+///   "files_with_matches"` and `-c` as `output_mode: "count"` when
+///   `output_mode` is absent, and dropped when it already says the same; `-r`
+///   is dropped (Grep always searches recursively). A flag counts when it is
+///   `true` or `"true"`. `-l` goes first, so beside `-c` it wins and `-c`
+///   stays, as in the CLI.
+///
+/// The CLI also appends a note on each repair to the result ("Note: Grep's
+/// parameter for where to search is named `path`. …", "Note: `-c` is not a
+/// Grep parameter and was read as …"), which the search card's output parser
+/// keeps as a note line.
 fn canonical_grep_input(input: &serde_json::Value) -> Option<serde_json::Value> {
+    const FLAG_MODES: [(&str, &str); 2] = [("-l", "files_with_matches"), ("-c", "count")];
     let original = input.as_object()?;
-    let file_path = original
-        .get("file_path")?
-        .as_str()
-        .filter(|path| !path.is_empty())?;
-    let mut args = original.clone();
-    match original.get("path") {
-        None => {
-            let value = args.remove("file_path")?;
-            args.insert("path".to_string(), value);
-        }
-        Some(path) if path.as_str() == Some(file_path) => {
-            args.remove("file_path");
-        }
-        Some(_) => return None,
+    if !["file_path", "-l", "-c", "-r"]
+        .iter()
+        .any(|key| original.contains_key(*key))
+    {
+        return None;
     }
-    Some(serde_json::Value::Object(args))
+    let mut args = original.clone();
+    let mut changed = false;
+    if let Some(file_path) = original
+        .get("file_path")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.is_empty())
+    {
+        match original.get("path") {
+            None => {
+                if let Some(value) = args.remove("file_path") {
+                    args.insert("path".to_string(), value);
+                    changed = true;
+                }
+            }
+            Some(path) if path.as_str() == Some(file_path) => {
+                args.remove("file_path");
+                changed = true;
+            }
+            Some(_) => {}
+        }
+    }
+    for (flag, mode) in FLAG_MODES {
+        if !is_cli_true(args.get(flag)) {
+            continue;
+        }
+        let unset = !args.contains_key("output_mode");
+        if unset || args.get("output_mode").and_then(serde_json::Value::as_str) == Some(mode) {
+            args.remove(flag);
+            args.insert(
+                "output_mode".to_string(),
+                serde_json::Value::String(mode.to_string()),
+            );
+            changed = true;
+        }
+    }
+    if is_cli_true(args.get("-r")) {
+        args.remove("-r");
+        changed = true;
+    }
+    changed.then_some(serde_json::Value::Object(args))
+}
+
+/// Bash's two aliases, the way CLI 2.1.296 repairs them:
+///
+/// * `timeout_ms` is read as `timeout` when `timeout` is absent and it holds a
+///   number or a string of digits; anything else stays where it is.
+/// * `command_description` (2.1.295) is read as `description` when
+///   `description` is absent and it is a string, and is dropped otherwise.
+///
+/// Values move as they are: a string of digits stays a string, as in the CLI.
+fn canonical_bash_input(input: &serde_json::Value) -> Option<serde_json::Value> {
+    let original = input.as_object()?;
+    if !original.contains_key("timeout_ms") && !original.contains_key("command_description") {
+        return None;
+    }
+    let mut args = original.clone();
+    let mut changed = false;
+    if !args.contains_key("timeout")
+        && args.get("timeout_ms").is_some_and(|value| {
+            value.is_number()
+                || value
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        })
+    {
+        if let Some(value) = args.remove("timeout_ms") {
+            args.insert("timeout".to_string(), value);
+            changed = true;
+        }
+    }
+    if let Some(description) = args.remove("command_description") {
+        if !args.contains_key("description") && description.is_string() {
+            args.insert("description".to_string(), description);
+        }
+        changed = true;
+    }
+    changed.then_some(serde_json::Value::Object(args))
+}
+
+/// The CLI's reading of a flag-like argument: `true` and `"true"` are true.
+fn is_cli_true(value: Option<&serde_json::Value>) -> bool {
+    matches!(value, Some(serde_json::Value::Bool(true)))
+        || value.and_then(serde_json::Value::as_str) == Some("true")
 }
 
 /// Move `alias` onto `canonical` when the canonical key is absent and the alias
@@ -3996,6 +4100,139 @@ mod tests {
         assert_eq!(
             canonical_file_tool_input("Glob", &json!({"pattern": "*.rs", "file_path": "/w"})),
             None
+        );
+    }
+
+    #[test]
+    fn grep_flags_are_read_the_way_the_cli_reads_them() {
+        // CLI 2.1.295: `-l` / `-c` set an absent `output_mode`, `true` or
+        // "true" alike, and `-r` is dropped.
+        assert_eq!(
+            canonical_file_tool_input("Grep", &json!({"pattern": "x", "-l": true})),
+            Some(json!({"pattern": "x", "output_mode": "files_with_matches"}))
+        );
+        assert_eq!(
+            canonical_file_tool_input("Grep", &json!({"pattern": "x", "-c": "true", "-r": true})),
+            Some(json!({"pattern": "x", "output_mode": "count"}))
+        );
+        // A flag that repeats `output_mode` is dropped; one that contradicts it
+        // stays, and so does a flag that is not true.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Grep",
+                &json!({"pattern": "x", "-c": true, "output_mode": "count"})
+            ),
+            Some(json!({"pattern": "x", "output_mode": "count"}))
+        );
+        for input in [
+            json!({"pattern": "x", "-l": true, "output_mode": "content"}),
+            json!({"pattern": "x", "-l": false}),
+            json!({"pattern": "x", "-c": "yes"}),
+            json!({"pattern": "x", "-r": "false"}),
+            json!({"pattern": "x", "-l": true, "output_mode": null}),
+        ] {
+            assert_eq!(canonical_file_tool_input("Grep", &input), None, "{input}");
+        }
+        // `-l` is read first, so it takes the mode and `-c` stays behind.
+        assert_eq!(
+            canonical_file_tool_input("Grep", &json!({"pattern": "x", "-l": true, "-c": true})),
+            Some(json!({"pattern": "x", "output_mode": "files_with_matches", "-c": true}))
+        );
+        // The flags and the `file_path` alias are repaired together.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Grep",
+                &json!({"pattern": "x", "file_path": "/w", "-r": "true", "-l": "true"})
+            ),
+            Some(json!({"pattern": "x", "path": "/w", "output_mode": "files_with_matches"}))
+        );
+        // Beside a `path` the `file_path` alias cannot settle, a flag still is.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Grep",
+                &json!({"pattern": "x", "path": "/w", "file_path": "/v", "-r": true})
+            ),
+            Some(json!({"pattern": "x", "path": "/w", "file_path": "/v"}))
+        );
+    }
+
+    #[test]
+    fn bash_aliases_are_read_the_way_the_cli_reads_them() {
+        // CLI 2.1.295: `command_description` is read as an absent
+        // `description`.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Bash",
+                &json!({"command": "ls", "command_description": "List files"})
+            ),
+            Some(json!({"command": "ls", "description": "List files"}))
+        );
+        // Beside a `description`, or when it is not a string, it is dropped.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Bash",
+                &json!({"command": "ls", "description": "Mine", "command_description": "Other"})
+            ),
+            Some(json!({"command": "ls", "description": "Mine"}))
+        );
+        assert_eq!(
+            canonical_file_tool_input("Bash", &json!({"command": "ls", "command_description": 3})),
+            Some(json!({"command": "ls"}))
+        );
+        // `timeout_ms` moves to an absent `timeout` when it holds a number or a
+        // string of digits, which moves as it is.
+        assert_eq!(
+            canonical_file_tool_input("Bash", &json!({"command": "ls", "timeout_ms": 5000})),
+            Some(json!({"command": "ls", "timeout": 5000}))
+        );
+        assert_eq!(
+            canonical_file_tool_input("Bash", &json!({"command": "ls", "timeout_ms": "5000"})),
+            Some(json!({"command": "ls", "timeout": "5000"}))
+        );
+        for input in [
+            json!({"command": "ls", "timeout_ms": "5s"}),
+            json!({"command": "ls", "timeout_ms": ""}),
+            json!({"command": "ls", "timeout_ms": 10, "timeout": 20}),
+            json!({"command": "ls", "description": "d"}),
+        ] {
+            assert_eq!(canonical_file_tool_input("Bash", &input), None, "{input}");
+        }
+        // PowerShell is not repaired by the CLI, so not here either.
+        assert_eq!(
+            canonical_file_tool_input(
+                "PowerShell",
+                &json!({"command": "ls", "command_description": "List files"})
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_history_bash_that_used_command_description_renders_with_description() {
+        let record = json!({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_b",
+                    "name": "Bash",
+                    "input": {"command": "cargo test", "command_description": "Run the tests"},
+                }],
+            },
+        });
+        let blocks = extract_assistant_content(&record);
+        let Some(ContentBlock::ToolUse {
+            input_preview: Some(input),
+            ..
+        }) = blocks.first()
+        else {
+            panic!("expected a tool_use block, got {blocks:?}");
+        };
+        let input: serde_json::Value = serde_json::from_str(input).unwrap();
+        assert_eq!(
+            input,
+            json!({"command": "cargo test", "description": "Run the tests"})
         );
     }
 
@@ -8386,6 +8623,17 @@ mod tests {
                 ("assistant", "Meanwhile, reading the code.".to_string()),
                 ("assistant", "The review is back.".to_string()),
             ]
+        );
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_config_dir_of_the_launch_env() {
+        let env = AgentEnv::with_overrides(&[("CLAUDE_CONFIG_DIR", "/relocated/claude")]);
+        assert_eq!(
+            ClaudeParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/claude").join("projects")
         );
     }
 }

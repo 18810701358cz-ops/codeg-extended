@@ -1538,11 +1538,16 @@ function FileToolInput({
   const cellType = str(input, "cell_type")
   const editMode = str(input, "edit_mode")
   const isRead = name === "read" || name === "read file"
+  // Claude Code's Read takes `allow_large` (CLI 2.1.296+) to read a text file,
+  // or a line range of one, past the usual size limits; `"true"` counts too.
+  const allowLarge =
+    isRead && (input.allow_large === true || input.allow_large === "true")
 
   const badges: string[] = []
   if (offset != null) badges.push(t("offset", { offset }))
   if (limit != null) badges.push(t("limit", { limit }))
   if (pages) badges.push(t("pages", { pages }))
+  if (allowLarge) badges.push(t("allowLarge"))
   if (editMode) badges.push(t("mode", { mode: editMode }))
   if (cellType) badges.push(t("cell", { cell: cellType }))
 

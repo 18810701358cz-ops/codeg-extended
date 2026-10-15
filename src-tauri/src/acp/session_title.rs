@@ -71,6 +71,20 @@ pub(crate) fn native_title_from_session_info(title: Option<&str>) -> Option<Stri
     crate::parsers::claude::displayed_session_title(title?)
 }
 
+/// The title `agent_type` published in `session_info_update.title`, as codeg
+/// shows it: [`native_title_from_session_info`], except for Kimi Code. Kimi's
+/// history parser reads the same title off `state.json` and cuts off the
+/// attachments Kimi wrote into it
+/// (`parsers::kimi_code::displayed_session_title`). The wire copy has to be
+/// cut the same way before it is shortened, or the row is renamed each time
+/// one of the two writes it.
+pub(crate) fn wire_title(agent_type: AgentType, title: Option<&str>) -> Option<String> {
+    match agent_type {
+        AgentType::KimiCode => crate::parsers::kimi_code::displayed_session_title(title?),
+        _ => native_title_from_session_info(title),
+    }
+}
+
 /// Take a title an agent published in `session_info_update.title`, already
 /// normalized by [`native_title_from_session_info`].
 ///
@@ -176,7 +190,7 @@ pub(crate) async fn publish_native_title(
 mod tests {
     use super::{
         accept_wire_title, native_title_from_session_info, publish_native_title,
-        release_held_wire_title,
+        release_held_wire_title, wire_title,
     };
     use crate::acp::session_state::SessionState;
     use crate::acp::types::AcpEvent;
@@ -232,6 +246,30 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Kimi's title carries the attachments codeg sent. Cut before it is
+    /// shortened, the live title is the one Kimi's history parser reads off
+    /// `state.json`; shortened first, it kept the start of the attachment.
+    #[test]
+    fn kimi_wire_title_is_cut_before_it_is_shortened() {
+        let typed = "p".repeat(90);
+        let published =
+            format!("{typed} <resource uri=\"https://a.test/\">Captured from a web page");
+        assert_eq!(
+            wire_title(AgentType::KimiCode, Some(&published)).as_deref(),
+            Some(typed.as_str())
+        );
+        assert_eq!(
+            wire_title(AgentType::KimiCode, Some(&published)),
+            crate::parsers::kimi_code::displayed_session_title(&published)
+        );
+        // Every other agent's title is read as before.
+        assert_eq!(
+            wire_title(AgentType::Codex, Some(&published)),
+            native_title_from_session_info(Some(&published))
+        );
+        assert_eq!(wire_title(AgentType::KimiCode, None), None);
     }
 
     /// The skip-cache is what keeps repeats cheap: Claude Code

@@ -485,6 +485,65 @@ describe("useReferenceSearch", () => {
     expect(groups).toEqual([])
   })
 
+  it("loads nothing for the tabs the panel isn't showing", async () => {
+    mocks.agents = [makeAgent("codex", { name: "Codex" })]
+    mocks.files = { allFiles: [makeFile("a.ts")], loaded: true }
+    mocks.listAllConversations.mockResolvedValue([makeConversation(1, "x")])
+    mocks.gitLog.mockResolvedValue({
+      entries: [makeCommit("abc1234")],
+      has_upstream: false,
+    })
+
+    const { result } = renderHook(() =>
+      useReferenceSearch({ defaultPath: "/repo", enabled: true })
+    )
+    let groups!: SuggestionGroup[]
+    await act(async () => {
+      groups = (await result.current("", undefined, [
+        "file",
+      ])) as SuggestionGroup[]
+    })
+
+    // Sessions and commits were hidden: neither request goes out.
+    expect(mocks.listAllConversations).not.toHaveBeenCalled()
+    expect(mocks.gitLog).not.toHaveBeenCalled()
+    expect(itemsOf(groups, "file")).toHaveLength(1)
+    expect(itemsOf(groups, "agent")).toHaveLength(0)
+    expect(itemsOf(groups, "session")).toHaveLength(0)
+    expect(itemsOf(groups, "commit")).toHaveLength(0)
+    // Still every group, so the provider's shape doesn't depend on the tabs.
+    expect(groups.map((g) => g.kind)).toEqual([
+      "file",
+      "agent",
+      "session",
+      "commit",
+    ])
+  })
+
+  it("keeps the git-log cache while the commit tab is hidden", async () => {
+    mocks.gitLog.mockResolvedValue({
+      entries: [makeCommit("abc1234")],
+      has_upstream: false,
+    })
+    const { result } = renderHook(() =>
+      useReferenceSearch({ defaultPath: "/repo", enabled: true })
+    )
+    let shownAgain!: SuggestionGroup[]
+    await act(async () => {
+      await result.current("")
+      await result.current("", undefined, ["agent", "file"])
+      shownAgain = (await result.current("", undefined, [
+        "agent",
+        "file",
+        "commit",
+      ])) as SuggestionGroup[]
+    })
+    // Hiding the tab didn't throw away what was already loaded…
+    expect(mocks.gitLog).toHaveBeenCalledTimes(1)
+    // …so switching it back on shows it straight away.
+    expect(itemsOf(shownAgain, "commit")).toHaveLength(1)
+  })
+
   it("retries a lazy fetch after it rejects (a failure is never cached)", async () => {
     mocks.listAllConversations
       .mockRejectedValueOnce(new Error("transient"))

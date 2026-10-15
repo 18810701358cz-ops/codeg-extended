@@ -126,6 +126,10 @@ import {
   withEventSoundsSuppressed,
 } from "@/lib/notification-sound"
 import {
+  requestWindowAttention,
+  withWindowAttentionSuppressed,
+} from "@/lib/window-attention"
+import {
   getSavedPrefsForConnect,
   saveModePreference,
   saveConfigPreference,
@@ -4873,10 +4877,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
               created_at: new Date().toISOString(),
             },
           })
-          // A blocked agent is exactly what a notification is for, and this
-          // was the one such state that never raised one — the sound path had
-          // covered it since it shipped. Body names the agent only: the
-          // question text is the agent's own prose.
+          // A blocked agent is exactly what a notification is for — the sound
+          // path had covered this one since it shipped. Body names the agent
+          // only: the question text is the agent's own prose.
           {
             const nc = quiet
               ? null
@@ -4890,6 +4893,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                   }),
                 })
               )
+              void requestWindowAttention("question_request")
             }
           }
           break
@@ -4917,6 +4921,27 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
               created_at: new Date().toISOString(),
             },
           })
+          // Blocked on the user's sign-off exactly like a permission prompt —
+          // which is what Claude Code's own ExitPlanMode arrives as — so it
+          // asks under that event's switches rather than a row of its own,
+          // and every plan approval reads the same whichever agent raised it.
+          // Body names the agent only: the plan is the agent's own prose.
+          {
+            const nc = quiet
+              ? null
+              : storeRef.current.connections.get(contextKey)
+            if (nc) {
+              void notifyDesktop(
+                "permission_request",
+                sessionNotification(contextKey, {
+                  body: t("notificationPlanApproval", {
+                    agent: getAgentLabel(nc.agentType),
+                  }),
+                })
+              )
+              void requestWindowAttention("permission_request")
+            }
+          }
           break
         case "plan_approval_resolved":
           // The approval was answered (this or another window) or canceled.
@@ -5019,6 +5044,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                       : many,
                 })
               )
+              void requestWindowAttention("background_task")
             }
             // 4. flip each async sub-agent's launch card to its terminal
             //    (completed + result) state IN-MEMORY, by rewriting the
@@ -5082,6 +5108,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                   body: `${agentLabel}: ${tChat("permissionDialog.subtitle")}`,
                 })
               )
+              void requestWindowAttention("permission_request")
             }
           }
           break
@@ -5522,6 +5549,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                     }),
                   })
                 )
+                void requestWindowAttention("error")
               } else {
                 void notifyDesktop(
                   "turn_complete",
@@ -5529,6 +5557,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                     body: t("notificationTurnComplete", { agent: agentLabel }),
                   })
                 )
+                void requestWindowAttention("turn_complete")
               }
             }
           }
@@ -5600,6 +5629,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                 }),
               })
             )
+            void requestWindowAttention("error")
           }
           if (quiet) break
           const connKey = nc?.connectionId ?? contextKey
@@ -5983,15 +6013,18 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // must not fire a burst of cues for turns that finished minutes ago.
           // Doubly true of OS notifications, which unlike a tone stay in the
           // notification centre until the user clears them by hand — and of
-          // toasts, which would re-announce every notice of the gap at once.
+          // toasts, which would re-announce every notice of the gap at once,
+          // and of a taskbar flash for a prompt that was answered long ago.
           envelopeEffectsMutedRef.current += 1
           try {
             withEventSoundsSuppressed(() =>
-              withDesktopNotificationsSuppressed(() => {
-                for (const envelope of events) {
-                  applyMappedEnvelope(contextKey, envelope)
-                }
-              })
+              withDesktopNotificationsSuppressed(() =>
+                withWindowAttentionSuppressed(() => {
+                  for (const envelope of events) {
+                    applyMappedEnvelope(contextKey, envelope)
+                  }
+                })
+              )
             )
           } finally {
             envelopeEffectsMutedRef.current -= 1
