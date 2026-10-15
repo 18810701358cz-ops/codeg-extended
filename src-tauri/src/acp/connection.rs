@@ -17728,7 +17728,9 @@ fn kiro_available_commands(notif: &KiroCommandsAvailableNotification) -> Vec<Ava
                 .and_then(|m| m.get("local"))
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
-            if name.is_empty() || local || TUI_ONLY.contains(&name) || !seen.insert(name.to_string()) {
+            // Every built-in's name is reserved, offered here or not: a prompt
+            // by that name never runs, because Kiro runs the command.
+            if name.is_empty() || !seen.insert(name.to_string()) || local || TUI_ONLY.contains(&name) {
                 return None;
             }
             let input_hint = meta
@@ -17944,6 +17946,32 @@ mod kiro_ext_tests {
                 ("release", "Cut a release", Some("<version> [notes]")),
             ]
         );
+    }
+
+    /// A prompt that shares its name with a built-in Kiro keeps out of the
+    /// menu (the TUI-only and client-local ones included), so picking it can
+    /// never run the command instead.
+    #[test]
+    fn a_prompt_named_like_a_hidden_builtin_stays_out_of_the_slash_menu() {
+        let notif: KiroCommandsAvailableNotification = serde_json::from_value(serde_json::json!({
+            "sessionId": "s1",
+            "commands": [
+                {"name": "/compact", "description": "Compact conversation history"},
+                {"name": "/quit", "description": "Quit the application"},
+                {"name": "/clear", "description": "Clear the screen", "meta": {"local": true}}
+            ],
+            "prompts": [
+                {"name": "quit", "description": "A file prompt", "serverName": "local"},
+                {"name": "/clear", "description": "A skill", "serverName": "skill:config"},
+                {"name": "review", "description": "Review the diff", "serverName": "local"}
+            ]
+        }))
+        .unwrap();
+        let names: Vec<_> = kiro_available_commands(&notif)
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, ["compact", "review"]);
     }
 
     #[test]
