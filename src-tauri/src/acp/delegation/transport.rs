@@ -1025,9 +1025,10 @@ mod tests {
         use tokio::net::UnixListener;
 
         // `/tmp`, not `$TMPDIR`: a socket path has ~104 bytes of `sun_path` to
-        // live in, and codeg exports a 72-byte per-session `TMPDIR` to the
-        // agents it launches. Under `tempdir()` this lands at 99 bytes there —
-        // green, but one directory level from an unexplainable red.
+        // live in, and `$TMPDIR` is whatever the environment hands us. Under
+        // the ~72-byte per-session `TMPDIR` codeg exported before #754 this
+        // landed at 99 bytes — green, but one directory level from an
+        // unexplainable red — and a hand-set one can be longer still.
         let dir = tempfile::tempdir_in("/tmp").unwrap();
         let path = dir.path().join("codeg-mcp.sock");
         let listener = UnixListener::bind(&path).unwrap();

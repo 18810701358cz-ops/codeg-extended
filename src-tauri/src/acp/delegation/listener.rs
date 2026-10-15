@@ -1598,11 +1598,12 @@ fn short_socket_dir() -> PathBuf {
 /// deletes wholesale ([`is_inside_sweep_scope`]) — inside [`short_socket_dir`].
 /// Neither fallback is hypothetical housekeeping:
 ///
-/// * The length budget: codeg exports a ~72-byte per-session `TMPDIR` to the
-///   agents it launches, so a codeg started from inside one is already within
-///   a few bytes of the macOS cap, and a container or a hand-set `TMPDIR`
-///   clears it outright. Without the fallback that produced a socket nobody
-///   could dial and no error anywhere — see [`DelegationListener::bind`].
+/// * The length budget: a container's or a hand-set `TMPDIR` can clear the
+///   `sun_path` cap outright, and a codeg session's own `TMPDIR` used to come
+///   close — ~72 bytes under `/var/folders/…/T/` until #754 moved it to the
+///   short scratch root, so a codeg started inside one sat a few bytes under
+///   the macOS cap. Without the fallback that produced a socket nobody could
+///   dial and no error anywhere — see [`DelegationListener::bind`].
 /// * The sweep scope: an app launched from inside a codeg-managed session
 ///   inherits that session's scratch `TMPDIR`, whose directory is named like a
 ///   `<pid>-<8 hex>` launch dir and is deleted wholesale — by the codeg that
