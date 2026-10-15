@@ -169,8 +169,11 @@ fn leaves_room_for_a_child_socket(root: &Path) -> bool {
 /// account to run codeg would own `codeg-acp` and every other account would be
 /// unable to create inside it. [`create`] makes it `0700` so the contents stay
 /// as private as they were in the per-user directory this replaces.
+///
+/// `pub(crate)` so [`crate::acp::delegation::listener`]'s socket tests can
+/// construct a temp directory inside the sweep scope this root belongs to.
 #[cfg(unix)]
-fn short_root() -> PathBuf {
+pub(crate) fn short_root() -> PathBuf {
     PathBuf::from(format!(
         "/tmp/{SCRATCH_NAMESPACE}-{}",
         // Always succeeds; `geteuid` has no failure mode.
@@ -275,6 +278,24 @@ fn sweep_roots() -> Vec<PathBuf> {
         }
     }
     roots
+}
+
+/// Whether `path` sits inside (or equals) any sweep root — i.e. it or an
+/// ancestor may be deleted wholesale by a sweep as a `<pid>-<8hex>` orphan.
+/// Consumer: the delegation listener's `default_socket_path`, which must never
+/// place the long-lived broker socket where a startup sweep can reach.
+///
+/// Compared exactly as written, never canonicalized — the same convention the
+/// listener's own path guards follow, and load-bearing: on macOS a resolved
+/// `/tmp` becomes `/private/tmp`, which would stop matching the literal roots
+/// the sweeps enumerate while still naming the same directories.
+///
+/// Unix-only because its consumer is: the Windows `default_socket_path` is a
+/// named pipe and ignores the temp directory, so an unused copy here would be
+/// dead code on that target.
+#[cfg(unix)]
+pub(crate) fn is_inside_sweep_scope(path: &Path) -> bool {
+    sweep_roots().iter().any(|root| path.starts_with(root))
 }
 
 /// A scratch directory owned by one agent launch.
@@ -960,6 +981,39 @@ mod tests {
             "and the ambient one, which a previous version may have filled"
         );
         assert!(roots.contains(&short_root()), "and the short fallback");
+        // Every root is inside the sweep scope by definition — the scope IS
+        // this list — which is what lets the socket guard refuse them all.
+        for root in &roots {
+            assert!(
+                is_inside_sweep_scope(root),
+                "{} is a sweep root, so it must be in scope",
+                root.display()
+            );
+        }
+    }
+
+    /// The guard the broker socket leans on: exactly the paths a startup sweep
+    /// may delete wholesale, and nothing else. Both sides are built from the
+    /// same helpers the sweeps use, so this encodes the scope rather than this
+    /// machine's current temp layout.
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_scope_covers_scratch_dirs_and_nothing_else() {
+        // Equal to a root, and a `<pid>-<8 hex>` leaf under one.
+        assert!(is_inside_sweep_scope(&short_root()));
+        assert!(is_inside_sweep_scope(
+            &short_root().join(format!("{}-deadbeef", std::process::id()))
+        ));
+        // The ambient root, wherever this machine's temp_dir points.
+        assert!(is_inside_sweep_scope(
+            &std::env::temp_dir().join(SCRATCH_NAMESPACE).join("4242-deadbeef")
+        ));
+        // A plain per-user temp path is NOT in scope: a socket there must keep
+        // the ordinary placement. Constructed, not read, so it holds on every
+        // machine.
+        assert!(!is_inside_sweep_scope(Path::new(
+            "/var/folders/hl/26lfwjvs4s760g9fm1nk15xm0000gn/T/codeg-delegation-4242.sock"
+        )));
     }
 
     #[test]
@@ -988,6 +1042,10 @@ mod tests {
             "123",                 // no suffix at all
             "",                    // empty
             "-deadbeef",           // no pid
+            // The broker socket's own names never match; the danger is the
+            // PARENT directory they sit in going with a sweep.
+            "codeg-delegation-16527.sock",
+            ".stg-16527-f41c5659",
         ] {
             assert_eq!(pid_from_dir_name(name), None, "{name} must not parse");
         }
