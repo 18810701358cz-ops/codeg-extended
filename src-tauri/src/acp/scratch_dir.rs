@@ -285,9 +285,9 @@ fn sweep_roots() -> Vec<PathBuf> {
 /// Consumer: the delegation listener's `default_socket_path`, which must never
 /// place the long-lived broker socket where that can happen.
 ///
-/// Two tests, either one enough:
+/// Three tests, any one enough:
 ///
-/// * Under one of THIS process's [`sweep_roots`].
+/// * Under one of THIS process's [`sweep_roots`], as written.
 /// * Under any directory NAMED like a scratch root ([`is_scratch_root_name`]),
 ///   wherever it sits. This process is not the only thing that deletes launch
 ///   dirs: the codeg that owns one removes it when that launch ends, and every
@@ -297,22 +297,31 @@ fn sweep_roots() -> Vec<PathBuf> {
 ///   as soon as the inherited `TMPDIR` pushes [`choose_root`] to the short
 ///   root, and a `/private/tmp` spelling of the macOS short root never matches
 ///   the literal one. The name test sees both.
+/// * The same name test on the path RESOLVED through its nearest existing
+///   ancestor, because an alias can hide every root component from the two
+///   tests above: a symlink into a launch dir, or a relative `TMPDIR=.` taken
+///   from inside one.
 ///
-/// Never canonicalized — the same convention the listener's own path guards
-/// follow. The root test compares against the literal roots the sweeps
-/// enumerate, and on macOS a resolved `/tmp` becomes `/private/tmp`, which
-/// would stop matching them; the name test does not care how the prefix is
-/// spelled.
+/// Resolution only ever adds a way in; it never replaces the literal tests.
+/// The roots are compared as written because that is how the sweeps enumerate
+/// them, and on macOS a resolved `/tmp` becomes `/private/tmp`, which would
+/// stop matching — the same convention the listener's own path guards follow.
 ///
 /// Unix-only because its consumer is: the Windows `default_socket_path` is a
 /// named pipe and ignores the temp directory, so an unused copy here would be
 /// dead code on that target.
 #[cfg(unix)]
 pub(crate) fn is_inside_sweep_scope(path: &Path) -> bool {
+    let named = |path: &Path| {
+        path.ancestors()
+            .any(|dir| dir.file_name().is_some_and(is_scratch_root_name))
+    };
     sweep_roots().iter().any(|root| path.starts_with(root))
+        || named(path)
         || path
             .ancestors()
-            .any(|dir| dir.file_name().is_some_and(is_scratch_root_name))
+            .find_map(|dir| std::fs::canonicalize(dir).ok())
+            .is_some_and(|resolved| named(&resolved))
 }
 
 /// The last component of every root [`scratch_root`] can pick, under whatever
@@ -1146,29 +1155,79 @@ mod tests {
     /// reclaiming it would delete this process's own temp directory — the
     /// startup sweep must leave it, and only it.
     ///
-    /// The temp dir is handed over RESOLVED while the root is enumerated as
-    /// written, the way a `/private/tmp` `TMPDIR` meets the literal `/tmp`
-    /// short root on macOS; where nothing in the path is a symlink the two are
-    /// the same and the literal comparison carries it.
+    /// The root is enumerated through a symlink while the temp dir is handed
+    /// over by its real path, so the two spellings never match as written —
+    /// the way a `/private/tmp` `TMPDIR` meets the literal `/tmp` short root on
+    /// macOS, but on every platform. Only the resolved comparison can keep it.
     #[cfg(unix)]
     #[test]
     fn a_startup_sweep_leaves_the_launch_dir_this_process_lives_in() {
-        let root = tempfile::tempdir().expect("tempdir");
+        let holder = tempfile::tempdir().expect("tempdir");
+        let root = holder.path().join("root");
+        std::fs::create_dir(&root).expect("create root");
+        let alias = holder.path().join("alias");
+        std::os::unix::fs::symlink(&root, &alias).expect("symlink");
         let dead = a_dead_pid();
-        let adopted = root.path().join(format!("{dead}-0000feed"));
-        let orphan = root.path().join(format!("{dead}-0000dead"));
+        let adopted = root.join(format!("{dead}-0000feed"));
+        let orphan = root.join(format!("{dead}-0000dead"));
         for dir in [&adopted, &orphan] {
             std::fs::create_dir(dir).expect("create");
         }
-        let temp_dir = adopted.canonicalize().expect("resolve");
 
-        sweep_foreign_orphans_in(&[root.path().to_path_buf()], &temp_dir);
+        sweep_foreign_orphans_in(&[alias], &adopted);
 
         assert!(adopted.exists(), "the dir this process lives in must survive");
         assert!(
             !orphan.exists(),
             "and the guard must not cost a real orphan its reclaim"
         );
+    }
+
+    /// The scope checked against what a sweep ACTUALLY deletes rather than
+    /// against its own reasoning: everything a sweep takes down must have been
+    /// in scope beforehand, including through an alias that hides the root's
+    /// name. The bystander is the control — it survives and is out of scope, so
+    /// the scope is not simply answering yes.
+    ///
+    /// Rooted in `/tmp` rather than `TMPDIR`: inside a codeg-managed session
+    /// `TMPDIR` is itself a launch dir, which would put the bystander in scope.
+    #[cfg(unix)]
+    #[test]
+    fn everything_a_sweep_deletes_was_in_scope() {
+        let holder = tempfile::tempdir_in("/tmp").expect("tempdir");
+        let dead = a_dead_pid();
+        let mut roots = Vec::new();
+        let mut probes = Vec::new();
+        for root_name in ["codeg-acp", "codeg-acp-4242"] {
+            let root = holder.path().join(root_name);
+            let leaf = root.join(format!("{dead}-deadbeef"));
+            std::fs::create_dir_all(&leaf).expect("create leaf");
+            let socket = leaf.join("codeg-delegation-1.sock");
+            std::fs::write(&socket, b"").expect("write");
+            let alias = holder.path().join(format!("alias-{root_name}"));
+            std::os::unix::fs::symlink(&leaf, &alias).expect("symlink");
+            let bystander = holder.path().join(format!("{root_name}-bystander.sock"));
+            std::fs::write(&bystander, b"").expect("write");
+            probes.extend([socket, alias.join("codeg-delegation-1.sock"), bystander]);
+            roots.push(root);
+        }
+        // Asked BEFORE the sweep, the way the broker asks at startup.
+        let in_scope: Vec<bool> = probes.iter().map(|p| is_inside_sweep_scope(p)).collect();
+
+        sweep_foreign_orphans_in(&roots, Path::new("/nonexistent-temp-dir"));
+
+        for (probe, in_scope) in probes.iter().zip(in_scope) {
+            let deleted = !probe.exists();
+            let is_bystander = probe.to_string_lossy().ends_with("-bystander.sock");
+            assert_eq!(deleted, !is_bystander, "{} deleted: {deleted}", probe.display());
+            assert_eq!(
+                in_scope,
+                deleted,
+                "{} was {}deleted but scoped {in_scope}",
+                probe.display(),
+                if deleted { "" } else { "not " }
+            );
+        }
     }
 
     /// The in-session sweep gets the same guard. Only a recycled pid can put

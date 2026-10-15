@@ -3698,17 +3698,22 @@ mod tests {
     #[test]
     fn an_over_long_temp_dir_falls_back_to_the_short_socket_dir() {
         let name = format!("codeg-delegation-{}.sock", std::process::id());
-        // A macOS `/var/folders/…/T` with codeg's own per-session nesting under
-        // it — the shape that actually produces this — padded so the composed
-        // path lands exactly ONE byte past what `sun_path` can hold. Sized from
-        // the cap rather than hard-coded, so it keeps straddling the boundary
-        // if either side of it moves.
+        // A macOS `/var/folders/…/T` with a per-session directory nested under
+        // it, padded so the composed path lands exactly ONE byte past what
+        // `sun_path` can hold. Sized from the cap rather than hard-coded, so it
+        // keeps straddling the boundary if either side of it moves. NOT codeg's
+        // own `codeg-acp/<pid>-<hex>` nesting: that is refused for its sweep
+        // scope as well, and this has to pin the length budget alone.
         let prefix = "/var/folders/hl/";
-        let suffix = "/T/codeg-acp/12345-deadbeef";
+        let suffix = "/T/agent-tmp/12345-deadbeef";
         let pad = SUN_PATH_CAP - 1 - name.len() - prefix.len() - suffix.len();
         let ambient = PathBuf::from(format!("{prefix}{}{suffix}", "z".repeat(pad)));
         assert_eq!(ambient.as_os_str().len() + 1 + name.len(), SUN_PATH_CAP);
         assert!(!fits_sun_path(&ambient.join(&name)));
+        assert!(
+            !is_inside_sweep_scope(&ambient.join(&name)),
+            "the sweep guard must NOT be what refuses this"
+        );
 
         let path = default_socket_path(&ambient);
         assert_eq!(path.parent(), Some(short_socket_dir().as_path()));
@@ -3774,6 +3779,23 @@ mod tests {
                 ambient.display()
             );
         }
+    }
+
+    /// ...and a launch dir reached through an alias that hides every root
+    /// component — here a symlink; a relative `TMPDIR=.` taken from inside a
+    /// launch dir is the same case. The directory behind it is deleted all the
+    /// same.
+    #[cfg(unix)]
+    #[test]
+    fn an_alias_into_a_launch_dir_falls_back_too() {
+        let holder = tempfile::tempdir_in("/tmp").expect("tempdir");
+        let leaf = holder.path().join("codeg-acp").join("4242-deadbeef");
+        std::fs::create_dir_all(&leaf).expect("create leaf");
+        let alias = holder.path().join("session-tmp");
+        std::os::unix::fs::symlink(&leaf, &alias).expect("symlink");
+
+        let path = default_socket_path(&alias);
+        assert_eq!(path.parent(), Some(short_socket_dir().as_path()));
     }
 
     /// Property rather than example: for ANY temp directory, the socket this
