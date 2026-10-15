@@ -186,9 +186,9 @@ Breite deine Arbeit räumlich aus: Unterhaltungen, Dateien, Terminals und Notize
 
 ### Desktop, Server, Mobil & Chat
 
-Betreibe Codeg als Desktop-App, als selbst gehosteten Server, den du in jedem Browser öffnest, oder als einzelnen Docker-Container; aus der Desktop-App öffnest du einen entfernten Server zudem in einem eigenen Arbeitsbereichsfenster. Native Clients für iPhone, iPad und Android — dazu Kanäle für Telegram, Lark und WeChat — halten deine Agenten in Reichweite, während deine Dateien und Sitzungen auf Rechnern bleiben, die du kontrollierst.
+Betreibe Codeg als Desktop-App, als selbst gehosteten Server, den du in jedem Browser öffnest, oder als einzelnen Docker-Container; aus der Desktop-App öffnest du einen entfernten Server zudem als Remote-Arbeitsbereich in einem eigenen Fenster. Native Clients für iPhone, iPad und Android — dazu Kanäle für Telegram, Lark und WeChat — halten deine Agenten in Reichweite, während deine Dateien und Sitzungen auf Rechnern bleiben, die du kontrollierst.
 
-[Doku →](https://docs.codeg.app/getting-started/deployment) · [Entfernte Arbeitsbereiche →](https://docs.codeg.app/guide/workspace#desktop-and-browser) · [Mobile Apps →](https://docs.codeg.app/getting-started/installation#mobile-apps) · [Chat-Kanäle →](https://docs.codeg.app/guide/chat-channels)
+[Doku →](https://docs.codeg.app/getting-started/deployment) · [Remote-Arbeitsbereiche →](https://docs.codeg.app/guide/workspace#desktop-and-browser) · [Mobile Apps →](https://docs.codeg.app/getting-started/installation#mobile-apps) · [Chat-Kanäle →](https://docs.codeg.app/guide/chat-channels)
 
 </td>
 <td width="50%">
