@@ -1,6 +1,6 @@
 [package]
 name = "codeg"
-version = "0.35.1"
+version = "0.35.2"
 description = "Agent Code Generation App"
 authors = ["feitao"]
 edition = "2021"
@@ -69,8 +69,8 @@ mcp-bin = []
 # tauri's eyes — with a tauri child attached, `is_webview_window()` turns
 # false, `get_webview_window("main")` returns None and every command taking a
 # `tauri::WebviewWindow` argument fails — and it needs no `unstable` feature.
-# Only macOS and Windows compile the child surface; Linux uses owned windows
-# (wry's child build is X11-only and cannot be positioned on Wayland).
+# Linux builds into a GTK Fixed overlay instead of build_as_child, supporting
+# both X11 and Wayland while preserving the workspace's WebviewWindow identity.
 browser-child = ["dep:tauri-runtime-wry", "dep:webview2-com", "dep:windows"]
 # Dev-only puppet driven by a JSON control file (see src/browser/smoke.rs).
 browser-smoke = []
@@ -212,6 +212,11 @@ http = "1"
 percent-encoding = "2"
 http-body = "1"
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+# Direct deps (already in the graph via reqwest) so a remote workspace's
+# WebSockets dial through the TCP connector its HTTP requests use, Happy
+# Eyeballs included — see `remote_proxy::connect_remote_ws`.
+hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
+tower-service = "0.3"
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io", "rt", "compat"] }
 prost = "0.13"
@@ -220,6 +225,9 @@ qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg", "gif"] }
 include_dir = "0.7"
 sha2 = "0.10"
+# HMAC-SHA256 over a forge webhook's body (GitHub / Gitea signatures) with a
+# constant-time check. Already in the lock tree as a transitive dependency.
+hmac = "0.12"
 aes-gcm = { version = "0.10", features = ["stream"] }
 argon2 = "0.5"
 tempfile = "3"

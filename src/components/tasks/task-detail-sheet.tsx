@@ -1679,6 +1679,14 @@ const EVENT_KIND_KEYS = {
   forge_writeback_failed: "eventForgeWritebackFailed",
 } as const
 
+/** What set off the repository panel's auto-processing, for a task it
+ *  created — the `auto` field the backend stamps on the `created` event. */
+const AUTO_TRIGGER_KEYS = {
+  schedule: "eventAutoSchedule",
+  webhook: "eventAutoWebhook",
+  manual: "eventAutoManual",
+} as const
+
 const STATUS_KEYS = new Set([
   "todo",
   "queued",
@@ -1729,8 +1737,18 @@ function TimelineRow({ event }: { event: WorkTaskEvent }) {
     event.kind in EVENT_KIND_KEYS
       ? EVENT_KIND_KEYS[event.kind as keyof typeof EVENT_KIND_KEYS]
       : null
-  const label = key ? t(key) : event.kind
-  const detail = timelineDetail(event)
+  // A task nobody clicked says where it came from: the repository panel's
+  // auto-processing, and which trigger woke it.
+  const rawAuto = event.kind === "created" ? event.payload?.auto : undefined
+  const autoTrigger = typeof rawAuto === "string" ? rawAuto : null
+  const label =
+    autoTrigger != null ? t("eventCreatedAuto") : key ? t(key) : event.kind
+  const detail =
+    autoTrigger != null
+      ? autoTrigger in AUTO_TRIGGER_KEYS
+        ? t(AUTO_TRIGGER_KEYS[autoTrigger as keyof typeof AUTO_TRIGGER_KEYS])
+        : autoTrigger
+      : timelineDetail(event)
   return (
     // ml-[3px] puts the rail under the centre of the header's dot above, and
     // 3px + the 1px rail + pl-2.5 lands the text at the same 14px inset as the

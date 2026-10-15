@@ -126,6 +126,10 @@ import {
   withEventSoundsSuppressed,
 } from "@/lib/notification-sound"
 import {
+  requestWindowAttention,
+  withWindowAttentionSuppressed,
+} from "@/lib/window-attention"
+import {
   getSavedPrefsForConnect,
   saveModePreference,
   saveConfigPreference,
@@ -3044,6 +3048,10 @@ function connectionsReducer(
  * that map would have to learn about a half-entry. It is a separate, reactive
  * side table read only by `useConnection` (which reports it as `connecting`)
  * and the composer's status chip.
+ *
+ * It names what the surface is waiting FOR: when a newer `connect()` is parked
+ * behind the one in flight (a draft switching agents while it connects), it is
+ * that newest request, which the in-flight call only runs ahead of.
  */
 export interface ConnectPendingInfo {
   agentType: AgentType
@@ -3074,7 +3082,8 @@ export interface ConnectErrorInfo {
 
 interface InternalStore {
   connections: ConnectionsMap
-  /** contextKey → the in-flight `connect()` for it (see ConnectPendingInfo). */
+  /** contextKey → the in-flight `connect()` for it, or the newest request
+   *  parked behind it (see ConnectPendingInfo). */
   connectPending: Map<string, ConnectPendingInfo>
   /** contextKey → why its last `connect()` failed (see ConnectErrorInfo). */
   connectErrors: Map<string, ConnectErrorInfo>
@@ -3087,9 +3096,10 @@ interface InternalStore {
 
 export interface ConnectionStoreApi {
   getConnection(key: string): ConnectionState | undefined
-  /** The in-flight `connect()` for this key, or undefined when none is. The
-   *  returned object is reference-stable for the lifetime of that connect, so
-   *  it is safe as a `useSyncExternalStore` snapshot. */
+  /** The in-flight `connect()` for this key (or the newest request parked
+   *  behind it), or undefined when none is. The returned object is
+   *  reference-stable until the next change, so it is safe as a
+   *  `useSyncExternalStore` snapshot. */
   getConnectPending(key: string): ConnectPendingInfo | undefined
   /** Why the last `connect()` for this key failed, or undefined. Reference-
    *  stable until the next change, like `getConnectPending`. */
@@ -4867,10 +4877,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
               created_at: new Date().toISOString(),
             },
           })
-          // A blocked agent is exactly what a notification is for, and this
-          // was the one such state that never raised one — the sound path had
-          // covered it since it shipped. Body names the agent only: the
-          // question text is the agent's own prose.
+          // A blocked agent is exactly what a notification is for — the sound
+          // path had covered this one since it shipped. Body names the agent
+          // only: the question text is the agent's own prose.
           {
             const nc = quiet
               ? null
@@ -4884,6 +4893,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                   }),
                 })
               )
+              void requestWindowAttention("question_request")
             }
           }
           break
@@ -4911,6 +4921,27 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
               created_at: new Date().toISOString(),
             },
           })
+          // Blocked on the user's sign-off exactly like a permission prompt —
+          // which is what Claude Code's own ExitPlanMode arrives as — so it
+          // asks under that event's switches rather than a row of its own,
+          // and every plan approval reads the same whichever agent raised it.
+          // Body names the agent only: the plan is the agent's own prose.
+          {
+            const nc = quiet
+              ? null
+              : storeRef.current.connections.get(contextKey)
+            if (nc) {
+              void notifyDesktop(
+                "permission_request",
+                sessionNotification(contextKey, {
+                  body: t("notificationPlanApproval", {
+                    agent: getAgentLabel(nc.agentType),
+                  }),
+                })
+              )
+              void requestWindowAttention("permission_request")
+            }
+          }
           break
         case "plan_approval_resolved":
           // The approval was answered (this or another window) or canceled.
@@ -5013,6 +5044,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                       : many,
                 })
               )
+              void requestWindowAttention("background_task")
             }
             // 4. flip each async sub-agent's launch card to its terminal
             //    (completed + result) state IN-MEMORY, by rewriting the
@@ -5076,6 +5108,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                   body: `${agentLabel}: ${tChat("permissionDialog.subtitle")}`,
                 })
               )
+              void requestWindowAttention("permission_request")
             }
           }
           break
@@ -5516,6 +5549,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                     }),
                   })
                 )
+                void requestWindowAttention("error")
               } else {
                 void notifyDesktop(
                   "turn_complete",
@@ -5523,6 +5557,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                     body: t("notificationTurnComplete", { agent: agentLabel }),
                   })
                 )
+                void requestWindowAttention("turn_complete")
               }
             }
           }
@@ -5594,6 +5629,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                 }),
               })
             )
+            void requestWindowAttention("error")
           }
           if (quiet) break
           const connKey = nc?.connectionId ?? contextKey
@@ -5977,15 +6013,18 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // must not fire a burst of cues for turns that finished minutes ago.
           // Doubly true of OS notifications, which unlike a tone stay in the
           // notification centre until the user clears them by hand — and of
-          // toasts, which would re-announce every notice of the gap at once.
+          // toasts, which would re-announce every notice of the gap at once,
+          // and of a taskbar flash for a prompt that was answered long ago.
           envelopeEffectsMutedRef.current += 1
           try {
             withEventSoundsSuppressed(() =>
-              withDesktopNotificationsSuppressed(() => {
-                for (const envelope of events) {
-                  applyMappedEnvelope(contextKey, envelope)
-                }
-              })
+              withDesktopNotificationsSuppressed(() =>
+                withWindowAttentionSuppressed(() => {
+                  for (const envelope of events) {
+                    applyMappedEnvelope(contextKey, envelope)
+                  }
+                })
+              )
             )
           } finally {
             envelopeEffectsMutedRef.current -= 1
@@ -6573,7 +6612,16 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // `reconnect()` has nothing else to go on.
       lastConnectParamsRef.current.set(contextKey, request)
       if (connectingKeysRef.current.has(contextKey)) {
+        // Parked: the call in flight runs this next, unless a newer request
+        // replaces it first. The surface is waiting on THIS request from now
+        // on, so it is what the pending marker names — a draft that switched
+        // agents mid-connect shows the agent picked last, not the one it left.
         pendingConnectRequestsRef.current.set(contextKey, request)
+        setConnectPending(contextKey, {
+          agentType,
+          workingDir: workingDir ?? null,
+        })
+        setConnectError(contextKey, null)
         return
       }
       connectingKeysRef.current.add(contextKey)
@@ -6593,10 +6641,14 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // too.
       setConnectError(contextKey, null)
       // Publish THIS attempt's failure — unless the surface let go of the
-      // attempt meanwhile (`disconnect()` marks it abandoned): a late
-      // rejection must not report a failure over whatever it does next.
+      // attempt meanwhile (`disconnect()` marks it abandoned) or parked a
+      // different request behind it: a late rejection must not report a
+      // failure over whatever it does next.
       const publishConnectError = (info: ConnectErrorInfo) => {
         if (abandonedKeysRef.current.has(contextKey)) return
+        const pendingRequest = pendingConnectRequestsRef.current.get(contextKey)
+        if (pendingRequest && !sameConnectRequest(pendingRequest, request))
+          return
         setConnectError(contextKey, info)
         notifyConnectError(contextKey, info)
       }

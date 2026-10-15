@@ -1034,19 +1034,8 @@ export function isLiveTurnId(id: string): boolean {
 
 export function buildStreamingTurnsFromLiveMessage(
   conversationId: number,
-  liveMessage: LiveMessage,
-  opts?: {
-    /**
-     * When false (the COMPLETE_TURN promotion path), parented subagent
-     * text/thinking is still routed OUT of the main thread but no
-     * `agent_transcript` is attached — the transcript is transient live-only
-     * data and must not survive into promoted `localTurns` (the authoritative
-     * detail reload that replaces them has no counterpart for it).
-     */
-    attachAgentTranscripts?: boolean
-  }
+  liveMessage: LiveMessage
 ): BuiltStreamingTurns {
-  const attachAgentTranscripts = opts?.attachAgentTranscripts !== false
   // Consolidate codex collab capsules first (spawn execution + per-wait result,
   // close folded in) so live matches the history reconstruction. No-op when the
   // message has no collab tool calls. See collab-collapse.ts.
@@ -1081,8 +1070,8 @@ export function buildStreamingTurnsFromLiveMessage(
   const childToolCallIds = new Set<string>()
   // Live subagent transcripts, keyed by the launching Agent tool call's id.
   // Fed by parented text/thinking blocks (claude-agent-acp ≥0.63 subagent
-  // transcripts); attached to the in-progress Agent card's tool_result as
-  // `agent_transcript`.
+  // transcripts) and a marker per child tool call; attached to the Agent
+  // card's tool_result, running or settled, as `agent_transcript`.
   const agentTranscripts = new Map<string, AgentTranscriptEntry[]>()
   // Agent id → the kind of prose that agent is currently in the middle of, or
   // absent once its own tool call ended that run. Drives the rejoin above.
@@ -1163,9 +1152,19 @@ export function buildStreamingTurnsFromLiveMessage(
 
         if (resolvedParent) {
           childToolCallIds.add(block.info.tool_call_id)
-          agentChildren
-            .get(resolvedParent)
-            ?.push({ info: block.info, toolName })
+          const children = agentChildren.get(resolvedParent)
+          const childIndex = children?.length ?? 0
+          children?.push({ info: block.info, toolName })
+          // Keep the child's work in ONE timeline: the marker preserves this
+          // tool call's position among the prose around it (the capsule
+          // resolves it back through `agent_stats.tool_calls` by ordinal —
+          // the stats carry no ids, and both lists are appended in this same
+          // arrival pass, so the ordinal is exact). The list is created on
+          // demand so a tool call arriving before any prose still anchors the
+          // timeline's start.
+          const timeline = agentTranscripts.get(resolvedParent) ?? []
+          timeline.push({ type: "tool_call", childIndex })
+          agentTranscripts.set(resolvedParent, timeline)
           // This agent stopped talking to run a tool: its next chunk starts a
           // new transcript entry rather than rejoining the previous one.
           transcriptRun.delete(resolvedParent)
@@ -1464,13 +1463,13 @@ export function buildStreamingTurnsFromLiveMessage(
         const children = isAgent
           ? (agentChildren.get(block.info.tool_call_id) ?? [])
           : []
-        // Live subagent transcript for the RUNNING card only: at settle the
-        // card flips to the real result (and history has no counterpart), so
-        // the final-state branch below never attaches it.
-        const transcript =
-          attachAgentTranscripts && isAgent
-            ? agentTranscripts.get(block.info.tool_call_id)
-            : undefined
+        // The subagent transcript stays attached at settle, so the finished
+        // card keeps the interleaved order it showed live; once history
+        // reloads from disk the parsed `agent_stats.timeline` takes over as
+        // the card's timeline source.
+        const transcript = isAgent
+          ? agentTranscripts.get(block.info.tool_call_id)
+          : undefined
 
         const agentStats: AgentExecutionStats | undefined =
           isAgent && children.length > 0
@@ -1503,6 +1502,7 @@ export function buildStreamingTurnsFromLiveMessage(
               : resolvedOutput,
             is_error: block.info.status === "failed",
             ...(agentStats ? { agent_stats: agentStats } : {}),
+            ...(transcript?.length ? { agent_transcript: transcript } : {}),
           })
           currentGroupHasCompletedTool = true
         } else if (
@@ -2193,14 +2193,17 @@ function reducer(
           : current.liveMessage
 
       // Convert liveMessage to completed MessageTurns (split into rounds).
-      // No agent transcripts on promotion: they are transient live-only data
-      // (see the option's doc) — parented blocks are still routed out of the
-      // main thread, just not re-attached to the promoted card.
+      // Agent transcripts ride along on promotion: the settled card keeps the
+      // interleaved order it showed live, and the authoritative detail reload
+      // that later replaces `localTurns` supplies `agent_stats.timeline`
+      // parsed from the child's own transcript (Claude Code, Qoder). The only
+      // live prose comes from Claude Code; elsewhere the transcript is tool
+      // markers alone, which the card renders like stats, so a reload from
+      // an agent without a parsed timeline does not change the card's shape.
       const streamingTurns = sourceLiveMessage
         ? buildStreamingTurnsFromLiveMessage(
             current.conversationId,
-            sourceLiveMessage,
-            { attachAgentTranscripts: false }
+            sourceLiveMessage
           ).turns
         : []
 

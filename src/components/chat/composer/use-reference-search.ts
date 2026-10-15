@@ -22,6 +22,7 @@ import type {
   SuggestionGroup,
   SuggestionItem,
 } from "./suggestion/types"
+import type { ReferenceKind } from "./types"
 
 // Commit-synchronous on the client (so the guard-critical refs are updated
 // during commit, before any later macrotask/microtask can resolve a stale
@@ -34,6 +35,7 @@ const useIsomorphicLayoutEffect =
 const MAX_PER_GROUP = 50
 /** How many commits the git-log group pulls (client-filtered down from here). */
 const GIT_LOG_LIMIT = 100
+const EMPTY_SESSIONS: Promise<DbConversationSummary[]> = Promise.resolve([])
 const EMPTY_COMMITS: Promise<GitLogEntry[]> = Promise.resolve([])
 
 /** Display headings for each group; injected so the host can localize them. */
@@ -203,7 +205,9 @@ export interface UseReferenceSearchOptions {
  * Files and agents are hook-loaded (and pre-warmed via `enabled`). Sessions and
  * the git log are fetched lazily on the first `@`, key-cached in a ref, and
  * awaited by `search` so the first open is populated without an extra keystroke;
- * window focus busts those caches so they stay fresh.
+ * window focus busts those caches so they stay fresh. A tab the user hid (the
+ * `kinds` the panel passes leave it out) costs nothing: its source isn't
+ * fetched and its group comes back empty.
  */
 export function useReferenceSearch({
   defaultPath,
@@ -276,30 +280,37 @@ export function useReferenceSearch({
     return () => window.removeEventListener("focus", onFocus)
   }, [])
 
-  return useCallback<ReferenceSearch>(async (query, signal) => {
+  return useCallback<ReferenceSearch>(async (query, signal, kinds) => {
     if (!enabledRef.current) return []
 
     const path = pathRef.current
+    const wants = (kind: ReferenceKind) => !kinds || kinds.includes(kind)
 
     // Lazy session fetch. On rejection the cache entry is cleared (not cached as
     // an empty result) so the next `@` retries instead of wedging on `[]`.
-    const sessionsKey = "all"
-    let sessionsEntry = sessionsRef.current
-    if (sessionsEntry?.key !== sessionsKey) {
-      const created: NonNullable<typeof sessionsRef.current> = {
-        key: sessionsKey,
-        promise: listAllConversations().catch(() => {
-          if (sessionsRef.current === created) sessionsRef.current = null
-          return [] as DbConversationSummary[]
-        }),
+    let sessionsPromise = EMPTY_SESSIONS
+    if (wants("session")) {
+      const sessionsKey = "all"
+      let sessionsEntry = sessionsRef.current
+      if (sessionsEntry?.key !== sessionsKey) {
+        const created: NonNullable<typeof sessionsRef.current> = {
+          key: sessionsKey,
+          promise: listAllConversations().catch(() => {
+            if (sessionsRef.current === created) sessionsRef.current = null
+            return [] as DbConversationSummary[]
+          }),
+        }
+        sessionsRef.current = created
+        sessionsEntry = created
       }
-      sessionsRef.current = created
-      sessionsEntry = created
+      sessionsPromise = sessionsEntry.promise
     }
 
     // Lazy git-log fetch, keyed by path with the same retry-on-rejection policy.
+    // A hidden commit tab leaves the cache alone: it is still keyed by path, so
+    // switching the tab back on reuses it or refetches as usual.
     let commitsPromise = EMPTY_COMMITS
-    if (path) {
+    if (path && wants("commit")) {
       let commitsEntry = commitsRef.current
       if (commitsEntry?.key !== path) {
         const created: NonNullable<typeof commitsRef.current> = {
@@ -315,12 +326,12 @@ export function useReferenceSearch({
         commitsEntry = created
       }
       commitsPromise = commitsEntry.promise
-    } else {
+    } else if (!path) {
       commitsRef.current = null
     }
 
     const [sessions, commits] = await Promise.all([
-      sessionsEntry.promise,
+      sessionsPromise,
       commitsPromise,
     ])
     // Discard this result if it can no longer be trusted for the live panel: a
@@ -337,9 +348,11 @@ export function useReferenceSearch({
     return buildReferenceGroups(
       query,
       {
-        files: fileState.files,
+        // Already loaded by their hooks, but a hidden tab's rows would only be
+        // matched and adapted to be thrown away.
+        files: wants("file") ? fileState.files : [],
         workspaceRoot: fileState.root,
-        agents: agentsRef.current,
+        agents: wants("agent") ? agentsRef.current : [],
         sessions,
         commits,
         repoKey: path,

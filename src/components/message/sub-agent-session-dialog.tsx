@@ -36,6 +36,7 @@ import {
   DrawerTitle,
   SIDE_PANEL_CONTENT_CLASS,
 } from "@/components/ui/drawer"
+import { useHistoryBackDismiss } from "@/hooks/use-history-back-dismiss"
 import { type AgentType } from "@/lib/types"
 import { getAgentLabel } from "@/lib/custom-agents"
 
@@ -63,6 +64,9 @@ export function SubAgentSessionDialog({
   kickoffTask,
 }: Props) {
   const t = useTranslations("Folder.chat.delegation")
+  // The drawer is a state toggle, not a route: without a history entry behind
+  // it, the back gesture unloads the whole page instead of closing the panel.
+  useHistoryBackDismiss(open, () => onOpenChange(false))
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">

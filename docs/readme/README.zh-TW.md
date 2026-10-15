@@ -59,13 +59,6 @@
   </tr>
   <tr>
     <td align="center" width="220">
-      <a href="https://console.lqapi.xyz/sign-up?aff=KPy9" target="_blank"><img src="../images/lq-router.png" alt="LQ router" width="160" /></a><br/>
-      <strong><a href="https://console.lqapi.xyz/sign-up?aff=KPy9">LQ router</a></strong>
-    </td>
-    <td>感謝 LQ router 中轉站對本專案的贊助！LQ router 是一家專業的企業級 AI 中轉站，為企業與個人開發者提供穩定、高效、低成本的 AI 模型 API 接入服務。平台支援 GPT、Claude、Grok、Gemini 等主流模型，GPT Pro 倍率低至 0.1。<a href="https://console.lqapi.xyz/sign-up?aff=KPy9">官網進群贈送 1 美元體驗金</a>。</td>
-  </tr>
-  <tr>
-    <td align="center" width="220">
       <a href="https://go.apimart.ai/gh-codeg" target="_blank"><img src="../images/apimart-ai.png" alt="APIMart" width="200" /></a><br/>
       <strong><a href="https://go.apimart.ai/gh-codeg">APIMart</a></strong>
     </td>
@@ -84,10 +77,10 @@
   </tr>
   <tr>
     <td align="center" width="220">
-      <a href="https://fluxionai.space/register?source=github&campaign=github-codeg-202609&promo=CODEG" target="_blank"><img src="../images/fluxion-ai.png" alt="Fluxion AI" width="160" /></a><br/>
-      <strong><a href="https://fluxionai.space/register?source=github&campaign=github-codeg-202609&promo=CODEG">Fluxion AI</a></strong>
+      <a href="https://fluxionai.space/register?source=github&campaign=github-sidrune-codeg&promo=SDRCODEG" target="_blank"><img src="../images/sidrune-ai.png" alt="Sidrune AI" width="200" /></a><br/>
+      <strong><a href="https://fluxionai.space/register?source=github&campaign=github-sidrune-codeg&promo=SDRCODEG">Sidrune AI</a></strong>
     </td>
-    <td>感謝 Fluxion AI 對本專案的贊助！Fluxion AI 透過一個統一的 API，提供快速、可靠、高性價比的 GPT、Claude、Gemini 等領先 AI 模型接入。新使用者透過<a href="https://fluxionai.space/register?source=github&campaign=github-codeg-202609&promo=CODEG">我們的專屬連結</a>註冊可獲得 3 美元 API 額度。</td>
+    <td>感謝 Sidrune AI 對本專案的贊助！Sidrune AI 透過一個 API 接入 GPT、Claude 等主流 AI 模型。新使用者透過<a href="https://fluxionai.space/register?source=github&campaign=github-sidrune-codeg&promo=SDRCODEG">我們的專屬連結</a>註冊時使用優惠碼 <code>SDRCODEG</code>，即送 3 美元 API 額度。</td>
   </tr>
   <tr>
     <td align="center" width="220">

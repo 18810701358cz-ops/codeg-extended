@@ -99,9 +99,11 @@ pub struct ListConversationsParams {
 }
 
 pub async fn list_conversations(
+    Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<ListConversationsParams>,
 ) -> Result<Json<Vec<ConversationSummary>>, AppCommandError> {
-    let result = conv_commands::list_conversations(
+    let result = conv_commands::list_conversations_core(
+        &state.db.conn,
         params.agent_type,
         params.search,
         params.sort_by,
@@ -119,9 +121,15 @@ pub struct GetConversationParams {
 }
 
 pub async fn get_conversation(
+    Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<GetConversationParams>,
 ) -> Result<Json<ConversationDetail>, AppCommandError> {
-    let result = conv_commands::get_conversation(params.agent_type, params.conversation_id).await?;
+    let result = conv_commands::get_conversation_core(
+        &state.db.conn,
+        params.agent_type,
+        params.conversation_id,
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -197,18 +205,24 @@ pub async fn get_folder_conversation_outline(
     Ok(Json(result))
 }
 
-pub async fn list_folders() -> Result<Json<Vec<FolderInfo>>, AppCommandError> {
-    let result = conv_commands::list_folders().await?;
+pub async fn list_folders(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<FolderInfo>>, AppCommandError> {
+    let result = conv_commands::list_folders_core(&state.db.conn).await?;
     Ok(Json(result))
 }
 
-pub async fn get_stats() -> Result<Json<AgentStats>, AppCommandError> {
-    let result = conv_commands::get_stats().await?;
+pub async fn get_stats(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<AgentStats>, AppCommandError> {
+    let result = conv_commands::get_stats_core(&state.db.conn).await?;
     Ok(Json(result))
 }
 
-pub async fn get_sidebar_data() -> Result<Json<SidebarData>, AppCommandError> {
-    let result = conv_commands::get_sidebar_data().await?;
+pub async fn get_sidebar_data(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<SidebarData>, AppCommandError> {
+    let result = conv_commands::get_sidebar_data_core(&state.db.conn).await?;
     Ok(Json(result))
 }
 

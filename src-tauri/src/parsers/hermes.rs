@@ -9,7 +9,7 @@ use sea_orm::{
 };
 
 use crate::models::*;
-use crate::parsers::{folder_name_from_path, AgentParser, ParseError};
+use crate::parsers::{folder_name_from_path, AgentEnv, AgentParser, ParseError};
 
 /// Parser for Hermes Agent (Nous Research) transcripts.
 ///
@@ -41,8 +41,13 @@ impl Default for HermesParser {
 
 impl HermesParser {
     pub fn new() -> Self {
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Hermes launched with `env`.
+    pub fn for_env(env: &AgentEnv) -> Self {
         Self {
-            base_dir: resolve_hermes_home_dir(),
+            base_dir: resolve_hermes_home_dir_for_env(env),
         }
     }
 
@@ -433,7 +438,12 @@ impl AgentParser for HermesParser {
 /// own `get_hermes_home` does NOT expand `~`), defaults to `~/.hermes`, falls
 /// back to `.` when the home dir is unknown.
 pub(crate) fn resolve_hermes_home_dir() -> PathBuf {
-    resolve_hermes_home(std::env::var("HERMES_HOME").ok(), dirs::home_dir())
+    resolve_hermes_home_dir_for_env(&AgentEnv::inherited())
+}
+
+/// [`resolve_hermes_home_dir`] for the Hermes launched with `env`.
+pub(crate) fn resolve_hermes_home_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_hermes_home(env.var("HERMES_HOME"), dirs::home_dir())
 }
 
 fn resolve_hermes_home(env: Option<String>, home: Option<PathBuf>) -> PathBuf {
@@ -1026,5 +1036,17 @@ mod tests {
         assert_eq!(content_to_text(Some("plain")).as_deref(), Some("plain"));
         assert_eq!(content_to_text(Some("  ")), None);
         assert_eq!(content_to_text(None), None);
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_home_of_the_launch_env() {
+        // Trimmed like Hermes' own `get_hermes_home`, then taken verbatim.
+        let env = AgentEnv::with_overrides(&[("HERMES_HOME", " /relocated/hermes ")]);
+        assert_eq!(
+            HermesParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/hermes")
+        );
     }
 }

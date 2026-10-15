@@ -11,7 +11,7 @@ use crate::models::{
 
 use super::{
     backfill_turn_durations, compute_session_stats, folder_name_from_path, title_from_user_text,
-    truncate_str, AgentParser, ParseError,
+    truncate_str, AgentEnv, AgentParser, ParseError,
 };
 
 // ---------------------------------------------------------------------------
@@ -280,7 +280,13 @@ struct ApiTokenMetrics {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn cline_data_dir() -> PathBuf {
-    if let Ok(custom) = std::env::var("CLINE_DIR") {
+    cline_data_dir_for_env(&AgentEnv::inherited())
+}
+
+/// The data dir of the Cline launched with `env`: its `CLINE_DIR` (trimmed),
+/// else `~/.cline/data`.
+pub(crate) fn cline_data_dir_for_env(env: &AgentEnv) -> PathBuf {
+    if let Some(custom) = env.var("CLINE_DIR") {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
@@ -308,8 +314,13 @@ impl Default for ClineParser {
 
 impl ClineParser {
     pub fn new() -> Self {
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Cline launched with `env`.
+    pub fn for_env(env: &AgentEnv) -> Self {
         Self {
-            base_dir: cline_data_dir(),
+            base_dir: cline_data_dir_for_env(env),
         }
     }
 
@@ -2126,5 +2137,16 @@ mod tests {
         );
         assert_eq!(extract_feedback("no tags here"), None);
         assert_eq!(extract_feedback("<feedback>unclosed"), None);
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_data_dir_of_the_launch_env() {
+        let env = AgentEnv::with_overrides(&[("CLINE_DIR", "/relocated/cline")]);
+        assert_eq!(
+            ClineParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/cline")
+        );
     }
 }

@@ -58,7 +58,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -70,7 +70,7 @@ use crate::acp::types::{AcpEvent, BackgroundSettledInfo, ConnectionStatus};
 use crate::models::agent::AgentType;
 use crate::models::message::MessageTurn;
 use crate::parsers::claude::{
-    capture_tag, capture_title_record, find_clear_rollover_successor, find_session_file,
+    capture_tag, capture_title_record, find_clear_rollover_successor, find_session_file_in,
     group_into_turns, is_meta_message, queued_human_prompt, queued_task_notification,
     slash_command_display, task_notification_result_regex, task_notification_status_regex,
     task_notification_summary_regex, task_notification_task_id_regex,
@@ -398,6 +398,12 @@ impl Drop for BackgroundWatchGuard {
 
 /// Arm the transcript watcher for a Claude connection; other agents have no
 /// transcript-notification mechanism and get no watcher (returns `None`).
+///
+/// `projects_dir` is where THIS launch's CLI writes its transcripts — the
+/// `projects` dir under the `CLAUDE_CONFIG_DIR` of the environment it was
+/// started with (`parsers::claude::resolve_claude_projects_dir_for_env`), which
+/// the agent's settings can move away from the one codeg's own environment
+/// names.
 pub(crate) fn spawn_if_claude(
     conn_id: &str,
     agent_type: AgentType,
@@ -405,13 +411,14 @@ pub(crate) fn spawn_if_claude(
     emitter: EventEmitter,
     cwd: String,
     ledger: Arc<PromptLedger>,
+    projects_dir: PathBuf,
 ) -> Option<BackgroundWatchGuard> {
     if agent_type != AgentType::ClaudeCode {
         return None;
     }
     let conn_id = conn_id.to_string();
     let handle = tokio::spawn(async move {
-        run_watch(conn_id, state, emitter, cwd, ledger).await;
+        run_watch(conn_id, state, emitter, cwd, ledger, projects_dir).await;
     });
     Some(BackgroundWatchGuard(handle))
 }
@@ -463,6 +470,7 @@ async fn run_watch(
     emitter: EventEmitter,
     cwd: String,
     ledger: Arc<PromptLedger>,
+    projects_dir: PathBuf,
 ) {
     let mut ws = WatchState::new();
     // Wall-clock boundary between pre-existing transcript history (renders
@@ -527,12 +535,14 @@ async fn run_watch(
         // File I/O + JSON parsing + turn grouping are blocking work; a large
         // tail after a long foreground turn must not stall the runtime.
         let ledger_ref = Arc::clone(&ledger);
+        let projects_for_tick = projects_dir.clone();
         let cwd_for_tick = cwd.clone();
         let conn_for_tick = conn_id.clone();
         let joined = tokio::task::spawn_blocking(move || {
             let mut ws = ws;
             let event = ws.tick(
                 &ledger_ref,
+                &projects_for_tick,
                 &cwd_for_tick,
                 &conn_for_tick,
                 is_prompting,
@@ -751,7 +761,7 @@ pub(crate) struct WatchState {
     /// by the next read that succeeds and by adopting a file.
     read_failed: bool,
     /// Transcript uuid this watch rolled over ONTO, kept for as long as the
-    /// watch lives. `find_session_file` resolves the ACP session id, which
+    /// watch lives. `find_session_file_in` resolves the ACP session id, which
     /// after a `/clear` names the abandoned file — so a re-locate (the stat
     /// error path below nulls `file`) has to ask for this id instead, or the
     /// watch would silently fall back onto the dead transcript. Cleared by
@@ -911,9 +921,13 @@ impl WatchState {
     /// `turn_ended_abnormally` is a snapshot of `SessionState::
     /// last_turn_ended_abnormally` taken at the same instant — meaningful only
     /// on the tick that observes the falling edge (see below).
+    ///
+    /// `projects_dir` is where the transcript is looked for (see
+    /// [`spawn_if_claude`]).
     pub(crate) fn tick(
         &mut self,
         ledger: &PromptLedger,
+        projects_dir: &Path,
         cwd: &str,
         conn_id: &str,
         is_prompting: bool,
@@ -982,7 +996,7 @@ impl WatchState {
         // this watch rolled onto instead.
         if self.file.is_none() {
             let lookup_id = self.rolled_over_id.clone().unwrap_or_else(|| session_id.clone());
-            if let Some(f) = find_session_file(&lookup_id) {
+            if let Some(f) = find_session_file_in(projects_dir, &lookup_id) {
                 self.adopt_file(f);
             }
             if let Some(f) = &self.file {
@@ -1700,6 +1714,10 @@ fn content_text(content: &serde_json::Value) -> Option<String> {
 ///   but always STRING content, so it still initiates);
 /// * auto-compaction continuation summaries land MID-turn while the wire is
 ///   still rendering it — never a boundary;
+/// * `turnCompanion` records are written on the running turn's behalf and
+///   continue it, whatever their shape — including the `isMeta` STRING note
+///   the Read tool leaves after an image larger than the display limit
+///   (CLI 2.1.293), which otherwise reads exactly like a cron prompt;
 /// * everything else user-typed/injected (real prompts, `<task-notification>`
 ///   records, cron prompts) initiates.
 ///
@@ -1707,6 +1725,9 @@ fn content_text(content: &serde_json::Value) -> Option<String> {
 /// record, and never initiates: see [`folded_prompt_text`].
 fn turn_initiator_text(value: &serde_json::Value) -> Option<TurnInitiatorText> {
     if value.get("type").and_then(|t| t.as_str()) != Some("user") {
+        return None;
+    }
+    if value.get("turnCompanion").and_then(|v| v.as_bool()) == Some(true) {
         return None;
     }
     let content = value.get("message")?.get("content")?;
@@ -1967,8 +1988,19 @@ mod tests {
         format!(r#"{{"type":"custom-title","customTitle":"{title}","sessionId":"s1"}}"#)
     }
 
+    /// A projects dir that does not exist: a tick with no transcript adopted
+    /// yet looks one up there, so these tests never read a real config dir.
+    const NO_PROJECTS_DIR: &str = "/nonexistent/codeg-test/claude-projects";
+
     fn tick_now(ws: &mut WatchState, ledger: &PromptLedger) -> Option<AcpEvent> {
-        ws.tick(ledger, "/tmp", "conn-test", false, false)
+        ws.tick(
+            ledger,
+            Path::new(NO_PROJECTS_DIR),
+            "/tmp",
+            "conn-test",
+            false,
+            false,
+        )
     }
 
     /// Like `tick_now`, but with the connection snapshotted as `Prompting` —
@@ -1976,7 +2008,14 @@ mod tests {
     /// plan), which engages while the connection is prompting and, with no
     /// time limit, for as long afterward as no new turn has started.
     fn tick_prompting(ws: &mut WatchState, ledger: &PromptLedger) -> Option<AcpEvent> {
-        ws.tick(ledger, "/tmp", "conn-test", true, false)
+        ws.tick(
+            ledger,
+            Path::new(NO_PROJECTS_DIR),
+            "/tmp",
+            "conn-test",
+            true,
+            false,
+        )
     }
 
     /// Like `tick_now`, but reporting the just-ended turn as having stopped
@@ -1984,7 +2023,14 @@ mod tests {
     /// path that lets a held turn's launched ids stop being suppression-
     /// eligible immediately instead of waiting for the next turn.
     fn tick_abnormal_end(ws: &mut WatchState, ledger: &PromptLedger) -> Option<AcpEvent> {
-        ws.tick(ledger, "/tmp", "conn-test", false, true)
+        ws.tick(
+            ledger,
+            Path::new(NO_PROJECTS_DIR),
+            "/tmp",
+            "conn-test",
+            false,
+            true,
+        )
     }
 
     fn unpack(
@@ -3614,6 +3660,122 @@ mod tests {
         );
     }
 
+    /// Real-shape image-resize note (CLI 2.1.293): the Read tool's result for
+    /// an image larger than the model's display limit is followed by this
+    /// record, written on the running turn's behalf. `isMeta` with STRING
+    /// content — the cron prompt's shape — but marked `turnCompanion` and
+    /// stamped with the running submission's `promptId`.
+    fn image_resize_note(uuid: &str, prompt_id: &str) -> String {
+        format!(
+            r#"{{"type":"user","timestamp":"2026-07-07T03:48:05.000Z","uuid":"{uuid}","promptId":"{prompt_id}","isMeta":true,"turnCompanion":true,"userType":"external","message":{{"role":"user","content":"[Image: original 2880x1800, displayed at 2000x1250. Multiply coordinates by 1.44 to map to original image.]"}}}}"#
+        )
+    }
+
+    /// Reading a large image mid-turn puts that note in the middle of a
+    /// wire-rendered turn. Read as an initiator, it opened an episode, and the
+    /// overlay drew everything the turn wrote after the image a second time,
+    /// under the live copy.
+    #[test]
+    fn an_image_resize_note_mid_turn_stays_foreground() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_session(&dir);
+        write_lines(&path, &[]);
+        let ledger = PromptLedger::shared();
+        let mut ws = WatchState::with_file_for_test("s1", path.clone());
+
+        ledger.record_text("look at the screenshot");
+        // The prompt carries the submission's `promptId` like every record
+        // after it, so the submission window keyed on that id opens here — and
+        // the Read call, the model's first record, closes it before the note.
+        let prompt = r#"{"type":"user","timestamp":"2026-07-07T03:48:00.000Z","uuid":"u1","promptId":"p1","message":{"role":"user","content":[{"type":"text","text":"look at the screenshot"}]}}"#;
+        let read_call = r#"{"type":"assistant","timestamp":"2026-07-07T03:48:04.000Z","uuid":"a-read","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/shot.png"}}]}}"#;
+        let read_result = r#"{"type":"user","timestamp":"2026-07-07T03:48:05.000Z","uuid":"u-read","promptId":"p1","message":{"role":"user","content":[{"tool_use_id":"toolu_read","type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}}"#;
+        write_lines(&path, &[prompt, read_call, read_result]);
+        let event = tick_prompting(&mut ws, &ledger);
+        assert!(event.is_none() || unpack(event.unwrap()).0.is_empty());
+
+        write_lines(
+            &path,
+            &[
+                &image_resize_note("m1", "p1"),
+                &assistant_text("a2", "the header is misaligned"),
+            ],
+        );
+        let event = tick_prompting(&mut ws, &ledger);
+        assert!(
+            event.is_none() || unpack(event.unwrap()).0.is_empty(),
+            "the note continues the wire-rendered turn — nothing after it may surface as overlay"
+        );
+
+        // The cron shape without the companion mark still starts a turn.
+        write_lines(
+            &path,
+            &[
+                &cron_prompt("check the build"),
+                &assistant_text("a3", "checking"),
+            ],
+        );
+        let (turns, ..) = unpack(tick_now(&mut ws, &ledger).expect("turns event"));
+        assert!(
+            !turns.is_empty(),
+            "a cron prompt (isMeta string, no turnCompanion) still surfaces"
+        );
+    }
+
+    /// The other half of the rule: in a turn Claude Code started on its own,
+    /// which only the overlay renders, the note stays with THAT turn. The
+    /// episode is at its rotation threshold when the note lands, so a note
+    /// still read as a turn boundary would re-base the episode right there and
+    /// draw the rest of the reply as a separate card.
+    #[test]
+    fn an_image_resize_note_mid_autonomous_turn_stays_in_its_episode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = temp_session(&dir);
+        write_lines(&path, &[]);
+        let ledger = PromptLedger::shared();
+        let mut ws = WatchState::with_file_for_test("s1", path.clone());
+
+        let mut lines = vec![cron_prompt("check the screenshot")];
+        for i in 0..MAX_EPISODE_MESSAGES {
+            lines.push(assistant_text(&format!("a-{i}"), "chunk"));
+        }
+        lines.push(r#"{"type":"assistant","timestamp":"2026-07-07T03:49:04.000Z","uuid":"a-read","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/shot.png"}}]}}"#.to_string());
+        lines.push(r#"{"type":"user","timestamp":"2026-07-07T03:49:05.000Z","uuid":"u-read","promptId":"p-cron","message":{"role":"user","content":[{"tool_use_id":"toolu_read","type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}}"#.to_string());
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        write_lines(&path, &refs);
+        let (turns, ..) = unpack(tick_now(&mut ws, &ledger).expect("the autonomous turn surfaces"));
+        let episode_of = |id: &str| id.rsplit_once('-').map(|(episode, _)| episode.to_string());
+        let episode = episode_of(&turns[0].id);
+        assert!(episode.is_some(), "overlay turn ids are bg-<base>-<index>");
+
+        write_lines(
+            &path,
+            &[
+                &image_resize_note("m1", "p-cron"),
+                &assistant_text("a-reply", "the header is misaligned"),
+            ],
+        );
+        let (turns, ..) =
+            unpack(tick_now(&mut ws, &ledger).expect("the reply after the note surfaces"));
+        let rendered = serde_json::to_string(&turns).unwrap();
+        assert!(
+            rendered.contains("the header is misaligned"),
+            "what the turn writes after the note still renders in the overlay"
+        );
+        assert!(
+            !rendered.contains("Multiply coordinates"),
+            "the note itself is the model's to read, never drawn: {rendered}"
+        );
+        for turn in &turns {
+            assert_eq!(
+                episode_of(&turn.id),
+                episode,
+                "the note must not re-base the episode: {}",
+                turn.id
+            );
+        }
+    }
+
     #[test]
     fn growing_turn_reemits_with_same_id_and_partial_lines_carry() {
         let dir = tempfile::tempdir().unwrap();
@@ -3933,6 +4095,38 @@ mod tests {
             Some("check weather")
         );
 
+        // `turnCompanion` records continue the running turn whatever their
+        // shape. The Read tool's image-resize note and the query loop's
+        // recovery nudges are all `isMeta` STRING records — the cron prompt's
+        // shape — told apart by the mark alone (texts as CLI 2.1.293 writes
+        // them).
+        for content in [
+            "[Image: original 2880x1800, displayed at 2000x1250. Multiply coordinates by 1.44 to map to original image.]",
+            "Output token limit hit. Resume directly \u{2014} no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces.",
+            "[Your previous response had no visible output. Please continue and produce a user-visible response.]",
+            "Your response above was cut off mid-stream. Resume directly from where it stops \u{2014} no apology, no recap. If none of it survived, answer the request from the start.",
+        ] {
+            let companion = serde_json::json!({
+                "type": "user",
+                "isMeta": true,
+                "turnCompanion": true,
+                "promptId": "p1",
+                "message": {"role": "user", "content": content},
+            });
+            assert!(turn_initiator_text(&companion).is_none(), "{content}");
+        }
+        // Only the mark set to `true` counts.
+        let unmarked = serde_json::json!({
+            "type": "user",
+            "isMeta": true,
+            "turnCompanion": false,
+            "message": {"role": "user", "content": "check weather"},
+        });
+        assert_eq!(
+            turn_initiator_text(&unmarked),
+            Some(TurnInitiatorText::Verbatim("check weather".into()))
+        );
+
         // context-continuation summary: never a boundary.
         let cont = format!(
             r#"{{"type":"user","uuid":"u-cont","message":{{"role":"user","content":"{}..."}}}}"#,
@@ -4109,13 +4303,41 @@ mod tests {
         assert!(waited.is_ok());
     }
 
+    /// A tick looks for the transcript in the projects dir the watch was armed
+    /// with — the one under the launch's `CLAUDE_CONFIG_DIR` — so a session
+    /// whose config dir the agent's settings moved is still tailed (#948).
+    #[test]
+    fn a_tick_finds_the_transcript_in_the_projects_dir_it_is_given() {
+        let projects = tempfile::tempdir().unwrap();
+        let project = projects.path().join("-Users-test-proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let transcript = project.join("s-relocated.jsonl");
+        write_lines(&transcript, &[&ai_title("Relocated")]);
+
+        let ledger = PromptLedger::shared();
+        let mut ws = WatchState::new();
+        ws.rearm("s-relocated".to_string(), epoch("2030-01-01T00:00:00Z"));
+        let _ = ws.tick(
+            &ledger,
+            Path::new(NO_PROJECTS_DIR),
+            "/tmp",
+            "conn-test",
+            false,
+            false,
+        );
+        assert_eq!(ws.file, None, "nothing to find in a dir without it");
+
+        let _ = ws.tick(&ledger, projects.path(), "/tmp", "conn-test", false, false);
+        assert_eq!(ws.file.as_deref(), Some(transcript.as_path()));
+    }
+
     /// The real watch loop settles a held wire title on the wake that holding
     /// it sends, not on its poll. The clock is paused and this test never
     /// sleeps, so the clock cannot auto-advance and the loop's poll delay
     /// never elapses: only the wake can make it poll. The session id is one
-    /// `find_session_file` refuses before it lists any directory, so the loop
-    /// finds no transcript (and this test reads no real config dir): the held
-    /// title is the only one, and the loop publishes it.
+    /// `find_session_file_in` refuses before it lists any directory, so the
+    /// loop finds no transcript (and this test reads no real config dir): the
+    /// held title is the only one, and the loop publishes it.
     #[tokio::test(start_paused = true)]
     async fn the_watch_loop_settles_a_held_title_on_its_wake() {
         let state = bound_claude_state();
@@ -4127,6 +4349,7 @@ mod tests {
             EventEmitter::Noop,
             "/tmp".into(),
             PromptLedger::shared(),
+            PathBuf::from(NO_PROJECTS_DIR),
         )
         .expect("a Claude connection gets a watcher");
 

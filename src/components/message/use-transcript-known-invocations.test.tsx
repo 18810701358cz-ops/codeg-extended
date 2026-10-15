@@ -286,19 +286,21 @@ describe("MessageListView", () => {
       const tag = source.slice(start, source.indexOf("/>", start))
       return /\bavailableCommands=\{([^}]*)\}/.exec(tag)?.[1].trim()
     }
-    expect(
-      commandsPassedBy("src/components/canvas/canvas-conversation-surface.tsx")
-    ).toBe("conn.availableCommands")
     // Except with no agent known at all: then nothing it remembered applies,
     // and `[]` is the deliberate answer.
     expect(
       commandsPassedBy("src/components/message/live-transcript-view.tsx")
     ).toBe("transcriptAgent ? conn?.availableCommands : []")
-    const detailPanel =
-      "src/components/conversations/conversation-detail-panel.tsx"
-    expect(commandsPassedBy(detailPanel)).toBe("connectionCommands")
-    expect(read(detailPanel)).toMatch(
-      /const connectionCommands = connIsForOtherAgent \? null : conn\.availableCommands\n/
-    )
+    // A connection still bound to the agent a draft switched away from has
+    // advertised nothing for the selected one: unknown again, never `[]`.
+    for (const surface of [
+      "src/components/conversations/conversation-detail-panel.tsx",
+      "src/components/canvas/canvas-conversation-surface.tsx",
+    ]) {
+      expect(commandsPassedBy(surface)).toBe("connectionCommands")
+      expect(read(surface)).toMatch(
+        /const connectionCommands = connIsForOtherAgent \? null : conn\.availableCommands\n/
+      )
+    }
   })
 })

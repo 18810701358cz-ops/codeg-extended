@@ -8,8 +8,8 @@ use regex::Regex;
 
 use crate::models::*;
 use crate::parsers::{
-    folder_name_from_path, is_safe_subagent_id, title_from_user_text, truncate_str, AgentParser,
-    ParseError,
+    folder_name_from_path, is_safe_subagent_id, title_from_user_text, truncate_str, AgentEnv,
+    AgentParser, ParseError,
 };
 
 /// Regex that matches Claude Code system-injected XML tags and their content.
@@ -1161,8 +1161,14 @@ impl Default for ClaudeParser {
 
 impl ClaudeParser {
     pub fn new() -> Self {
-        let base_dir = resolve_claude_config_dir().join("projects");
-        Self { base_dir }
+        Self::for_env(&AgentEnv::inherited())
+    }
+
+    /// The history of the Claude launched with `env`.
+    pub fn for_env(env: &AgentEnv) -> Self {
+        Self {
+            base_dir: resolve_claude_projects_dir_for_env(env),
+        }
     }
 
     /// Test-only constructor that lets callers point the parser at a fixture
@@ -1177,18 +1183,15 @@ impl ClaudeParser {
     }
 }
 
-/// Locate `<session_id>.jsonl` under any project directory of the Claude
-/// config dir. Used by the background watcher (`crate::acp::background_watch`)
-/// to arm its transcript tail; mirrors `get_conversation`'s discovery scan
-/// (Claude offers no forward cwd→project-dir encoding, so discovery is by
-/// session-id filename).
-pub(crate) fn find_session_file(session_id: &str) -> Option<PathBuf> {
-    find_session_file_in(&resolve_claude_config_dir().join("projects"), session_id)
-}
-
-/// `find_session_file` against an explicit base dir (test seam). `session_id`
-/// is embedded in a filename, so path-traversal shapes are rejected outright
-/// (`is_safe_subagent_id`: separators, `..`, drive colon, NUL).
+/// Locate `<session_id>.jsonl` under any project directory of `base_dir` —
+/// the `projects` dir of the launch's Claude config dir
+/// ([`resolve_claude_projects_dir_for_env`]). Used by the background watcher
+/// (`crate::acp::background_watch`) to arm its transcript tail; mirrors
+/// `get_conversation`'s discovery scan (Claude offers no forward
+/// cwd→project-dir encoding, so discovery is by session-id filename).
+/// `session_id` is embedded in a filename, so path-traversal shapes are
+/// rejected outright (`is_safe_subagent_id`: separators, `..`, drive colon,
+/// NUL).
 pub(crate) fn find_session_file_in(base_dir: &Path, session_id: &str) -> Option<PathBuf> {
     if session_id.is_empty() || !is_safe_subagent_id(session_id) {
         return None;
@@ -1561,7 +1564,19 @@ impl ClaudeParser {
 }
 
 pub(crate) fn resolve_claude_config_dir() -> PathBuf {
-    resolve_claude_config_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+    resolve_claude_config_dir_for_env(&AgentEnv::inherited())
+}
+
+/// The config dir of the Claude launched with `env`: its `CLAUDE_CONFIG_DIR`,
+/// else `~/.claude`.
+pub(crate) fn resolve_claude_config_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_claude_config_dir_from(env.var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+}
+
+/// Where the Claude launched with `env` keeps its transcripts:
+/// `<config dir>/projects/<encoded cwd>/<session id>.jsonl`.
+pub(crate) fn resolve_claude_projects_dir_for_env(env: &AgentEnv) -> PathBuf {
+    resolve_claude_config_dir_for_env(env).join("projects")
 }
 
 fn resolve_claude_config_dir_from(
@@ -2177,8 +2192,15 @@ impl ClaudeRecordAccumulator {
                                 let subagent_path =
                                     subagent_dir.join(format!("agent-{}.jsonl", agent_id));
                                 if subagent_path.exists() {
-                                    stats.tool_calls =
-                                        parse_subagent_tool_calls(&subagent_path).0;
+                                    let (calls, timeline, _, _, duration_ms) =
+                                        parse_subagent_tool_calls(&subagent_path);
+                                    stats.tool_calls = calls;
+                                    stats.timeline = timeline;
+                                    // The transcript-derived span only fills
+                                    // the gap: a task-reported duration is the
+                                    // more direct measurement.
+                                    stats.total_duration_ms =
+                                        stats.total_duration_ms.or(duration_ms);
                                 }
                             }
                         }
@@ -2976,7 +2998,10 @@ fn parse_data_uri_image(raw: &str) -> Option<(String, String)> {
 ///   `old_string`, `new_str` → `new_string`, and `replace_name` →
 ///   `replace_all` (true only for `true` / `"true"`).
 /// * `Grep` (2.1.292, read out of the 2.1.293 binary): the other way round,
-///   see [`canonical_grep_input`].
+///   see [`canonical_grep_input`], which since 2.1.295 also reads grep's own
+///   `-l` / `-c` / `-r` flags.
+/// * `Bash` (2.1.295, read out of the 2.1.296 binary): `command_description` →
+///   `description`, and `timeout_ms` → `timeout`, see [`canonical_bash_input`].
 ///
 /// Each rename fills a canonical key the input left ABSENT, and only from a
 /// string, so an input that already uses the canonical names — the common
@@ -2997,6 +3022,7 @@ pub(crate) fn canonical_file_tool_input(
         "Write" => (true, &["path", "file_text", "file_content"]),
         "Edit" => (false, &["path", "old_str", "new_str", "replace_name"]),
         "Grep" => return canonical_grep_input(input),
+        "Bash" => return canonical_bash_input(input),
         _ => return None,
     };
     let args = input.as_object()?;
@@ -3035,30 +3061,115 @@ pub(crate) fn canonical_file_tool_input(
     changed.then_some(serde_json::Value::Object(args))
 }
 
-/// Grep's one alias, the way the CLI repairs it: a non-empty `file_path` is
-/// read as `path` when `path` is absent, and dropped when it repeats `path`.
-/// Beside a different `path` it is left alone, as the CLI leaves it, and so is
-/// an empty one. The CLI also appends a note on the rename to the result
-/// ("Note: Grep's parameter for where to search is named `path`. …"), which
-/// the search card's output parser keeps as a note line.
+/// Grep's aliases, the way the CLI repairs them (`coerceInput`, read out of the
+/// 2.1.296 binary), in its order:
+///
+/// * `file_path` (2.1.292): a non-empty one is read as `path` when `path` is
+///   absent, and dropped when it repeats `path`. Beside a different `path` it
+///   is left alone, as the CLI leaves it, and so is an empty one.
+/// * grep's own flags (2.1.295): `-l` is read as `output_mode:
+///   "files_with_matches"` and `-c` as `output_mode: "count"` when
+///   `output_mode` is absent, and dropped when it already says the same; `-r`
+///   is dropped (Grep always searches recursively). A flag counts when it is
+///   `true` or `"true"`. `-l` goes first, so beside `-c` it wins and `-c`
+///   stays, as in the CLI.
+///
+/// The CLI also appends a note on each repair to the result ("Note: Grep's
+/// parameter for where to search is named `path`. …", "Note: `-c` is not a
+/// Grep parameter and was read as …"), which the search card's output parser
+/// keeps as a note line.
 fn canonical_grep_input(input: &serde_json::Value) -> Option<serde_json::Value> {
+    const FLAG_MODES: [(&str, &str); 2] = [("-l", "files_with_matches"), ("-c", "count")];
     let original = input.as_object()?;
-    let file_path = original
-        .get("file_path")?
-        .as_str()
-        .filter(|path| !path.is_empty())?;
-    let mut args = original.clone();
-    match original.get("path") {
-        None => {
-            let value = args.remove("file_path")?;
-            args.insert("path".to_string(), value);
-        }
-        Some(path) if path.as_str() == Some(file_path) => {
-            args.remove("file_path");
-        }
-        Some(_) => return None,
+    if !["file_path", "-l", "-c", "-r"]
+        .iter()
+        .any(|key| original.contains_key(*key))
+    {
+        return None;
     }
-    Some(serde_json::Value::Object(args))
+    let mut args = original.clone();
+    let mut changed = false;
+    if let Some(file_path) = original
+        .get("file_path")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.is_empty())
+    {
+        match original.get("path") {
+            None => {
+                if let Some(value) = args.remove("file_path") {
+                    args.insert("path".to_string(), value);
+                    changed = true;
+                }
+            }
+            Some(path) if path.as_str() == Some(file_path) => {
+                args.remove("file_path");
+                changed = true;
+            }
+            Some(_) => {}
+        }
+    }
+    for (flag, mode) in FLAG_MODES {
+        if !is_cli_true(args.get(flag)) {
+            continue;
+        }
+        let unset = !args.contains_key("output_mode");
+        if unset || args.get("output_mode").and_then(serde_json::Value::as_str) == Some(mode) {
+            args.remove(flag);
+            args.insert(
+                "output_mode".to_string(),
+                serde_json::Value::String(mode.to_string()),
+            );
+            changed = true;
+        }
+    }
+    if is_cli_true(args.get("-r")) {
+        args.remove("-r");
+        changed = true;
+    }
+    changed.then_some(serde_json::Value::Object(args))
+}
+
+/// Bash's two aliases, the way CLI 2.1.296 repairs them:
+///
+/// * `timeout_ms` is read as `timeout` when `timeout` is absent and it holds a
+///   number or a string of digits; anything else stays where it is.
+/// * `command_description` (2.1.295) is read as `description` when
+///   `description` is absent and it is a string, and is dropped otherwise.
+///
+/// Values move as they are: a string of digits stays a string, as in the CLI.
+fn canonical_bash_input(input: &serde_json::Value) -> Option<serde_json::Value> {
+    let original = input.as_object()?;
+    if !original.contains_key("timeout_ms") && !original.contains_key("command_description") {
+        return None;
+    }
+    let mut args = original.clone();
+    let mut changed = false;
+    if !args.contains_key("timeout")
+        && args.get("timeout_ms").is_some_and(|value| {
+            value.is_number()
+                || value
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        })
+    {
+        if let Some(value) = args.remove("timeout_ms") {
+            args.insert("timeout".to_string(), value);
+            changed = true;
+        }
+    }
+    if let Some(description) = args.remove("command_description") {
+        if !args.contains_key("description") && description.is_string() {
+            args.insert("description".to_string(), description);
+        }
+        changed = true;
+    }
+    changed.then_some(serde_json::Value::Object(args))
+}
+
+/// The CLI's reading of a flag-like argument: `true` and `"true"` are true.
+fn is_cli_true(value: Option<&serde_json::Value>) -> bool {
+    matches!(value, Some(serde_json::Value::Bool(true)))
+        || value.and_then(serde_json::Value::as_str) == Some("true")
 }
 
 /// Move `alias` onto `canonical` when the canonical key is absent and the alias
@@ -3212,6 +3323,8 @@ fn extract_agent_execution_stats(tur: &serde_json::Value) -> AgentExecutionStats
             .and_then(|v| v.as_u64())
             .map(|v| v as u32),
         tool_calls: Vec::new(),
+        timeline: Vec::new(),
+        recovered_result: None,
         // Claude's sub-agent lives inside the parent transcript (a sidechain),
         // not as a session of its own.
         child_session_id: None,
@@ -3266,7 +3379,7 @@ fn attribute_subagent_usage(session_path: &Path, turns: &mut [MessageTurn]) {
     transcripts.sort();
 
     for transcript in transcripts {
-        let (_, usage, started_at) = parse_subagent_tool_calls(&transcript);
+        let (_, _, usage, started_at, _) = parse_subagent_tool_calls(&transcript);
         let Some(extra) = usage else { continue };
 
         // The turn that was speaking when the sub-agent began. Falling back to
@@ -3302,19 +3415,62 @@ fn attribute_subagent_usage(session_path: &Path, turns: &mut [MessageTurn]) {
     }
 }
 
-/// Read one sub-agent's transcript: the tool calls it made, what it spent, and
-/// when it started.
+/// Per-entry cap for thinking/text blocks folded into a sub-agent timeline, so
+/// one huge block cannot balloon the stats every detail load carries. Almost
+/// every block is far below it; the ones that reach it are typically the
+/// child's long final report (measured on local Claude Code transcripts: 27 of
+/// 7,715 blocks, the longest ~40K chars), which the card also shows in full as
+/// the Agent call's own result.
+const TIMELINE_ENTRY_MAX_CHARS: usize = 16_384;
+
+/// One parsed sub-agent transcript: the tool calls, the mixed timeline,
+/// the deduped usage, the first record's timestamp, and the
+/// first-to-last-timestamped-record span (`None` without a real interval).
+pub(crate) type SubagentTranscript = (
+    Vec<AgentToolCall>,
+    Vec<AgentTimelineEntry>,
+    Option<TurnUsage>,
+    Option<DateTime<Utc>>,
+    Option<u64>,
+);
+
+/// Read one sub-agent's transcript: the tool calls it made, its mixed
+/// thinking/text/tool timeline, what it spent, when it started, and how long
+/// it ran.
+///
+/// The timeline preserves arrival order — a sub-agent transcript interleaves
+/// `thinking`/`text` blocks with its `tool_use` blocks exactly as the model
+/// emitted them, and that order IS the card's historical activity view. Each
+/// timeline `tool_call` entry anchors into the returned `AgentToolCall` vec by
+/// ordinal (`child_index`), which stays exact because the vec keeps arrival
+/// order: results are joined by id afterwards and never reorder it. `thinking`
+/// is read from the Anthropic field name (`thinking`), `text` from `text`;
+/// unknown block kinds (`redacted_thinking`, …) stay ignored. One API call is
+/// written as several records that PARTITION its content blocks (measured on
+/// real transcripts: no block repeats across the records of one `message.id`),
+/// so per-block extraction needs no dedup — only the usage below does.
 ///
 /// The usage is deduped by `message.id` on the same rule the parent transcript
 /// uses (see [`ClaudeRecordAccumulator::claim_assistant_usage`]) — a sub-agent
 /// transcript has the identical one-line-per-content-block shape. It is
 /// consumed by [`attribute_subagent_usage`]; the tool-call caller ignores it.
-fn parse_subagent_tool_calls(
-    path: &PathBuf,
-) -> (Vec<AgentToolCall>, Option<TurnUsage>, Option<DateTime<Utc>>) {
+///
+/// The duration is the span between the transcript's first and last timestamped
+/// records — the child's real active time, derived from data every record
+/// already carries. It is the fallback source for
+/// `AgentExecutionStats::total_duration_ms` where the task/meta file carries no
+/// duration (qoder's `task-*.json` has none). Records are appended in time
+/// order, so the last parse wins; a transcript with no interval (a single
+/// record, or no timestamps at all) yields `None` rather than a zero span.
+///
+/// Rewind rule, shared by `tool_calls` and the timeline: a sub-agent
+/// transcript left behind by a rewind stays on disk, but the attach passes
+/// only fill Agent calls present in the current branch's turns, so an
+/// abandoned branch's transcript is parsed and then dropped, never rendered.
+pub(crate) fn parse_subagent_tool_calls(path: &PathBuf) -> SubagentTranscript {
     let file = match fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return (Vec::new(), None, None),
+        Err(_) => return (Vec::new(), Vec::new(), None, None, None),
     };
     let reader = BufReader::new(file);
 
@@ -3326,6 +3482,14 @@ fn parse_subagent_tool_calls(
     let mut usage_by_message_id: std::collections::HashMap<String, TurnUsage> =
         std::collections::HashMap::new();
     let mut started_at: Option<DateTime<Utc>> = None;
+    // Last record that carried a usable `timestamp`. Cheap field-presence gate
+    // ahead of the RFC3339 parse keeps the per-line cost at zero for tail
+    // records once `started_at` is already known.
+    let mut last_timestamp: Option<DateTime<Utc>> = None;
+    // The card's mixed timeline in arrival order. `child_index` anchors each
+    // tool_call entry into `calls` — safe to record at push time because the
+    // final `tool_calls` array below keeps `calls`' arrival order untouched.
+    let mut timeline: Vec<AgentTimelineEntry> = Vec::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -3342,8 +3506,13 @@ fn parse_subagent_tool_calls(
 
         let msg_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-        if started_at.is_none() {
-            started_at = parse_timestamp(&value);
+        if value.get("timestamp").is_some() {
+            if let Some(ts) = parse_timestamp(&value) {
+                if started_at.is_none() {
+                    started_at = Some(ts);
+                }
+                last_timestamp = Some(ts);
+            }
         }
 
         if msg_type == "assistant" {
@@ -3376,23 +3545,53 @@ fn parse_subagent_tool_calls(
             {
                 for item in content {
                     let block_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                    if block_type == "tool_use" || block_type == "server_tool_use" {
-                        let id = item
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let name = item
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        let input = item
-                            .get("input")
-                            .map(|v| truncate_str(&tool_input_json(&name, v), 500));
-                        if !id.is_empty() {
-                            calls.push((id, name, input));
+                    match block_type {
+                        "tool_use" | "server_tool_use" => {
+                            let id = item
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let name = item
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let input = item
+                                .get("input")
+                                .map(|v| truncate_str(&tool_input_json(&name, v), 500));
+                            if !id.is_empty() {
+                                calls.push((id, name, input));
+                                timeline.push(AgentTimelineEntry {
+                                    entry_type: "tool_call".to_string(),
+                                    text: None,
+                                    child_index: Some(calls.len() - 1),
+                                });
+                            }
                         }
+                        "thinking" | "text" => {
+                            // The sub-agent's own reasoning and narration,
+                            // interleaved with its tool calls in the
+                            // transcript. Guard-railed per entry so one
+                            // pathologically large block cannot balloon the
+                            // stats payload attached to every ToolResult.
+                            if let Some(text) = item
+                                .get(if block_type == "thinking" {
+                                    "thinking"
+                                } else {
+                                    "text"
+                                })
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                            {
+                                timeline.push(AgentTimelineEntry {
+                                    entry_type: block_type.to_string(),
+                                    text: Some(truncate_str(text, TIMELINE_ENTRY_MAX_CHARS)),
+                                    child_index: None,
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3450,7 +3649,15 @@ fn parse_subagent_tool_calls(
             }
         })
         .collect();
-    (calls, usage, started_at)
+    // A zero span is no span: a single-record transcript has no interval to
+    // report, and claiming 0ms would describe activity that never happened.
+    let duration_ms = match (started_at, last_timestamp) {
+        (Some(start), Some(end)) if end > start => {
+            Some((end - start).num_milliseconds().max(0) as u64)
+        }
+        _ => None,
+    };
+    (calls, timeline, usage, started_at, duration_ms)
 }
 
 /// The header Claude Code writes above a subagent's report inside the raw
@@ -3897,6 +4104,139 @@ mod tests {
     }
 
     #[test]
+    fn grep_flags_are_read_the_way_the_cli_reads_them() {
+        // CLI 2.1.295: `-l` / `-c` set an absent `output_mode`, `true` or
+        // "true" alike, and `-r` is dropped.
+        assert_eq!(
+            canonical_file_tool_input("Grep", &json!({"pattern": "x", "-l": true})),
+            Some(json!({"pattern": "x", "output_mode": "files_with_matches"}))
+        );
+        assert_eq!(
+            canonical_file_tool_input("Grep", &json!({"pattern": "x", "-c": "true", "-r": true})),
+            Some(json!({"pattern": "x", "output_mode": "count"}))
+        );
+        // A flag that repeats `output_mode` is dropped; one that contradicts it
+        // stays, and so does a flag that is not true.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Grep",
+                &json!({"pattern": "x", "-c": true, "output_mode": "count"})
+            ),
+            Some(json!({"pattern": "x", "output_mode": "count"}))
+        );
+        for input in [
+            json!({"pattern": "x", "-l": true, "output_mode": "content"}),
+            json!({"pattern": "x", "-l": false}),
+            json!({"pattern": "x", "-c": "yes"}),
+            json!({"pattern": "x", "-r": "false"}),
+            json!({"pattern": "x", "-l": true, "output_mode": null}),
+        ] {
+            assert_eq!(canonical_file_tool_input("Grep", &input), None, "{input}");
+        }
+        // `-l` is read first, so it takes the mode and `-c` stays behind.
+        assert_eq!(
+            canonical_file_tool_input("Grep", &json!({"pattern": "x", "-l": true, "-c": true})),
+            Some(json!({"pattern": "x", "output_mode": "files_with_matches", "-c": true}))
+        );
+        // The flags and the `file_path` alias are repaired together.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Grep",
+                &json!({"pattern": "x", "file_path": "/w", "-r": "true", "-l": "true"})
+            ),
+            Some(json!({"pattern": "x", "path": "/w", "output_mode": "files_with_matches"}))
+        );
+        // Beside a `path` the `file_path` alias cannot settle, a flag still is.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Grep",
+                &json!({"pattern": "x", "path": "/w", "file_path": "/v", "-r": true})
+            ),
+            Some(json!({"pattern": "x", "path": "/w", "file_path": "/v"}))
+        );
+    }
+
+    #[test]
+    fn bash_aliases_are_read_the_way_the_cli_reads_them() {
+        // CLI 2.1.295: `command_description` is read as an absent
+        // `description`.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Bash",
+                &json!({"command": "ls", "command_description": "List files"})
+            ),
+            Some(json!({"command": "ls", "description": "List files"}))
+        );
+        // Beside a `description`, or when it is not a string, it is dropped.
+        assert_eq!(
+            canonical_file_tool_input(
+                "Bash",
+                &json!({"command": "ls", "description": "Mine", "command_description": "Other"})
+            ),
+            Some(json!({"command": "ls", "description": "Mine"}))
+        );
+        assert_eq!(
+            canonical_file_tool_input("Bash", &json!({"command": "ls", "command_description": 3})),
+            Some(json!({"command": "ls"}))
+        );
+        // `timeout_ms` moves to an absent `timeout` when it holds a number or a
+        // string of digits, which moves as it is.
+        assert_eq!(
+            canonical_file_tool_input("Bash", &json!({"command": "ls", "timeout_ms": 5000})),
+            Some(json!({"command": "ls", "timeout": 5000}))
+        );
+        assert_eq!(
+            canonical_file_tool_input("Bash", &json!({"command": "ls", "timeout_ms": "5000"})),
+            Some(json!({"command": "ls", "timeout": "5000"}))
+        );
+        for input in [
+            json!({"command": "ls", "timeout_ms": "5s"}),
+            json!({"command": "ls", "timeout_ms": ""}),
+            json!({"command": "ls", "timeout_ms": 10, "timeout": 20}),
+            json!({"command": "ls", "description": "d"}),
+        ] {
+            assert_eq!(canonical_file_tool_input("Bash", &input), None, "{input}");
+        }
+        // PowerShell is not repaired by the CLI, so not here either.
+        assert_eq!(
+            canonical_file_tool_input(
+                "PowerShell",
+                &json!({"command": "ls", "command_description": "List files"})
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_history_bash_that_used_command_description_renders_with_description() {
+        let record = json!({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_b",
+                    "name": "Bash",
+                    "input": {"command": "cargo test", "command_description": "Run the tests"},
+                }],
+            },
+        });
+        let blocks = extract_assistant_content(&record);
+        let Some(ContentBlock::ToolUse {
+            input_preview: Some(input),
+            ..
+        }) = blocks.first()
+        else {
+            panic!("expected a tool_use block, got {blocks:?}");
+        };
+        let input: serde_json::Value = serde_json::from_str(input).unwrap();
+        assert_eq!(
+            input,
+            json!({"command": "cargo test", "description": "Run the tests"})
+        );
+    }
+
+    #[test]
     fn a_history_grep_that_used_file_path_renders_with_path() {
         let record = json!({
             "type": "assistant",
@@ -3988,13 +4328,233 @@ mod tests {
             })
         )
         .unwrap();
-        let (calls, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        let (calls, _, _, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
         let input: serde_json::Value =
             serde_json::from_str(calls[0].input_preview.as_deref().unwrap()).unwrap();
         assert_eq!(
             input,
             json!({"file_path": "/w/lib.rs", "old_string": "a", "new_string": "b"})
         );
+    }
+
+    /// One sub-agent record, one content block. The helper keeps the fixture
+    /// lines below shape-identical to what the CLI writes per streaming chunk.
+    fn subagent_record(at: &str, block: serde_json::Value) -> String {
+        json!({
+            "type": "assistant",
+            "timestamp": at,
+            "uuid": "c",
+            "message": {"id": "m1", "role": "assistant", "content": [block]},
+        })
+        .to_string()
+    }
+
+    /// Same record at the helper's default timestamp — the fixtures below that
+    /// don't care about the clock.
+    fn subagent_record_undated(block: serde_json::Value) -> String {
+        subagent_record("2026-08-16T15:45:33.089Z", block)
+    }
+
+    #[test]
+    fn a_subagent_timeline_keeps_the_arrival_order_of_thinking_text_and_tools() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for line in [
+            subagent_record(
+                "2026-08-16T15:45:33.089Z",
+                json!({
+                    "type": "thinking", "thinking": "Need the file first.", "signature": "s"
+                }),
+            ),
+            subagent_record("2026-08-16T15:45:33.189Z", json!({"type": "text", "text": "Checking."})),
+            subagent_record(
+                "2026-08-16T15:45:33.289Z",
+                json!({
+                    "type": "tool_use", "id": "tu1", "name": "Read",
+                    "input": {"file_path": "/a"}
+                }),
+            ),
+            subagent_record(
+                "2026-08-16T15:45:33.389Z",
+                json!({
+                    "type": "thinking", "thinking": "Now the command.", "signature": "s"
+                }),
+            ),
+            subagent_record(
+                "2026-08-16T15:45:33.489Z",
+                json!({
+                    "type": "tool_use", "id": "tu2", "name": "Bash",
+                    "input": {"command": "ls"}
+                }),
+            ),
+            json!({
+                "type": "user",
+                "message": {"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": "tu1", "content": "1\theader"
+                }]},
+            })
+            .to_string(),
+        ] {
+            writeln!(file, "{line}").unwrap();
+        }
+        let (calls, timeline, _, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
+
+        assert_eq!(calls.len(), 2);
+        let kinds: Vec<(&str, Option<usize>, Option<&str>)> = timeline
+            .iter()
+            .map(|e| (e.entry_type.as_str(), e.child_index, e.text.as_deref()))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("thinking", None, Some("Need the file first.")),
+                ("text", None, Some("Checking.")),
+                ("tool_call", Some(0), None),
+                ("thinking", None, Some("Now the command.")),
+                ("tool_call", Some(1), None),
+            ]
+        );
+        // Every tool_call entry anchors the call it sits at in `tool_calls`.
+        for entry in timeline.iter().filter(|e| e.entry_type == "tool_call") {
+            let call = &calls[entry.child_index.unwrap()];
+            assert_eq!(
+                call.tool_name,
+                if entry.child_index == Some(0) { "Read" } else { "Bash" }
+            );
+        }
+        assert_eq!(calls[0].output_preview.as_deref(), Some("1\theader"));
+    }
+
+    #[test]
+    fn a_pathologically_large_thinking_block_is_guard_railed_in_the_timeline() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            subagent_record_undated(json!({
+                "type": "thinking", "thinking": "x".repeat(20_000), "signature": "s"
+            }))
+        )
+        .unwrap();
+        let (_, timeline, _, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert_eq!(timeline.len(), 1);
+        // `truncate_str` appends "..." past the cap.
+        let text = timeline[0].text.as_deref().unwrap();
+        assert_eq!(text.chars().count(), TIMELINE_ENTRY_MAX_CHARS + 3);
+        assert!(text.ends_with("..."));
+    }
+
+    #[test]
+    fn an_empty_subagent_transcript_yields_no_calls_and_no_timeline() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let (calls, timeline, usage, _, _) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert!(calls.is_empty());
+        assert!(timeline.is_empty());
+        assert!(usage.is_none());
+    }
+
+    #[test]
+    fn a_subagent_transcripts_first_and_last_timestamps_yield_its_active_span() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for line in [
+            subagent_record(
+                "2026-08-16T15:45:33.000Z",
+                json!({
+                    "type": "tool_use", "id": "tu1", "name": "Read",
+                    "input": {"file_path": "/a"}
+                }),
+            ),
+            subagent_record(
+                "2026-08-16T15:45:35.500Z",
+                json!({"type": "text", "text": "done"}),
+            ),
+        ] {
+            writeln!(file, "{line}").unwrap();
+        }
+        let (_, _, _, _, duration_ms) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert_eq!(duration_ms, Some(2_500));
+    }
+
+    #[test]
+    fn a_single_record_transcript_has_no_span_and_yields_no_duration() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            subagent_record(
+                "2026-08-16T15:45:33.000Z",
+                json!({"type": "text", "text": "one and only"}),
+            )
+        )
+        .unwrap();
+        let (_, _, _, _, duration_ms) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert_eq!(duration_ms, None);
+    }
+
+    #[test]
+    fn a_transcript_without_timestamps_yields_no_duration() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for line in [
+            json!({
+                "type": "assistant",
+                "uuid": "c1",
+                "message": {"id": "m1", "role": "assistant", "content": [
+                    {"type": "text", "text": "no clock here"}
+                ]},
+            })
+            .to_string(),
+            json!({
+                "type": "assistant",
+                "uuid": "c2",
+                "message": {"id": "m1", "role": "assistant", "content": [
+                    {"type": "text", "text": "still none"}
+                ]},
+            })
+            .to_string(),
+        ] {
+            writeln!(file, "{line}").unwrap();
+        }
+        let (_, _, _, _, duration_ms) = parse_subagent_tool_calls(&file.path().to_path_buf());
+        assert_eq!(duration_ms, None);
+    }
+
+    #[test]
+    fn a_subagent_timeline_reaches_the_history_card_through_the_sidechain_attach() {
+        let child = vec![
+            subagent_record_undated(json!({
+                "type": "thinking", "thinking": "Reading.", "signature": "s"
+            })),
+            subagent_record_undated(json!({
+                "type": "tool_use", "id": "tu1", "name": "Read",
+                "input": {"file_path": "/a"}
+            })),
+            json!({
+                "type": "user",
+                "message": {"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": "tu1", "content": "done"
+                }]},
+            })
+            .to_string(),
+        ];
+        let detail = parse_with_subagents(&session_launching("abc", 1), &[("abc", child)]);
+        let stats = detail
+            .turns
+            .iter()
+            .flat_map(|t| t.blocks.iter())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult { agent_stats, .. } => agent_stats.clone(),
+                _ => None,
+            })
+            .expect("Agent result carries agent_stats");
+        assert_eq!(
+            stats
+                .timeline
+                .iter()
+                .map(|e| e.entry_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thinking", "tool_call"]
+        );
+        assert_eq!(stats.timeline[1].child_index, Some(0));
+        assert_eq!(stats.tool_calls[0].tool_name, "Read");
     }
 
     /// A resume replays the surviving history into the SAME transcript,
@@ -8063,6 +8623,17 @@ mod tests {
                 ("assistant", "Meanwhile, reading the code.".to_string()),
                 ("assistant", "The review is back.".to_string()),
             ]
+        );
+    }
+
+    /// #948: built with an agent's launch env, the parser reads where THAT
+    /// env puts the agent's files, not where codeg's own environment does.
+    #[test]
+    fn for_env_reads_the_config_dir_of_the_launch_env() {
+        let env = AgentEnv::with_overrides(&[("CLAUDE_CONFIG_DIR", "/relocated/claude")]);
+        assert_eq!(
+            ClaudeParser::for_env(&env).base_dir,
+            PathBuf::from("/relocated/claude").join("projects")
         );
     }
 }

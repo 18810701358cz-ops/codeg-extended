@@ -132,6 +132,21 @@ export interface AgentExecutionStats {
   lines_removed?: number | null
   other_tool_count?: number | null
   tool_calls?: AgentToolCall[]
+  /** The child's thinking/text/tool activity in arrival order, from the same
+   *  transcript pass that produced `tool_calls` (Rust mirror:
+   *  `AgentExecutionStats.timeline`; a `tool_call` entry's `childIndex`
+   *  anchors into `tool_calls` at the same ordinal). Lets the settled card
+   *  replay the child's mixed timeline when the live transcript is gone. */
+  timeline?: AgentTranscriptEntry[]
+  /** What the child's task file filed as its outcome (Qoder): for a
+   *  `status: "completed"` run, its final report, recovered after the parent
+   *  turn died before the async result was delivered (the card's tool_result
+   *  is then an error); other statuses file an error message or a
+   *  placeholder. Rendered ONLY on an errored card whose `status` is
+   *  `completed` — a normally completed async child delivered its result via
+   *  the notification turn, so this field stays invisible there (display
+   *  policy lives in the card, parsers attach it blindly). */
+  recovered_result?: string
   /** The child's own session id, when the sub-agent ran as a standalone session
    *  on disk instead of as chunks folded into the parent (Grok: every
    *  `spawn_subagent` child). Drives the Agent card's "open the sub-agent's
@@ -141,15 +156,27 @@ export interface AgentExecutionStats {
 }
 
 /**
- * One entry of a live subagent transcript (LIVE-only — never persisted, never
- * emitted by the Rust parsers). Entries arrive pre-merged: the reducer/backend
- * split blocks only at kind/attribution boundaries, so consecutive same-kind
- * chunks of one subagent are a single growing entry.
+ * One entry of a subagent transcript. Two data sources share this shape: the
+ * LIVE channel (a running capsule's stream; entries arrive pre-merged — the
+ * reducer/backend split blocks only at kind/attribution boundaries, so
+ * consecutive same-kind chunks of one subagent are a single growing entry)
+ * and history (`AgentExecutionStats.timeline`, parsed from the child's own
+ * JSONL by the Rust parsers — one entry per thinking/text/tool block, in
+ * arrival order).
  */
-export interface AgentTranscriptEntry {
-  type: "text" | "thinking"
-  text: string
-}
+export type AgentTranscriptEntry =
+  | { type: "text" | "thinking"; text: string }
+  | {
+      /**
+       * A marker into the mixed timeline: the child's OWN tool call, keeping
+       * its chronological position among the prose around it. `childIndex` is
+       * the call's ordinal among this parent's children — `agent_stats.
+       * tool_calls` carries no ids, and both lists are appended in the same
+       * arrival pass, so the ordinal is exact.
+       */
+      type: "tool_call"
+      childIndex: number
+    }
 
 /**
  * Image payload shared across `ContentBlock::Image` /
@@ -234,13 +261,14 @@ export type ContentBlock =
        */
       images?: ImageData[] | null
       /**
-       * Frontend-only, LIVE-stream data (same doctrine as the `plan` block:
-       * never persisted, never emitted by the Rust JSONL parsers). The
-       * in-flight transcript of a Claude native subagent — text/thinking
-       * chunks attributed to this Agent tool call via
+       * LIVE-stream data: the in-flight transcript of a native subagent —
+       * a marker per child tool call, plus (Claude Code only) the text/
+       * thinking chunks attributed to this Agent tool call via
        * `_meta.claudeCode.parentToolUseId` (claude-agent-acp ≥0.63) —
-       * rendered inside the live Agent capsule. Detached at settle:
-       * history shows the parsed `agent_stats` shape only.
+       * rendered inside the live Agent capsule. Still attached at settle so
+       * the finished card keeps the interleaved order it showed live; once
+       * history reloads from disk, the parsed `agent_stats.timeline` takes
+       * over as the card's timeline source.
        */
       agent_transcript?: AgentTranscriptEntry[] | null
     }
@@ -2241,6 +2269,100 @@ export interface ForgePanelSettings {
   /** Standing instructions appended after a scenario's built-in wording,
    *  keyed by scenario id plus the reserved `all` (every scenario). */
   scenario_prompts: Record<string, string>
+  /** Auto-processing for this scope. Always sent by the backend; optional here
+   *  because a blob from a build that predates it has none, which reads as
+   *  auto-processing off. */
+  auto?: ForgeAutoSettings
+}
+
+/** Auto-processing of one scope — mirrors `forge::settings::ForgeAutoSettings`.
+ *
+ *  Matching OPEN items become tasks, each at most once, picked up by a
+ *  schedule, a webhook, or both. Rule patterns are case-insensitive and `*`
+ *  matches any run of characters (`area/*`, `*[bot]`); exclusions always win
+ *  over inclusions. */
+export interface ForgeAutoSettings {
+  /** Scan the repository on a timer. */
+  schedule: boolean
+  /** Minutes between scheduled scans (1–1440; clamped server-side). */
+  interval_minutes: number
+  /** Scan as soon as the forge delivers a webhook for the repository. */
+  webhook: boolean
+  /** What the forge signs deliveries with. Generated on save when the webhook
+   *  is on and none is set; kept when it is switched off. */
+  webhook_secret: string | null
+  issues: boolean
+  pull_requests: boolean
+  /** Scenario an automatic issue task runs; null = the kind's default. */
+  issue_scenario: string | null
+  pr_scenario: string | null
+  include_labels: string[]
+  exclude_labels: string[]
+  include_authors: string[]
+  exclude_authors: string[]
+  skip_drafts: boolean
+  /** Queue the task as soon as it exists (subject to the folder's concurrency
+   *  limit) instead of leaving it in To-do. */
+  auto_start: boolean
+  /** Comment the outcome back on the item when the task finishes. */
+  writeback: boolean
+  /** Also pick up items already open, untouched, before switch-on. */
+  include_existing: boolean
+  /** When auto-processing was switched on (ISO). SERVER-STAMPED — a value
+   *  sent from here is ignored. */
+  enabled_at: string | null
+}
+
+/** What set an auto-processing scan off. */
+export type ForgeAutoTrigger = "schedule" | "webhook" | "manual"
+
+/** Why a listed item was passed over — the first rule that ruled it out. */
+export type ForgeAutoSkip =
+  | "kind"
+  | "not_open"
+  | "draft"
+  | "excluded_label"
+  | "excluded_author"
+  | "missing_label"
+  | "author_not_included"
+
+/** One scan's report — mirrors `forge::auto::ScanReport`. */
+export interface ForgeAutoScanReport {
+  trigger: ForgeAutoTrigger
+  started_at: string
+  finished_at: string
+  /** Why the scan stopped before it could look at anything. */
+  error: string | null
+  /** The window's start; null = every open item. */
+  since: string | null
+  examined: number
+  matched: number
+  already_handled: number
+  created: {
+    number: number
+    is_pr: boolean
+    title: string
+    task_id: number
+    started: boolean
+    start_error: string | null
+  }[]
+  failed: { number: number; is_pr: boolean; error: string }[]
+  skipped: Partial<Record<ForgeAutoSkip, number>>
+  /** The listing hit its page bound; the next scan re-reads the same window. */
+  truncated: boolean
+}
+
+/** Where auto-processing stands for one folder — mirrors
+ *  `forge::auto::ForgeAutoStatus`. In-memory on the backend: a restart starts
+ *  the record afresh. */
+export interface ForgeAutoStatus {
+  /** False in a codeg that does not run auto-processing (another process
+   *  holds the task engine for this data directory). */
+  available: boolean
+  scanning: boolean
+  last_scan: ForgeAutoScanReport | null
+  next_scan_at: string | null
+  last_delivery_at: string | null
 }
 
 /** Every scope of the panel's preferences — mirrors
@@ -4770,6 +4892,8 @@ export interface OpenCodeCatalogModel {
   context: number | null
   cost_in: number | null
   cost_out: number | null
+  cost_cache_read: number | null
+  cost_cache_write: number | null
 }
 
 /**
