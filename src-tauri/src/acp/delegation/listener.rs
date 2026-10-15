@@ -1605,11 +1605,12 @@ fn short_socket_dir() -> PathBuf {
 ///   could dial and no error anywhere — see [`DelegationListener::bind`].
 /// * The sweep scope: an app launched from inside a codeg-managed session
 ///   inherits that session's scratch `TMPDIR`, whose directory is named like a
-///   `<pid>-<8 hex>` launch dir and is reclaimed wholesale once the pid in the
-///   name is dead. The socket FILE never matches that pattern — the danger is
-///   its PARENT being deleted with it, after which the listener keeps serving
-///   an unlinked vnode and every `delegate_to_agent` fails `ENOENT`
-///   (2026-10-15, twice in a row on this machine).
+///   `<pid>-<8 hex>` launch dir and is deleted wholesale — by the codeg that
+///   owns it when that launch ends, or by any codeg's startup sweep once the
+///   pid in the name is dead. The socket FILE never matches that pattern —
+///   the danger is its PARENT being deleted with it, after which the listener
+///   keeps serving an unlinked vnode and every `delegate_to_agent` fails
+///   `ENOENT` (2026-10-15, twice in a row on this machine).
 ///
 /// Windows: a named pipe address `\\.\pipe\codeg-delegation-<pid>`. Windows
 /// named pipes live in their own kernel namespace and ignore `temp_dir`; the
@@ -1644,12 +1645,12 @@ pub fn default_socket_path(temp_dir: &Path) -> PathBuf {
     }
     if in_sweep_scope {
         tracing::warn!(
-            "[delegation] TMPDIR {} sits inside codeg's scratch sweep namespace \
-             (a `<pid>-<8 hex>` directory a startup sweep deletes wholesale once \
-             its owner is dead), so the broker socket is bound at {} instead — \
-             bound there it would silently disappear with that directory. This \
-             usually happens when the app is launched from inside a \
-             codeg-managed session environment and inherits its scratch TMPDIR; \
+            "[delegation] TMPDIR {} sits inside codeg's per-launch scratch \
+             namespace (`<pid>-<8 hex>` directories codeg deletes wholesale when \
+             their launch ends or their owner dies), so the broker socket is bound \
+             at {} instead — bound there it would silently disappear with that \
+             directory. This usually happens when the app is launched from inside \
+             a codeg-managed session environment and inherits its scratch TMPDIR; \
              if that was not intentional, restart it from a clean environment.",
             temp_dir.display(),
             short.display(),
@@ -3747,6 +3748,34 @@ mod tests {
         );
     }
 
+    /// ...and so must a launch dir under a root that is NOT among this
+    /// process's own sweep roots. Its owner deletes it when that launch ends,
+    /// and any codeg whose root it is sweeps it at startup — neither needs to
+    /// be this process. Linux's default `/tmp/codeg-acp` is the common shape:
+    /// a `TMPDIR` under it pushes this process to the short root instead.
+    #[cfg(unix)]
+    #[test]
+    fn a_launch_dir_under_another_codegs_root_falls_back_too() {
+        let resolved_short_root = Path::new("/private").join(
+            short_root()
+                .strip_prefix("/")
+                .expect("the short root is absolute"),
+        );
+        for ambient in [
+            PathBuf::from("/tmp/codeg-acp/4242-deadbeef"),
+            PathBuf::from("/srv/elsewhere/codeg-acp/4242-deadbeef"),
+            resolved_short_root.join("4242-deadbeef"),
+        ] {
+            let path = default_socket_path(&ambient);
+            assert_eq!(
+                path.parent(),
+                Some(short_socket_dir().as_path()),
+                "{} must not host the socket",
+                ambient.display()
+            );
+        }
+    }
+
     /// Property rather than example: for ANY temp directory, the socket this
     /// picks must sit outside every sweep root — a parent inside one can be
     /// deleted wholesale by a startup sweep while the listener is live, which
@@ -3758,11 +3787,13 @@ mod tests {
     fn no_chosen_socket_path_is_ever_inside_the_sweep_scope() {
         for temp_dir in [
             // The ordinary short case, an over-long macOS one, a scratch
-            // directory of our own, the ambient scratch root, and TMPDIR.
+            // directory of our own, the ambient scratch root, one under
+            // another codeg's root, and TMPDIR.
             PathBuf::from("/tmp"),
             PathBuf::from(format!("/var/folders/hl/{}/T", "z".repeat(30))),
             short_root().join(format!("{}-deadbeef", std::process::id())),
             std::env::temp_dir().join("codeg-acp").join("4242-deadbeef"),
+            PathBuf::from("/tmp/codeg-acp/4242-deadbeef"),
             std::env::temp_dir(),
         ] {
             let path = default_socket_path(&temp_dir);

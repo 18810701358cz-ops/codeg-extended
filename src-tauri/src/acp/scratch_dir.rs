@@ -280,15 +280,29 @@ fn sweep_roots() -> Vec<PathBuf> {
     roots
 }
 
-/// Whether `path` sits inside (or equals) any sweep root — i.e. it or an
-/// ancestor may be deleted wholesale by a sweep as a `<pid>-<8hex>` orphan.
+/// Whether `path` sits inside (or equals) a scratch root — i.e. it or an
+/// ancestor may be deleted wholesale as a `<pid>-<8hex>` launch dir.
 /// Consumer: the delegation listener's `default_socket_path`, which must never
-/// place the long-lived broker socket where a startup sweep can reach.
+/// place the long-lived broker socket where that can happen.
 ///
-/// Compared exactly as written, never canonicalized — the same convention the
-/// listener's own path guards follow, and load-bearing: on macOS a resolved
-/// `/tmp` becomes `/private/tmp`, which would stop matching the literal roots
-/// the sweeps enumerate while still naming the same directories.
+/// Two tests, either one enough:
+///
+/// * Under one of THIS process's [`sweep_roots`].
+/// * Under any directory NAMED like a scratch root ([`is_scratch_root_name`]),
+///   wherever it sits. This process is not the only thing that deletes launch
+///   dirs: the codeg that owns one removes it when that launch ends, and every
+///   other codeg on the machine sweeps its own roots at startup. A launch dir
+///   inherited as `TMPDIR` hangs off THAT process's root, which this process's
+///   list need not contain — Linux's default `/tmp/codeg-acp` drops out of it
+///   as soon as the inherited `TMPDIR` pushes [`choose_root`] to the short
+///   root, and a `/private/tmp` spelling of the macOS short root never matches
+///   the literal one. The name test sees both.
+///
+/// Never canonicalized — the same convention the listener's own path guards
+/// follow. The root test compares against the literal roots the sweeps
+/// enumerate, and on macOS a resolved `/tmp` becomes `/private/tmp`, which
+/// would stop matching them; the name test does not care how the prefix is
+/// spelled.
 ///
 /// Unix-only because its consumer is: the Windows `default_socket_path` is a
 /// named pipe and ignores the temp directory, so an unused copy here would be
@@ -296,6 +310,27 @@ fn sweep_roots() -> Vec<PathBuf> {
 #[cfg(unix)]
 pub(crate) fn is_inside_sweep_scope(path: &Path) -> bool {
     sweep_roots().iter().any(|root| path.starts_with(root))
+        || path
+            .ancestors()
+            .any(|dir| dir.file_name().is_some_and(is_scratch_root_name))
+}
+
+/// The last component of every root [`scratch_root`] can pick, under whatever
+/// parent: `codeg-acp` (nested under the ambient temp directory or under
+/// [`ROOT_ENV`]), or [`short_root`]'s `codeg-acp-<euid>` — any euid, since
+/// which account's root it is changes nothing about whether it gets swept.
+#[cfg(unix)]
+fn is_scratch_root_name(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    match name.strip_prefix(SCRATCH_NAMESPACE) {
+        Some("") => true,
+        Some(rest) => rest
+            .strip_prefix('-')
+            .is_some_and(|euid| !euid.is_empty() && euid.bytes().all(|b| b.is_ascii_digit())),
+        None => false,
+    }
 }
 
 /// A scratch directory owned by one agent launch.
@@ -1014,6 +1049,36 @@ mod tests {
         assert!(!is_inside_sweep_scope(Path::new(
             "/var/folders/hl/26lfwjvs4s760g9fm1nk15xm0000gn/T/codeg-delegation-4242.sock"
         )));
+    }
+
+    /// The scope is every codeg's roots, not just this process's: the launch
+    /// dir a codeg inherits as `TMPDIR` is deleted by its OWNER when that launch
+    /// ends, and swept at startup by any codeg whose root it sits under — and
+    /// the root it hangs off need not be among this process's own.
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_scope_covers_any_codeg_root_by_name() {
+        for path in [
+            // Linux's default root. A codeg launched with a `TMPDIR` under it
+            // derives the short root instead, so it is not in that list.
+            "/tmp/codeg-acp/4242-deadbeef/codeg-delegation-1.sock",
+            // Another codeg's `CODEG_ACP_TMP_ROOT`, which this process lacks.
+            "/srv/elsewhere/codeg-acp/4242-deadbeef",
+            // The macOS short root as a resolved `/tmp` spells it.
+            "/private/tmp/codeg-acp-501/4242-deadbeef/codeg-delegation-1.sock",
+        ] {
+            assert!(is_inside_sweep_scope(Path::new(path)), "{path} is in scope");
+        }
+        for path in [
+            // The broker socket's own fallback directory.
+            "/tmp/codeg-501/codeg-delegation-1.sock",
+            // Names that merely resemble a root.
+            "/tmp/codeg-acpx/4242-deadbeef/codeg-delegation-1.sock",
+            "/tmp/codeg-acp-/4242-deadbeef/codeg-delegation-1.sock",
+            "/tmp/codeg-acp-50a/4242-deadbeef/codeg-delegation-1.sock",
+        ] {
+            assert!(!is_inside_sweep_scope(Path::new(path)), "{path} is not");
+        }
     }
 
     #[test]
