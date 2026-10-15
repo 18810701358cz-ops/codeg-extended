@@ -91,9 +91,9 @@ fn release_focus_of(page: &gtk::Widget) {
     }
 }
 
-/// Persist both the requested size and Fixed coordinates. Wry 0.55's
-/// set_bounds only changes the current allocation, which GTK overwrites at
-/// the next layout pass with the old position and size.
+/// Persist both the requested size and Fixed coordinates. Wry's set_bounds
+/// (0.55 through 0.57) only changes the current allocation, which GTK
+/// overwrites at the next layout pass with the old position and size.
 pub fn set_bounds(webview: &wry::WebView, bounds: Bounds) -> wry::Result<()> {
     let widget = webview.webview();
     let parent = widget

@@ -127,12 +127,14 @@ mod tauri_app {
     /// not: the app hears `Exit` alone, from inside the platform's own
     /// teardown, with the loop no longer delivering anything. Whichever
     /// arrives first does the work, and `APP_QUITTING` turns the other into a
-    /// no-op.
+    /// no-op. An update on Windows hears neither — the updater ends the process
+    /// as soon as the installer is running — so `commands::app_update` calls
+    /// this itself just before.
     ///
     /// The process ends soon after this returns, so everything here finishes
     /// before it does: nothing may be left to a spawned task, or to a window
     /// event that `Exit` would never see delivered.
-    fn shut_down(app: &tauri::AppHandle) {
+    pub(crate) fn shut_down(app: &tauri::AppHandle) {
         if APP_QUITTING.swap(true, Ordering::Relaxed) {
             return;
         }
@@ -622,9 +624,8 @@ mod tauri_app {
             // path, which is the same repair with consent attached.
             //
             // Two accepted defects live in `auto-launch`, which this plugin
-            // wraps, and are still unfixed as of its 0.6 line — so there is no
-            // version to upgrade to, and pinning past `auto-launch ^0.5` (what
-            // the plugin requires) would not help:
+            // wraps, and are still there in 0.6.0 — the line the plugin has
+            // required since 2.7 — so there is no version to upgrade to:
             //   * Windows writes the Run value as `{app_path} {args}` with the
             //     path unquoted. Per-user installs land under
             //     `C:\Users\<name>\AppData\Local\codeg\`, so a username with a
@@ -2261,3 +2262,5 @@ mod tauri_app {
 
 #[cfg(feature = "tauri-runtime")]
 pub use tauri_app::run;
+#[cfg(feature = "tauri-runtime")]
+pub(crate) use tauri_app::shut_down;

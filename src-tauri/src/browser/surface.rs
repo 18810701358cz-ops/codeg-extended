@@ -140,10 +140,11 @@ impl BrowserSurface {
         per_surface!(self, child: |c| Ok(c.reload()?), window: |w| Ok(w.reload()?))
     }
 
-    /// Dev puppet only. Owned windows are deliberately not asked: wry 0.55's
-    /// `url()` unwraps `WKWebView.URL`, which is nil until a navigation has
-    /// committed (or after the first one failed), and that unwrap panics the
-    /// main thread. The registry state carries the URL either way.
+    /// Dev puppet only. Owned windows are deliberately not asked: wry's
+    /// `url()` (0.55 through 0.57) unwraps `WKWebView.URL`, which is nil until
+    /// a navigation has committed (or after the first one failed), and that
+    /// unwrap panics the main thread. The registry state carries the URL
+    /// either way.
     pub fn url(&self) -> Result<Url, SurfaceError> {
         per_surface!(self,
             child: |c| Url::parse(&c.url()?).map_err(|e| SurfaceError(e.to_string())),
