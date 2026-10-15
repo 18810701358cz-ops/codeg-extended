@@ -22,7 +22,10 @@
 //!   (`"custom:kiro-cli"`) — the enabled flag, order and launch env carry over;
 //! * JSON configs that embed an agent type as a string value —
 //!   `work_task.config`, `work_task_settings.config`,
-//!   `work_task_template.config`, `automation.config`.
+//!   `work_task_template.config`, `automation.config`;
+//! * the delegation defaults (`app_metadata` key `delegation.agent_defaults`),
+//!   one JSON object keyed by agent type — the custom agent's entry moves to
+//!   `kiro`.
 //!
 //! The custom definition itself is then deleted. codeg's own ACP transcripts
 //! of those sessions (`<data>/acp-transcripts/kiro-cli/`) are left on disk: the
@@ -32,9 +35,11 @@
 //! Collisions (possible only on a database that already holds built-in `kiro`
 //! rows, i.e. one a pre-release build wrote to) resolve toward the built-in
 //! without losing anything: a `custom:kiro-cli` conversation whose session is
-//! already imported as `kiro` hands its tabs to that row and is soft-deleted
-//! (`deleted_at`), and an existing `kiro` settings row keeps its own state but
-//! inherits the custom row's launch env and model provider where it has none.
+//! already imported as `kiro` hands its tabs to that row, adds its tags to the
+//! ones that row has, and is soft-deleted (`deleted_at`); an existing `kiro`
+//! settings row keeps its own state but inherits the custom row's launch env
+//! and model provider where it has none; and existing `kiro` delegation
+//! defaults are kept over the custom agent's.
 //!
 //! Irreversible by design — `down` is a no-op: once a user has new built-in
 //! Kiro conversations, nothing can tell them apart from migrated ones.
@@ -45,6 +50,9 @@ use sea_orm_migration::prelude::*;
 const CUSTOM_WIRE: &str = "custom:kiro-cli";
 const BUILTIN_WIRE: &str = "kiro";
 const REGISTRY_ID: &str = "kiro-cli";
+/// `commands::delegation::KEY_DELEGATION_AGENT_DEFAULTS`, frozen here as this
+/// migration found it.
+const DELEGATION_DEFAULTS_KEY: &str = "delegation.agent_defaults";
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -87,6 +95,16 @@ fn statements() -> Vec<String> {
                JOIN conversation AS dup ON dup.external_id = existing.external_id \
                WHERE existing.agent_type = '{builtin}' AND dup.id = opened_tab.conversation_id) \
              WHERE conversation_id IN (SELECT id FROM conversation WHERE {duplicate})"
+        ),
+        // …its tags join the ones that row already has…
+        format!(
+            "INSERT OR IGNORE INTO conversation_tag_link (conversation_id, tag_id, created_at) \
+             SELECT existing.id, link.tag_id, link.created_at \
+             FROM conversation_tag_link AS link \
+             JOIN conversation AS dup ON dup.id = link.conversation_id \
+             JOIN conversation AS existing ON existing.external_id = dup.external_id \
+             WHERE existing.agent_type = '{builtin}' \
+               AND link.conversation_id IN (SELECT id FROM conversation WHERE {duplicate})"
         ),
         // …and the duplicate is hidden rather than deleted.
         format!(
@@ -150,6 +168,22 @@ fn statements() -> Vec<String> {
              WHERE instr(config, '{quoted_custom}') > 0"
         ));
     }
+    // The delegation defaults, keyed by wire name: the custom agent's entry
+    // becomes the built-in's unless the built-in already has its own, which
+    // wins as its settings row does. `->` keeps the entry a JSON object. A
+    // value that is not JSON is left alone rather than failing the migration
+    // (the CASE makes sure nothing parses it first).
+    let custom_path = format!("$.\"{CUSTOM_WIRE}\"");
+    let builtin_path = format!("$.\"{BUILTIN_WIRE}\"");
+    out.push(format!(
+        "UPDATE app_metadata SET value = json_remove( \
+           CASE WHEN json_type(value, '{builtin_path}') IS NULL \
+                THEN json_set(value, '{builtin_path}', value -> '{custom_path}') \
+                ELSE value END, \
+           '{custom_path}') \
+         WHERE key = '{DELEGATION_DEFAULTS_KEY}' \
+           AND CASE WHEN json_valid(value) THEN json_type(value, '{custom_path}') END IS NOT NULL"
+    ));
     out.push(format!(
         "DELETE FROM custom_agent WHERE registry_id = '{REGISTRY_ID}'"
     ));
@@ -214,6 +248,21 @@ mod tests {
                         message_count, title_locked, created_at, updated_at, external_id) VALUES ";
     const SETTING: &str = "INSERT INTO agent_setting (agent_type, registry_id, enabled, \
                            sort_order, installed_version, env_json, created_at, updated_at) VALUES ";
+    const DELEGATION: &str = "INSERT INTO app_metadata (key, value, created_at, updated_at) VALUES ";
+
+    /// The delegation defaults after the migration, parsed.
+    async fn delegation_defaults(conn: &DatabaseConnection) -> serde_json::Value {
+        let raw = strings(
+            conn,
+            "SELECT value FROM app_metadata WHERE key = 'delegation.agent_defaults'",
+        )
+        .await;
+        let [Some(raw)] = raw.as_slice() else {
+            panic!("one delegation defaults row expected: {raw:?}");
+        };
+        serde_json::from_str(raw).expect("still JSON")
+    }
+
     const CUSTOM: &str = "INSERT INTO custom_agent (registry_id, name, description, version, \
                           distribution_kind, spec_json, created_at, updated_at) VALUES \
                           ('kiro-cli', 'Kiro', '', '2.24.1', 'binary', '{}', '2026-01-01', '2026-01-01'), \
@@ -232,6 +281,11 @@ mod tests {
             "INSERT INTO work_task_settings (folder_id, config, created_at, updated_at) VALUES \
              (1, '{\"default_agent_type\":\"custom:kiro-cli\",\"other\":\"custom:kiro-cli-beta\"}', \
              '2026-01-01', '2026-01-01')",
+            &format!(
+                "{DELEGATION}('delegation.agent_defaults', \
+                 '{{\"codex\":{{\"mode\":\"auto\"}},\"custom:kiro-cli\":{{\"model\":\"claude-opus-5.5\"}}}}', \
+                 '2026-01-01', '2026-01-01')"
+            ),
         ])
         .await;
 
@@ -280,6 +334,14 @@ mod tests {
                 "{\"default_agent_type\":\"kiro\",\"other\":\"custom:kiro-cli-beta\"}".into()
             )]
         );
+        // The delegation defaults move with the agent, as an object.
+        assert_eq!(
+            delegation_defaults(&conn).await,
+            serde_json::json!({
+                "codex": {"mode": "auto"},
+                "kiro": {"model": "claude-opus-5.5"},
+            })
+        );
     }
 
     // Rows the built-in already has win, without losing anything: the
@@ -296,6 +358,17 @@ mod tests {
             "INSERT INTO opened_tab (folder_id, conversation_id, agent_type, position, is_active, \
              is_pinned, created_at, updated_at) VALUES (1, 1, 'custom:kiro-cli', 0, 1, 0, \
              '2026-01-01', '2026-01-01')",
+            "INSERT INTO conversation_tag (id, folder_id, name, color, sort_order, created_at, \
+             updated_at) VALUES (1, NULL, 'a', 'red', 0, '2026-01-01', '2026-01-01'), \
+             (2, NULL, 'b', 'blue', 1, '2026-01-01', '2026-01-01')",
+            // The duplicate has tags 1 and 2, the built-in row tag 2 already.
+            "INSERT INTO conversation_tag_link (conversation_id, tag_id, created_at) VALUES \
+             (1, 1, '2026-01-01'), (1, 2, '2026-01-01'), (2, 2, '2026-01-01')",
+            &format!(
+                "{DELEGATION}('delegation.agent_defaults', \
+                 '{{\"custom:kiro-cli\":{{\"model\":\"custom\"}},\"kiro\":{{\"model\":\"own\"}}}}', \
+                 '2026-01-01', '2026-01-01')"
+            ),
         ])
         .await;
 
@@ -306,6 +379,21 @@ mod tests {
                 Some("kiro".into()),
                 Some("kiro".into())
             ]
+        );
+        assert_eq!(
+            strings(
+                &conn,
+                "SELECT group_concat(tag_id) FROM (SELECT tag_id FROM conversation_tag_link \
+                 WHERE conversation_id = 2 ORDER BY tag_id)"
+            )
+            .await,
+            [Some("1,2".into())],
+            "the duplicate's tags join the built-in row's, once each"
+        );
+        assert_eq!(
+            delegation_defaults(&conn).await,
+            serde_json::json!({"kiro": {"model": "own"}}),
+            "the built-in's own delegation defaults win"
         );
         assert_eq!(
             strings(
@@ -351,6 +439,25 @@ mod tests {
                 .as_deref(),
             Some("{\"KIRO_API_KEY\":\"k\"}"),
             "custom env inherited"
+        );
+    }
+
+    // Delegation defaults that are not JSON stay as they are; the migration
+    // does not fail on them.
+    #[tokio::test]
+    async fn delegation_defaults_that_are_not_json_are_left_alone() {
+        let conn = migrated_db(&[&format!(
+            "{DELEGATION}('delegation.agent_defaults', 'custom:kiro-cli', \
+             '2026-01-01', '2026-01-01')"
+        )])
+        .await;
+        assert_eq!(
+            strings(
+                &conn,
+                "SELECT value FROM app_metadata WHERE key = 'delegation.agent_defaults'"
+            )
+            .await,
+            [Some("custom:kiro-cli".into())]
         );
     }
 
