@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "Carregando...",
     "sectionTitle": "Geral",
-    "sectionDescription": "Preferências centralizadas para o terminal padrão, aceleração de renderização, comportamento ao fechar a janela, notificações e sons.",
+    "sectionDescription": "Preferências centralizadas para o terminal padrão, aceleração de renderização, painel de menções @, comportamento ao fechar a janela, notificações e sons.",
     "terminalTitle": "Terminal padrão",
     "terminalDescription": "Escolha o shell que o codeg inicia para novas abas de terminal e para linhas de comando inteiras que um agente pede para executar. Agentes com shell próprio (Codex, Claude Code) executam os comandos dentro do próprio processo, então esta configuração não os alcança.",
     "terminalSystemDefault": "Padrão do sistema",
@@ -1762,6 +1762,15 @@
     "restartNow": "Reiniciar agora",
     "restartFailed": "Falha ao reiniciar: {message}",
     "loadFailed": "Falha ao carregar: {message}"
+  },
+  "MentionPanelSettings": {
+    "title": "Painel de menções",
+    "description": "Escolha quais abas o painel @ do campo de entrada mostra e arraste-as para a ordem que preferir. O painel abre na primeira aba com resultados. A aba Arquivos é sempre exibida.",
+    "tabsLabel": "Abas do painel de menções",
+    "reset": "Redefinir",
+    "alwaysShown": "Sempre exibida",
+    "moveTab": "Mover “{name}”: arraste ou pressione as setas para cima e para baixo",
+    "showTab": "Mostrar a aba “{name}”"
   },
   "CollaborationSettings": {
     "sectionTitle": "Colaboração",

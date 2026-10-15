@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "読み込み中...",
     "sectionTitle": "一般",
-    "sectionDescription": "デフォルトターミナル、レンダリング高速化、ウィンドウを閉じたときの動作、通知と通知音などの共通設定をここで一括管理します。",
+    "sectionDescription": "デフォルトターミナル、レンダリング高速化、@ メンションパネル、ウィンドウを閉じたときの動作、通知と通知音などの共通設定をここで一括管理します。",
     "terminalTitle": "デフォルトターミナル",
     "terminalDescription": "codeg が新しいターミナルタブを開くとき、およびエージェントに代わってコマンドライン全体を実行するときに使うシェルを選択します。独自のシェルを持つエージェント（Codex、Claude Code など）は自分のプロセス内でコマンドを実行するため、この設定は届きません。",
     "terminalSystemDefault": "システムデフォルト",
@@ -1762,6 +1762,15 @@
     "restartNow": "今すぐ再起動",
     "restartFailed": "再起動に失敗しました: {message}",
     "loadFailed": "読み込みに失敗しました: {message}"
+  },
+  "MentionPanelSettings": {
+    "title": "メンションパネル",
+    "description": "入力欄の @ メンションパネルに表示するタブを選び、ドラッグで並び順を変更します。パネルを開くと、一致する結果がある最初のタブが選ばれます。「ファイル」タブは常に表示されます。",
+    "tabsLabel": "メンションパネルのタブ",
+    "reset": "既定に戻す",
+    "alwaysShown": "常に表示",
+    "moveTab": "「{name}」を移動：ドラッグするか、上下の矢印キーを押します",
+    "showTab": "「{name}」タブを表示"
   },
   "CollaborationSettings": {
     "sectionTitle": "コラボレーション",

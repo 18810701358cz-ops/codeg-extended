@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "Chargement...",
     "sectionTitle": "Général",
-    "sectionDescription": "Préférences centralisées pour le terminal par défaut, l’accélération du rendu, le comportement à la fermeture de la fenêtre, les notifications et les sons.",
+    "sectionDescription": "Préférences centralisées pour le terminal par défaut, l’accélération du rendu, le panneau de mentions @, le comportement à la fermeture de la fenêtre, les notifications et les sons.",
     "terminalTitle": "Terminal par défaut",
     "terminalDescription": "Choisissez le shell que codeg lance pour les nouveaux onglets de terminal et pour les lignes de commande complètes qu’un agent lui demande d’exécuter. Les agents dotés de leur propre shell (Codex, Claude Code) exécutent les commandes dans leur propre processus : ce réglage ne les atteint pas.",
     "terminalSystemDefault": "Par défaut système",
@@ -1762,6 +1762,15 @@
     "restartNow": "Redémarrer maintenant",
     "restartFailed": "Échec du redémarrage : {message}",
     "loadFailed": "Échec du chargement : {message}"
+  },
+  "MentionPanelSettings": {
+    "title": "Panneau de mentions",
+    "description": "Choisissez les onglets qu'affiche le panneau @ de la zone de saisie et faites-les glisser dans l'ordre voulu. Le panneau s'ouvre sur le premier onglet qui contient des résultats. L'onglet Fichiers est toujours affiché.",
+    "tabsLabel": "Onglets du panneau de mentions",
+    "reset": "Réinitialiser",
+    "alwaysShown": "Toujours affiché",
+    "moveTab": "Déplacer « {name} » : faites glisser ou appuyez sur les flèches haut et bas",
+    "showTab": "Afficher l'onglet « {name} »"
   },
   "CollaborationSettings": {
     "sectionTitle": "Collaboration",

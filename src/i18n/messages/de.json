@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "Wird geladen...",
     "sectionTitle": "Allgemein",
-    "sectionDescription": "Zentrale Einstellungen für das Standardterminal, die Rendering-Beschleunigung, das Verhalten beim Schließen des Fensters sowie Benachrichtigungen und Töne.",
+    "sectionDescription": "Zentrale Einstellungen für das Standardterminal, die Rendering-Beschleunigung, das @-Erwähnungspanel, das Verhalten beim Schließen des Fensters sowie Benachrichtigungen und Töne.",
     "terminalTitle": "Standardterminal",
     "terminalDescription": "Wählen Sie die Shell, die codeg für neue Terminal-Tabs startet und für vollständige Befehlszeilen, deren Ausführung ein Agent bei codeg anfragt. Agenten mit einer eigenen Shell (Codex, Claude Code) führen Befehle im eigenen Prozess aus — dorthin reicht diese Einstellung nicht.",
     "terminalSystemDefault": "Systemstandard",
@@ -1762,6 +1762,15 @@
     "restartNow": "Jetzt neu starten",
     "restartFailed": "Neustart fehlgeschlagen: {message}",
     "loadFailed": "Laden fehlgeschlagen: {message}"
+  },
+  "MentionPanelSettings": {
+    "title": "Erwähnungspanel",
+    "description": "Lege fest, welche Tabs das @-Panel im Eingabefeld anzeigt, und ziehe sie in die gewünschte Reihenfolge. Das Panel öffnet sich auf dem ersten Tab mit Treffern. Der Tab „Dateien“ wird immer angezeigt.",
+    "tabsLabel": "Tabs des Erwähnungspanels",
+    "reset": "Zurücksetzen",
+    "alwaysShown": "Immer sichtbar",
+    "moveTab": "„{name}“ verschieben: ziehen oder die Pfeiltasten nach oben und unten drücken",
+    "showTab": "Tab „{name}“ anzeigen"
   },
   "CollaborationSettings": {
     "sectionTitle": "Zusammenarbeit",

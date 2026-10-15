@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "加载中...",
     "sectionTitle": "常规",
-    "sectionDescription": "集中管理默认终端、渲染加速、关闭行为、通知与提示音等通用偏好。",
+    "sectionDescription": "集中管理默认终端、渲染加速、@ 提及面板、关闭行为、通知与提示音等通用偏好。",
     "terminalTitle": "默认终端",
     "terminalDescription": "选择 codeg 打开新终端标签页、以及代智能体执行整条命令行时使用的 Shell。自带 Shell 的智能体（如 Codex、Claude Code）在自己进程内执行命令，不受此设置影响。",
     "terminalSystemDefault": "系统默认",
@@ -1762,6 +1762,15 @@
     "restartNow": "立即重启",
     "restartFailed": "重启失败：{message}",
     "loadFailed": "加载失败：{message}"
+  },
+  "MentionPanelSettings": {
+    "title": "提及面板",
+    "description": "选择输入框中 @ 提及面板显示哪些标签页，并拖动调整它们的顺序。面板打开时会定位到第一个有匹配结果的标签页。「文件」标签页始终显示。",
+    "tabsLabel": "提及面板标签页",
+    "reset": "恢复默认",
+    "alwaysShown": "始终显示",
+    "moveTab": "移动「{name}」：拖动，或按上下方向键",
+    "showTab": "显示「{name}」标签页"
   },
   "CollaborationSettings": {
     "sectionTitle": "协作",

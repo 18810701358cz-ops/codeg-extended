@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "載入中...",
     "sectionTitle": "一般",
-    "sectionDescription": "集中管理預設終端機、渲染加速、關閉行為、通知與提示音等通用偏好。",
+    "sectionDescription": "集中管理預設終端機、渲染加速、@ 提及面板、關閉行為、通知與提示音等通用偏好。",
     "terminalTitle": "預設終端",
     "terminalDescription": "選擇 codeg 開啟新終端分頁、以及代智慧代理執行整條命令列時使用的 Shell。自帶 Shell 的智慧代理（如 Codex、Claude Code）會在自己的行程內執行命令，不受此設定影響。",
     "terminalSystemDefault": "系統預設",
@@ -1762,6 +1762,15 @@
     "restartNow": "立即重新啟動",
     "restartFailed": "重新啟動失敗：{message}",
     "loadFailed": "載入失敗：{message}"
+  },
+  "MentionPanelSettings": {
+    "title": "提及面板",
+    "description": "選擇輸入框中 @ 提及面板顯示哪些分頁，並拖曳調整它們的順序。面板開啟時會定位到第一個有符合結果的分頁。「檔案」分頁一律顯示。",
+    "tabsLabel": "提及面板分頁",
+    "reset": "還原預設",
+    "alwaysShown": "一律顯示",
+    "moveTab": "移動「{name}」：拖曳，或按上下方向鍵",
+    "showTab": "顯示「{name}」分頁"
   },
   "CollaborationSettings": {
     "sectionTitle": "協作",

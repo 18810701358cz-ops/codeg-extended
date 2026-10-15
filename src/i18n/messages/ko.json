@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "로딩 중...",
     "sectionTitle": "일반",
-    "sectionDescription": "기본 터미널, 렌더링 가속, 창을 닫을 때의 동작, 알림과 알림음 등 공용 환경설정을 한곳에서 관리합니다.",
+    "sectionDescription": "기본 터미널, 렌더링 가속, @ 멘션 패널, 창을 닫을 때의 동작, 알림과 알림음 등 공용 환경설정을 한곳에서 관리합니다.",
     "terminalTitle": "기본 터미널",
     "terminalDescription": "codeg가 새 터미널 탭을 열 때와 에이전트를 대신해 전체 명령줄을 실행할 때 사용할 셸을 선택합니다. 자체 셸을 갖춘 에이전트(Codex, Claude Code)는 자기 프로세스 안에서 명령을 실행하므로 이 설정이 닿지 않습니다.",
     "terminalSystemDefault": "시스템 기본값",
@@ -1762,6 +1762,15 @@
     "restartNow": "지금 다시 시작",
     "restartFailed": "다시 시작 실패: {message}",
     "loadFailed": "불러오기 실패: {message}"
+  },
+  "MentionPanelSettings": {
+    "title": "멘션 패널",
+    "description": "입력창의 @ 멘션 패널에 표시할 탭을 고르고, 드래그해서 원하는 순서로 정렬합니다. 패널을 열면 일치하는 결과가 있는 첫 번째 탭이 선택됩니다. “파일” 탭은 항상 표시됩니다.",
+    "tabsLabel": "멘션 패널 탭",
+    "reset": "기본값으로 재설정",
+    "alwaysShown": "항상 표시",
+    "moveTab": "“{name}” 이동: 드래그하거나 위/아래 화살표 키를 누르세요",
+    "showTab": "“{name}” 탭 표시"
   },
   "CollaborationSettings": {
     "sectionTitle": "협업",

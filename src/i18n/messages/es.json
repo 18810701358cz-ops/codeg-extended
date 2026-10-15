@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "Cargando...",
     "sectionTitle": "General",
-    "sectionDescription": "Preferencias centralizadas para el terminal predeterminado, la aceleración de renderizado, el comportamiento al cerrar la ventana, las notificaciones y los sonidos.",
+    "sectionDescription": "Preferencias centralizadas para el terminal predeterminado, la aceleración de renderizado, el panel de menciones @, el comportamiento al cerrar la ventana, las notificaciones y los sonidos.",
     "terminalTitle": "Terminal predeterminada",
     "terminalDescription": "Elige el shell que codeg usa para las nuevas pestañas de terminal y para las líneas de comandos completas que un agente le pide ejecutar. Los agentes con shell propio (Codex, Claude Code) ejecutan los comandos dentro de su propio proceso, así que este ajuste no les llega.",
     "terminalSystemDefault": "Predeterminado del sistema",
@@ -1762,6 +1762,15 @@
     "restartNow": "Reiniciar ahora",
     "restartFailed": "No se pudo reiniciar: {message}",
     "loadFailed": "Error al cargar: {message}"
+  },
+  "MentionPanelSettings": {
+    "title": "Panel de menciones",
+    "description": "Elige qué pestañas muestra el panel @ del cuadro de entrada y arrástralas en el orden que quieras. El panel se abre en la primera pestaña con coincidencias. La pestaña Archivos siempre se muestra.",
+    "tabsLabel": "Pestañas del panel de menciones",
+    "reset": "Restablecer",
+    "alwaysShown": "Siempre visible",
+    "moveTab": "Mover «{name}»: arrastra o pulsa las flechas arriba y abajo",
+    "showTab": "Mostrar la pestaña «{name}»"
   },
   "CollaborationSettings": {
     "sectionTitle": "Colaboración",

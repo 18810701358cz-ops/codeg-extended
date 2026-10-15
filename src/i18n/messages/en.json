@@ -1737,7 +1737,7 @@
   "GeneralSettings": {
     "loading": "Loading...",
     "sectionTitle": "General",
-    "sectionDescription": "Centralized preferences for the default terminal, rendering acceleration, window close behavior, notifications and sounds.",
+    "sectionDescription": "Centralized preferences for the default terminal, rendering acceleration, the @ mention panel, window close behavior, notifications and sounds.",
     "terminalTitle": "Default Terminal",
     "terminalDescription": "Choose the shell codeg launches for new terminal tabs and for whole command lines an agent asks codeg to run. Agents with a shell of their own (Codex, Claude Code) run commands inside their own process, where this setting cannot reach them.",
     "terminalSystemDefault": "System default",
@@ -1762,6 +1762,15 @@
     "restartNow": "Restart now",
     "restartFailed": "Failed to restart: {message}",
     "loadFailed": "Load failed: {message}"
+  },
+  "MentionPanelSettings": {
+    "title": "Mention panel",
+    "description": "Choose which tabs the @ panel in the composer shows, and drag them into the order you want. The panel opens on the first tab with matches. The Files tab is always shown.",
+    "tabsLabel": "Mention panel tabs",
+    "reset": "Reset",
+    "alwaysShown": "Always shown",
+    "moveTab": "Move “{name}”: drag, or press the up and down arrow keys",
+    "showTab": "Show the “{name}” tab"
   },
   "CollaborationSettings": {
     "sectionTitle": "Collaboration",
