@@ -17708,7 +17708,8 @@ struct KiroAgentSwitchedNotification {
 /// an editor, the clipboard or the microphone of the machine Kiro runs on, and
 /// the two that answer a prompt with nothing (checked against 2.24.1):
 /// `/prompts` needs the TUI's selection menu, and `/rewind` forks into a new
-/// Kiro session codeg would never see. Everything else answers in the
+/// Kiro session codeg would never see. So is any `$`-named entry, which the
+/// composer can only send as `$name`. Everything else answers in the
 /// conversation.
 ///
 /// The hint is Kiro's own when it has one, else its subcommand list — the
@@ -17784,6 +17785,10 @@ fn kiro_available_commands(notif: &KiroCommandsAvailableNotification) -> Vec<Ava
             input_hint: kiro_prompt_input_hint(prompt),
         })
     }));
+    // The composer sends a command named `$x` as `$x`, the token codex-acp
+    // gives its skills (`commandInvocationToken` in invocation-reference.ts),
+    // and Kiro runs only `/x`: picked from the menu, such an entry never runs.
+    available.retain(|command| !command.name.starts_with('$'));
     available
 }
 
@@ -17963,6 +17968,28 @@ mod kiro_ext_tests {
             "prompts": [
                 {"name": "quit", "description": "A file prompt", "serverName": "local"},
                 {"name": "/clear", "description": "A skill", "serverName": "skill:config"},
+                {"name": "review", "description": "Review the diff", "serverName": "local"}
+            ]
+        }))
+        .unwrap();
+        let names: Vec<_> = kiro_available_commands(&notif)
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, ["compact", "review"]);
+    }
+
+    /// The composer sends a `$`-named command as `$name` (codex-acp's skill
+    /// token), which Kiro reads as plain text, so the entry could never run.
+    #[test]
+    fn a_dollar_named_prompt_stays_out_of_the_slash_menu() {
+        let notif: KiroCommandsAvailableNotification = serde_json::from_value(serde_json::json!({
+            "sessionId": "s1",
+            "commands": [
+                {"name": "/compact", "description": "Compact conversation history"}
+            ],
+            "prompts": [
+                {"name": "$report", "description": "Weekly report", "serverName": "reports"},
                 {"name": "review", "description": "Review the diff", "serverName": "local"}
             ]
         }))
