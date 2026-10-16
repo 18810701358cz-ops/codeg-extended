@@ -193,19 +193,56 @@ describe("CommandManageDialog", () => {
     ])
   })
 
-  it("refuses a host save that comes back with a global command's id", async () => {
+  const refusal = new RegExp(
+    `^${md.saveFailed}: .*the folder's host returned command id -\\d+$`
+  )
+
+  it("refuses a host create that comes back with a global command's id", async () => {
     createGlobalCommand("mine", "pnpm mine")
     h.create.mockResolvedValue(hostCommand(-1, "x", "local: echo injected"))
     renderDialog()
     await screen.findByText("mine")
     await startNewCommand("dev", "pnpm dev")
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    expect(
-      await screen.findByText(new RegExp(`^${md.saveFailed}: `))
-    ).toBeInTheDocument()
+    expect(await screen.findByText(refusal)).toBeInTheDocument()
+    expect(h.create).toHaveBeenCalledWith(1, "dev", "pnpm dev")
     // The form doesn't take the host's entry for this computer's command.
     expect(screen.getByRole("switch")).not.toBeChecked()
     expect(screen.getByLabelText(md.commandLabel)).toHaveValue("pnpm dev")
+    expect(listGlobalCommands().map((c) => [c.id, c.command])).toEqual([
+      [-1, "pnpm mine"],
+    ])
+  })
+
+  it("refuses a host update that comes back with a global command's id", async () => {
+    createGlobalCommand("mine", "pnpm mine")
+    h.hostCommands = [hostCommand(3, "dev", "pnpm dev")]
+    h.update.mockResolvedValue(hostCommand(-1, "x", "local: echo injected"))
+    renderDialog()
+    await screen.findByText("dev")
+    fireEvent.change(screen.getByLabelText(md.commandLabel), {
+      target: { value: "pnpm dev --port 3001" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(await screen.findByText(refusal)).toBeInTheDocument()
+    expect(h.update).toHaveBeenCalledWith(3, "dev", "pnpm dev --port 3001")
+    expect(screen.getByRole("switch")).not.toBeChecked()
+    expect(listGlobalCommands().map((c) => [c.id, c.command])).toEqual([
+      [-1, "pnpm mine"],
+    ])
+  })
+
+  it("keeps a global command whose move to the folder the host answers badly", async () => {
+    createGlobalCommand("mine", "pnpm mine")
+    h.create.mockResolvedValue(hostCommand(-2, "x", "local: echo injected"))
+    renderDialog()
+    await screen.findByText("mine")
+    // Selected first, as the only command: turn "every folder" off.
+    expect(screen.getByRole("switch")).toBeChecked()
+    fireEvent.click(screen.getByRole("switch"))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(await screen.findByText(refusal)).toBeInTheDocument()
+    expect(h.create).toHaveBeenCalledWith(1, "mine", "pnpm mine")
     expect(listGlobalCommands().map((c) => [c.id, c.command])).toEqual([
       [-1, "pnpm mine"],
     ])

@@ -124,6 +124,8 @@ export function createGlobalCommand(
 ): FolderCommand {
   const { lastId, commands } = readStored()
   const id = lastId - 1
+  // Past the last safe integer an id no longer reads back as one.
+  if (!Number.isSafeInteger(id)) throw new Error("No command ids left")
   const next = [...commands, { id, name, command }]
   writeStored({ lastId: id, commands: next })
   return toFolderCommand(next[next.length - 1], next.length - 1)

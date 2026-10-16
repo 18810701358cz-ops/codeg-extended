@@ -292,8 +292,15 @@ export function CommandManageDialog({
     [commands, deleteTargetId]
   )
 
+  // The command the form was last filled from. Moving to another one drops
+  // the last one's error; the same one read again — the refresh after a failed
+  // move — keeps it in view, or the failure would pass unexplained.
+  const formCommandIdRef = useRef<number | null>(null)
+
   useEffect(() => {
-    setFormError(null)
+    const id = selected?.id ?? null
+    if (id !== formCommandIdRef.current) setFormError(null)
+    formCommandIdRef.current = id
     if (!selected) {
       setDraft(EMPTY_DRAFT)
       return

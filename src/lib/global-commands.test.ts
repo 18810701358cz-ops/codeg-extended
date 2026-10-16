@@ -45,6 +45,18 @@ describe("global commands", () => {
     expect(createGlobalCommand("d", "d").id).toBe(-4)
   })
 
+  it("refuses to hand out an id past the last safe integer", () => {
+    localStorage.setItem(
+      GLOBAL_COMMANDS_STORAGE_KEY,
+      JSON.stringify({
+        lastId: Number.MIN_SAFE_INTEGER,
+        commands: [{ id: Number.MIN_SAFE_INTEGER, name: "a", command: "a" }],
+      })
+    )
+    expect(() => createGlobalCommand("b", "b")).toThrow()
+    expect(summary().map((c) => c.name)).toEqual(["a"])
+  })
+
   it("reads the bare list earlier builds stored, and counts on below it", () => {
     localStorage.setItem(
       GLOBAL_COMMANDS_STORAGE_KEY,
