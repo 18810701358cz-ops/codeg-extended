@@ -211,6 +211,7 @@ function makeConnState(overrides: Partial<ConnectionState>): ConnectionState {
     configOptions: null,
     availableCommands: null,
     usage: null,
+    promptSuggestion: null,
     liveMessage: null,
     pendingPermission: null,
     pendingQuestion: null,

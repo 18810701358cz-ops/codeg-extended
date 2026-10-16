@@ -320,6 +320,14 @@ export interface ConnectionState {
   configOptions: SessionConfigOptionInfo[] | null
   availableCommands: AvailableCommandInfo[] | null
   usage: SessionUsageUpdateInfo | null
+  /**
+   * The prompt the agent predicts the user will send next (claude-agent-acp
+   * 0.92.0), offered as gray text in the empty composer, where Tab fills it in.
+   * Set by `prompt_suggestion`, withdrawn by its `null`, and cleared when a
+   * prompt starts (STATUS_CHANGED → prompting): it predicted that prompt. The
+   * backend keeps the same value for the snapshot.
+   */
+  promptSuggestion: string | null
   liveMessage: LiveMessage | null
   pendingPermission: PendingPermission | null
   /** In-flight user prompt for the current turn — set from a `user_message`
@@ -791,6 +799,11 @@ type Action =
       type: "USAGE_UPDATE"
       contextKey: string
       usage: SessionUsageUpdateInfo
+    }
+  | {
+      type: "PROMPT_SUGGESTION"
+      contextKey: string
+      text: string | null
     }
   | {
       type: "EVENT_APPLIED"
@@ -1848,6 +1861,7 @@ function connectionsReducer(
         configOptions: null,
         availableCommands: null,
         usage: null,
+        promptSuggestion: null,
         liveMessage: null,
         pendingPermission: null,
         pendingUserMessage: null,
@@ -1910,6 +1924,7 @@ function connectionsReducer(
         configOptions: null,
         availableCommands: null,
         usage: null,
+        promptSuggestion: null,
         liveMessage: null,
         pendingPermission: null,
         pendingUserMessage: null,
@@ -2069,6 +2084,9 @@ function connectionsReducer(
         configOptions: action.patch.configOptions,
         availableCommands: action.patch.availableCommands,
         usage: action.patch.usage,
+        // Current state like `usage`; a stale snapshot never reaches here, so
+        // it cannot bring back a prediction a later prompt already spent.
+        promptSuggestion: action.patch.promptSuggestion,
         liveMessage: hydratedLiveMessage,
         // A snapshot with a turn in flight carries a prompt newer than any the
         // user stopped, which ends that turn's window as the status event of
@@ -2182,6 +2200,9 @@ function connectionsReducer(
         updated.outOfTurnToolCalls = null
         // A new turn ends the window in which a stopped one's reports land.
         updated.cancelledTurn = null
+        // The predicted prompt was for this prompt's place, so it is spent
+        // whatever the user sent (the backend clears its copy the same way).
+        updated.promptSuggestion = null
       } else if (conn.status === "prompting") {
         // Prompt cycle ended: clear in-flight Claude API retry banner.
         updated.claudeApiRetry = null
@@ -2724,6 +2745,9 @@ function connectionsReducer(
         ...conn,
         sessionId: action.sessionId,
         asyncTasks: forked ? [] : conn.asyncTasks,
+        // Likewise the predicted prompt: it follows the last turn of the
+        // session left behind, and a fork starts from an earlier point of it.
+        promptSuggestion: forked ? null : conn.promptSuggestion,
       })
       return next
     }
@@ -3117,6 +3141,14 @@ function connectionsReducer(
         ...conn,
         usage: action.usage,
       })
+      return next
+    }
+
+    case "PROMPT_SUGGESTION": {
+      const conn = state.get(action.contextKey)
+      if (!conn || conn.promptSuggestion === action.text) return state
+      const next = new Map(state)
+      next.set(action.contextKey, { ...conn, promptSuggestion: action.text })
       return next
     }
 
@@ -5928,6 +5960,14 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
               used: e.used,
               size: e.size,
             },
+          })
+          break
+        case "prompt_suggestion":
+          flushStreamingQueue(contextKey)
+          dispatch({
+            type: "PROMPT_SUGGESTION",
+            contextKey,
+            text: e.text?.trim() || null,
           })
           break
       }

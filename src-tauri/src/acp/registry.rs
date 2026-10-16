@@ -437,7 +437,7 @@ pub const PI_MIN_RUNTIME_VERSION: &str = "0.81.0";
 
 /// The npm package the built-in Claude Code entry runs — and the name the
 /// adapter reports as `agentInfo.name` at `initialize`, which is its
-/// `packageJson.name` (read from the 0.58.1 to 0.91.0 sources). A custom agent
+/// `packageJson.name` (read from the 0.58.1 to 0.92.0 sources). A custom agent
 /// whose running adapter reports exactly this name follows the Claude Code
 /// steering policy (`connection.rs::steering_policy_agent`).
 pub const CLAUDE_AGENT_ACP_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
@@ -2291,9 +2291,69 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             //     task runs in an SDK session. codeg already sends both kinds of
             //     attachment with a steer and renders such wakeups from the
             //     transcript.
+            //
+            // 0.92.0 moves the ACP SDK 1.8.0 → 1.9.0 and keeps the Claude SDK
+            // at 0.3.300, so the CLI is the same 2.1.300 binary. The published
+            // package differs from 0.91.0's in exactly the files the tag diff
+            // touches. The scenario harness, the same in both tags, is
+            // byte-identical in all 40 scenarios with codeg's exact
+            // `clientCapabilities` except for two additions: `initialize`
+            // advertises `sessionCapabilities.systemPrompt`, and an MCP tool
+            // call carries `_meta.jetbrains.air.mcp`. No scenario predicts a
+            // prompt, so (yyy) was measured live against the local fake
+            // Anthropic API (no model call), 0.91.0 and 0.92.0 side by side.
+            //
+            // (yyy) **Predicted follow-up prompt** (#1356). The adapter turns
+            // the SDK's `promptSuggestions` on for every session and forwards
+            // the prediction to an AIR client as `session_info_update._meta.
+            // promptSuggestions = {suggestions: [{text}]}`, cleared with
+            // `suggestions: []` when the next prompt arrives. Measured: 0.91.0
+            // sends no prediction request, and 0.92.0 sends one after every
+            // turn but the first, with the whole conversation, the main model,
+            // its adaptive thinking and every tool, so that it reads the turn's
+            // prompt cache. Claude Code predicts nothing before the
+            // conversation holds two assistant messages, after an API error, in
+            // plan mode, or at the usage limit, and does predict after a turn
+            // the user stopped. The prediction is never written to the
+            // transcript (both versions write the same records, line for line)
+            // and `session/load` and `session/resume` do not replay it. It
+            // lands 10 to 100 ms after the turn's response. A prompt sent before
+            // it lands aborts the request, and the adapter drops the late
+            // answer. A `session/close` with one in flight still answers in
+            // 5 ms. codeg offers it as gray text in the empty composer, where
+            // Tab fills it in (`AcpEvent::PromptSuggestion`). The sessions of
+            // an automation run and of a chat-channel bot, which nobody types
+            // into, ask for none (`_meta.claudeCode.options.promptSuggestions:
+            // false`, see `claude_raw_sdk_session_meta`). A user who wants none
+            // anywhere sets Claude Code's own `promptSuggestionEnabled: false`
+            // or `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` (each measured: no
+            // request).
+            //
+            // (zzz) Nothing to change in codeg, each checked:
+            //   * `_meta.jetbrains.air.mcp = {server, tool}` (#1359) names an MCP
+            //     call's server and tool, split from `mcp__<server>__<tool>` the
+            //     way Claude Code splits it. codeg reads the same name from
+            //     `claudeCode.toolName`, which the history parsers keep as well,
+            //     so a live card and its reloaded twin stay alike.
+            //   * `sessionCapabilities.systemPrompt` (ACP SDK 1.9.0, #1366)
+            //     accepts a client system prompt (`append` or `override`) on
+            //     session requests. codeg sends none, and the schema crate skips
+            //     the capability it does not know (pinned by a parse test of this
+            //     version's `initialize`).
+            //   * #1366 also ends a stopped turn `cancelled` when the cancel's
+            //     abort kills the stream (it failed with the stream's error
+            //     before), and a `session/close` that lands while a prompt
+            //     starts ends that prompt `cancelled`. codeg ends a stopped turn
+            //     itself (see (sss)), and closes a session only when a fork
+            //     leaves it, which happens between turns.
+            //   * #1357 (subagent edits in the file-change report) and #1364
+            //     (resumed subagents restored after a restart, in the AIR
+            //     native-subagent form) serve capabilities codeg does not
+            //     declare (see `build_client_capabilities`). The rest of #1366
+            //     changes the experimental ACP v2 surface.
             distribution: AgentDistribution::Npx {
-                version: "0.91.0",
-                package: "@agentclientprotocol/claude-agent-acp@0.91.0",
+                version: "0.92.0",
+                package: "@agentclientprotocol/claude-agent-acp@0.92.0",
                 cmd: "claude-agent-acp",
                 args: &[],
                 env: &[],
@@ -5196,8 +5256,8 @@ mod tests {
     fn registry_pins_current_acp_agent_versions() {
         assert_npx_version(
             AgentType::ClaudeCode,
-            "0.91.0",
-            "@agentclientprotocol/claude-agent-acp@0.91.0",
+            "0.92.0",
+            "@agentclientprotocol/claude-agent-acp@0.92.0",
             Some("22.0.0"),
         );
         assert_npx_version(

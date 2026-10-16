@@ -75,6 +75,10 @@ export interface UseConnectionReturn {
   modes: SessionModeStateInfo | null
   configOptions: SessionConfigOptionInfo[] | null
   availableCommands: AvailableCommandInfo[] | null
+  /** The prompt the agent predicts the user will send next, offered by the
+   *  empty composer (Tab fills it in), or `null`. See
+   *  `ConnectionState.promptSuggestion`. */
+  promptSuggestion: string | null
   pendingPermission: PendingPermission | null
   pendingUserMessage: PendingUserMessage | null
   /** Feedback-note ids this turn's live message adopted as mid-turn user turns
@@ -274,6 +278,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
   const configOptions =
     connection?.configOptions ?? cached?.configOptions ?? null
   const availableCommands = connection?.availableCommands ?? null
+  const promptSuggestion = connection?.promptSuggestion ?? null
   const pendingPermission = connection?.pendingPermission ?? null
   const pendingUserMessage = connection?.pendingUserMessage ?? null
   const steeredMessageIds =
@@ -383,6 +388,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
       modes,
       configOptions,
       availableCommands,
+      promptSuggestion,
       pendingPermission,
       pendingUserMessage,
       steeredMessageIds,
@@ -426,6 +432,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
       modes,
       configOptions,
       availableCommands,
+      promptSuggestion,
       pendingPermission,
       pendingUserMessage,
       steeredMessageIds,

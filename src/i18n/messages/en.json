@@ -3277,6 +3277,7 @@
       },
       "messageInput": {
         "askAnything": "Ask anything...",
+        "promptSuggestion": "{suggestion} (Tab to use)",
         "removeAttachmentAria": "Remove {name}",
         "attachFiles": "Attach files",
         "attachLocalUpload": "Upload local file",

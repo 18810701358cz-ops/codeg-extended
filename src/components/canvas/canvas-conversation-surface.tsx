@@ -829,6 +829,7 @@ export function CanvasConversationSurface({
           onConfigOptionChange={handleSetConfigOption}
           agentType={agentType}
           availableCommands={connectionCommands ?? []}
+          promptSuggestion={connIsForOtherAgent ? null : conn.promptSuggestion}
           draftStorageKey={`canvas-draft:${contextKey}`}
           getSentHistory={getSentHistory}
           // The card's own connection key doubles as its composer scope: the

@@ -3277,6 +3277,7 @@
       },
       "messageInput": {
         "askAnything": "Pregunta lo que sea...",
+        "promptSuggestion": "{suggestion} (Tab para usarla)",
         "removeAttachmentAria": "Quitar {name}",
         "attachFiles": "Adjuntar archivos",
         "addActions": "Añadir",

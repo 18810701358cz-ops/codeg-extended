@@ -3110,6 +3110,17 @@ export type AcpEvent =
       size: number
     }
   /**
+   * The prompt the agent predicts the user will send next (claude-agent-acp
+   * 0.92.0's `_meta.promptSuggestions`), offered as gray text in the empty
+   * composer; Tab fills it in. `null` withdraws the one held. Current state,
+   * like `usage_update`: the snapshot carries the last one, and a new prompt
+   * clears it.
+   */
+  | {
+      type: "prompt_suggestion"
+      text: string | null
+    }
+  /**
    * Out-of-turn activity surfaced from the agent's own session transcript by
    * the backend watcher (Claude only): async sub-agent / background-shell
    * `<task-notification>` completions, the agent's continued work after them,
@@ -3645,6 +3656,9 @@ export interface LiveSessionSnapshot {
   config_options: SessionConfigOptionInfo[] | null
   prompt_capabilities: PromptCapabilitiesInfo | null
   usage: SessionUsageUpdateInfo | null
+  /** The follow-up prompt the agent last predicted (see the
+   *  `prompt_suggestion` event). Absent when there is none. */
+  prompt_suggestion?: string | null
   fork_supported: boolean
   available_commands: AvailableCommandInfo[]
   selectors_ready: boolean

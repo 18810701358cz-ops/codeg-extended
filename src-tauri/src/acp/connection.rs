@@ -5639,8 +5639,24 @@ fn resolve_working_dir(working_dir: Option<&str>) -> PathBuf {
     }
 }
 
+/// The `_meta.claudeCode` object every Claude session request names
+/// (`session/new`, `load`, `resume`, `fork`): the raw SDK message stream, and,
+/// when `prompt_suggestions` is false, `options.promptSuggestions: false`.
+///
+/// claude-agent-acp 0.92.0 turns the SDK's `promptSuggestions` on for every
+/// session it serves an AIR client: after each turn Claude Code sends one more
+/// request, with the whole conversation, the main model and its thinking, to
+/// predict the user's next prompt (measured against a fake API: none on 0.91.0,
+/// one after every turn past the first on 0.92.0; never written to the
+/// transcript). The composer offers the prediction (`AcpEvent::PromptSuggestion`),
+/// so a session someone types into keeps it. A session nobody composes in asks
+/// for none (see `SessionState.wants_prompt_suggestions`). The flag is fixed
+/// for a connection, and every request of it must name the same object: the
+/// adapter restarts a session whose resume names other settings than it was
+/// started with (see `crate::acp::fork::build_fork_request`).
 pub(crate) fn claude_raw_sdk_session_meta(
     agent_type: AgentType,
+    prompt_suggestions: bool,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     if agent_type != AgentType::ClaudeCode {
         return None;
@@ -5651,6 +5667,12 @@ pub(crate) fn claude_raw_sdk_session_meta(
         "emitRawSDKMessages".to_string(),
         serde_json::Value::Bool(true),
     );
+    if !prompt_suggestions {
+        claude_code.insert(
+            "options".to_string(),
+            serde_json::json!({ "promptSuggestions": false }),
+        );
+    }
 
     let mut meta = serde_json::Map::new();
     meta.insert(
@@ -6079,9 +6101,10 @@ fn build_new_session_request(
     agent_type: AgentType,
     cwd: &Path,
     mcp_servers: Vec<McpServer>,
+    prompt_suggestions: bool,
 ) -> NewSessionRequest {
     let mut req = NewSessionRequest::new(cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, prompt_suggestions) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -6095,9 +6118,10 @@ fn build_load_session_request(
     session_id: SessionId,
     cwd: &Path,
     mcp_servers: Vec<McpServer>,
+    prompt_suggestions: bool,
 ) -> LoadSessionRequest {
     let mut req = LoadSessionRequest::new(session_id, cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, prompt_suggestions) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -6116,9 +6140,10 @@ pub(crate) fn build_resume_session_request(
     session_id: SessionId,
     cwd: &Path,
     mcp_servers: Vec<McpServer>,
+    prompt_suggestions: bool,
 ) -> ResumeSessionRequest {
     let mut req = ResumeSessionRequest::new(session_id, cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, prompt_suggestions) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -7708,6 +7733,10 @@ async fn run_connection(
             )
             .await;
 
+            // Fixed for the connection, so every session request below names
+            // the same Claude settings (see `claude_raw_sdk_session_meta`).
+            let prompt_suggestions = state.read().await.wants_prompt_suggestions;
+
             if let Some(sid) = session_id {
                 // Prefer session/resume when the agent advertises the
                 // capability: it restores session context WITHOUT replaying
@@ -7722,6 +7751,7 @@ async fn run_connection(
                         SessionId::new(sid.clone()),
                         &cwd,
                         mcp_servers.clone(),
+                        prompt_suggestions,
                     );
                     match unless_cancelled(&handshake, send_resume_session(&cx, resume_req)).await? {
                         Ok((resume_resp, models_raw)) => {
@@ -7866,6 +7896,7 @@ async fn run_connection(
                         SessionId::new(sid.clone()),
                         &cwd,
                         mcp_servers.clone(),
+                        prompt_suggestions,
                     );
                     if agent_type == AgentType::Kiro {
                         unless_cancelled(
@@ -8221,7 +8252,12 @@ async fn run_connection(
                             &handshake,
                             send_new_session_capturing_models(
                                 &cx,
-                                build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
+                                build_new_session_request(
+                                    agent_type,
+                                    &cwd,
+                                    mcp_servers.clone(),
+                                    prompt_suggestions,
+                                ),
                             ),
                         )
                         .await?
@@ -8340,7 +8376,12 @@ async fn run_connection(
                     &handshake,
                     send_new_session_capturing_models(
                         &cx,
-                        build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
+                        build_new_session_request(
+                            agent_type,
+                            &cwd,
+                            mcp_servers.clone(),
+                            prompt_suggestions,
+                        ),
                     ),
                 )
                 .await?
@@ -11334,11 +11375,13 @@ async fn handle_fork_or_exit(
     // fork response exactly as before. Neither is worse off than it was before
     // this call existed.
     let resumed = if supports_resume {
+        let prompt_suggestions = state.read().await.wants_prompt_suggestions;
         let resume_req = build_resume_session_request(
             agent_type,
             SessionId::new(new_sid.clone()),
             cwd,
             mcp_servers.to_vec(),
+            prompt_suggestions,
         );
         match send_resume_session(&cx, resume_req).await {
             Ok(pair) => Some(pair),
@@ -13673,12 +13716,14 @@ async fn run_conversation_loop(
                 // brought; only one landing from now on can be newer than that
                 // handshake (see `SessionState::grok_catalog_broadcast`).
                 state.write().await.grok_catalog_broadcast = None;
+                let prompt_suggestions = state.read().await.wants_prompt_suggestions;
                 let result = crate::acp::fork::fork_session(
                     &cx,
                     &sid,
                     agent_type,
                     cwd,
                     mcp_servers,
+                    prompt_suggestions,
                     fork_point.as_ref(),
                 )
                 .await;
@@ -15980,6 +16025,39 @@ fn session_info_goal_value(
     } else {
         meta?.get("codex").and_then(|codex| codex.get("goal"))
     }
+}
+
+/// What a `session_info_update` says about the predicted follow-up prompt:
+/// `Some(Some(text))` offers `text`, `Some(None)` withdraws the one offered,
+/// and `None` (the key absent or unreadable) leaves it as it is.
+///
+/// claude-agent-acp 0.92.0 (#1356) forwards the prompt Claude Code predicts
+/// after a turn as `_meta.promptSuggestions = {suggestions: [{text}]}`, to an
+/// AIR client only, and sends `suggestions: []` when the next prompt arrives
+/// (the prediction is spent) or a conversation reset drops the transcript it
+/// was drawn from. The first non-blank `text` is the one offered, as AIR offers
+/// it. The key names no vendor, but it is read only from the two adapters codeg
+/// declares AIR to ([`crate::acp::air_contract::speaks_air_contract`]), the
+/// only agents that send it.
+fn prompt_suggestion_update(
+    agent_type: AgentType,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Option<Option<String>> {
+    if !crate::acp::air_contract::speaks_air_contract(agent_type) {
+        return None;
+    }
+    let suggestions = meta?
+        .get("promptSuggestions")?
+        .get("suggestions")?
+        .as_array()?;
+    Some(
+        suggestions
+            .iter()
+            .filter_map(|entry| entry.get("text")?.as_str())
+            .map(str::trim)
+            .find(|text| !text.is_empty())
+            .map(str::to_string),
+    )
 }
 
 /// The raw `sessionFailure` value out of a `_meta.jetbrains.air` envelope —
@@ -20870,10 +20948,15 @@ async fn emit_conversation_update(
                 crate::acp::session_title::accept_wire_title(state, emitter, agent_type, title)
                     .await;
             }
+            // claude-agent-acp 0.92.0's predicted follow-up prompt, offered in
+            // the empty composer. It arrives after the turn's response (Claude
+            // Code predicts once the turn has ended), and its clear at the
+            // start of the next prompt.
+            if let Some(text) = prompt_suggestion_update(agent_type, info.meta.as_ref()) {
+                emit_with_state(state, emitter, AcpEvent::PromptSuggestion { text }).await;
+            }
             let neutral_goal_channel = state.read().await.neutral_goal_channel;
-            if let Some(goal) =
-                session_info_goal_value(neutral_goal_channel, info.meta.as_ref())
-            {
+            if let Some(goal) = session_info_goal_value(neutral_goal_channel, info.meta.as_ref()) {
                 if let Some(marker) =
                     crate::acp::codex_goal::next_goal_marker(&mut cb_state.codex_open_goal, goal)
                 {
@@ -22089,6 +22172,57 @@ mod tests {
         assert!(!init_advertises_steering(None));
     }
 
+    /// claude-agent-acp 0.92.0's `initialize` answer, as its own scenario harness
+    /// records it for codeg's exact `clientCapabilities`: ACP SDK 1.9.0 adds the
+    /// unstable `sessionCapabilities.systemPrompt`, which this schema crate does
+    /// not know. The typed response must still parse, with every capability
+    /// codeg reads beside it intact — a failed parse here would end every
+    /// Claude connection at its handshake.
+    #[test]
+    fn claude_0920_initialize_response_parses_past_its_system_prompt_capability() {
+        let wire = serde_json::json!({
+            "_meta": {
+                "jetbrains": {"air": {
+                    "capabilities": ["sessionFailure", "agentFileChangeReport", "nativeSubagentSessions",
+                        "asyncTasks", "customInstructions", "recommendedValue", "diffPatch", "planFile"],
+                    "goal": {"actions": ["set", "clear"], "controlMethod": "_session/goal", "version": 1},
+                    "version": 1
+                }},
+                "steering": {"supported": true}
+            },
+            "agentCapabilities": {
+                "_meta": {"authStatus": {}, "claudeCode": {"promptQueueing": true}},
+                "auth": {"logout": {}},
+                "loadSession": true,
+                "mcpCapabilities": {"http": true, "sse": true},
+                "promptCapabilities": {"embeddedContext": true, "image": true},
+                "providers": {},
+                "sessionCapabilities": {
+                    "additionalDirectories": {}, "close": {}, "delete": {}, "fork": {}, "list": {},
+                    "resume": {}, "subagents": {},
+                    "systemPrompt": {"mode": {"override": {}}}
+                }
+            },
+            "agentInfo": {"name": "@agentclientprotocol/claude-agent-acp", "title": "Claude Agent", "version": "0.92.0"},
+            "authMethods": [],
+            "protocolVersion": 1
+        });
+        let response: agent_client_protocol::schema::v1::InitializeResponse =
+            serde_json::from_value(wire).expect("0.92.0 initialize parses");
+        let caps = &response.agent_capabilities;
+        assert!(caps.load_session);
+        assert!(caps.session_capabilities.resume.is_some());
+        assert!(caps.session_capabilities.close.is_some());
+        assert!(caps.session_capabilities.fork.is_some());
+        assert!(caps.prompt_capabilities.image);
+        assert!(init_advertises_steering(response.meta.as_ref()));
+        assert!(init_advertises_goal(response.meta.as_ref()));
+        assert_eq!(
+            response.agent_info.as_ref().map(|info| info.name.as_str()),
+            Some(crate::acp::registry::CLAUDE_AGENT_ACP_PACKAGE)
+        );
+    }
+
     #[test]
     fn init_advertises_goal_requires_integer_version_at_least_1() {
         // The real advertisements: codex-acp 1.2.0+ / claude-agent-acp 0.66.0+.
@@ -22187,6 +22321,152 @@ mod tests {
             "version": 1, "sessionFailure": {"id": "x", "revision": 1}
         }}}));
         assert!(session_info_goal_value(true, Some(&failure)).is_none());
+    }
+
+    // --- predicted follow-up prompt (`_meta.promptSuggestions`) ------------
+
+    #[test]
+    fn prompt_suggestion_update_reads_the_offer_the_clear_and_nothing_else() {
+        let read = |meta: serde_json::Value| {
+            prompt_suggestion_update(AgentType::ClaudeCode, Some(&meta_map(meta)))
+        };
+        // claude-agent-acp 0.92.0's two frames: an offer, and the clear it
+        // sends when the next prompt arrives.
+        assert_eq!(
+            read(
+                serde_json::json!({"promptSuggestions": {"suggestions": [{"text": "Run the tests"}]}})
+            ),
+            Some(Some("Run the tests".to_string()))
+        );
+        assert_eq!(
+            read(serde_json::json!({"promptSuggestions": {"suggestions": []}})),
+            Some(None)
+        );
+        // The first non-blank text is the one offered, trimmed.
+        assert_eq!(
+            read(serde_json::json!({"promptSuggestions": {"suggestions": [
+                {"text": "   "}, {"other": 1}, {"text": "  commit this \n"}, {"text": "push it"}
+            ]}})),
+            Some(Some("commit this".to_string()))
+        );
+        // Only blank texts withdraw the offer rather than showing an empty hint.
+        assert_eq!(
+            read(serde_json::json!({"promptSuggestions": {"suggestions": [{"text": " "}]}})),
+            Some(None)
+        );
+        // Anything else leaves the held one as it is: no key, an unreadable
+        // shape, or a goal/title-only update.
+        assert_eq!(read(serde_json::json!({"goal": {"version": 1}})), None);
+        assert_eq!(read(serde_json::json!({"promptSuggestions": null})), None);
+        assert_eq!(
+            read(serde_json::json!({"promptSuggestions": {"suggestions": "x"}})),
+            None
+        );
+        assert_eq!(read(serde_json::json!({"promptSuggestions": {}})), None);
+        assert_eq!(prompt_suggestion_update(AgentType::ClaudeCode, None), None);
+    }
+
+    /// Read only from the two adapters codeg declares AIR to, the only ones the
+    /// key is sent to: an unnamespaced key from anyone else is not taken on trust.
+    #[test]
+    fn prompt_suggestion_update_is_read_from_the_air_adapters_only() {
+        let offer = meta_map(serde_json::json!({
+            "promptSuggestions": {"suggestions": [{"text": "Run the tests"}]}
+        }));
+        assert!(prompt_suggestion_update(AgentType::Codex, Some(&offer)).is_some());
+        for agent_type in [AgentType::CodeBuddy, AgentType::Grok, AgentType::OpenCode] {
+            assert_eq!(
+                prompt_suggestion_update(agent_type, Some(&offer)),
+                None,
+                "{agent_type:?}"
+            );
+        }
+    }
+
+    /// Drive one `session_info_update` with this `_meta` through
+    /// `emit_conversation_update`, as the idle loop does between turns.
+    async fn drive_session_info_meta(
+        state: &Arc<RwLock<SessionState>>,
+        agent_type: AgentType,
+        meta: serde_json::Value,
+    ) {
+        let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+            "sessionUpdate": "session_info_update",
+            "_meta": meta,
+        }))
+        .expect("valid session_info_update wire shape");
+        let mut cache = ToolCallOutputCache::default();
+        let mut cb = CodeBuddyLiveState::default();
+        emit_conversation_update(
+            state,
+            &EventEmitter::Noop,
+            agent_type,
+            update,
+            None,
+            &mut cache,
+            &mut cb,
+        )
+        .await;
+    }
+
+    /// The offer and the clear each become a `PromptSuggestion` event, which the
+    /// session state keeps for the snapshot; an update without the key (a goal,
+    /// a title) emits none and leaves the held offer alone.
+    #[tokio::test]
+    async fn session_info_update_offers_and_withdraws_the_predicted_prompt() {
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-suggest".to_string(),
+            AgentType::ClaudeCode,
+            None,
+            "win".to_string(),
+            None,
+        )));
+        let suggestions = |state: &SessionState| -> Vec<Option<String>> {
+            state
+                .recent_events_after(0)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|e| match &e.payload {
+                    AcpEvent::PromptSuggestion { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        drive_session_info_meta(
+            &state,
+            AgentType::ClaudeCode,
+            serde_json::json!({"promptSuggestions": {"suggestions": [{"text": "Run the tests"}]}}),
+        )
+        .await;
+        assert_eq!(
+            state.read().await.prompt_suggestion.as_deref(),
+            Some("Run the tests")
+        );
+
+        drive_session_info_meta(
+            &state,
+            AgentType::ClaudeCode,
+            serde_json::json!({"jetbrains": {"air": {"version": 1}}}),
+        )
+        .await;
+        assert_eq!(
+            state.read().await.prompt_suggestion.as_deref(),
+            Some("Run the tests"),
+            "an update without the key keeps the offer"
+        );
+
+        drive_session_info_meta(
+            &state,
+            AgentType::ClaudeCode,
+            serde_json::json!({"promptSuggestions": {"suggestions": []}}),
+        )
+        .await;
+        assert_eq!(state.read().await.prompt_suggestion, None);
+        assert_eq!(
+            suggestions(&*state.read().await),
+            vec![Some("Run the tests".to_string()), None]
+        );
     }
 
     // --- live ACP session title (`session_info_update.title`) --------------
@@ -25344,7 +25624,7 @@ mod tests {
 
     #[test]
     fn claude_raw_sdk_meta_enabled_only_for_claude() {
-        let claude_meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode)
+        let claude_meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode, true)
             .expect("Claude must have raw SDK meta");
         assert_eq!(
             claude_meta
@@ -25354,7 +25634,50 @@ mod tests {
             Some(true)
         );
 
-        assert!(claude_raw_sdk_session_meta(AgentType::Codex).is_none());
+        assert!(claude_raw_sdk_session_meta(AgentType::Codex, true).is_none());
+        assert!(claude_raw_sdk_session_meta(AgentType::Codex, false).is_none());
+        // A session that asks for predicted prompts names nothing else: the
+        // adapter turns them on itself.
+        assert_eq!(
+            serde_json::Value::Object(claude_meta),
+            serde_json::json!({"claudeCode": {"emitRawSDKMessages": true}})
+        );
+    }
+
+    /// claude-agent-acp 0.92.0 reads `_meta.claudeCode.options` into the SDK
+    /// options after its own `promptSuggestions: true`, so this is what keeps
+    /// a session nobody types into from paying for a prediction after every
+    /// turn (measured against a fake API: no prediction request at all).
+    #[test]
+    fn claude_session_meta_turns_prompt_suggestions_off_when_asked() {
+        let meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode, false)
+            .expect("Claude must have raw SDK meta");
+        assert_eq!(
+            serde_json::Value::Object(meta),
+            serde_json::json!({"claudeCode": {
+                "emitRawSDKMessages": true,
+                "options": {"promptSuggestions": false},
+            }})
+        );
+        // Every request of the connection names the same object.
+        let cwd = std::path::PathBuf::from("/tmp/codeg");
+        let new_req = build_new_session_request(AgentType::ClaudeCode, &cwd, Vec::new(), false);
+        let load_req = build_load_session_request(
+            AgentType::ClaudeCode,
+            SessionId::new("abc".to_string()),
+            &cwd,
+            Vec::new(),
+            false,
+        );
+        let resume_req = build_resume_session_request(
+            AgentType::ClaudeCode,
+            SessionId::new("abc".to_string()),
+            &cwd,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(new_req.meta, load_req.meta);
+        assert_eq!(new_req.meta, resume_req.meta);
     }
 
     #[test]
@@ -27910,7 +28233,7 @@ mod tests {
     #[test]
     fn build_new_session_request_sets_claude_raw_meta() {
         let cwd = std::path::PathBuf::from("/tmp/codeg");
-        let req = build_new_session_request(AgentType::ClaudeCode, &cwd, Vec::new());
+        let req = build_new_session_request(AgentType::ClaudeCode, &cwd, Vec::new(), true);
 
         assert_eq!(
             req.meta
@@ -28757,6 +29080,7 @@ mod tests {
             SessionId::new("abc".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
 
         assert!(req.meta.is_none());
@@ -28775,7 +29099,7 @@ mod tests {
     fn openclaw_session_requests_carry_no_mcp_servers() {
         let cwd = std::path::PathBuf::from("/tmp/codeg");
 
-        let new_req = build_new_session_request(AgentType::OpenClaw, &cwd, Vec::new());
+        let new_req = build_new_session_request(AgentType::OpenClaw, &cwd, Vec::new(), true);
         assert!(
             new_req.mcp_servers.is_empty(),
             "OpenClaw session/new must carry no MCP servers"
@@ -28792,6 +29116,7 @@ mod tests {
             SessionId::new("openclaw-session".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
         assert!(
             load_req.mcp_servers.is_empty(),
@@ -28937,6 +29262,7 @@ mod tests {
             SessionId::new("abc".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
 
         assert_eq!(
@@ -28957,6 +29283,7 @@ mod tests {
             SessionId::new("abc".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
 
         assert!(req.meta.is_none());
@@ -28978,6 +29305,7 @@ mod tests {
             SessionId::new("openclaw-session".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
         assert!(
             req.mcp_servers.is_empty(),
@@ -34599,7 +34927,7 @@ mod tests {
     #[test]
     fn untyped_new_session_carries_the_typed_request_payload() {
         let cwd = std::path::PathBuf::from("/tmp/codeg");
-        let req = build_new_session_request(AgentType::Cline, &cwd, Vec::new());
+        let req = build_new_session_request(AgentType::Cline, &cwd, Vec::new(), true);
         let expected = serde_json::to_value(&req).unwrap();
 
         let untyped = UntypedMessage::new(AGENT_METHOD_NAMES.session_new, req).expect("builds");

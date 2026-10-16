@@ -2333,6 +2333,8 @@ const ConversationTabView = memo(function ConversationTabView({
       onConfigOptionChange={handleSetConfigOption}
       agentType={selectedAgent}
       availableCommands={connectionCommands}
+      // The previous agent's prediction is no use to the one just picked.
+      promptSuggestion={connIsForOtherAgent ? null : conn.promptSuggestion}
       attachmentTabId={tabId}
       draftStorageKey={draftStorageKey}
       hideInput={isWelcomeMode || Boolean(acpLoadError)}

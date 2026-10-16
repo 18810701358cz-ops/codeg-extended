@@ -443,6 +443,19 @@ pub struct SessionState {
     pub fork_supported: bool,
     pub available_commands: Vec<AvailableCommandInfo>,
     pub usage: Option<UsageInfo>,
+    /// The follow-up prompt the agent last predicted (`AcpEvent::PromptSuggestion`),
+    /// offered by the composer while it is empty. Cleared when a prompt starts,
+    /// as the frontend reducer clears it, and when the connection moves to
+    /// another session: it predicted what follows THAT session's last turn.
+    /// Carried on `to_snapshot()` so a client attaching between turns offers it
+    /// too.
+    pub prompt_suggestion: Option<String>,
+    /// Whether this connection's sessions ask the agent to predict the next
+    /// prompt (claude-agent-acp's `promptSuggestions`, which costs one request
+    /// after every turn; see `connection::claude_raw_sdk_session_meta`). Fixed
+    /// at creation by [`owner_composes_prompts`]. Backend-internal — not
+    /// serialized, not carried on `to_snapshot()`.
+    pub wants_prompt_suggestions: bool,
     /// True once the agent's initial selectors handshake (modes +
     /// config_options) has finished and `SelectorsReady` has fired. Persisted
     /// on the snapshot so a frontend that reconnects after refresh can see
@@ -732,6 +745,7 @@ impl SessionState {
         owner_window_label: String,
         folder_id: Option<i32>,
     ) -> Self {
+        let wants_prompt_suggestions = owner_composes_prompts(&owner_window_label);
         Self {
             connection_id,
             conversation_id: None,
@@ -766,6 +780,8 @@ impl SessionState {
             fork_supported: false,
             available_commands: Vec::new(),
             usage: None,
+            prompt_suggestion: None,
+            wants_prompt_suggestions,
             selectors_ready: false,
             last_error: None,
             session_started_tx: None,
@@ -858,6 +874,9 @@ impl SessionState {
                     // accepted between turns.
                     self.async_tasks.clear();
                     self.async_task_activity_at = None;
+                    // A prediction follows the last turn of the session it was
+                    // made in; a fork starts from an earlier point of it.
+                    self.prompt_suggestion = None;
                 }
                 self.external_id = Some(session_id.clone());
                 self.status = ConnectionStatus::Connected;
@@ -901,6 +920,10 @@ impl SessionState {
                     // and nothing renders an entry the live message no longer
                     // references.
                     self.live_message = None;
+                    // The prediction was for this prompt's place: whatever the
+                    // user sent, it is spent (the adapter clears its copy the
+                    // same way).
+                    self.prompt_suggestion = None;
                 }
                 self.status = status.clone();
             }
@@ -944,6 +967,9 @@ impl SessionState {
                     used: *used,
                     size: *size,
                 });
+            }
+            AcpEvent::PromptSuggestion { text } => {
+                self.prompt_suggestion = text.clone();
             }
             AcpEvent::ContentDelta {
                 text,
@@ -2189,6 +2215,7 @@ impl SessionState {
             config_options: self.config_options.clone(),
             prompt_capabilities: self.prompt_capabilities.clone(),
             usage: self.usage.clone(),
+            prompt_suggestion: self.prompt_suggestion.clone(),
             fork_supported: self.fork_supported,
             available_commands: self.available_commands.clone(),
             selectors_ready: self.selectors_ready,
@@ -2201,6 +2228,21 @@ impl SessionState {
             event_seq: self.event_seq,
         }
     }
+}
+
+/// Whether someone types the prompts of a connection with this owner label, so
+/// that a predicted follow-up prompt has a composer to appear in.
+///
+/// Not for the two owners codeg drives without one: an automation run (owner
+/// `"automation"`, see `automation::engine`) and a chat-channel bot (owners
+/// `"chat_channel:<channel>:<sender>…"`, see
+/// `chat_channel::session_commands::owner_label_for`), whose prompts arrive from
+/// a schedule or a messaging app. For them a prediction would only be paid for.
+/// Everything else is a person's window, a work task (its session takes
+/// follow-ups once the task stops), or a delegated child (which inherits its
+/// parent's label, and whose session the user can open and continue).
+pub(crate) fn owner_composes_prompts(owner_window_label: &str) -> bool {
+    owner_window_label != "automation" && !owner_window_label.starts_with("chat_channel:")
 }
 
 /// Max age of the background keep-alive: how long a connection with
@@ -2295,6 +2337,11 @@ pub struct LiveSessionSnapshot {
     pub config_options: Option<Vec<SessionConfigOptionInfo>>,
     pub prompt_capabilities: Option<PromptCapabilitiesInfo>,
     pub usage: Option<UsageInfo>,
+    /// The follow-up prompt the agent last predicted (see
+    /// `SessionState.prompt_suggestion`). Omitted when there is none, so the
+    /// common snapshot keeps its pre-feature wire shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_suggestion: Option<String>,
     pub fork_supported: bool,
     pub available_commands: Vec<AvailableCommandInfo>,
     pub selectors_ready: bool,
@@ -3275,6 +3322,95 @@ mod tests {
             s.to_snapshot().last_error.is_none(),
             "new prompts clear stale snapshot-recoverable errors"
         );
+    }
+
+    /// The predicted follow-up prompt is current state: the snapshot hands it to
+    /// a client that attaches between turns, until the adapter withdraws it, a
+    /// prompt spends it, or the connection moves to another session.
+    #[test]
+    fn snapshot_carries_the_predicted_prompt_until_it_is_spent() {
+        let mut s = fresh_state();
+        assert!(
+            !serde_json::to_string(&s.to_snapshot())
+                .expect("serialize")
+                .contains("prompt_suggestion"),
+            "no prediction: the snapshot keeps its pre-feature wire shape"
+        );
+
+        s.apply_event(&AcpEvent::PromptSuggestion {
+            text: Some("Run the tests".into()),
+        });
+        let snap = s.to_snapshot();
+        assert_eq!(snap.prompt_suggestion.as_deref(), Some("Run the tests"));
+        let back: LiveSessionSnapshot =
+            serde_json::from_str(&serde_json::to_string(&snap).expect("serialize"))
+                .expect("deserialize");
+        assert_eq!(back.prompt_suggestion.as_deref(), Some("Run the tests"));
+
+        // Withdrawn by the adapter.
+        s.apply_event(&AcpEvent::PromptSuggestion { text: None });
+        assert_eq!(s.to_snapshot().prompt_suggestion, None);
+
+        // Spent by the next prompt, whatever it says.
+        s.apply_event(&AcpEvent::PromptSuggestion {
+            text: Some("Run the tests".into()),
+        });
+        s.apply_event(&AcpEvent::StatusChanged {
+            status: ConnectionStatus::Prompting,
+        });
+        assert_eq!(s.to_snapshot().prompt_suggestion, None);
+
+        // Ending a turn keeps what arrives after it.
+        s.apply_event(&AcpEvent::StatusChanged {
+            status: ConnectionStatus::Connected,
+        });
+        s.apply_event(&AcpEvent::SessionStarted {
+            session_id: "s1".into(),
+        });
+        s.apply_event(&AcpEvent::PromptSuggestion {
+            text: Some("commit this".into()),
+        });
+        // The same session announced again keeps it; another one (a fork)
+        // drops it, since it predicted what follows the session left behind.
+        s.apply_event(&AcpEvent::SessionStarted {
+            session_id: "s1".into(),
+        });
+        assert_eq!(s.prompt_suggestion.as_deref(), Some("commit this"));
+        s.apply_event(&AcpEvent::SessionStarted {
+            session_id: "s2".into(),
+        });
+        assert_eq!(s.prompt_suggestion, None);
+    }
+
+    /// The owners codeg drives without a composer ask for no predicted prompt;
+    /// every other one does, decided once when the state is made.
+    #[test]
+    fn only_owners_someone_types_into_ask_for_predicted_prompts() {
+        for owner in [
+            "main",
+            "workspace-2",
+            "work_task",
+            "delegation-probe",
+            "automations",
+        ] {
+            assert!(owner_composes_prompts(owner), "{owner}");
+        }
+        for owner in [
+            "automation",
+            "chat_channel:4:wx-user",
+            "chat_channel:4:tg-user:thread:9",
+        ] {
+            assert!(!owner_composes_prompts(owner), "{owner}");
+        }
+        assert!(fresh_state().wants_prompt_suggestions);
+        let automation = SessionState::new(
+            "conn-auto".to_string(),
+            AgentType::ClaudeCode,
+            None,
+            "automation".to_string(),
+            None,
+        );
+        assert!(!automation.wants_prompt_suggestions);
     }
 
     #[test]

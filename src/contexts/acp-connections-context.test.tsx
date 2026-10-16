@@ -210,6 +210,7 @@ beforeEach(() => {
     configOptions: null,
     availableCommands: null,
     usage: null,
+    promptSuggestion: null as string | null,
     liveMessage: null,
     pendingPermission: null,
     pendingAskQuestion: null,
@@ -290,6 +291,7 @@ function snapshotBase() {
     configOptions: null,
     availableCommands: null,
     usage: null,
+    promptSuggestion: null as string | null,
     liveMessage: null,
     pendingPermission: null,
     pendingAskQuestion: null,
@@ -4792,6 +4794,145 @@ describe("HYDRATE_FROM_SNAPSHOT last_error recovery", () => {
     expect(h.store!.getConnection(TAB)!.error).toBe(
       "backendErrors.turnFailedRefusal"
     )
+  })
+})
+
+describe("predicted follow-up prompt (claude-agent-acp 0.92.0)", () => {
+  async function connectOwner(): Promise<AttachHandlers> {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    return latestAttachHandlers()
+  }
+
+  const suggestion = () => h.store!.getConnection(TAB)!.promptSuggestion
+
+  it("holds the offer between turns, drops a withdrawn one, and spends it on the next prompt", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "connected",
+    })
+    expect(suggestion()).toBeNull()
+
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "prompt_suggestion",
+      text: "Run the tests",
+    })
+    expect(suggestion()).toBe("Run the tests")
+
+    // The adapter withdraws it (the clear at the next prompt, or a reset).
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "prompt_suggestion",
+      text: null,
+    })
+    expect(suggestion()).toBeNull()
+
+    // A blank one is no offer at all.
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "prompt_suggestion",
+      text: "   ",
+    })
+    expect(suggestion()).toBeNull()
+
+    // A prompt spends it at once, before the adapter's own clear arrives.
+    emitAcpEvent(handlers, {
+      seq: 5,
+      connection_id: "spawned-conn",
+      type: "prompt_suggestion",
+      text: "commit this",
+    })
+    emitAcpEvent(handlers, {
+      seq: 6,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    expect(suggestion()).toBeNull()
+
+    // The turn's own prediction lands after it ends.
+    emitAcpEvent(handlers, {
+      seq: 7,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    })
+    emitAcpEvent(handlers, {
+      seq: 8,
+      connection_id: "spawned-conn",
+      type: "prompt_suggestion",
+      text: "push it",
+    })
+    expect(suggestion()).toBe("push it")
+  })
+
+  it("drops the offer when the connection moves to another session (a fork), as the backend does", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_started",
+      session_id: "sess-1",
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "prompt_suggestion",
+      text: "Run the tests",
+    })
+    // The same session announced again keeps it.
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_started",
+      session_id: "sess-1",
+    })
+    expect(suggestion()).toBe("Run the tests")
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "session_started",
+      session_id: "sess-fork",
+    })
+    expect(suggestion()).toBeNull()
+  })
+
+  it("recovers the offer from a fresh snapshot but never brings a spent one back", async () => {
+    const handlers = await connectOwner()
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      eventSeq: 5,
+      promptSuggestion: "Run the tests",
+    })
+    hydrateSnapshot(handlers, {
+      event_seq: 5,
+    } as unknown as LiveSessionSnapshot)
+    expect(suggestion()).toBe("Run the tests")
+
+    emitAcpEvent(handlers, {
+      seq: 6,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    expect(suggestion()).toBeNull()
+
+    // Taken before that prompt (eventSeq 5 <= lastAppliedSeq 6): stale.
+    hydrateSnapshot(handlers, {
+      event_seq: 5,
+    } as unknown as LiveSessionSnapshot)
+    expect(suggestion()).toBeNull()
   })
 })
 

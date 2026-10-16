@@ -697,6 +697,19 @@ pub enum AcpEvent {
     AvailableCommands { commands: Vec<AvailableCommandInfo> },
     /// Session usage/context window updated during conversation
     UsageUpdate { used: u64, size: u64 },
+    /// The prompt the agent predicts the user will send next, which the
+    /// composer offers as gray text while it is empty (Tab fills it in, nothing
+    /// is sent). `None` clears the one held. Read from claude-agent-acp
+    /// 0.92.0's `session_info_update._meta.promptSuggestions` (see
+    /// `connection::prompt_suggestion_update`).
+    ///
+    /// Current state, not an event: `SessionState::apply_event` keeps the last
+    /// one so a client that attaches between turns offers it too, and a new
+    /// prompt clears it there and in the frontend reducer alike.
+    PromptSuggestion {
+        #[serde(default)]
+        text: Option<String>,
+    },
     /// Out-of-turn activity surfaced from the agent's own session transcript
     /// by the background watcher (`acp::background_watch`; Claude-only today).
     /// Covers everything that happens OUTSIDE a codeg-driven prompt turn:
