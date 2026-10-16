@@ -19,9 +19,12 @@ use crate::terminal::shell_flavor::{classify_shell_family, ShellFamily};
 ///
 /// `folder_path` is the active folder's path *on its host* (the remote path in a
 /// remote-desktop window) and `remote_host` the remote server's host name; both
-/// reach the command as `CODEG_FOLDER_PATH` / `CODEG_REMOTE_HOST`. It runs in
-/// `working_dir` — the folder, when the window is a local one — or, failing
-/// that, the home directory: a remote folder's path names nothing here.
+/// reach the command as `CODEG_FOLDER_PATH` / `CODEG_REMOTE_HOST`. `remote_host`
+/// is present exactly when the window is bound to a remote server (empty when
+/// its name can't be read), and so exactly when `folder_path` came from that
+/// server rather than from this machine. The command runs in `working_dir` —
+/// the folder, when the window is a local one — or, failing that, the home
+/// directory: a remote folder's path names nothing here.
 ///
 /// `async` because the spawn needs a tokio runtime in scope, not because it
 /// awaits anything.
@@ -32,30 +35,39 @@ pub async fn run_local_command(
     remote_host: Option<String>,
     working_dir: Option<String>,
 ) -> Result<(), AppCommandError> {
-    let command = validate_local_command(&command)?;
     let shell = crate::terminal::manager::resolve_shell();
-    let mut child = tokio::process::Command::new(&shell);
-    match shell_invocation(&shell, command) {
+    spawn_local_command(&shell, &command, folder_path, remote_host, working_dir)
+}
+
+/// [`run_local_command`] in `shell`.
+fn spawn_local_command(
+    shell: &str,
+    command: &str,
+    folder_path: Option<String>,
+    remote_host: Option<String>,
+    working_dir: Option<String>,
+) -> Result<(), AppCommandError> {
+    let command = validate_local_command(command)?;
+    let remote = remote_host.is_some();
+    let folder_path = folder_path.unwrap_or_default();
+    let remote_host = remote_host.unwrap_or_default();
+    let mut child = tokio::process::Command::new(shell);
+    match shell_invocation(shell, command) {
         ShellInvocation::Args(args) => {
             child.args(args);
         }
-        #[cfg(windows)]
         ShellInvocation::CmdLine(line) => {
-            use std::os::windows::process::CommandExt;
-            child.as_std_mut().raw_arg(line);
-        }
-        // Only a Windows host resolves its shell to cmd.exe.
-        #[cfg(not(windows))]
-        ShellInvocation::CmdLine(_) => {
-            return Err(AppCommandError::invalid_input(format!(
-                "{shell} can only run commands on Windows"
-            )));
+            if remote {
+                reject_cmd_syntax("CODEG_FOLDER_PATH", &folder_path)?;
+                reject_cmd_syntax("CODEG_REMOTE_HOST", &remote_host)?;
+            }
+            append_cmd_line(&mut child, line)?;
         }
     }
     child
         .env("CODEG_CMD", command)
-        .env("CODEG_FOLDER_PATH", folder_path.unwrap_or_default())
-        .env("CODEG_REMOTE_HOST", remote_host.unwrap_or_default())
+        .env("CODEG_FOLDER_PATH", folder_path)
+        .env("CODEG_REMOTE_HOST", remote_host)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -73,6 +85,48 @@ pub async fn run_local_command(
     child.spawn().map(|_| ()).map_err(|err| {
         AppCommandError::external_command("Failed to run local command", format!("{shell}: {err}"))
     })
+}
+
+/// Hand cmd.exe its command line as it is. Passed as an argument, std would
+/// quote it the MSVC way, which cmd does not undo.
+#[cfg(windows)]
+fn append_cmd_line(
+    child: &mut tokio::process::Command,
+    line: String,
+) -> Result<(), AppCommandError> {
+    use std::os::windows::process::CommandExt;
+    child.as_std_mut().raw_arg(line);
+    Ok(())
+}
+
+/// Only a Windows host resolves its shell to cmd.exe.
+#[cfg(not(windows))]
+fn append_cmd_line(
+    _child: &mut tokio::process::Command,
+    line: String,
+) -> Result<(), AppCommandError> {
+    Err(AppCommandError::invalid_input(format!(
+        "cmd.exe runs only on Windows: {line}"
+    )))
+}
+
+/// Refuse `value`, the variable `name`, when it holds a character cmd.exe reads
+/// as syntax. cmd splices a `%VAR%` value into its command line before it
+/// parses that line, so such a value can close a quoted argument or chain a
+/// command of its own: a remote folder named `/srv/x" & calc.exe & rem "` turns
+/// `echo "%CODEG_FOLDER_PATH%"` into a launch of calc.exe. Only a remote
+/// window's values are checked: they come from the remote server, which is not
+/// trusted with this machine, while a local window's are this machine's own.
+fn reject_cmd_syntax(name: &str, value: &str) -> Result<(), AppCommandError> {
+    let syntax = value
+        .chars()
+        .find(|c| c.is_control() || matches!(c, '"' | '&' | '|' | '<' | '>' | '^' | '%' | '!'));
+    match syntax {
+        Some(c) => Err(AppCommandError::invalid_input(format!(
+            "{name} from the remote server holds {c:?}, which cmd.exe would read as part of the command"
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// `requested` when it is a directory on this machine, else the home directory.
@@ -116,7 +170,9 @@ enum ShellInvocation {
 /// line, and never inside a value it expanded, so behind `%CODEG_CMD%` the
 /// `%CODEG_FOLDER_PATH%` in a command would reach the program literally. The
 /// command is the command line itself instead, as if typed at a prompt; `/S`
-/// strips only the outer quotes around it.
+/// strips only the outer quotes around it, and `/V:OFF` keeps a `!` literal
+/// even where the registry turns delayed expansion on. Splicing values into the
+/// line is what `reject_cmd_syntax` guards.
 fn shell_invocation(shell: &str, command: &str) -> ShellInvocation {
     let args: Vec<&str> = match classify_shell_family(shell) {
         ShellFamily::PowerShell => vec![
@@ -125,7 +181,9 @@ fn shell_invocation(shell: &str, command: &str) -> ShellInvocation {
             "-Command",
             "Invoke-Expression $env:CODEG_CMD",
         ],
-        ShellFamily::Cmd => return ShellInvocation::CmdLine(format!("/D /S /C \"{command}\"")),
+        ShellFamily::Cmd => {
+            return ShellInvocation::CmdLine(format!("/D /V:OFF /S /C \"{command}\""))
+        }
         ShellFamily::Posix if is_bash_like(shell) => vec!["-l", "-c", "eval \"$CODEG_CMD\""],
         // nu / xonsh / elvish: no assumptions about `-l` or `eval`.
         ShellFamily::Posix => vec!["-c", command],
@@ -172,7 +230,7 @@ mod tests {
         // So cmd's one expansion pass reaches the variables in the command.
         assert_eq!(
             shell_invocation("cmd.exe", r#"code "%CODEG_FOLDER_PATH%""#),
-            ShellInvocation::CmdLine(r#"/D /S /C "code "%CODEG_FOLDER_PATH%"""#.into())
+            ShellInvocation::CmdLine(r#"/D /V:OFF /S /C "code "%CODEG_FOLDER_PATH%"""#.into())
         );
     }
 
@@ -191,6 +249,54 @@ mod tests {
         assert_eq!(resolve_working_dir(Some(missing)), dirs::home_dir());
         assert_eq!(resolve_working_dir(Some("")), dirs::home_dir());
         assert_eq!(resolve_working_dir(None), dirs::home_dir());
+    }
+
+    #[test]
+    fn cmd_refuses_a_remote_folder_path_it_would_read_as_syntax() {
+        // Refused before anything is spawned, on every platform.
+        let err = spawn_local_command(
+            "cmd.exe",
+            r#"echo "%CODEG_FOLDER_PATH%""#,
+            Some(r#"/srv/repo" & calc.exe & rem ""#.into()),
+            Some("devbox".into()),
+            None,
+        )
+        .expect_err("refused");
+        assert!(err.message.contains("CODEG_FOLDER_PATH"), "{err:?}");
+    }
+
+    #[test]
+    fn cmd_syntax_is_refused_and_ordinary_paths_pass() {
+        for path in ["/home/me/My Projects/repo-1.0_x", "/srv/仓库/@scope+x=1,y~"] {
+            assert!(
+                reject_cmd_syntax("CODEG_FOLDER_PATH", path).is_ok(),
+                "{path}"
+            );
+        }
+        for path in [
+            "/a\"b", "/a&b", "/a|b", "/a<b", "/a>b", "/a^b", "/a%PATH%", "/a!b", "/a\nb",
+        ] {
+            assert!(
+                reject_cmd_syntax("CODEG_FOLDER_PATH", path).is_err(),
+                "{path}"
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn cmd_takes_a_local_windows_folder_path_as_it_is() {
+        // `C:\R&D` is a folder of this machine: no refusal, so the only error
+        // left off Windows is that cmd.exe does not run here.
+        let err = spawn_local_command(
+            "cmd.exe",
+            "echo %CODEG_FOLDER_PATH%",
+            Some(r"C:\R&D".into()),
+            None,
+            None,
+        )
+        .expect_err("cmd.exe off Windows");
+        assert!(err.message.contains("only on Windows"), "{err:?}");
     }
 
     #[test]

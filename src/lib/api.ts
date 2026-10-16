@@ -3466,9 +3466,11 @@ export async function openInCode(path: string): Promise<void> {
  * Run a shell command detached on THIS desktop machine, even from a
  * remote-desktop window — hence the shell transport. `folderPath` (the folder's
  * path on its own host) and `remoteHost` reach the command as
- * `$CODEG_FOLDER_PATH` / `$CODEG_REMOTE_HOST`. It runs in `workingDir` when
- * that is a directory on this machine, else in the home directory. Desktop
- * only.
+ * `$CODEG_FOLDER_PATH` / `$CODEG_REMOTE_HOST`. `remoteHost` is non-null exactly
+ * in a remote-desktop window (empty when its host's name can't be read): the
+ * backend then treats `folderPath` as the remote server's, not this machine's.
+ * It runs in `workingDir` when that is a directory on this machine, else in
+ * the home directory. Desktop only.
  */
 export async function runLocalCommand(
   command: string,

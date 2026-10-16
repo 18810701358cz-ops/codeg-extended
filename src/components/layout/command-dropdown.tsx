@@ -219,7 +219,9 @@ export function CommandDropdown() {
           await runLocalCommand(
             localCommand,
             folderPath,
-            getRemoteHostName(),
+            // Set in, and only in, a remote window, even if its host's name
+            // can't be read: it tells the backend `folderPath` is the server's.
+            remote ? (getRemoteHostName() ?? "") : null,
             // Only a local window's folder exists on this computer to run in.
             remote ? null : folderPath
           )

@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   toastError: vi.fn(),
   desktop: true,
   remote: true,
+  baseUrl: "https://devbox.example:3080",
   folder: { id: 1, path: "/repo" },
   command: "pnpm dev",
   // What the folder's host lists; null for its one "dev" command (`command`).
@@ -32,7 +33,7 @@ vi.mock("sonner", () => ({ toast: { error: h.toastError } }))
 vi.mock("@/lib/transport", () => ({
   isDesktop: () => h.desktop,
   isRemoteDesktopMode: () => h.remote,
-  getServerBaseUrl: () => "https://devbox.example:3080",
+  getServerBaseUrl: () => h.baseUrl,
 }))
 vi.mock("@/contexts/active-folder-context", () => ({
   useActiveFolder: () => ({ activeFolder: h.folder }),
@@ -88,6 +89,7 @@ describe("CommandDropdown", () => {
     h.toastError.mockClear()
     h.desktop = true
     h.remote = true
+    h.baseUrl = "https://devbox.example:3080"
     h.folder = { id: 1, path: "/repo" }
     h.command = "pnpm dev"
     h.hostCommands = null
@@ -170,6 +172,23 @@ describe("CommandDropdown", () => {
     expect(useCommandTerminalLinkStore.getState().links).toEqual({})
   })
 
+  it("still tells the backend the folder is remote when its host can't be read", async () => {
+    // The backend checks a remote folder's path before cmd.exe splices it in.
+    h.baseUrl = "not a url"
+    h.hostCommands = []
+    createGlobalCommand("open", "local: echo %CODEG_FOLDER_PATH%")
+    render(<CommandDropdown />)
+    fireEvent.click(await screen.findByTitle("runCommandTitle"))
+    await waitFor(() =>
+      expect(h.runLocal).toHaveBeenCalledWith(
+        "echo %CODEG_FOLDER_PATH%",
+        "/repo",
+        "",
+        null
+      )
+    )
+  })
+
   it("refuses a local: command outside the desktop app", async () => {
     h.desktop = false
     h.remote = false
@@ -247,5 +266,19 @@ describe("CommandDropdown", () => {
         null
       )
     )
+  })
+
+  it("drops global commands when another window clears the storage", async () => {
+    h.hostCommands = []
+    createGlobalCommand("zed", "local: zed .")
+    render(<CommandDropdown />)
+    await screen.findByTitle("runCommandTitle")
+
+    // `clear()` reaches other windows as a storage event with no key.
+    localStorage.clear()
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: null }))
+    })
+    expect(await screen.findByText("addCommand")).toBeInTheDocument()
   })
 })
