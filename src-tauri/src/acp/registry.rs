@@ -3561,7 +3561,7 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // ad-hoc signature Bun leaves behind — the one macOS 27 kills
             // binaries over (see the Cline entry). 1.18.33's darwin-arm64
             // binary fails `codesign --verify --strict` yet ran, so nothing
-            // had happened to read its bad page. 1.19.1's darwin-arm64 and
+            // had happened to read its bad page. 1.19.3's darwin-arm64 and
             // darwin-x64 binaries carry the same Developer ID signature and
             // pass that check (still built with Bun 1.3.14).
             //
@@ -3585,40 +3585,59 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // npm sources are byte-identical to 1.19.0. `initialize` and
             // `session/new` match too, apart from the free models the binary
             // lists (now named `OpenCode/…` rather than `OpenCode Zen/…`).
+            //
+            // 1.19.2 and 1.19.3 change only the update path and how a
+            // configured model gets its variants. The ACP bridge, session,
+            // storage, tool, plugin and npm sources are byte-identical to
+            // 1.19.1, and `initialize` and `session/new` again differ only in
+            // the free models listed. 1.19.2 keeps OpenCode 1 updates on 1.x:
+            // the installer and `opencode upgrade` find the newest 1.x through
+            // npm rather than GitHub's latest release, which upstream expects
+            // to become OpenCode 2. Neither is on the `opencode acp` path, and
+            // codeg's unreviewed-latest offer reads the ACP registry, not
+            // GitHub. 1.19.3 lets a model declared in `opencode.json` carry
+            // `reasoning_options`, the models.dev field catalog models already
+            // build their variants from. When set, they replace that model's
+            // variants (configured `variants` still apply on top), and they
+            // reach codeg as the model's `effort` choices: live, a model given
+            // `[{type: "effort", values: ["low", "high"]}]` offers
+            // `low`/`high`/`default` on 1.19.3 where 1.19.1 ignores the key and
+            // offers `low`/`medium`/`high`/`default`. codeg writes no
+            // `reasoning_options` itself.
             distribution: AgentDistribution::Binary {
-                version: "1.19.1",
+                version: "1.19.3",
                 cmd: "opencode",
                 args: &["acp"],
                 env: &[],
                 platforms: &[
                     PlatformBinary {
                         platform: "darwin-aarch64",
-                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.1/opencode-darwin-arm64.zip",
+                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.3/opencode-darwin-arm64.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "darwin-x86_64",
-                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.1/opencode-darwin-x64.zip",
+                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.3/opencode-darwin-x64.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "linux-aarch64",
-                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.1/opencode-linux-arm64.tar.gz",
+                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.3/opencode-linux-arm64.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "linux-x86_64",
-                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.1/opencode-linux-x64.tar.gz",
+                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.3/opencode-linux-x64.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "windows-aarch64",
-                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.1/opencode-windows-arm64.zip",
+                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.3/opencode-windows-arm64.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "windows-x86_64",
-                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.1/opencode-windows-x64.zip",
+                        url: "https://github.com/anomalyco/opencode/releases/download/v1.19.3/opencode-windows-x64.zip",
                         sha256: None,
                     },
                 ],
@@ -4343,41 +4362,54 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             //   "Generate Video: <prompt>", with `rawInput._toolName:
             //   "generateVideo"`; codeg shows it as a generic tool card.
             //
+            // 2026.10.14-941492e is a second build of that day. Its 19 ACP
+            // modules match 0f9edde's in all six archives once build paths, the
+            // version string and chunk numbers are normalized, and `initialize`
+            // and the unauthenticated `session/new` answer are identical. Its
+            // one code change is in the private-worker controller (`cursor-agent
+            // worker`), which codeg never runs: `--identity-audience <aud>` asks
+            // each claim for a signed identity token and hands it to the spawn
+            // hook. Because the two builds share a date, the agent settings page
+            // tells them apart by build (`isBehindRecommended`): compared by
+            // numbers alone they tie, so an install of 0f9edde would read
+            // "Already latest" while connect, which never downloads, kept
+            // launching it.
+            //
             // Every pin still has to be triaged in `cursor_acp_retry_compat`.
             distribution: AgentDistribution::Binary {
-                version: "2026.10.14-0f9edde",
+                version: "2026.10.14-941492e",
                 cmd: "cursor-agent",
                 args: &["acp"],
                 env: &[],
                 platforms: &[
                     PlatformBinary {
                         platform: "darwin-aarch64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-0f9edde/darwin/arm64/agent-cli-package.tar.gz",
+                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/darwin/arm64/agent-cli-package.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "darwin-x86_64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-0f9edde/darwin/x64/agent-cli-package.tar.gz",
+                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/darwin/x64/agent-cli-package.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "linux-aarch64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-0f9edde/linux/arm64/agent-cli-package.tar.gz",
+                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/linux/arm64/agent-cli-package.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "linux-x86_64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-0f9edde/linux/x64/agent-cli-package.tar.gz",
+                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/linux/x64/agent-cli-package.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "windows-aarch64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-0f9edde/windows/arm64/agent-cli-package.zip",
+                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/windows/arm64/agent-cli-package.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "windows-x86_64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-0f9edde/windows/x64/agent-cli-package.zip",
+                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/windows/x64/agent-cli-package.zip",
                         sha256: None,
                     },
                 ],
@@ -4613,7 +4645,8 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // acceptEdits/auto/dontAsk/yolo, `yolo` being the one labelled
             // "Bypass Permissions" (`bypassPermissions` is accepted as an alias
             // for it, `plan` is rejected) — re-read live on 1.1.64, 1.1.65,
-            // 1.1.67, 1.1.71 and 1.1.72, and nothing in codeg names them.
+            // 1.1.67, 1.1.71, 1.1.72 and 1.1.73, and nothing in codeg names
+            // them.
             // Session logs land as
             // `$QODER_CONFIG_DIR/projects/<encoded-cwd>/<sessionId>.jsonl`
             // (default `~/.qoder/...`) in the Claude-Code-style chunk-log
@@ -4652,21 +4685,41 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             //
             // 1.1.72 changes only the two bundles and the version strings: the
             // vendored qoder-security plugin is still the byte-identical 0.9.5,
-            // and `postinstall.cjs`, the npm dispatcher and the ripgrep binaries
-            // are byte-identical. Its code changes sit outside the ACP layer
-            // (WebSearch and VideoGenRetrieve move into the built-in
-            // `qoder-tools` plugin and stay available over ACP, `/model` and
-            // `/release-notes` move into the account plugin, the model catalog
-            // cache becomes `catalog-v7`), and the ACP module is structurally
-            // unchanged. A live A/B of 1.1.72 against 1.1.71 under
-            // `--fake-responses` (the same scenario, with the `AskUserQuestion`
-            // form answered once with an option and once with free text) gives
-            // identical answers, update streams, load replay and transcript
-            // records once ids, times, paths and the per-request
-            // `requestTokenAnchor` hashes are normalized. The token-usage gate
-            // below, the config-dir resolution and the `AskUserQuestion` form
-            // handling are the same code in every release from 1.1.67 to
-            // 1.1.72.
+            // and `postinstall.cjs`, the npm dispatcher and the macOS and Linux
+            // ripgrep binaries are byte-identical (the Windows `rg.exe` differs
+            // only in its signature: with the Authenticode table and PE
+            // checksum stripped, the 1.1.71, 1.1.72 and 1.1.73 images are
+            // identical). Its code changes sit outside the ACP layer (WebSearch
+            // and VideoGenRetrieve move into the built-in `qoder-tools` plugin
+            // and stay available over ACP, `/model` and `/release-notes` move
+            // into the account plugin, the model catalog cache becomes
+            // `catalog-v7`), and the ACP module is structurally unchanged. A
+            // live A/B of 1.1.72 against 1.1.71 under `--fake-responses` (the
+            // same scenario, with the `AskUserQuestion` form answered once with
+            // an option and once with free text) gives identical answers,
+            // update streams, load replay and transcript records once ids,
+            // times, paths and the per-request `requestTokenAnchor` hashes are
+            // normalized. The token-usage gate below, the config-dir resolution
+            // and the `AskUserQuestion` form handling are the same code in
+            // every release from 1.1.67 to 1.1.73.
+            //
+            // 1.1.73 changes the two bundles, the version strings and how Qoder
+            // Sites ships, and the ACP module is structurally unchanged.
+            // `postinstall.cjs`, the npm dispatcher, qoder-security 0.9.5 and
+            // the macOS and Linux ripgrep binaries are still byte-identical, and
+            // `engines.node` is unchanged. Sites used to be a plugin running its
+            // own MCP server and is now built in: every session, ACP ones
+            // included, gets four `sites:*` skills (the advertised commands go
+            // from 18 to 22, the transcript's skill listing from 11 to 15), and
+            // the CLI creates `<config dir>/sites/{resources,sessions}`. A live
+            // A/B of 1.1.73 against 1.1.72 under `--fake-responses` (the same
+            // scenario) gives identical answers, update streams, load replay and
+            // transcript records once ids, times, paths, `requestTokenAnchor`
+            // hashes and `promptId`s are normalized, apart from those skills and
+            // one field: a Bash result now carries `processStarted: true`, which
+            // codeg does not read. On both versions a stdio MCP server sent in
+            // `session/new` is started with the session and its tools reach the
+            // model as `mcp__<server>__<tool>`.
             //
             // `QODER_EXPOSE_TOKEN_USAGE` turns OFF qoder's own token-count
             // redaction, and without it every qoder session reports zero tokens
@@ -4686,17 +4739,17 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // The name is assembled at runtime from a `QODER_`/`QODERCN_`
             // prefix (`Sr(A) = `${vv}${A}``, `ebA = Sr("EXPOSE_TOKEN_USAGE")`
             // in 1.1.54, `yr` / `CRA` in 1.1.67, `Dr` / `qMA` in 1.1.71, `yr` /
-            // `VMA` in 1.1.72; the minified names change every build), so
-            // grepping the bundle for the full literal returns nothing — grep
-            // the bare suffix instead, the same trap `parsers::qoder` documents
-            // for the config-dir vars.
+            // `VMA` in 1.1.72, `Or` / `m1A` in 1.1.73; the minified names
+            // change every build), so grepping the bundle for the full literal
+            // returns nothing — grep the bare suffix instead, the same trap
+            // `parsers::qoder` documents for the config-dir vars.
             //
             // Registry env is only the base: `merge_agent_env` lets a per-agent
             // `runtime_env` override it, so a user who wants the redaction back
             // sets `QODER_EXPOSE_TOKEN_USAGE=0` in the agent's env settings.
             distribution: AgentDistribution::Npx {
-                version: "1.1.72",
-                package: "@qoder-ai/qodercli@1.1.72",
+                version: "1.1.73",
+                package: "@qoder-ai/qodercli@1.1.73",
                 cmd: "qoder",
                 args: &["--acp"],
                 env: &[("QODER_EXPOSE_TOKEN_USAGE", "1")],
@@ -5124,8 +5177,8 @@ mod tests {
         let meta = get_agent_meta(AgentType::Cursor);
         assert_binary_version(
             AgentType::Cursor,
-            "2026.10.14-0f9edde",
-            "/lab/2026.10.14-0f9edde/",
+            "2026.10.14-941492e",
+            "/lab/2026.10.14-941492e/",
         );
         match meta.distribution {
             AgentDistribution::Binary {
@@ -5317,11 +5370,11 @@ mod tests {
         );
         assert_npx_version(
             AgentType::Qoder,
-            "1.1.72",
-            "@qoder-ai/qodercli@1.1.72",
+            "1.1.73",
+            "@qoder-ai/qodercli@1.1.73",
             Some("20.0.0"),
         );
-        assert_binary_version(AgentType::OpenCode, "1.19.1", "/releases/download/v1.19.1/");
+        assert_binary_version(AgentType::OpenCode, "1.19.3", "/releases/download/v1.19.3/");
         // Hermes rides the community npm bridge (upstream retired its PyPI
         // channel at 0.19.0; see the registry entry). The npm package version
         // tracks the upstream version 1:1, and the pin must stay EXACT — the

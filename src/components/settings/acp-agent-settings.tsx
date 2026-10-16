@@ -3853,6 +3853,40 @@ function compareVersion(a: string, b: string): number {
   return 0
 }
 
+/**
+ * What follows a version's dotted numbers: `-0f9edde` for
+ * `2026.10.14-0f9edde`, nothing for `1.19.3`. Read from where
+ * `compareVersion` starts reading, and only as far as the version runs.
+ */
+function versionBuildSuffix(value: string): string {
+  const version =
+    /^[0-9A-Za-z.+-]*/.exec(value.trim().replace(/^[^\d]*/, ""))?.[0] ?? ""
+  return version.replace(/^\d+(?:\.\d+)*/, "")
+}
+
+/**
+ * Whether Version Status offers the recommended version in place of the
+ * installed one: an older release, or another build of the same release.
+ * Cursor publishes several builds a day under one date (`2026.10.14-0f9edde`,
+ * then `2026.10.14-941492e`), which `compareVersion` ranks equal, so a pin
+ * that moves within a day would leave every install of the earlier build
+ * reading "Already latest" while connect keeps launching it. Builds of one
+ * release cannot be ordered, so the reviewed one is what gets offered. Only a
+ * suffix on both sides names two builds; `1.0.0+abc` against `1.0.0` stays
+ * equal, as it always has.
+ */
+function isBehindRecommended(installed: string, recommended: string): boolean {
+  const order = compareVersion(installed, recommended)
+  if (order !== 0) return order < 0
+  const installedBuild = versionBuildSuffix(installed)
+  const recommendedBuild = versionBuildSuffix(recommended)
+  return (
+    installedBuild !== "" &&
+    recommendedBuild !== "" &&
+    installedBuild !== recommendedBuild
+  )
+}
+
 function hasComparableVersion(
   value: string | null | undefined
 ): value is string {
@@ -4383,7 +4417,7 @@ export function buildVersionCheck(
   if (
     hasComparableVersion(agent.registry_version) &&
     hasComparableVersion(agent.installed_version) &&
-    compareVersion(agent.installed_version, agent.registry_version) < 0
+    isBehindRecommended(agent.installed_version, agent.registry_version)
   ) {
     return {
       check_id: "version_status",
