@@ -286,7 +286,7 @@ Codeg talks to every agent over the [Agent Client Protocol](https://agentclientp
   <a href="https://qoder.com"><kbd><picture><source media="(prefers-color-scheme: dark)" srcset="./docs/images/agents/qoder-dark.svg" /><img src="./docs/images/agents/qoder.svg" alt="" width="16" valign="middle" /></picture> Qoder</kbd></a> &nbsp;
   <a href="https://antigravity.google"><kbd><picture><source media="(prefers-color-scheme: dark)" srcset="./docs/images/agents/google-antigravity-dark.svg" /><img src="./docs/images/agents/google-antigravity.svg" alt="" width="16" valign="middle" /></picture> Google Antigravity</kbd></a> &nbsp;
   <a href="https://kiro.dev/cli/"><kbd><img src="./docs/images/agents/kiro.svg" alt="" width="16" valign="middle" /> Kiro CLI</kbd></a> &nbsp;
-  <a href="./docs/agents/zcode.md"><kbd>ZCode</kbd></a> &nbsp;
+  <a href="./docs/agents/zcode.md"><kbd><img src="./docs/images/agents/zcode.svg" alt="" width="16" valign="middle" /> ZCode</kbd></a> &nbsp;
   <a href="https://docs.codeg.app/guide/custom-agents"><kbd>+ any ACP agent</kbd></a>
 </p>
 
