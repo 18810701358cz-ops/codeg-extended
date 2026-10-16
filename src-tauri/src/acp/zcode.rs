@@ -23,6 +23,14 @@ pub enum RuntimeError {
     NodeUnsupported,
 }
 
+fn same_env_key(name: &str, key: &str) -> bool {
+    if cfg!(windows) {
+        name.eq_ignore_ascii_case(key)
+    } else {
+        name == key
+    }
+}
+
 impl ZCodeRuntime {
     pub fn apply(&self, env: &mut Vec<(String, String)>) {
         for (key, value) in [
@@ -30,14 +38,17 @@ impl ZCodeRuntime {
             ("ZCODE_NODE", self.node.to_string_lossy().into_owned()),
             ("ZCODE_ACP_REMOTE", "0".to_string()),
         ] {
-            env.retain(|(name, _)| {
-                if cfg!(windows) {
-                    !name.eq_ignore_ascii_case(key)
-                } else {
-                    name != key
-                }
-            });
+            env.retain(|(name, _)| !same_env_key(name, key));
             env.push((key.to_string(), value));
+        }
+        // The bridge re-executes itself under Bun >= 1.4 when it finds one.
+        // Keep it on the Node validated above unless the agent's own
+        // environment chose a runtime.
+        if !env
+            .iter()
+            .any(|(name, _)| same_env_key(name, "ZCODE_ACP_RUNTIME"))
+        {
+            env.push(("ZCODE_ACP_RUNTIME".to_string(), "node".to_string()));
         }
     }
 }
@@ -87,35 +98,79 @@ fn resolve_program(value: &str, env: &BTreeMap<String, String>, cwd: &Path) -> O
     resolved.is_file().then_some(resolved)
 }
 
-/// npm's Windows shim is not directly spawnable by the bridge. Read its JS
-/// target instead, without running the shim or changing the user's installation.
-pub(crate) fn cli_entry(path: &Path) -> Option<PathBuf> {
-    let extension = path
-        .extension()
+fn extension_of(path: &Path) -> String {
+    path.extension()
         .and_then(|value| value.to_str())
         .unwrap_or("")
-        .to_ascii_lowercase();
-    if extension == "cmd" {
-        let metadata = std::fs::metadata(path).ok()?;
-        if metadata.len() > 32 * 1024 {
-            return None;
-        }
-        let shim = std::fs::read_to_string(path).ok()?;
-        let pattern = regex::Regex::new(r#"(?i)%dp0%[\\/]([^"\r\n]+?\.(?:cjs|mjs|js))"#).ok()?;
-        for captures in pattern.captures_iter(&shim) {
-            let relative = captures.get(1)?.as_str().replace('\\', "/");
-            let entry = path.parent()?.join(relative);
-            if entry.is_file() {
-                return Some(entry);
-            }
-        }
+        .to_ascii_lowercase()
+}
+
+fn is_js(path: &Path) -> bool {
+    matches!(extension_of(path).as_str(), "cjs" | "mjs" | "js")
+}
+
+/// The JavaScript file behind a command: the file itself, the target an npm
+/// link points at, or the entry an npm/pnpm launcher names relative to its
+/// own directory (`%dp0%\…`, `%~dp0\…`, `$basedir/…`). Reads the launcher
+/// without running it or changing the user's installation.
+fn js_entry(path: &Path) -> Option<PathBuf> {
+    let extension = extension_of(path);
+    if is_js(path) {
+        return path.is_file().then(|| path.to_path_buf());
+    }
+    if !matches!(extension.as_str(), "" | "cmd") {
         return None;
     }
-    if matches!(extension.as_str(), "" | "exe" | "cjs" | "mjs" | "js") && path.is_file() {
-        Some(path.to_path_buf())
-    } else {
-        None
+    if cfg!(unix) && extension.is_empty() {
+        if let Ok(target) = std::fs::canonicalize(path) {
+            if is_js(&target) && target.is_file() {
+                return Some(target);
+            }
+        }
     }
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > 32 * 1024 {
+        return None;
+    }
+    // A native launcher is not UTF-8 and stops here.
+    let launcher = std::fs::read_to_string(path).ok()?;
+    let pattern =
+        regex::Regex::new(r#"(?i)(?:%dp0%|%~dp0|\$basedir)[\\/]([^"\r\n]+?\.(?:cjs|mjs|js))"#)
+            .ok()?;
+    let dir = path.parent()?;
+    for captures in pattern.captures_iter(&launcher) {
+        let Some(relative) = captures.get(1) else {
+            continue;
+        };
+        let entry = dir.join(relative.as_str().replace('\\', "/"));
+        if entry.is_file() {
+            return Some(entry);
+        }
+    }
+    None
+}
+
+/// The bridge's JavaScript entry. Codeg runs it with the validated Node, so a
+/// launcher that names no entry (a native shim) cannot be used.
+pub(crate) fn bridge_entry(command: &Path) -> Option<PathBuf> {
+    js_entry(command)
+}
+
+pub(crate) fn bridge_entry_missing_message(command: &str) -> String {
+    format!(
+        "The ZCode ACP bridge found at {command} does not lead to its JavaScript entry, which Codeg runs with the validated Node. Remove that installation from PATH or reinstall the bridge with npm."
+    )
+}
+
+/// The official CLI as ZCODE_BIN. The bridge runs a JavaScript entry with
+/// ZCODE_NODE and anything else directly, through its own shebang on
+/// whichever `node` comes first in PATH, so prefer the entry behind a
+/// launcher or link and fall back to a native executable.
+pub(crate) fn cli_entry(path: &Path) -> Option<PathBuf> {
+    js_entry(path).or_else(|| {
+        (matches!(extension_of(path).as_str(), "" | "exe") && path.is_file())
+            .then(|| path.to_path_buf())
+    })
 }
 
 fn bundled_candidates(platform: &str, home: Option<&Path>, local: Option<&str>) -> Vec<PathBuf> {
@@ -174,6 +229,60 @@ pub(crate) fn resolve_cli_path(
     )
 }
 
+/// Node executables to try, best first. An explicit ZCODE_NODE is the only
+/// candidate: a broken override is reported, never replaced by another Node.
+fn node_candidates(
+    env: &BTreeMap<String, String>,
+    cwd: &Path,
+    home: Option<&Path>,
+    platform: &str,
+) -> Result<Vec<PathBuf>, RuntimeError> {
+    if let Some(explicit) = env.get("ZCODE_NODE") {
+        return resolve_program(explicit, env, cwd)
+            .map(|node| vec![node])
+            .ok_or_else(|| RuntimeError::NodeInvalid(explicit.clone()));
+    }
+    discovered_nodes(
+        env,
+        cwd,
+        platform,
+        crate::process::node_bin_dir_candidates(home),
+    )
+}
+
+/// PATH's `node`, then Node version-manager installs (`manager_dirs`), then
+/// the Windows installer's default location.
+fn discovered_nodes(
+    env: &BTreeMap<String, String>,
+    cwd: &Path,
+    platform: &str,
+    manager_dirs: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>, RuntimeError> {
+    let mut candidates: Vec<PathBuf> = resolve_program("node", env, cwd).into_iter().collect();
+    candidates.extend(
+        manager_dirs
+            .into_iter()
+            .map(|dir| dir.join(if cfg!(windows) { "node.exe" } else { "node" }))
+            .filter(|path| path.is_file()),
+    );
+    if platform == "windows" {
+        if let Some(base) = std::env::var_os("ProgramFiles") {
+            let node = PathBuf::from(base).join("nodejs/node.exe");
+            if node.is_file() {
+                candidates.push(node);
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|node| seen.insert(node.clone()));
+    if candidates.is_empty() {
+        Err(RuntimeError::NodeMissing)
+    } else {
+        Ok(candidates)
+    }
+}
+
+#[cfg(test)]
 fn resolve_paths(
     env: &BTreeMap<String, String>,
     cwd: &Path,
@@ -181,29 +290,31 @@ fn resolve_paths(
     platform: &str,
 ) -> Result<ZCodeRuntime, RuntimeError> {
     let cli = resolve_cli(env, cwd, home, platform)?;
-    let node = if let Some(explicit) = env.get("ZCODE_NODE") {
-        resolve_program(explicit, env, cwd)
-            .ok_or_else(|| RuntimeError::NodeInvalid(explicit.clone()))?
-    } else {
-        resolve_program("node", env, cwd)
-            .or_else(|| {
-                crate::process::node_bin_dir_candidates(home)
-                    .into_iter()
-                    .map(|dir| dir.join(if cfg!(windows) { "node.exe" } else { "node" }))
-                    .find(|path| path.is_file())
-            })
-            .or_else(|| {
-                if platform == "windows" {
-                    std::env::var_os("ProgramFiles")
-                        .map(|base| PathBuf::from(base).join("nodejs/node.exe"))
-                        .filter(|path| path.is_file())
-                } else {
-                    None
-                }
-            })
-            .ok_or(RuntimeError::NodeMissing)?
-    };
+    let node = node_candidates(env, cwd, home, platform)?.swap_remove(0);
     Ok(ZCodeRuntime { cli, node })
+}
+
+/// Node 22+ whose `node:sqlite` loads without a flag, which ZCode requires.
+async fn node_supports_zcode(node: &Path, path: Option<&String>) -> bool {
+    let mut command = crate::process::tokio_command(node);
+    command.args(["-e", "if(Number(process.versions.node.split('.')[0])<22)process.exit(2);new (require('node:sqlite').DatabaseSync)(':memory:')"]);
+    command.kill_on_drop(true);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await;
+    matches!(output, Ok(Ok(ref output)) if output.status.success())
+}
+
+/// The first candidate that can run ZCode. Like the bridge's own discovery,
+/// an old Node first on PATH must not hide a newer one from a version manager.
+async fn first_supported_node(candidates: Vec<PathBuf>, path: Option<&String>) -> Option<PathBuf> {
+    for node in candidates {
+        if node_supports_zcode(&node, path).await {
+            return Some(node);
+        }
+    }
+    None
 }
 
 pub async fn resolve_runtime(
@@ -211,18 +322,14 @@ pub async fn resolve_runtime(
     cwd: &Path,
 ) -> Result<ZCodeRuntime, RuntimeError> {
     let env = effective_env(overrides);
-    let runtime = resolve_paths(&env, cwd, dirs::home_dir().as_deref(), std::env::consts::OS)?;
-    let mut command = crate::process::tokio_command(&runtime.node);
-    command.args(["-e", "if(Number(process.versions.node.split('.')[0])<22)process.exit(2);new (require('node:sqlite').DatabaseSync)(':memory:')"]);
-    command.kill_on_drop(true);
-    if let Some(path) = env.get("PATH") {
-        command.env("PATH", path);
-    }
-    let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await;
-    if !matches!(output, Ok(Ok(ref output)) if output.status.success()) {
-        return Err(RuntimeError::NodeUnsupported);
-    }
-    Ok(runtime)
+    let home = dirs::home_dir();
+    let platform = std::env::consts::OS;
+    let cli = resolve_cli(&env, cwd, home.as_deref(), platform)?;
+    let candidates = node_candidates(&env, cwd, home.as_deref(), platform)?;
+    let node = first_supported_node(candidates, env.get("PATH"))
+        .await
+        .ok_or(RuntimeError::NodeUnsupported)?;
+    Ok(ZCodeRuntime { cli, node })
 }
 
 pub fn initial_mode(
@@ -328,6 +435,138 @@ mod tests {
         runtime.apply(&mut env);
         assert_eq!(env.iter().filter(|(key, _)| key == "ZCODE_NODE").count(), 1);
         assert!(env.contains(&("ZCODE_ACP_REMOTE".into(), "0".into())));
+        // The bridge stays on the validated Node instead of re-executing
+        // itself under a Bun it finds, unless the agent env picked a runtime.
+        assert!(env.contains(&("ZCODE_ACP_RUNTIME".into(), "node".into())));
+        let mut chosen = vec![("ZCODE_ACP_RUNTIME".to_string(), "bun".to_string())];
+        runtime.apply(&mut chosen);
+        let runtimes: Vec<_> = chosen
+            .iter()
+            .filter(|(key, _)| key == "ZCODE_ACP_RUNTIME")
+            .collect();
+        assert_eq!(
+            runtimes,
+            vec![&("ZCODE_ACP_RUNTIME".to_string(), "bun".to_string())]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_link_to_the_cli_resolves_to_its_js_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("lib/node_modules/zcode/bin/zcode.mjs");
+        file(&entry);
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let link = bin.join("zcode");
+        std::os::unix::fs::symlink(&entry, &link).unwrap();
+        // The bridge runs only a JS entry with ZCODE_NODE; the link itself
+        // would run through its shebang on whichever node PATH offers.
+        assert_eq!(
+            cli_entry(&link),
+            Some(std::fs::canonicalize(&entry).unwrap())
+        );
+        let native = bin.join("zcode-native");
+        file(&native);
+        assert_eq!(cli_entry(&native), Some(native.clone()));
+    }
+
+    #[test]
+    fn bridge_launchers_lead_to_the_js_entry_node_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir
+            .path()
+            .join("global/5/node_modules/zcode-acp-server/dist/cli.js");
+        file(&entry);
+        // pnpm's Unix launcher: running it under Node would be a syntax error.
+        let sh = dir.path().join("zcode-acp-server");
+        std::fs::write(
+            &sh,
+            "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\n\
+             if [ -x \"$basedir/node\" ]; then\n  exec \"$basedir/node\"  \
+             \"$basedir/global/5/node_modules/zcode-acp-server/dist/cli.js\" \"$@\"\n\
+             else\n  exec node  \"$basedir/global/5/node_modules/zcode-acp-server/dist/cli.js\" \"$@\"\nfi\n",
+        )
+        .unwrap();
+        assert_eq!(bridge_entry(&sh), Some(entry.clone()));
+        // pnpm's Windows launcher spells the directory `%~dp0`, npm's `%dp0%`.
+        let cmd = dir.path().join("zcode-acp-server.cmd");
+        std::fs::write(
+            &cmd,
+            "@IF EXIST \"%~dp0\\node.exe\" (\r\n  \"%~dp0\\node.exe\"  \
+             \"%~dp0\\global\\5\\node_modules\\zcode-acp-server\\dist\\cli.js\" %*\r\n)\r\n",
+        )
+        .unwrap();
+        assert_eq!(bridge_entry(&cmd), Some(entry.clone()));
+        assert_eq!(bridge_entry(&entry), Some(entry.clone()));
+        // A native shim names no entry; Node cannot run it as the bridge.
+        let native = dir.path().join("zcode-acp-native");
+        std::fs::write(&native, [0x7f, b'E', b'L', b'F', 0xff, 0xfe]).unwrap();
+        assert_eq!(bridge_entry(&native), None);
+        assert_eq!(bridge_entry(&dir.path().join("missing")), None);
+        // The official CLI may still be a native executable the bridge runs.
+        assert_eq!(cli_entry(&native), Some(native.clone()));
+    }
+
+    #[test]
+    fn node_candidates_put_path_first_and_leave_an_explicit_node_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("Path Bin");
+        let path_node = bin.join(if cfg!(windows) { "node.exe" } else { "node" });
+        file(&path_node);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path_node, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let env = BTreeMap::from([("PATH".into(), bin.display().to_string())]);
+        let found = node_candidates(&env, dir.path(), None, "test").unwrap();
+        assert_eq!(found.first(), Some(&path_node));
+        let chosen = dir.path().join("Chosen Node/node.exe");
+        file(&chosen);
+        let mut explicit = env.clone();
+        explicit.insert("ZCODE_NODE".into(), chosen.display().to_string());
+        assert_eq!(
+            node_candidates(&explicit, dir.path(), None, "test").unwrap(),
+            vec![chosen]
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_old_path_node_does_not_hide_a_version_manager_node() {
+        let dir = tempfile::tempdir().unwrap();
+        // Each fake answers only the real probe — the script that loads
+        // node:sqlite — and fails anything else.
+        let fake = |bin: &str, supported: bool| {
+            let bin = dir.path().join(bin);
+            std::fs::create_dir_all(&bin).unwrap();
+            let verdict = if supported { 0 } else { 2 };
+            crate::process::write_test_script(
+                &bin.join("node"),
+                &format!(
+                    "#!/bin/sh\ncase \"$2\" in *node:sqlite*) exit {verdict};; esac\nexit 9\n"
+                ),
+            );
+            bin
+        };
+        let path_bin = fake("Path Node", false);
+        let manager_bin = fake("Version Manager/v24.0.0/bin", true);
+        let env = BTreeMap::from([("PATH".into(), path_bin.display().to_string())]);
+        let candidates =
+            discovered_nodes(&env, dir.path(), "test", vec![manager_bin.clone()]).unwrap();
+        assert_eq!(
+            candidates,
+            vec![path_bin.join("node"), manager_bin.join("node")]
+        );
+        assert_eq!(
+            first_supported_node(candidates, env.get("PATH")).await,
+            Some(manager_bin.join("node"))
+        );
+        assert_eq!(
+            first_supported_node(vec![path_bin.join("node")], env.get("PATH")).await,
+            None
+        );
     }
 
     #[test]

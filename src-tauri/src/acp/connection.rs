@@ -1980,19 +1980,19 @@ async fn build_agent(
                 parts.push(format!("{k}={v}"));
             }
             let bridge_command = crate::commands::acp::resolve_npx_command(cmd)
-                    .await
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| {
-                        crate::process::normalized_program(cmd)
-                            .to_string_lossy()
-                            .to_string()
-                    });
+                .await
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| {
+                    crate::process::normalized_program(cmd)
+                        .to_string_lossy()
+                        .to_string()
+                });
             if let Some(runtime) = zcode_runtime {
-                let entry =
-                    crate::acp::zcode::cli_entry(Path::new(&bridge_command)).ok_or_else(|| {
-                        AcpError::protocol(
-                            "Could not resolve the ZCode ACP bridge entry".to_string(),
-                        )
+                let entry = crate::acp::zcode::bridge_entry(Path::new(&bridge_command))
+                    .ok_or_else(|| {
+                        AcpError::protocol(crate::acp::zcode::bridge_entry_missing_message(
+                            &bridge_command,
+                        ))
                     })?;
                 // Use the same validated Node for the bridge and official CLI,
                 // bypassing npm shims that might select an older Node on PATH.

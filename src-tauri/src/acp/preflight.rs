@@ -128,55 +128,21 @@ pub async fn run_preflight_with_env(
                 }
             }
         }
-        checks.push(CheckItem {
-            check_id: "zcode_bridge".into(),
-            label: "ZCode ACP bridge".into(),
-            status: if installed {
-                CheckStatus::Pass
-            } else {
-                CheckStatus::Fail
-            },
-            message: if installed {
-                "ACP bridge is installed".into()
-            } else {
-                "Install the ZCode ACP bridge in Agent Settings".into()
-            },
-            fixes: vec![],
-        });
+        // Launch runs the bridge's JavaScript entry with the validated Node,
+        // so an installed launcher that leads to none still cannot start.
+        let bridge = match &meta.distribution {
+            AgentDistribution::Npx { cmd, .. } => {
+                crate::commands::acp::resolve_npx_command(cmd).await
+            }
+            _ => None,
+        };
+        let entry = bridge.as_deref().and_then(crate::acp::zcode::bridge_entry);
+        checks.extend(zcode_checks(bridge.as_deref(), entry.as_deref(), runtime));
         if let Some(info) = adapter.as_mut() {
             info.native_path = crate::acp::zcode::resolve_cli_path(runtime_env, &cwd)
                 .ok()
                 .map(|path| path.display().to_string());
         }
-        checks.push(CheckItem {
-            check_id: "zcode_runtime".into(),
-            label: "Official ZCode runtime".into(),
-            status: if runtime.is_ok() {
-                CheckStatus::Pass
-            } else {
-                CheckStatus::Fail
-            },
-            message: match runtime {
-                Ok(runtime) => format!(
-                    "ZCode CLI: {}; Node: {}",
-                    runtime.cli.display(),
-                    runtime.node.display()
-                ),
-                Err(error) => error.to_string(),
-            },
-            fixes: vec![FixAction {
-                label: "ZCode installation guide".into(),
-                kind: FixActionKind::OpenUrl,
-                payload: "https://github.com/zai-org/ZCode".into(),
-            }],
-        });
-        checks.push(CheckItem {
-            check_id: "zcode_auth".into(),
-            label: "Official ZCode sign-in".into(),
-            status: CheckStatus::Warn,
-            message: "Sign in through official ZCode. Authentication is checked when the session starts; this runtime preflight does not verify credentials.".into(),
-            fixes: vec![],
-        });
     }
 
     let passed = checks
@@ -190,6 +156,56 @@ pub async fn run_preflight_with_env(
         checks,
         adapter,
     }
+}
+
+/// ZCode's own rows: the bridge Codeg launches and the official runtime it
+/// drives. Sign-in cannot be checked offline, so it is noted on the runtime
+/// row rather than raised as a warning that a working setup could never clear.
+fn zcode_checks(
+    bridge: Option<&std::path::Path>,
+    bridge_entry: Option<&std::path::Path>,
+    runtime: Result<crate::acp::zcode::ZCodeRuntime, crate::acp::zcode::RuntimeError>,
+) -> Vec<CheckItem> {
+    let bridge_check = CheckItem {
+        check_id: "zcode_bridge".into(),
+        label: "ZCode ACP bridge".into(),
+        status: if bridge_entry.is_some() {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Fail
+        },
+        message: match (bridge, bridge_entry) {
+            (_, Some(_)) => "ACP bridge is installed".into(),
+            (Some(command), None) => {
+                crate::acp::zcode::bridge_entry_missing_message(&command.to_string_lossy())
+            }
+            (None, None) => "Install the ZCode ACP bridge in Agent Settings".into(),
+        },
+        fixes: vec![],
+    };
+    let runtime_check = CheckItem {
+        check_id: "zcode_runtime".into(),
+        label: "Official ZCode runtime".into(),
+        status: if runtime.is_ok() {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Fail
+        },
+        message: match runtime {
+            Ok(runtime) => format!(
+                "ZCode CLI: {}; Node: {}. Sign in through official ZCode; credentials are checked when a session starts.",
+                runtime.cli.display(),
+                runtime.node.display()
+            ),
+            Err(error) => error.to_string(),
+        },
+        fixes: vec![FixAction {
+            label: "ZCode installation guide".into(),
+            kind: FixActionKind::OpenUrl,
+            payload: "https://github.com/zai-org/ZCode".into(),
+        }],
+    };
+    vec![bridge_check, runtime_check]
 }
 
 /// Probe the adapter/vendor-CLI split for an adapter agent (`None` otherwise).
@@ -909,5 +925,45 @@ mod adapter_tests {
                 "unexpected adapter info for {agent_type:?}"
             );
         }
+    }
+
+    #[test]
+    fn zcode_checks_pass_a_working_setup_and_name_what_blocks_launch() {
+        use crate::acp::zcode::{RuntimeError, ZCodeRuntime};
+        use std::path::Path;
+
+        let runtime = || {
+            Ok(ZCodeRuntime {
+                cli: "/opt/ZCode/resources/glm/zcode.cjs".into(),
+                node: "/usr/local/bin/node".into(),
+            })
+        };
+        let launcher = Path::new("/home/u/.local/share/pnpm/zcode-acp-server");
+        let entry = Path::new(
+            "/home/u/.local/share/pnpm/global/5/node_modules/zcode-acp-server/dist/cli.js",
+        );
+        // Nothing a working setup can't clear: the summary badge stays green.
+        let ready = zcode_checks(Some(launcher), Some(entry), runtime());
+        assert!(ready
+            .iter()
+            .all(|check| matches!(check.status, CheckStatus::Pass)));
+        assert!(ready[1]
+            .message
+            .contains("credentials are checked when a session starts"));
+        // Installed, but a launcher Codeg cannot run with the validated Node.
+        let unreadable = zcode_checks(Some(launcher), None, runtime());
+        assert!(matches!(unreadable[0].status, CheckStatus::Fail));
+        assert!(unreadable[0]
+            .message
+            .contains("/home/u/.local/share/pnpm/zcode-acp-server"));
+        let missing = zcode_checks(None, None, Err(RuntimeError::CliMissing));
+        assert!(missing
+            .iter()
+            .all(|check| matches!(check.status, CheckStatus::Fail)));
+        assert_eq!(
+            missing[0].message,
+            "Install the ZCode ACP bridge in Agent Settings"
+        );
+        assert_eq!(missing[1].message, RuntimeError::CliMissing.to_string());
     }
 }
