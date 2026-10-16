@@ -112,8 +112,20 @@ describe("MentionPanelSettingsSection", () => {
     expect(
       screen.getByRole("heading", { name: "Mention panel" })
     ).toBeInTheDocument()
-    expect(rowNames()).toEqual(["agent", "file", "session", "commit"])
-    for (const name of ["Agents", "Files", "Sessions", "Commits"]) {
+    expect(rowNames()).toEqual([
+      "agent",
+      "assistant",
+      "file",
+      "session",
+      "commit",
+    ])
+    for (const name of [
+      "Agents",
+      "Assistants",
+      "Files",
+      "Sessions",
+      "Commits",
+    ]) {
       expect(
         screen.getByRole("switch", { name: `Show the “${name}” tab` })
       ).toHaveAttribute("data-state", "checked")
@@ -143,7 +155,13 @@ describe("MentionPanelSettingsSection", () => {
     expect(commits).toHaveAttribute("data-state", "unchecked")
     expect(stored()?.tabs).toContainEqual({ kind: "commit", visible: false })
     // The order is untouched by a visibility change.
-    expect(storedKinds()).toEqual(["agent", "file", "session", "commit"])
+    expect(storedKinds()).toEqual([
+      "agent",
+      "assistant",
+      "file",
+      "session",
+      "commit",
+    ])
     expect(screen.getByRole("button", { name: "Reset" })).toBeEnabled()
   })
 
@@ -160,6 +178,7 @@ describe("MentionPanelSettingsSection", () => {
     })
     expect(stored()?.tabs).toEqual([
       { kind: "agent", visible: true },
+      { kind: "assistant", visible: true },
       { kind: "file", visible: true },
       { kind: "session", visible: false },
       { kind: "commit", visible: false },
@@ -168,28 +187,39 @@ describe("MentionPanelSettingsSection", () => {
 
   it("saves a dragged order once, on release", () => {
     renderSection()
+    const dragged = ["file", "commit", "agent", "assistant", "session"]
 
     // Mid-drag the rows follow the pointer, but nothing is written yet — every
     // open composer is subscribed to the stored value.
-    act(() => motion.onReorder?.(["file", "commit", "agent", "session"]))
-    expect(rowNames()).toEqual(["file", "commit", "agent", "session"])
+    act(() => motion.onReorder?.(dragged))
+    expect(rowNames()).toEqual(dragged)
     expect(stored()).toBeNull()
 
     act(() => motion.dragEnd.get("commit")?.())
-    expect(storedKinds()).toEqual(["file", "commit", "agent", "session"])
-    expect(rowNames()).toEqual(["file", "commit", "agent", "session"])
+    expect(storedKinds()).toEqual(dragged)
+    expect(rowNames()).toEqual(dragged)
   })
 
   it("writes nothing when a drag ends where it started", () => {
     renderSection()
     const setItem = vi.spyOn(Storage.prototype, "setItem")
-    act(() => motion.onReorder?.(["file", "agent", "session", "commit"]))
-    act(() => motion.onReorder?.(["agent", "file", "session", "commit"]))
+    act(() =>
+      motion.onReorder?.(["file", "agent", "assistant", "session", "commit"])
+    )
+    act(() =>
+      motion.onReorder?.(["agent", "assistant", "file", "session", "commit"])
+    )
     act(() => motion.dragEnd.get("agent")?.())
     // A press that never moved a row doesn't even report an order.
     act(() => motion.dragEnd.get("file")?.())
     expect(setItem).not.toHaveBeenCalled()
-    expect(rowNames()).toEqual(["agent", "file", "session", "commit"])
+    expect(rowNames()).toEqual([
+      "agent",
+      "assistant",
+      "file",
+      "session",
+      "commit",
+    ])
   })
 
   /** Another window writing the preference, as this one sees it. */
@@ -202,11 +232,14 @@ describe("MentionPanelSettingsSection", () => {
 
   it("keeps a switch flipped in another window while a drag is in flight", () => {
     renderSection()
-    act(() => motion.onReorder?.(["file", "agent", "session", "commit"]))
+    act(() =>
+      motion.onReorder?.(["file", "agent", "assistant", "session", "commit"])
+    )
     // The Commits tab is hidden elsewhere mid-drag…
     writeElsewhere({
       tabs: [
         { kind: "agent", visible: true },
+        { kind: "assistant", visible: true },
         { kind: "file", visible: true },
         { kind: "session", visible: true },
         { kind: "commit", visible: false },
@@ -216,13 +249,20 @@ describe("MentionPanelSettingsSection", () => {
     expect(
       screen.getByRole("switch", { name: "Show the “Commits” tab" })
     ).toHaveAttribute("data-state", "unchecked")
-    expect(rowNames()).toEqual(["file", "agent", "session", "commit"])
+    expect(rowNames()).toEqual([
+      "file",
+      "agent",
+      "assistant",
+      "session",
+      "commit",
+    ])
 
     // …and the release writes the dragged order without undoing it.
     act(() => motion.dragEnd.get("file")?.())
     expect(stored()?.tabs).toEqual([
       { kind: "file", visible: true },
       { kind: "agent", visible: true },
+      { kind: "assistant", visible: true },
       { kind: "session", visible: true },
       { kind: "commit", visible: false },
     ])
@@ -230,21 +270,32 @@ describe("MentionPanelSettingsSection", () => {
 
   it("lets a reorder made elsewhere stand when a drag ends where it started", () => {
     renderSection()
-    act(() => motion.onReorder?.(["file", "agent", "session", "commit"]))
+    act(() =>
+      motion.onReorder?.(["file", "agent", "assistant", "session", "commit"])
+    )
     const elsewhere: MentionPanelPrefs = {
       tabs: [
         { kind: "commit", visible: true },
         { kind: "session", visible: true },
         { kind: "file", visible: true },
         { kind: "agent", visible: true },
+        { kind: "assistant", visible: true },
       ],
     }
     writeElsewhere(elsewhere)
-    act(() => motion.onReorder?.(["agent", "file", "session", "commit"]))
+    act(() =>
+      motion.onReorder?.(["agent", "assistant", "file", "session", "commit"])
+    )
     act(() => motion.dragEnd.get("file")?.())
     // No net move here, so nothing of this drag's starting order is replayed.
     expect(stored()).toEqual(elsewhere)
-    expect(rowNames()).toEqual(["commit", "session", "file", "agent"])
+    expect(rowNames()).toEqual([
+      "commit",
+      "session",
+      "file",
+      "agent",
+      "assistant",
+    ])
   })
 
   it("moves a tab with the arrow keys on its handle, keeping focus there", () => {
@@ -255,22 +306,31 @@ describe("MentionPanelSettingsSection", () => {
     handle.focus()
 
     fireEvent.keyDown(handle, { key: "ArrowDown" })
-    expect(storedKinds()).toEqual(["file", "agent", "session", "commit"])
-    expect(rowNames()).toEqual(["file", "agent", "session", "commit"])
+    const once = ["assistant", "agent", "file", "session", "commit"]
+    expect(storedKinds()).toEqual(once)
+    expect(rowNames()).toEqual(once)
     expect(handle).toHaveFocus()
 
     fireEvent.keyDown(handle, { key: "ArrowDown" })
     fireEvent.keyDown(handle, { key: "ArrowDown" })
-    expect(rowNames()).toEqual(["file", "session", "commit", "agent"])
+    fireEvent.keyDown(handle, { key: "ArrowDown" })
+    const last = ["assistant", "file", "session", "commit", "agent"]
+    expect(rowNames()).toEqual(last)
     expect(handle).toHaveFocus()
 
     // Already last: the key is left alone rather than claimed for nothing.
     const atEnd = fireEvent.keyDown(handle, { key: "ArrowDown" })
     expect(atEnd).toBe(true)
-    expect(rowNames()).toEqual(["file", "session", "commit", "agent"])
+    expect(rowNames()).toEqual(last)
 
     fireEvent.keyDown(handle, { key: "ArrowUp" })
-    expect(rowNames()).toEqual(["file", "session", "agent", "commit"])
+    expect(rowNames()).toEqual([
+      "assistant",
+      "file",
+      "session",
+      "agent",
+      "commit",
+    ])
   })
 
   it("resets to the built-in tabs", () => {
@@ -279,15 +339,28 @@ describe("MentionPanelSettingsSection", () => {
         { kind: "commit", visible: true },
         { kind: "file", visible: true },
         { kind: "agent", visible: false },
+        { kind: "assistant", visible: true },
         { kind: "session", visible: false },
       ],
     })
     renderSection()
-    expect(rowNames()).toEqual(["commit", "file", "agent", "session"])
+    expect(rowNames()).toEqual([
+      "commit",
+      "file",
+      "agent",
+      "assistant",
+      "session",
+    ])
 
     fireEvent.click(screen.getByRole("button", { name: "Reset" }))
     expect(localStorage.getItem(KEY)).toBeNull()
-    expect(rowNames()).toEqual(["agent", "file", "session", "commit"])
+    expect(rowNames()).toEqual([
+      "agent",
+      "assistant",
+      "file",
+      "session",
+      "commit",
+    ])
     expect(
       screen.getByRole("switch", { name: "Show the “Agents” tab" })
     ).toHaveAttribute("data-state", "checked")
@@ -310,7 +383,15 @@ describe("MentionPanelSettingsSection", () => {
       )
       window.dispatchEvent(new StorageEvent("storage", { key: KEY }))
     })
-    expect(rowNames()).toEqual(["session", "agent", "file", "commit"])
+    // Written before the assistant tab existed: it joins after its
+    // neighbour, the hidden agent tab.
+    expect(rowNames()).toEqual([
+      "session",
+      "agent",
+      "assistant",
+      "file",
+      "commit",
+    ])
     expect(
       screen.getByRole("switch", { name: "Show the “Agents” tab" })
     ).toHaveAttribute("data-state", "unchecked")

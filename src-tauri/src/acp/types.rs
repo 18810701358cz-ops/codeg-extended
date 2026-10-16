@@ -746,6 +746,13 @@ pub enum AcpEvent {
         /// `task_id=<id>` — so the live card can label the delegation before
         /// the ack text lands on the tool output.
         task_id: String,
+        /// The assistant the child runs as (its id, and its name when the task
+        /// started); absent for a plain agent delegation. `agent_type` is then
+        /// the assistant's agent — the one actually running.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assistant_id: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assistant_name: Option<String>,
     },
     /// The child sub-session has finished (or errored / timed out / been
     /// canceled). The MCP tool_result has been delivered to the parent agent.
@@ -761,6 +768,12 @@ pub enum AcpEvent {
         /// hardcoded default. Mirrors `DelegationStarted.agent_type`.
         agent_type: crate::models::agent::AgentType,
         result: DelegationResultSummary,
+        /// Mirrors `DelegationStarted`'s assistant identity, for the same
+        /// missed-start reason as `agent_type`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assistant_id: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assistant_name: Option<String>,
     },
     /// A human submitted a prompt from the Codeg conversation UI (desktop or
     /// web). Synthetic, notification-only event: it mutates no `SessionState`
@@ -1468,6 +1481,16 @@ pub struct AgentOptionsSnapshot {
     /// `None` when the agent advertised nothing within the probe window.
     #[serde(default)]
     pub prompt_capabilities: Option<PromptCapabilitiesInfo>,
+    /// The options the caller asked the probe to set that the probe session
+    /// did not end up holding — rejected, skipped as withdrawn, or no longer
+    /// listed. An editor that probed for a chosen model reads `model` here as
+    /// "these options are the OTHER model's": the probe still succeeds, and
+    /// the applied options' `current_value` is deliberately rewritten to the
+    /// agent's own pick (see `report_agent_chosen_values`), so nothing else in
+    /// the snapshot can tell. Always serialized, empty included, so a missing
+    /// field can only mean a backend that predates it.
+    #[serde(default)]
+    pub unapplied_config_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

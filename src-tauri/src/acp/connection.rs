@@ -39,7 +39,7 @@ use crate::acp::agent_session::AgentSession;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use crate::acp::agent_mentions::append_agent_routes;
+use crate::acp::agent_mentions::{append_agent_routes, append_assistant_routes};
 use crate::acp::background_watch;
 use crate::acp::cursor_ext::{
     CursorAskQuestionRequest, CursorCreatePlanRequest, CursorGenerateImageRequest,
@@ -1184,6 +1184,16 @@ pub enum ConnectionCommand {
         /// prompt actually being processed. `None` for delegation children,
         /// empty prompts, unbound conversations, and non-linked senders.
         user_message: Option<(String, Vec<UserMessageBlock>)>,
+        /// Codeg-authored blocks appended after `blocks` at the final agent
+        /// boundary, and only there: the assistant brief a delegated child
+        /// receives with its first prompt and with each resume prompt. Carried
+        /// ON this command, never staged in `SessionState`, so it can only ride
+        /// the prompt it was meant for — a resume can reuse a child connection
+        /// already open in a tab, and a staged brief would go out with whatever
+        /// prompt that tab sent first. Ingress scrubbing, the ledger, every
+        /// broadcast and the title seed only ever read `blocks`. Empty for
+        /// every other prompt.
+        internal_suffix: Vec<PromptInputBlock>,
     },
     SetMode {
         mode_id: String,
@@ -3543,6 +3553,31 @@ fn env_pinned_config_option_ids(
 
 /// Cline's provider selector id — the one `CLINE_PROVIDER` freezes.
 const CLINE_PROVIDER_CONFIG_OPTION_ID: &str = "provider";
+
+/// Whether a launch replays a saved preference for `config_id` — the one rule
+/// behind both [`apply_preferred_session_options`]'s skip and the option probe
+/// leaving such options out of what an editor offers (an option codeg never
+/// replays is one a saved selection cannot affect). Two cases:
+///
+///   * what this launch's environment froze (`env_pinned`) — a set can only
+///     fail, and it is reachable, because the composer saves the pick BEFORE
+///     the set is awaited, so anyone who clicked cline's provider dropdown
+///     while it was still offered has one stored;
+///   * cline's `provider` unconditionally, because the settings panel owns it
+///     (it writes providers.json and decides the launch env). Pinning alone is
+///     not enough: the preference saved during a BYO launch is merely SKIPPED
+///     there, and would then be replayed on the next sign-in launch — which is
+///     not pinned — switching the user's billing account away from the one the
+///     panel shows. Switching accounts mid-session is still allowed; it just
+///     does not outlive the session.
+pub(crate) fn config_option_never_replayed(
+    agent_type: AgentType,
+    env_pinned: &[String],
+    config_id: &str,
+) -> bool {
+    env_pinned.iter().any(|id| id == config_id)
+        || (agent_type == AgentType::Cline && config_id == CLINE_PROVIDER_CONFIG_OPTION_ID)
+}
 
 /// The advertised options minus the ones this launch pinned through the
 /// environment. Applied on the way out so all three producers of a
@@ -9156,19 +9191,8 @@ async fn apply_preferred_session_options(
 
     let session_id = session.session_id().clone();
     let mut options = initial_config_options;
-    // Ids this launch must not replay a saved preference for. Two rules:
-    //
-    //   * what this launch's environment froze — a set can only fail, and it is
-    //     reachable, because the composer saves the pick BEFORE the set is
-    //     awaited, so anyone who clicked cline's provider dropdown while it was
-    //     still offered has one stored;
-    //   * cline's `provider` unconditionally, because the settings panel owns
-    //     it (it writes providers.json and decides the launch env). Pinning
-    //     alone is not enough: the preference saved during a BYO launch is
-    //     merely SKIPPED there, and would then be replayed on the next sign-in
-    //     launch — which is not pinned — switching the user's billing account
-    //     away from the one the panel shows. Switching accounts mid-session is
-    //     still allowed; it just does not outlive the session.
+    // Ids this launch must not replay a saved preference for — see
+    // `config_option_never_replayed`, which the option probe shares.
     let (pinned, agent_type) = {
         let guard = state.read().await;
         (
@@ -9176,10 +9200,8 @@ async fn apply_preferred_session_options(
             guard.agent_type,
         )
     };
-    let never_replayed = |config_id: &str| {
-        pinned.iter().any(|id| id == config_id)
-            || (agent_type == AgentType::Cline && config_id == CLINE_PROVIDER_CONFIG_OPTION_ID)
-    };
+    let never_replayed =
+        |config_id: &str| config_option_never_replayed(agent_type, &pinned, config_id);
     // A model pick saved under a spelling the agent has since renamed — a
     // retired `[1m]` lane, or a concrete id re-spelled as its family alias —
     // replays as the spelling it lists now (see `heal_retired_model_pick`).
@@ -10060,12 +10082,18 @@ pub(crate) fn map_prompt_blocks(blocks: Vec<PromptInputBlock>) -> Vec<ContentBlo
 /// companion's delegation group — that flag is the only gate, and it is already
 /// the injection gate's own verdict (`supports_mcp` + `agent_delivers_wire_mcp`
 /// + the delegation feature being on).
+///
+/// `internal_suffix` (the assistant brief, see [`ConnectionCommand::Prompt`])
+/// goes last, after the routing frames.
 fn prepare_agent_bound_prompt(
     agent_type: AgentType,
     mut blocks: Vec<PromptInputBlock>,
     delegation_enabled: bool,
+    internal_suffix: Vec<PromptInputBlock>,
 ) -> Vec<ContentBlock> {
     append_agent_routes(&mut blocks, delegation_enabled);
+    append_assistant_routes(&mut blocks, delegation_enabled);
+    blocks.extend(internal_suffix);
     if agent_type == AgentType::Grok {
         blocks = normalize_grok_image_blocks(blocks);
     }
@@ -11360,6 +11388,7 @@ async fn run_conversation_loop(
             Some(ConnectionCommand::Prompt {
                 blocks,
                 user_message,
+                internal_suffix,
             }) => {
                 // Fingerprint the outgoing prompt for the background watcher's
                 // foreground/out-of-turn classifier BEFORE the blocks are
@@ -11395,8 +11424,12 @@ async fn run_conversation_loop(
                 // and cross-client broadcast. Only the final agent-bound prompt
                 // receives the machine routing block derived from agent badges.
                 let delegation_enabled = state.read().await.delegation_enabled;
-                let prompt_blocks =
-                    prepare_agent_bound_prompt(agent_type, blocks, delegation_enabled);
+                let prompt_blocks = prepare_agent_bound_prompt(
+                    agent_type,
+                    blocks,
+                    delegation_enabled,
+                    internal_suffix,
+                );
                 if prompt_blocks.is_empty() {
                     // Defensive: the manager rejects empty prompts before the
                     // concurrency gate is set / the command is enqueued (see
@@ -23655,7 +23688,7 @@ mod tests {
             AgentType::Gemini,
             AgentType::custom("delegating-custom").expect("valid custom id"),
         ] {
-            let prompt = prepare_agent_bound_prompt(parent, blocks.clone(), true);
+            let prompt = prepare_agent_bound_prompt(parent, blocks.clone(), true, Vec::new());
             assert_eq!(prompt.len(), 2, "{parent} must receive the routing block");
             assert!(matches!(
                 &prompt[0],
@@ -23672,12 +23705,54 @@ mod tests {
         // An agent that never received the companion (OpenClaw's
         // supports_mcp=false, pi's wire exclusion) reaches here with delegation
         // off and keeps a pristine prompt.
-        let unrouted = prepare_agent_bound_prompt(AgentType::OpenClaw, blocks, false);
+        let unrouted = prepare_agent_bound_prompt(AgentType::OpenClaw, blocks, false, Vec::new());
         assert_eq!(unrouted.len(), 1);
         assert!(matches!(
             &unrouted[0],
             ContentBlock::Text(text) if text.text == visible
         ));
+    }
+
+    #[test]
+    fn the_internal_suffix_goes_last_after_every_routing_frame() {
+        let visible = "ask [@Codex](codeg://agent/codex) and [@Reviewer](codeg://assistant/3)";
+        let brief = crate::acp::agent_mentions::render_assistant_brief("Reviewer", "Cite lines.")
+            .expect("brief");
+        let prompt = prepare_agent_bound_prompt(
+            AgentType::ClaudeCode,
+            vec![PromptInputBlock::Text {
+                text: visible.into(),
+            }],
+            true,
+            vec![PromptInputBlock::Text {
+                text: brief.clone(),
+            }],
+        );
+        let texts: Vec<&str> = prompt
+            .iter()
+            .map(|b| match b {
+                ContentBlock::Text(t) => t.text.as_str(),
+                other => panic!("unexpected block {other:?}"),
+            })
+            .collect();
+        assert_eq!(texts.len(), 4);
+        assert_eq!(texts[0], visible);
+        assert!(texts[1].contains(r#""agentType":"codex""#));
+        assert!(texts[2].contains(r#"{"assistantId":3}"#));
+        assert_eq!(texts[3], brief, "the brief is the very last block");
+
+        // Delegation off: no routing — but a brief still reaches the child.
+        let unrouted = prepare_agent_bound_prompt(
+            AgentType::OpenClaw,
+            vec![PromptInputBlock::Text {
+                text: visible.into(),
+            }],
+            false,
+            vec![PromptInputBlock::Text {
+                text: brief.clone(),
+            }],
+        );
+        assert_eq!(unrouted.len(), 2);
     }
 
     #[test]
@@ -25990,6 +26065,7 @@ mod tests {
                 .send(ConnectionCommand::Prompt {
                     blocks: vec![PromptInputBlock::Text { text: text.into() }],
                     user_message: None,
+                    internal_suffix: Vec::new(),
                 })
                 .await
                 .expect("the connection is running");
@@ -33189,6 +33265,7 @@ mod tests {
                 .send(ConnectionCommand::Prompt {
                     blocks: vec![PromptInputBlock::Text { text: text.into() }],
                     user_message: None,
+                    internal_suffix: Vec::new(),
                 })
                 .await
                 .expect("the loop is running");
@@ -34352,6 +34429,7 @@ mod tests {
                 .send(ConnectionCommand::Prompt {
                     blocks: vec![PromptInputBlock::Text { text: text.into() }],
                     user_message: None,
+                    internal_suffix: Vec::new(),
                 })
                 .await
                 .expect("the loop is running");
@@ -34755,6 +34833,7 @@ mod tests {
                         text: "go on".into(),
                     }],
                     user_message: None,
+                    internal_suffix: Vec::new(),
                 })
                 .await
                 .expect("the loop is running");
@@ -35446,6 +35525,7 @@ mod tests {
                         text: prompt.into(),
                     }],
                     user_message: None,
+                    internal_suffix: Vec::new(),
                 })
                 .await
                 .expect("the loop is running");

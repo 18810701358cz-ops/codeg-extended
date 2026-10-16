@@ -8,9 +8,7 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use walkdir::WalkDir;
 
-use crate::acp::agent_mentions::{
-    contains_only_internal_agent_routes, strip_internal_agent_routes,
-};
+use crate::acp::agent_mentions::{contains_only_internal_frames, strip_internal_frames};
 use crate::acp::js_text::is_js_whitespace;
 use crate::models::*;
 use crate::parsers::codex_code_mode::{
@@ -579,12 +577,12 @@ impl CodexParser {
                                 }
 
                                 let visible_text =
-                                    strip_internal_agent_routes(&decode_user_text(raw_text));
+                                    strip_internal_frames(&decode_user_text(raw_text));
                                 let has_images = payload
                                     .get("images")
                                     .and_then(|v| v.as_array())
                                     .is_some_and(|images| !images.is_empty());
-                                if contains_only_internal_agent_routes(raw_text) && !has_images {
+                                if contains_only_internal_frames(raw_text) && !has_images {
                                     continue;
                                 }
                                 if skip_duplicate_user_record(
@@ -3533,7 +3531,7 @@ impl CodexParser {
                                     }
                                 }
 
-                                if blocks.is_empty() && contains_only_internal_agent_routes(&text) {
+                                if blocks.is_empty() && contains_only_internal_frames(&text) {
                                     continue;
                                 }
 
@@ -6199,7 +6197,7 @@ fn promotion_payload_type<'a>(msg_type: &str, value: &'a serde_json::Value) -> &
         let route_only = payload
             .and_then(|payload| payload.get("message"))
             .and_then(serde_json::Value::as_str)
-            .is_some_and(contains_only_internal_agent_routes);
+            .is_some_and(contains_only_internal_frames);
         let has_images = payload
             .and_then(|payload| payload.get("images"))
             .and_then(serde_json::Value::as_array)
@@ -6784,7 +6782,7 @@ fn strip_blocked_resource_mentions(input: &str) -> String {
     let blocked_re = Regex::new(r"@([^\s@]+)\s*\[blocked[^\]]*\]").expect("valid blocked regex");
     let image_tag_re = Regex::new(r"(?i)</?image\s*/?>").expect("valid image tag regex");
     let collapsed_ws_re = Regex::new(r"[ \t]{2,}").expect("valid whitespace regex");
-    let visible = strip_internal_agent_routes(input);
+    let visible = strip_internal_frames(input);
     let text = blocked_re.replace_all(&visible, "").to_string();
     let text = image_tag_re.replace_all(&text, "").to_string();
     let text = collapsed_ws_re.replace_all(&text, " ").to_string();

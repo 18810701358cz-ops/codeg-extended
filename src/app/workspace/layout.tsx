@@ -23,6 +23,7 @@ import {
   AppWorkspaceProvider,
   ConversationStatusEventBridge,
 } from "@/contexts/app-workspace-context"
+import { AssistantsSync } from "@/stores/assistants-store"
 import { ConversationTagsSync } from "@/stores/conversation-tags-store"
 import { ConversationTagsManagerHost } from "@/components/conversations/conversation-tags-manager"
 import { useActiveFolder } from "@/contexts/active-folder-context"
@@ -1506,6 +1507,7 @@ function WorkspaceLayoutInner({ children }: { children: React.ReactNode }) {
                     window; which tags a conversation carries rides on its
                     summary instead. */}
                 <ConversationTagsSync />
+                <AssistantsSync />
                 {/* The tag manager, opened from tag pickers, folder menus and
                     the sidebar's tag filter — all popovers or menus that
                     unmount as they close, so none can host it. */}

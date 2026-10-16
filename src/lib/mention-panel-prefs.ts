@@ -21,11 +21,17 @@ const PREFS_EVENT = "codeg:mention-panel-changed"
 
 /**
  * The panel's tabs in their built-in order: agent first (a product decision —
- * handing a subtask to another agent is what `@` is there for), then the rest.
- * Skills, commands and experts are not tabs: they come from the `/` and `$`
- * triggers.
+ * handing a subtask to another agent is what `@` is there for), the user's
+ * assistants beside it, then the rest. Skills, commands and experts are not
+ * tabs: they come from the `/` and `$` triggers.
  */
-export const MENTION_TAB_KINDS = ["agent", "file", "session", "commit"] as const
+export const MENTION_TAB_KINDS = [
+  "agent",
+  "assistant",
+  "file",
+  "session",
+  "commit",
+] as const
 
 export type MentionTabKind = (typeof MENTION_TAB_KINDS)[number]
 
@@ -66,7 +72,11 @@ export function isMentionTabKind(value: unknown): value is MentionTabKind {
  * - `visible` is honoured only as an explicit `false` — anything else shows the
  *   tab, so a damaged flag can't make a tab disappear;
  * - a kind the value doesn't mention (written before that tab existed) is
- *   appended at the end, shown, so a new tab is visible to the people who
+ *   added, shown, right after the nearest kind before it in the built-in order
+ *   that the value does list — hidden or not — or first when there is none.
+ *   So the old built-in list `[agent, file, session, commit]` reads as the new
+ *   built-in one (and "Reset" does not light up for nothing), and a customized
+ *   list gets the new tab beside its neighbour, visible to the people who
  *   customized the old list too.
  */
 export function parseMentionPanelPrefs(raw: unknown): MentionPanelPrefs {
@@ -88,9 +98,22 @@ export function parseMentionPanelPrefs(raw: unknown): MentionPanelPrefs {
       })
     }
   }
-  for (const kind of MENTION_TAB_KINDS) {
-    if (!seen.has(kind)) tabs.push({ kind, visible: true })
-  }
+  // In built-in order, so a kind added here is a neighbour the next one finds.
+  MENTION_TAB_KINDS.forEach((kind, index) => {
+    if (seen.has(kind)) return
+    let at = 0
+    for (let before = index - 1; before >= 0; before--) {
+      const found = tabs.findIndex(
+        (tab) => tab.kind === MENTION_TAB_KINDS[before]
+      )
+      if (found >= 0) {
+        at = found + 1
+        break
+      }
+    }
+    tabs.splice(at, 0, { kind, visible: true })
+    seen.add(kind)
+  })
   return { tabs }
 }
 

@@ -89,7 +89,8 @@ mod tauri_app {
     use crate::chat_channel::manager::ChatChannelManager;
     use crate::commands::{
         acp as acp_commands, app_update as app_update_commands,
-        automation as automation_commands, background as background_commands, backup,
+        assistants as assistant_commands, automation as automation_commands,
+        background as background_commands, backup,
         browser as browser_commands,
         canvas as canvas_commands,
         chat_authoring as chat_authoring_commands, chat_channel as chat_channel_commands,
@@ -1700,6 +1701,11 @@ mod tauri_app {
                 conversations::update_conversation_status,
                 conversations::update_conversation_title,
                 conversations::update_conversation_pinned,
+                assistant_commands::assistant_list,
+                assistant_commands::assistant_create,
+                assistant_commands::assistant_update,
+                assistant_commands::assistant_delete,
+                assistant_commands::assistant_reorder,
                 conversation_tags::list_conversation_tags,
                 conversation_tags::create_conversation_tag,
                 conversation_tags::update_conversation_tag,

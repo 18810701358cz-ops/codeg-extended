@@ -242,15 +242,15 @@ describe("SuggestionPopup", () => {
     await waitFor(() => expect(popupLayer().style.left).toBe("300px"))
   })
 
-  it("renders the active (agent-first) tab's options plus a four-tab strip", async () => {
+  it("renders the active (agent-first) tab's options plus a five-tab strip", async () => {
     mountPopup()
     // Agent is the first non-empty tab, so its options show by default.
     expect(await screen.findByText("Codex Helper")).toBeInTheDocument()
     expect(screen.getByText("Claude Helper")).toBeInTheDocument()
     // The file tab's option is hidden until that tab is active.
     expect(screen.queryByText("alpha.md")).toBeNull()
-    // Four fixed tabs (no skill tab), agent selected.
-    expect(screen.getAllByRole("tab")).toHaveLength(4)
+    // Five fixed tabs (no skill tab), agent selected.
+    expect(screen.getAllByRole("tab")).toHaveLength(5)
     expect(screen.getByRole("tab", { selected: true })).toHaveAccessibleName(
       /Agents/
     )
@@ -287,7 +287,7 @@ describe("SuggestionPopup", () => {
     mountPopup({ search: emptySearch, emptyLabel: "Nothing" })
     const panel = screen.getByTestId("mention-popup")
     expect(await within(panel).findByText("Nothing")).toBeInTheDocument()
-    expect(screen.getAllByRole("tab")).toHaveLength(4)
+    expect(screen.getAllByRole("tab")).toHaveLength(5)
   })
 
   it("selects the active tab's highlighted row on Enter (default = first agent)", async () => {
@@ -321,7 +321,14 @@ describe("SuggestionPopup", () => {
     act(() => {
       expect(ref.current?.onKeyDown(key("Tab"))).toBe(true)
     })
-    // agent → file; the file option appears and the agent options are gone.
+    // agent → assistant: shown even with nothing in it…
+    expect(screen.getByRole("tab", { selected: true })).toHaveAccessibleName(
+      /Assistants/
+    )
+    act(() => {
+      expect(ref.current?.onKeyDown(key("Tab"))).toBe(true)
+    })
+    // …→ file; the file option appears and the agent options are gone.
     expect(await screen.findByText("alpha.md")).toBeInTheDocument()
     expect(screen.queryByText("Codex Helper")).toBeNull()
     expect(screen.getByRole("tab", { selected: true })).toHaveAccessibleName(
@@ -888,6 +895,12 @@ describe("SuggestionPopup with a chosen tab order", () => {
   it("treats an empty tab list as the built-in one rather than an empty strip", async () => {
     mountPopup({ tabs: [] })
     await screen.findByText("Codex Helper")
-    expect(tabNames()).toEqual(["Agents", "Files", "Sessions", "Commits"])
+    expect(tabNames()).toEqual([
+      "Agents",
+      "Assistants",
+      "Files",
+      "Sessions",
+      "Commits",
+    ])
   })
 })

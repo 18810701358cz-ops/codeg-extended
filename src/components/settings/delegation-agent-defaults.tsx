@@ -22,37 +22,15 @@ import { Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
   type AgentDelegationDefaults,
   type AgentOptionsSnapshot,
   type AgentType,
-  type SessionConfigOptionInfo,
 } from "@/lib/types"
 import { getAgentLabel, isCustomAgentType } from "@/lib/custom-agents"
-import {
-  deriveModelGroups,
-  modelListGroups,
-  type ModelOptionGroup,
-} from "@/lib/model-config-groups"
 import { describeAgentOptions } from "@/lib/api"
 import { useAcpAgents } from "@/hooks/use-acp-agents"
-import { useAgentVocabulary } from "@/hooks/use-agent-vocabulary"
 import { toErrorMessage } from "@/lib/app-error"
-
-// Sentinel `value` slot used by the top "Default" Select item in mode +
-// config-option rows. Picking it clears the override (sets it back to
-// `null`) so the agent's own default takes effect at runtime. Must not
-// collide with any real option id any agent could emit — the codeg
-// prefix makes a collision implausible.
-const DEFAULT_SENTINEL = "__codeg_default__"
+import { OverrideOptionsEditor } from "./agent-options-editor"
 
 // Tab-switch debounce. Without this, rapid clicks across the agent
 // buttons would each kick off a real probe (which on the backend now
@@ -139,13 +117,15 @@ export function DelegationAgentDefaultsPanel({
     [agents]
   )
   const [selectedAgent, setSelectedAgent] = useState<AgentType>("claude_code")
-  // Snapshot and the agent it was probed from, in ONE state value: the tab
-  // switch below is debounced, so for that whole window `selectedAgent` is
-  // already the new tab while the snapshot on screen is still the old agent's.
-  // Localising the agent's own vocabulary has to key on the producer, or a
-  // switch would briefly paint one agent's options in another's wording.
+  // Snapshot and what it was probed FOR (agent + model), in ONE state value:
+  // the tab switch and the model change are debounced, so for that whole window
+  // the selection is already the new one while the snapshot on screen is still
+  // the previous one's. Its rows are then shown as loading rather than
+  // offered — a value picked off them would land in the new selection — and
+  // the agent's vocabulary keys on the producer, not the selection.
   const [loaded, setLoaded] = useState<{
     agent: AgentType
+    model: string | null
     snapshot: AgentOptionsSnapshot
   } | null>(null)
   const [loading, setLoading] = useState(false)
@@ -161,7 +141,7 @@ export function DelegationAgentDefaultsPanel({
       if (!force) {
         const cached = readCache(agent, model)
         if (cached) {
-          setLoaded({ agent, snapshot: cached })
+          setLoaded({ agent, model, snapshot: cached })
           setError(null)
           setLoading(false)
           return
@@ -178,7 +158,7 @@ export function DelegationAgentDefaultsPanel({
         )
         if (reqIdRef.current !== reqId) return
         writeCache(agent, model, fresh)
-        setLoaded({ agent, snapshot: fresh })
+        setLoaded({ agent, model, snapshot: fresh })
       } catch (err: unknown) {
         if (reqIdRef.current !== reqId) return
         setError(toErrorMessage(err))
@@ -227,6 +207,17 @@ export function DelegationAgentDefaultsPanel({
   const current = value[selectedAgent] ?? null
   const currentModeId = current?.mode_id ?? null
   const currentConfigValues = current?.config_values ?? {}
+  // The snapshot on screen answers the CURRENT selection — see `loaded`.
+  const loadedIsCurrent =
+    loaded !== null &&
+    loaded.agent === selectedAgent &&
+    loaded.model === probeModel
+  // The probe asked for the selected model and the agent did not switch to
+  // it, so the options shown are its OTHER model's. They stay editable — any
+  // of them may be left on Default — but the user is told.
+  const modelNotSwitched =
+    loadedIsCurrent &&
+    (loaded?.snapshot.unapplied_config_ids?.includes("model") ?? false)
 
   const setMode = (modeId: string | null) => {
     const next: AgentDelegationDefaults = {
@@ -282,7 +273,7 @@ export function DelegationAgentDefaultsPanel({
       </div>
 
       <div className="min-h-[7.5rem] rounded-lg border bg-card/50 p-3">
-        {loading && (
+        {(loading || (!error && !loadedIsCurrent)) && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" aria-hidden />
             {t("probing")}
@@ -308,264 +299,36 @@ export function DelegationAgentDefaultsPanel({
           </div>
         )}
 
-        {!loading && !error && loaded && (
-          <SnapshotEditor
-            agentType={loaded.agent}
-            snapshot={loaded.snapshot}
-            overrideModeId={currentModeId}
-            overrideConfigValues={currentConfigValues}
-            onModeChange={setMode}
-            onConfigChange={setConfigValue}
-            disabled={disabled}
-          />
+        {!loading && !error && loadedIsCurrent && loaded && (
+          <div className="space-y-4">
+            {modelNotSwitched && (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {t("modelNotSwitched")}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void loadSnapshot(selectedAgent, probeModel, true)
+                  }
+                >
+                  {t("retry")}
+                </Button>
+              </div>
+            )}
+            <OverrideOptionsEditor
+              agentType={loaded.agent}
+              snapshot={loaded.snapshot}
+              modeId={currentModeId}
+              configValues={currentConfigValues}
+              onModeChange={setMode}
+              onConfigChange={setConfigValue}
+              disabled={disabled}
+            />
+          </div>
         )}
       </div>
-    </div>
-  )
-}
-
-interface SnapshotEditorProps {
-  /** Localises the agent's own mode / option vocabulary; see
-   *  `lib/agent-label-vocabulary`. */
-  agentType: AgentType
-  snapshot: AgentOptionsSnapshot
-  overrideModeId: string | null
-  overrideConfigValues: Record<string, string>
-  onModeChange: (modeId: string | null) => void
-  onConfigChange: (optionId: string, valueId: string | null) => void
-  disabled?: boolean
-}
-
-function SnapshotEditor({
-  agentType,
-  snapshot,
-  overrideModeId,
-  overrideConfigValues,
-  onModeChange,
-  onConfigChange,
-  disabled,
-}: SnapshotEditorProps) {
-  const t = useTranslations("AcpAgentSettings.multiAgent")
-  // Localised once here rather than inside the rows: `ModeRow` derives the
-  // "agent default" caption from the same list, so translating at the row
-  // would leave that caption in the agent's language.
-  const vocabulary = useAgentVocabulary(agentType)
-  const hasModes =
-    snapshot.modes !== null &&
-    snapshot.modes !== undefined &&
-    snapshot.modes.available_modes.length > 0
-  const hasOptions = snapshot.config_options.length > 0
-
-  if (!hasModes && !hasOptions) {
-    return (
-      <p className="text-xs text-muted-foreground">{t("noConfigAvailable")}</p>
-    )
-  }
-
-  // Match the chat input box's behavior (`src/components/chat/message-input.tsx`):
-  // when the agent advertises both modes AND config options, hide the standalone
-  // mode row — some agents (e.g. Codex) expose mode selection as one of the
-  // config options too, and showing both produces a duplicate "Mode" entry.
-  const showStandaloneMode = hasModes && !hasOptions
-  return (
-    <div className="space-y-4">
-      {showStandaloneMode && snapshot.modes && (
-        <ModeRow
-          modes={vocabulary.modes(snapshot.modes.available_modes)}
-          agentDefaultModeId={snapshot.modes.current_mode_id}
-          overrideModeId={overrideModeId}
-          onChange={onModeChange}
-          disabled={disabled}
-        />
-      )}
-      {snapshot.config_options.map((option) => (
-        <ConfigOptionRow
-          key={option.id}
-          option={vocabulary.configOption(option)}
-          overrideValue={overrideConfigValues[option.id] ?? null}
-          onChange={(valueId) => onConfigChange(option.id, valueId)}
-          disabled={disabled}
-        />
-      ))}
-    </div>
-  )
-}
-
-interface ModeRowProps {
-  modes: Array<{ id: string; name: string; description?: string | null }>
-  agentDefaultModeId: string
-  overrideModeId: string | null
-  onChange: (modeId: string | null) => void
-  disabled?: boolean
-}
-
-function ModeRow({
-  modes,
-  agentDefaultModeId,
-  overrideModeId,
-  onChange,
-  disabled,
-}: ModeRowProps) {
-  const t = useTranslations("AcpAgentSettings.multiAgent")
-  const agentDefaultName =
-    modes.find((m) => m.id === agentDefaultModeId)?.name ?? agentDefaultModeId
-  // When no override exists, show the Default sentinel so the user can
-  // see "no override is set" at a glance; selecting any real mode below
-  // applies an override, selecting the sentinel clears it.
-  const selectValue = overrideModeId ?? DEFAULT_SENTINEL
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="space-y-0.5 min-w-0">
-        <label className="text-sm font-medium">{t("modeLabel")}</label>
-        <p className="text-xs text-muted-foreground">
-          {t("agentDefaultHint", { value: agentDefaultName })}
-        </p>
-      </div>
-      <Select
-        value={selectValue}
-        onValueChange={(v) => onChange(v === DEFAULT_SENTINEL ? null : v)}
-        disabled={disabled}
-      >
-        <SelectTrigger size="sm" className="w-44">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={DEFAULT_SENTINEL}>
-            {t("defaultOptionLabel", { value: agentDefaultName })}
-          </SelectItem>
-          {modes.map((mode) => (
-            <SelectItem key={mode.id} value={mode.id}>
-              {mode.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  )
-}
-
-/**
- * The agent's own default as the "Agent default" hint names it. It keeps the
- * option's unstripped name, which already carries the provider when the agent
- * writes names as `Provider/model`. A bare name that another option also uses
- * (two providers both listing `glm-5` under `provider/glm-5` ids) is
- * qualified with the provider header its row is grouped under. A value the
- * agent does not list reads as itself.
- *
- * The backend ships the flat `options` for grouped selects too, so this
- * lookup covers both shapes.
- */
-function agentDefaultHintLabel(
-  option: SessionConfigOptionInfo,
-  value: string
-): string {
-  if (option.kind.type !== "select") return value
-  const options = option.kind.options
-  const own = options.find((o) => o.value === value)
-  if (!own) return value
-  const sharedName = options.some(
-    (o) => o.value !== value && o.name === own.name
-  )
-  if (!sharedName) return own.name
-  for (const group of deriveModelGroups(option) ?? []) {
-    const row = group.options.find((o) => o.value === value)
-    if (!row) continue
-    // A stripped row's own name already starts with its header.
-    return group.name !== null && row.name === own.name
-      ? `${group.name}/${own.name}`
-      : own.name
-  }
-  return own.name
-}
-
-interface ConfigOptionRowProps {
-  option: SessionConfigOptionInfo
-  overrideValue: string | null
-  onChange: (valueId: string | null) => void
-  disabled?: boolean
-}
-
-function ConfigOptionRow({
-  option,
-  overrideValue,
-  onChange,
-  disabled,
-}: ConfigOptionRowProps) {
-  const t = useTranslations("AcpAgentSettings.multiAgent")
-  if (option.kind.type !== "select") return null
-
-  // Same grouping the composer's model picker uses (`modelListGroups`):
-  // values carrying a `provider/` prefix group under their provider, with
-  // the shared provider prefix stripped from each row. Some agents serve
-  // ids as `provider/model` (two providers can offer the SAME model id), so
-  // a flat list of bare model names is ambiguous — here the provider becomes
-  // a group header and the rows stay clean. Non-model options keep their
-  // server groups, else render flat — behavior unchanged for them.
-  const groups: ModelOptionGroup[] = modelListGroups(option)
-  const agentDefault = option.kind.current_value
-  // The hint names the agent's own default with the provider in it — no
-  // group header stands beside the hint to supply it.
-  const agentDefaultLabel = agentDefaultHintLabel(option, agentDefault)
-  // The sentinel/trigger resolve against the RENDERED rows so the selected
-  // model shows its prefix-stripped name, exactly as the composer's selector
-  // shows it. In the open list the group headers name the provider; the hint
-  // names the default's.
-  const agentDefaultRenderedLabel =
-    groups
-      .flatMap((group) => group.options)
-      .find((o) => o.value === agentDefault)?.name ?? agentDefaultLabel
-  // When no override exists, the trigger shows the Default sentinel item
-  // so the user can tell "I'm inheriting" apart from "I picked the
-  // agent's current default explicitly" — the latter would stick to that
-  // literal value even if the agent later changes its own default.
-  const selectValue = overrideValue ?? DEFAULT_SENTINEL
-
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="space-y-0.5 min-w-0">
-        <label className="text-sm font-medium">{option.name}</label>
-        <p className="text-xs text-muted-foreground">
-          {t("agentDefaultHint", { value: agentDefaultLabel })}
-        </p>
-      </div>
-      <Select
-        value={selectValue}
-        onValueChange={(v) => onChange(v === DEFAULT_SENTINEL ? null : v)}
-        disabled={disabled}
-      >
-        <SelectTrigger size="sm" className="w-56">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={DEFAULT_SENTINEL}>
-            {t("defaultOptionLabel", { value: agentDefaultRenderedLabel })}
-          </SelectItem>
-          {groups.map((group) =>
-            group.name === null ? (
-              group.options.map((item) => (
-                <SelectItem
-                  key={`${group.key}-${item.value}`}
-                  value={item.value}
-                >
-                  {item.name}
-                </SelectItem>
-              ))
-            ) : (
-              <SelectGroup key={group.key}>
-                <SelectLabel>{group.name}</SelectLabel>
-                {group.options.map((item) => (
-                  <SelectItem
-                    key={`${group.key}-${item.value}`}
-                    value={item.value}
-                  >
-                    {item.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            )
-          )}
-        </SelectContent>
-      </Select>
     </div>
   )
 }

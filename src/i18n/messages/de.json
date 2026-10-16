@@ -768,7 +768,93 @@
       "noConfigAvailable": "Dieser Agent hat keine konfigurierbaren Optionen.",
       "modeLabel": "Modus",
       "agentDefaultHint": "Agent-Standard: {value}",
-      "defaultOptionLabel": "Standard ({value})"
+      "defaultOptionLabel": "Standard ({value})",
+      "tabAssistants": "Assistenten",
+      "booleanOn": "An",
+      "booleanOff": "Aus",
+      "modelNotSwitched": "Der Agent hat nicht zum gewählten Modell gewechselt; diese Optionen gehören möglicherweise zu einem anderen Modell.",
+      "unsavedChanges": "Ungespeicherte Änderungen",
+      "assistants": {
+        "description": "Assistenten sind Delegations-Vorlagen, die du per @ erwähnen kannst: ein Agent mit allen gewählten Optionen und dauerhaften Anweisungen. Eine Delegation an einen Assistenten läuft genau so.",
+        "create": "Neuer Assistent",
+        "delegationOff": "Multi-Agenten-Zusammenarbeit ist aus; an Assistenten kann derzeit nicht delegiert werden.",
+        "unsavedElsewhere": "{tabs} hat ungespeicherte Änderungen.",
+        "unsavedGoBack": "Zurück",
+        "loadFailed": "Assistenten konnten nicht geladen werden: {detail}",
+        "empty": "Noch keine Assistenten. Lege einen an, um einem Agenten eine feste Einrichtung und dauerhafte Anweisungen zu geben, die du in jedem Gespräch per @ erwähnen kannst.",
+        "reorderFailed": "Assistenten konnten nicht neu angeordnet werden",
+        "saveFailed": "Assistent konnte nicht gespeichert werden",
+        "duplicated": "{name} angelegt",
+        "deleteFailed": "Assistent konnte nicht gelöscht werden",
+        "deleteTitle": "{name} löschen?",
+        "deleteDescription": "Er verschwindet aus den Einstellungen und dem Erwähnungsfeld und kann nicht mehr beauftragt werden. Bereits vorhandene Delegationskarten in Gesprächen zeigen ihn weiterhin.",
+        "cancel": "Abbrechen",
+        "delete": "Löschen",
+        "duplicate": "Duplizieren",
+        "move": "{name} verschieben",
+        "enableAssistant": "{name} aktivieren",
+        "edit": "{name} bearbeiten",
+        "more": "Weitere Aktionen für {name}",
+        "agentNotInstalled": "nicht installiert",
+        "agentDisabled": "deaktiviert",
+        "createTitle": "Neuer Assistent",
+        "editTitle": "Assistent bearbeiten",
+        "editorDescription": "Wähle den Agenten und jede seiner Optionen – alle sind Pflicht. Eine Delegation an diesen Assistenten läuft genau so.",
+        "nameLabel": "Name",
+        "namePlaceholder": "z. B. Code-Reviewer",
+        "descriptionLabel": "Beschreibung",
+        "descriptionPlaceholder": "Wann dieser Assistent passt",
+        "descriptionHint": "Erscheint im Erwähnungsfeld und sagt dem delegierenden Agenten, wann er diesen Assistenten wählen soll.",
+        "agentLabel": "Agent",
+        "agentPlaceholder": "Agent wählen",
+        "instructionsLabel": "Dauerhafte Anweisungen",
+        "instructionsPlaceholder": "Rolle und Arbeitsregeln, die dieser Assistent bei jeder Aufgabe befolgt",
+        "instructionsHint": "Wird dem Agenten mit jeder delegierten Aufgabe übergeben. Erscheint nicht in den Nachrichten der Untersitzung.",
+        "charCount": "{count} / {max}",
+        "enabledLabel": "Aktiviert",
+        "save": "Speichern",
+        "pickAgentFirst": "Wähle einen Agenten, um seine Optionen zu sehen.",
+        "pickModelFirst": "Wähle ein Modell, um die übrigen Optionen zu sehen.",
+        "modelNotSwitched": "Der Agent hat nicht zu diesem Modell gewechselt, daher lassen sich seine übrigen Optionen nicht lesen. Versuche es erneut oder wähle ein anderes Modell.",
+        "agentUnavailableHint": "Dieser Agent ist deaktiviert oder nicht installiert, daher lassen sich seine Optionen nicht prüfen. Unten stehen die gespeicherten; wähle einen anderen Agenten, um sie zu ändern.",
+        "optionsChanged": "{count, plural, one {Die Optionen des Agenten haben sich seit dem Speichern geändert – wähle die markierte Option.} other {Die Optionen des Agenten haben sich seit dem Speichern geändert – wähle die # markierten Optionen.}}",
+        "missingCount": "{count, plural, one {Noch # Option zu wählen} other {Noch # Optionen zu wählen}}",
+        "cannotSaveProbeFailed": "Speichern nicht möglich: Die Optionen des Agenten ließen sich nicht laden und daher nicht prüfen. Versuche es zuerst erneut.",
+        "cannotSaveModelNotSwitched": "Speichern nicht möglich: Der Agent hat nicht zum gewählten Modell gewechselt. Versuche es erneut oder wähle ein anderes Modell.",
+        "cannotSaveStillLoading": "Optionen des Agenten werden noch gelesen…",
+        "savedOptions": "Gespeicherte Optionen",
+        "savedNoOptions": "Für diesen Agenten wurden keine Optionen gespeichert.",
+        "required": "Pflicht",
+        "selectPlaceholder": "Auswählen",
+        "noValuesOffered": "Keine Werte angeboten",
+        "recommended": "Empfohlen",
+        "optionNew": "Neu",
+        "optionUnavailable": "Nicht verfügbar (war {value})",
+        "avatarChange": "Avatar ändern",
+        "avatarMonogram": "Buchstabe",
+        "avatarEmoji": "Emoji",
+        "avatarImage": "Bild",
+        "avatarMonogramHint": "Das erste Zeichen des Namens.",
+        "avatarUseMonogram": "Buchstaben verwenden",
+        "avatarEmojiPlaceholder": "Emoji eingeben oder einfügen",
+        "avatarEmojiUse": "Verwenden",
+        "avatarUpload": "Bild hochladen",
+        "avatarUploadHint": "Wird quadratisch zugeschnitten und auf 128×128 verkleinert.",
+        "avatarTooLarge": "Das Bild ist auch verkleinert noch zu groß. Versuche ein anderes.",
+        "avatarUnreadable": "Diese Datei ließ sich nicht als Bild lesen.",
+        "avatarColor": "Farbe",
+        "errors": {
+          "emptyName": "Gib dem Assistenten einen Namen.",
+          "nameTooLong": "Der Name darf höchstens {max} Zeichen lang sein.",
+          "duplicateName": "Ein Assistent namens „{name}“ existiert bereits.",
+          "descriptionTooLong": "Die Beschreibung darf höchstens {max} Zeichen lang sein.",
+          "instructionsTooLong": "Die Anweisungen dürfen höchstens {max} Zeichen lang sein.",
+          "invalidAvatar": "Dieser Avatar ist nicht verwendbar. Wähle einen anderen.",
+          "avatarTooLarge": "Das Avatarbild ist zu groß.",
+          "invalidAgentOptions": "Die Optionen des Agenten sind unvollständig. Öffne den Assistenten erneut und wähle alle Optionen.",
+          "notFound": "Dieser Assistent existiert nicht mehr."
+        }
+      }
     },
     "actions": {
       "dragSort": "Zum Neuordnen ziehen",
@@ -2117,7 +2203,8 @@
       "updatedAt": "Aktualisiert",
       "none": "—",
       "copyField": "{field} kopieren",
-      "copiedField": "{field} kopiert"
+      "copiedField": "{field} kopiert",
+      "assistant": "Assistent"
     },
     "conversationCard": {
       "untitledConversation": "Unbenannte Konversation",
@@ -3217,7 +3304,8 @@
         "mentionGroupAgent": "Agenten",
         "mentionGroupSession": "Sitzungen",
         "mentionGroupCommit": "Commits",
-        "mentionGroupSkill": "Fähigkeiten"
+        "mentionGroupSkill": "Fähigkeiten",
+        "mentionGroupAssistant": "Assistenten"
       },
       "messageQueue": {
         "addToQueue": "Zur Warteschlange",
@@ -3584,9 +3672,14 @@
             "child_auth_required": "Subagent braucht Anmeldung",
             "child_rejected": "Subagent lehnte Anfrage ab",
             "child_unknown": "Subagent: Fehler",
-            "unknown": "unbekannte Aufgabe"
+            "unknown": "unbekannte Aufgabe",
+            "assistant_not_found": "Assistent nicht gefunden",
+            "assistants_unsupported": "Neustart nötig",
+            "assistant_support_unknown": "keine Antwort"
           }
-        }
+        },
+        "unknownAssistant": "Assistent #{id}",
+        "deletedAssistant": "(gelöscht)"
       },
       "contentParts": {
         "showingTailOutput": "Zur besseren Performance wird während des Streamings nur die Endausgabe angezeigt.",
@@ -5008,7 +5101,8 @@
       "customAgents": "Eigene Agenten",
       "quickMessages": "Schnellnachrichten",
       "taskTemplates": "Aufgabenvorlagen",
-      "preferences": "App-Einstellungen (Sprache, Aussehen, Schalter)"
+      "preferences": "App-Einstellungen (Sprache, Aussehen, Schalter)",
+      "assistants": "Assistenten"
     },
     "scopeExcluded": {
       "conversations": "Unterhaltungen und Verlauf",
@@ -5078,7 +5172,8 @@
       "customAgents": "{count, plural, one {# eigener Agent} other {# eigene Agenten}}",
       "quickMessages": "{count, plural, one {# Schnellnachricht} other {# Schnellnachrichten}}",
       "taskTemplates": "{count, plural, one {# Aufgabenvorlage} other {# Aufgabenvorlagen}}",
-      "preferences": "{count, plural, one {# Einstellung} other {# Einstellungen}}"
+      "preferences": "{count, plural, one {# Einstellung} other {# Einstellungen}}",
+      "assistants": "{count, plural, one {# Assistent} other {# Assistenten}}"
     },
     "rollbackTitle": "Import rückgängig machen",
     "rollbackHint": "Jeder Import und jede Wiederherstellung sichern vorher den Stand dieses Geräts. Die letzten zehn bleiben erhalten.",
@@ -5094,7 +5189,8 @@
     "passphrase": "Passphrase",
     "passphraseKeep": "Leer lassen, um die gespeicherte Passphrase zu behalten",
     "passphrasePlaceholder": "Passphrase zur Verschlüsselung",
-    "passphraseHint": "Bleibt im Schlüsselbund dieses Geräts und wird nie hochgeladen. Gib auf deinen anderen Geräten dieselbe Passphrase ein."
+    "passphraseHint": "Bleibt im Schlüsselbund dieses Geräts und wird nie hochgeladen. Gib auf deinen anderen Geräten dieselbe Passphrase ein.",
+    "assistantsRenamed": "{count, plural, one {# Assistent wurde umbenannt: Hier gab es schon einen mit seinem Namen.} other {# Assistenten wurden umbenannt: Hier gab es schon welche mit ihren Namen.}}"
   },
   "backup": {
     "restore": {
@@ -5801,7 +5897,10 @@
     "cronApply": "Anwenden",
     "cronPreviewLabel": "Vorschau",
     "cronOpenBuilder": "Zeitplan-Generator öffnen",
-    "branchDefault": "Standard-Branch"
+    "branchDefault": "Standard-Branch",
+    "booleanOn": "An",
+    "booleanOff": "Aus",
+    "modelNotSwitched": "Der Agent hat nicht zum gewählten Modell gewechselt; diese Optionen gehören möglicherweise zu einem anderen Modell."
   },
   "Tasks": {
     "title": "To-dos",

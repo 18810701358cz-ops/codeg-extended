@@ -768,7 +768,93 @@
       "noConfigAvailable": "لا يحتوي هذا الوكيل على خيارات قابلة للضبط.",
       "modeLabel": "الوضع",
       "agentDefaultHint": "افتراضي الوكيل: {value}",
-      "defaultOptionLabel": "افتراضي ({value})"
+      "defaultOptionLabel": "افتراضي ({value})",
+      "tabAssistants": "المساعدون",
+      "booleanOn": "تشغيل",
+      "booleanOff": "إيقاف",
+      "modelNotSwitched": "لم ينتقل الوكيل إلى النموذج المحدد، لذا قد تخص هذه الخيارات نموذجًا آخر.",
+      "unsavedChanges": "تغييرات غير محفوظة",
+      "assistants": {
+        "description": "المساعدون إعدادات تفويض مسبقة يمكنك ذكرها بـ @: وكيل مع اختيار كل خياراته، إضافة إلى تعليمات دائمة. التفويض إلى مساعد يشغّل هذا الإعداد بالضبط.",
+        "create": "مساعد جديد",
+        "delegationOff": "التعاون متعدد الوكلاء متوقف، لذا لا يمكن التفويض إلى المساعدين حاليًا.",
+        "unsavedElsewhere": "توجد تغييرات غير محفوظة في {tabs}.",
+        "unsavedGoBack": "رجوع",
+        "loadFailed": "تعذّر تحميل المساعدين: {detail}",
+        "empty": "لا يوجد مساعدون بعد. أنشئ واحدًا لتمنح وكيلًا إعدادًا ثابتًا وتعليمات دائمة يمكنك ذكرها بـ @ في أي محادثة.",
+        "reorderFailed": "تعذّر إعادة ترتيب المساعدين",
+        "saveFailed": "تعذّر حفظ المساعد",
+        "duplicated": "تم إنشاء {name}",
+        "deleteFailed": "تعذّر حذف المساعد",
+        "deleteTitle": "هل تريد حذف {name}؟",
+        "deleteDescription": "سيختفي من الإعدادات ولوحة الإشارة، ولن يمكن التفويض إليه بعد الآن. بطاقات التفويض الموجودة مسبقًا في المحادثات ستظل تعرضه.",
+        "cancel": "إلغاء",
+        "delete": "حذف",
+        "duplicate": "تكرار",
+        "move": "نقل {name}",
+        "enableAssistant": "تفعيل {name}",
+        "edit": "تحرير {name}",
+        "more": "إجراءات أخرى لـ {name}",
+        "agentNotInstalled": "غير مثبت",
+        "agentDisabled": "معطّل",
+        "createTitle": "مساعد جديد",
+        "editTitle": "تحرير المساعد",
+        "editorDescription": "اختر الوكيل وكل خيار من خياراته — كلها مطلوبة. التفويض إلى هذا المساعد يشغّل هذا الإعداد بالضبط.",
+        "nameLabel": "الاسم",
+        "namePlaceholder": "مثال: مراجع الشيفرة",
+        "descriptionLabel": "الوصف",
+        "descriptionPlaceholder": "متى تستخدم هذا المساعد",
+        "descriptionHint": "يظهر في لوحة الإشارة، ويُعطى للوكيل المفوِّض ليعرف متى يختار هذا المساعد.",
+        "agentLabel": "الوكيل",
+        "agentPlaceholder": "اختر وكيلًا",
+        "instructionsLabel": "التعليمات الدائمة",
+        "instructionsPlaceholder": "الدور وقواعد العمل التي يتبعها هذا المساعد في كل مهمة",
+        "instructionsHint": "تُسلَّم إلى الوكيل مع كل مهمة مفوَّضة، ولا تظهر في رسائل الجلسة الفرعية.",
+        "charCount": "{count} / {max}",
+        "enabledLabel": "مفعّل",
+        "save": "حفظ",
+        "pickAgentFirst": "اختر وكيلًا لعرض خياراته.",
+        "pickModelFirst": "اختر نموذجًا لعرض بقية الخيارات.",
+        "modelNotSwitched": "لم ينتقل الوكيل إلى هذا النموذج، لذا تتعذّر قراءة بقية خياراته. أعد المحاولة أو اختر نموذجًا آخر.",
+        "agentUnavailableHint": "هذا الوكيل معطّل أو غير مثبت، لذا يتعذّر التحقق من خياراته. الخيارات المحفوظة معروضة أدناه؛ اختر وكيلًا آخر لتغييرها.",
+        "optionsChanged": "تغيّرت خيارات الوكيل منذ الحفظ — اختر الخيارات المعلَّمة ({count}).",
+        "missingCount": "بقي {count} من الخيارات دون اختيار",
+        "cannotSaveProbeFailed": "تعذّر الحفظ: لم يمكن تحميل خيارات الوكيل للتحقق منها. أعد المحاولة أولًا.",
+        "cannotSaveModelNotSwitched": "تعذّر الحفظ: لم ينتقل الوكيل إلى النموذج المحدد. أعد المحاولة أو اختر نموذجًا آخر.",
+        "cannotSaveStillLoading": "لا تزال خيارات الوكيل قيد القراءة…",
+        "savedOptions": "الخيارات المحفوظة",
+        "savedNoOptions": "لم تُحفَظ أي خيارات لهذا الوكيل.",
+        "required": "مطلوب",
+        "selectPlaceholder": "اختر",
+        "noValuesOffered": "لا توجد قيم متاحة",
+        "recommended": "موصى به",
+        "optionNew": "جديد",
+        "optionUnavailable": "غير متاح (كان {value})",
+        "avatarChange": "تغيير الصورة الرمزية",
+        "avatarMonogram": "حرف",
+        "avatarEmoji": "رمز تعبيري",
+        "avatarImage": "صورة",
+        "avatarMonogramHint": "الحرف الأول من الاسم.",
+        "avatarUseMonogram": "استخدام الحرف",
+        "avatarEmojiPlaceholder": "اكتب رمزًا تعبيريًا أو الصقه",
+        "avatarEmojiUse": "استخدام",
+        "avatarUpload": "رفع صورة",
+        "avatarUploadHint": "تُقص إلى مربع وتُصغَّر إلى 128×128.",
+        "avatarTooLarge": "الصورة لا تزال كبيرة جدًا حتى بعد تصغيرها. جرّب صورة أخرى.",
+        "avatarUnreadable": "تعذّرت قراءة هذا الملف كصورة.",
+        "avatarColor": "اللون",
+        "errors": {
+          "emptyName": "أدخل اسمًا للمساعد.",
+          "nameTooLong": "يجب ألا يتجاوز الاسم {max} حرفًا.",
+          "duplicateName": "يوجد بالفعل مساعد باسم “{name}”.",
+          "descriptionTooLong": "يجب ألا يتجاوز الوصف {max} حرفًا.",
+          "instructionsTooLong": "يجب ألا تتجاوز التعليمات {max} حرفًا.",
+          "invalidAvatar": "لا يمكن استخدام هذه الصورة الرمزية. اختر أخرى.",
+          "avatarTooLarge": "صورة الصورة الرمزية كبيرة جدًا.",
+          "invalidAgentOptions": "خيارات الوكيل غير مكتملة. أعد فتح المساعد واختر كل خيار.",
+          "notFound": "لم يعد هذا المساعد موجودًا."
+        }
+      }
     },
     "actions": {
       "dragSort": "اسحب لإعادة الترتيب",
@@ -2117,7 +2203,8 @@
       "updatedAt": "تاريخ التحديث",
       "none": "—",
       "copyField": "نسخ {field}",
-      "copiedField": "تم نسخ {field}"
+      "copiedField": "تم نسخ {field}",
+      "assistant": "المساعد"
     },
     "conversationCard": {
       "untitledConversation": "محادثة بدون عنوان",
@@ -3217,7 +3304,8 @@
         "mentionGroupAgent": "الوكلاء",
         "mentionGroupSession": "الجلسات",
         "mentionGroupCommit": "عمليات الإيداع",
-        "mentionGroupSkill": "المهارات"
+        "mentionGroupSkill": "المهارات",
+        "mentionGroupAssistant": "المساعدون"
       },
       "messageQueue": {
         "addToQueue": "إضافة للقائمة",
@@ -3584,9 +3672,14 @@
             "child_auth_required": "الوكيل الفرعي يحتاج تسجيل دخول",
             "child_rejected": "الوكيل الفرعي رفض الطلب",
             "child_unknown": "الوكيل الفرعي: خطأ",
-            "unknown": "مهمة غير معروفة"
+            "unknown": "مهمة غير معروفة",
+            "assistant_not_found": "المساعد غير موجود",
+            "assistants_unsupported": "يلزم إعادة التشغيل",
+            "assistant_support_unknown": "لا استجابة"
           }
-        }
+        },
+        "unknownAssistant": "المساعد #{id}",
+        "deletedAssistant": "(محذوف)"
       },
       "contentParts": {
         "showingTailOutput": "يتم عرض نهاية المخرجات أثناء البث لتحسين الأداء.",
@@ -5008,7 +5101,8 @@
       "customAgents": "الوكلاء المخصصون",
       "quickMessages": "الرسائل السريعة",
       "taskTemplates": "قوالب المهام",
-      "preferences": "تفضيلات التطبيق (اللغة والمظهر والخيارات)"
+      "preferences": "تفضيلات التطبيق (اللغة والمظهر والخيارات)",
+      "assistants": "المساعدون"
     },
     "scopeExcluded": {
       "conversations": "المحادثات والسجل",
@@ -5078,7 +5172,8 @@
       "customAgents": "{count, plural, one {وكيل مخصص واحد} other {# وكيل مخصص}}",
       "quickMessages": "{count, plural, one {رسالة سريعة واحدة} other {# رسالة سريعة}}",
       "taskTemplates": "{count, plural, one {قالب مهمة واحد} other {# قالب مهمة}}",
-      "preferences": "{count, plural, one {تفضيل واحد} other {# تفضيل}}"
+      "preferences": "{count, plural, one {تفضيل واحد} other {# تفضيل}}",
+      "assistants": "{count, plural, one {مساعد واحد} other {# مساعد}}"
     },
     "rollbackTitle": "التراجع عن استيراد",
     "rollbackHint": "يحفظ كل استيراد وكل استعادة حالة هذا الجهاز قبل التطبيق، ويُحتفظ بآخر عشر نسخ.",
@@ -5094,7 +5189,8 @@
     "passphrase": "عبارة المرور",
     "passphraseKeep": "اتركه فارغًا للإبقاء على عبارة المرور المحفوظة",
     "passphrasePlaceholder": "عبارة مرور التشفير",
-    "passphraseHint": "تُحفظ في سلسلة مفاتيح هذا الجهاز ولا تُرفع أبدًا. أدخل العبارة نفسها على أجهزتك الأخرى."
+    "passphraseHint": "تُحفظ في سلسلة مفاتيح هذا الجهاز ولا تُرفع أبدًا. أدخل العبارة نفسها على أجهزتك الأخرى.",
+    "assistantsRenamed": "{count, plural, one {أُعيدت تسمية مساعد واحد لأن مساعدًا هنا يحمل اسمه بالفعل.} other {أُعيدت تسمية # مساعد لأن مساعدين هنا يحملون أسماءهم بالفعل.}}"
   },
   "backup": {
     "restore": {
@@ -5801,7 +5897,10 @@
     "cronApply": "تطبيق",
     "cronPreviewLabel": "معاينة",
     "cronOpenBuilder": "فتح منشئ الجدولة",
-    "branchDefault": "الفرع الافتراضي"
+    "branchDefault": "الفرع الافتراضي",
+    "booleanOn": "تشغيل",
+    "booleanOff": "إيقاف",
+    "modelNotSwitched": "لم ينتقل الوكيل إلى النموذج المحدد، لذا قد تخص هذه الخيارات نموذجًا آخر."
   },
   "Tasks": {
     "title": "المهام قيد الانتظار",

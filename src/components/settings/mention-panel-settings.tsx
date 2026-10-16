@@ -28,6 +28,7 @@ import {
   GripVertical,
   MessageSquare,
   RotateCcw,
+  UserRound,
   type LucideIcon,
 } from "lucide-react"
 import { Reorder, useDragControls } from "motion/react"
@@ -50,9 +51,11 @@ import {
 } from "@/lib/mention-panel-prefs"
 import { cn } from "@/lib/utils"
 
-// The glyphs the inline reference badges use for the same kinds.
+// The glyphs the inline reference badges use for the same kinds (an
+// assistant's badge shows its own avatar; the row uses the generic glyph).
 const TAB_ICONS = {
   agent: Bot,
+  assistant: UserRound,
   file: FileText,
   session: MessageSquare,
   commit: GitCommit,

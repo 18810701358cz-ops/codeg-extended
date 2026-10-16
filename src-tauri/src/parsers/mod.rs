@@ -410,11 +410,19 @@ pub fn build_agent_parser(agent_type: AgentType, env: &AgentEnv) -> Box<dyn Agen
     Box::new(RouteSanitized(inner))
 }
 
-/// Removes Codeg's internal `@agent` routing frame from whatever a parser read
-/// back out of an agent's own transcript.
+/// A parser wrapped the way [`build_agent_parser`] wraps every one, for tests
+/// that build their parser over a fixture directory.
+#[cfg(test)]
+pub(crate) fn sanitized(inner: impl AgentParser + 'static) -> Box<dyn AgentParser> {
+    Box::new(RouteSanitized(Box::new(inner)))
+}
+
+/// Removes Codeg's internal prompt frames — the `@agent` and `@assistant`
+/// routing frames and the assistant brief — from whatever a parser read back
+/// out of an agent's own transcript.
 ///
 /// Only complete frames that re-render byte-for-byte are touched (see
-/// [`crate::acp::agent_mentions::strip_internal_agent_routes`]), and the
+/// [`crate::acp::agent_mentions::strip_internal_frames`]), and the
 /// separator that opens one is scrubbed from every prompt at ingress, so
 /// look-alike user prose is never eligible. A BLOCK left with no content after
 /// stripping carried nothing but the frame and is dropped; a user turn left
@@ -499,17 +507,17 @@ fn sanitize_summary(summary: &mut ConversationSummary) {
 ///
 /// The trailing trim only runs when a frame WAS removed, and it is load-bearing
 /// for the agents that join a prompt's text blocks into one record with a blank
-/// line: `strip_internal_agent_routes` absorbs a single newline adjacent to the
+/// line: `strip_internal_frames` absorbs a single newline adjacent to the
 /// frame, so `"prose\n\n<frame>"` comes back as `"prose\n"` — which
 /// `whitespace-pre-wrap` paints as an extra blank line under the message. Text
 /// with no frame in it is never touched.
 fn sanitize_text(text: &mut String) -> bool {
     // Single scan short-circuit: history with no frame pays one memchr per
     // string, not a parse attempt.
-    if !crate::acp::agent_mentions::contains_internal_agent_routes(text) {
+    if !crate::acp::agent_mentions::contains_internal_frames(text) {
         return false;
     }
-    *text = crate::acp::agent_mentions::strip_internal_agent_routes(text);
+    *text = crate::acp::agent_mentions::strip_internal_frames(text);
     text.truncate(text.trim_end().len());
     true
 }
@@ -1875,7 +1883,7 @@ mod route_sanitizer_tests {
         let truncated = super::truncate_str(format!("hi{frame}").trim(), 80);
         assert!(
             truncated.contains('\u{001e}')
-                && !crate::acp::agent_mentions::contains_internal_agent_routes(&truncated),
+                && !crate::acp::agent_mentions::contains_internal_frames(&truncated),
             "fixture must straddle the frame, or it proves nothing"
         );
 
@@ -2079,6 +2087,52 @@ mod route_sanitizer_tests {
             detail.turns[0].blocks.as_slice(),
             [ContentBlock::Text { text }] if text == "real prompt"
         ));
+    }
+
+    /// A delegated assistant child's first prompt is the task plus the brief
+    /// frame. History shows the task alone — in its own block or joined into
+    /// the task's — the title carries no instruction text, and a record that
+    /// held only the brief is neither rendered nor counted.
+    #[test]
+    fn an_assistant_brief_never_surfaces_in_history() {
+        let task = "Review the diff in /repo and report findings";
+        let brief = crate::acp::agent_mentions::render_assistant_brief(
+            "Reviewer",
+            "Cite file and line.\n- Be terse",
+        )
+        .expect("brief");
+
+        let mut own_block = turn(TurnRole::User, task);
+        own_block.blocks.push(ContentBlock::Text {
+            text: brief.clone(),
+        });
+        let joined = turn(TurnRole::User, &format!("{task}\n\n{brief}"));
+        for user in [own_block, joined] {
+            let detail = sanitized(Fixture {
+                summary: summary(Some(&format!("{task} {brief}")[..120]), 2),
+                turns: vec![user, turn(TurnRole::Assistant, "found two issues")],
+            });
+            assert_eq!(detail.turns.len(), 2);
+            assert!(matches!(
+                detail.turns[0].blocks.as_slice(),
+                [ContentBlock::Text { text }] if text == task
+            ));
+            assert_eq!(detail.summary.message_count, 2);
+            let title = detail.summary.title.expect("title kept");
+            assert!(title.starts_with("Review the diff"));
+            assert!(!title.contains("codeg_internal") && !title.contains('\u{1e}'));
+        }
+
+        let detail = sanitized(Fixture {
+            summary: summary(Some(task), 3),
+            turns: vec![
+                turn(TurnRole::User, task),
+                turn(TurnRole::User, &brief),
+                turn(TurnRole::Assistant, "done"),
+            ],
+        });
+        assert_eq!(detail.turns.len(), 2, "the brief-only record is dropped");
+        assert_eq!(detail.summary.message_count, 2);
     }
 
     #[test]

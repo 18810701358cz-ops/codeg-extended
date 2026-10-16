@@ -768,7 +768,93 @@
       "noConfigAvailable": "该智能体没有可配置项。",
       "modeLabel": "模式",
       "agentDefaultHint": "智能体默认：{value}",
-      "defaultOptionLabel": "默认（{value}）"
+      "defaultOptionLabel": "默认（{value}）",
+      "tabAssistants": "助手配置",
+      "booleanOn": "开启",
+      "booleanOff": "关闭",
+      "modelNotSwitched": "智能体没有切换到所选模型，下面的选项可能属于另一个模型。",
+      "unsavedChanges": "有未保存的修改",
+      "assistants": {
+        "description": "助手是可以被 @ 的委派预设：一个智能体、选定的每一项选项，加上常驻指令。委派给助手时，就按这套设置运行。",
+        "create": "新建助手",
+        "delegationOff": "多智能体协同已关闭，助手暂时不能被委派。",
+        "unsavedElsewhere": "{tabs}有未保存的修改。",
+        "unsavedGoBack": "返回",
+        "loadFailed": "加载助手失败：{detail}",
+        "empty": "还没有助手。新建一个，给智能体一套固定的设置和常驻指令，在任何会话里都能 @ 它。",
+        "reorderFailed": "调整助手顺序失败",
+        "saveFailed": "保存助手失败",
+        "duplicated": "已创建 {name}",
+        "deleteFailed": "删除助手失败",
+        "deleteTitle": "删除 {name}？",
+        "deleteDescription": "它会从设置和提及面板中消失，也不能再被委派。会话里已有的委派卡片仍会显示它。",
+        "cancel": "取消",
+        "delete": "删除",
+        "duplicate": "复制",
+        "move": "移动 {name}",
+        "enableAssistant": "启用 {name}",
+        "edit": "编辑 {name}",
+        "more": "{name} 的更多操作",
+        "agentNotInstalled": "未安装",
+        "agentDisabled": "已停用",
+        "createTitle": "新建助手",
+        "editTitle": "编辑助手",
+        "editorDescription": "选择智能体并选定它的每一项选项，每一项都必填。委派给这个助手时，就按这套设置运行。",
+        "nameLabel": "名称",
+        "namePlaceholder": "例如：代码审查员",
+        "descriptionLabel": "简介",
+        "descriptionPlaceholder": "什么时候用这个助手",
+        "descriptionHint": "显示在提及面板中，也会告诉发起委派的智能体什么时候该选这个助手。",
+        "agentLabel": "智能体",
+        "agentPlaceholder": "选择智能体",
+        "instructionsLabel": "常驻指令",
+        "instructionsPlaceholder": "这个助手每次接任务时都要遵守的角色和工作要求",
+        "instructionsHint": "每次委派时随任务一起交给智能体，不会显示在子会话的消息里。",
+        "charCount": "{count} / {max}",
+        "enabledLabel": "启用",
+        "save": "保存",
+        "pickAgentFirst": "先选择智能体，再选它的选项。",
+        "pickModelFirst": "选择模型后显示其余选项。",
+        "modelNotSwitched": "智能体没有切换到这个模型，读不到它的其余选项。可以重试，也可以换一个模型。",
+        "agentUnavailableHint": "这个智能体已停用或未安装，无法核对它的选项。下面是存着的选项；改选别的智能体才能修改。",
+        "optionsChanged": "智能体的选项有变化，请补选标出的 {count} 项。",
+        "missingCount": "还有 {count} 项未选",
+        "cannotSaveProbeFailed": "无法保存：读不到智能体的选项，无法确认每一项都已选定。请先重试。",
+        "cannotSaveModelNotSwitched": "无法保存：智能体没有切换到所选模型。请重试，或换一个模型。",
+        "cannotSaveStillLoading": "正在读取智能体的选项…",
+        "savedOptions": "存着的选项",
+        "savedNoOptions": "这个智能体没有存任何选项。",
+        "required": "必填",
+        "selectPlaceholder": "请选择",
+        "noValuesOffered": "没有可选值",
+        "recommended": "推荐",
+        "optionNew": "新增",
+        "optionUnavailable": "不可用（原为 {value}）",
+        "avatarChange": "更换头像",
+        "avatarMonogram": "字母",
+        "avatarEmoji": "Emoji",
+        "avatarImage": "图片",
+        "avatarMonogramHint": "取名称的第一个字。",
+        "avatarUseMonogram": "使用字母",
+        "avatarEmojiPlaceholder": "输入或粘贴 emoji",
+        "avatarEmojiUse": "使用",
+        "avatarUpload": "上传图片",
+        "avatarUploadHint": "会居中裁成正方形，并缩小到 128×128。",
+        "avatarTooLarge": "这张图片缩小之后仍然太大，请换一张。",
+        "avatarUnreadable": "无法把这个文件读成图片。",
+        "avatarColor": "颜色",
+        "errors": {
+          "emptyName": "请填写助手名称。",
+          "nameTooLong": "名称最多 {max} 个字。",
+          "duplicateName": "已经有一个名为“{name}”的助手。",
+          "descriptionTooLong": "简介最多 {max} 个字。",
+          "instructionsTooLong": "常驻指令最多 {max} 个字。",
+          "invalidAvatar": "这个头像不能用，请换一个。",
+          "avatarTooLarge": "头像图片太大。",
+          "invalidAgentOptions": "智能体的选项没有选齐。请重新打开助手，把每一项都选上。",
+          "notFound": "这个助手已经不存在了。"
+        }
+      }
     },
     "actions": {
       "dragSort": "拖拽排序",
@@ -2117,7 +2203,8 @@
       "updatedAt": "更新时间",
       "none": "—",
       "copyField": "复制{field}",
-      "copiedField": "已复制{field}"
+      "copiedField": "已复制{field}",
+      "assistant": "助手"
     },
     "conversationCard": {
       "untitledConversation": "未命名会话",
@@ -3217,7 +3304,8 @@
         "mentionGroupAgent": "智能体",
         "mentionGroupSession": "会话",
         "mentionGroupCommit": "提交",
-        "mentionGroupSkill": "技能"
+        "mentionGroupSkill": "技能",
+        "mentionGroupAssistant": "助手"
       },
       "messageQueue": {
         "addToQueue": "加入队列",
@@ -3584,9 +3672,14 @@
             "child_auth_required": "子智能体需登录",
             "child_rejected": "子代理拒绝该请求",
             "child_unknown": "子代理未知错误",
-            "unknown": "未知任务"
+            "unknown": "未知任务",
+            "assistant_not_found": "助手不存在",
+            "assistants_unsupported": "需要重启",
+            "assistant_support_unknown": "未响应"
           }
-        }
+        },
+        "unknownAssistant": "助手 #{id}",
+        "deletedAssistant": "（已删除）"
       },
       "contentParts": {
         "showingTailOutput": "为保证性能，流式输出时仅显示尾部内容。",
@@ -5008,7 +5101,8 @@
       "customAgents": "自定义智能体",
       "quickMessages": "快捷消息",
       "taskTemplates": "任务模板",
-      "preferences": "应用偏好（语言、外观、开关）"
+      "preferences": "应用偏好（语言、外观、开关）",
+      "assistants": "助手"
     },
     "scopeExcluded": {
       "conversations": "会话记录与历史",
@@ -5078,7 +5172,8 @@
       "customAgents": "{count} 个自定义智能体",
       "quickMessages": "{count} 条快捷消息",
       "taskTemplates": "{count} 个任务模板",
-      "preferences": "{count} 项应用偏好"
+      "preferences": "{count} 项应用偏好",
+      "assistants": "{count} 个助手"
     },
     "rollbackTitle": "撤销导入",
     "rollbackHint": "每次导入和每次还原前，都会先保存这台设备当时的配置，最近十份会保留下来。",
@@ -5094,7 +5189,8 @@
     "passphrase": "加密口令",
     "passphraseKeep": "留空则沿用已保存的口令",
     "passphrasePlaceholder": "加密口令",
-    "passphraseHint": "只保存在这台设备的钥匙串里，不会上传。请在你的其他设备上输入同一个口令。"
+    "passphraseHint": "只保存在这台设备的钥匙串里，不会上传。请在你的其他设备上输入同一个口令。",
+    "assistantsRenamed": "有 {count} 个助手与本机已有的助手重名，已自动改名。"
   },
   "backup": {
     "restore": {
@@ -5801,7 +5897,10 @@
     "cronApply": "应用",
     "cronPreviewLabel": "预览",
     "cronOpenBuilder": "打开计划生成器",
-    "branchDefault": "默认分支"
+    "branchDefault": "默认分支",
+    "booleanOn": "开启",
+    "booleanOff": "关闭",
+    "modelNotSwitched": "智能体没有切换到所选模型，下面的选项可能属于另一个模型。"
   },
   "Tasks": {
     "title": "待办任务",

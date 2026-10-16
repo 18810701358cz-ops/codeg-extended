@@ -122,6 +122,7 @@ describe("RichComposer @ mention integration", () => {
         { kind: "file", visible: true },
         { kind: "commit", visible: true },
         { kind: "agent", visible: false },
+        { kind: "assistant", visible: false },
         { kind: "session", visible: true },
       ],
     })
@@ -141,6 +142,7 @@ describe("RichComposer @ mention integration", () => {
         saveMentionPanelPrefs({
           tabs: [
             { kind: "agent", visible: true },
+            { kind: "assistant", visible: false },
             { kind: "file", visible: true },
             { kind: "session", visible: false },
             { kind: "commit", visible: false },

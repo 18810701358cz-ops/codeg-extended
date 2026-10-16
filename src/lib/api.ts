@@ -23,6 +23,9 @@ import type {
   AgentType,
   AgentDelegationDefaults,
   AgentOptionsSnapshot,
+  AssistantDraft,
+  AssistantInfo,
+  AssistantPatch,
   Automation,
   AutomationRun,
   AutomationDraft,
@@ -2309,6 +2312,38 @@ export async function setFolderGroup(
   groupId: number | null
 ): Promise<void> {
   return getTransport().call("set_folder_group", { folderId, groupId })
+}
+
+/** Every assistant, tombstones included, in display order. */
+export async function assistantList(): Promise<AssistantInfo[]> {
+  return getTransport().call("assistant_list", {})
+}
+
+export async function assistantCreate(
+  draft: AssistantDraft
+): Promise<AssistantInfo> {
+  return getTransport().call("assistant_create", { draft })
+}
+
+/** Apply an edit; only the fields present change. */
+export async function assistantUpdate(
+  id: number,
+  patch: AssistantPatch
+): Promise<AssistantInfo> {
+  return getTransport().call("assistant_update", { id, patch })
+}
+
+/** Soft-delete; resolves to the tombstone. */
+export async function assistantDelete(id: number): Promise<AssistantInfo> {
+  return getTransport().call("assistant_delete", { id })
+}
+
+/** Persist the order after a drag (the complete list, first to last);
+ *  resolves to the rows whose position changed. */
+export async function assistantReorder(
+  ids: number[]
+): Promise<AssistantInfo[]> {
+  return getTransport().call("assistant_reorder", { ids })
 }
 
 export async function listConversationTags(): Promise<ConversationTagDetail[]> {

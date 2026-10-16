@@ -596,6 +596,11 @@ export interface DbConversationSummary {
    *  worktree path it originally ran in. Drives the "source worktree removed"
    *  badge. */
   origin_cwd?: string | null
+  /** The assistant a delegation child ran as, and its name when the
+   *  delegation started (off the child row's snapshot). Absent on every other
+   *  row. Prefer the assistant store's current name when it knows the id. */
+  assistant_id?: number
+  assistant_name?: string
   /**
    * Ids of the {@link ConversationTagDetail tags} on this conversation,
    * ascending. Absent when it has none (the backend omits an empty list). May
@@ -1651,12 +1656,124 @@ export interface AgentOptionsSnapshot {
    *  with no live session (the to-do task boxes) encode an attached image the
    *  way this agent takes it. Null when the agent advertised none. */
   prompt_capabilities?: PromptCapabilitiesInfo | null
+  /** The options the probe was asked to set but did not end up holding —
+   *  `model` here means the snapshot describes the agent's OTHER model, not
+   *  the one asked for (the applied options' `current_value` is rewritten to
+   *  the agent's own pick, so nothing else tells). Always sent by current
+   *  backends; absent only from one that predates it. */
+  unapplied_config_ids?: string[]
 }
 
 export interface AgentDelegationDefaults {
   mode_id?: string | null
   config_values: Record<string, string>
 }
+
+// ─── Assistants ────────────────────────────────────────────────────────────
+// Mirrors src-tauri/src/models/assistant.rs (snake_case wire form). An
+// assistant is a delegation preset the composer can @-mention: an identity, an
+// agent with EVERY option it advertises picked explicitly, and standing
+// instructions handed to the delegated child.
+
+/** Palette keys an avatar colour is picked from (not colours: the UI maps each
+ *  to its own light/dark treatment). Same list as the backend validates. */
+export const ASSISTANT_AVATAR_COLORS = [
+  "slate",
+  "red",
+  "orange",
+  "amber",
+  "green",
+  "teal",
+  "sky",
+  "blue",
+  "violet",
+  "pink",
+] as const
+export type AssistantAvatarColor = (typeof ASSISTANT_AVATAR_COLORS)[number]
+
+export type AssistantAvatar =
+  | { kind: "monogram"; color: AssistantAvatarColor }
+  | { kind: "emoji"; emoji: string; color: AssistantAvatarColor }
+  /** A cropped, downscaled `data:image/(png|jpeg|webp);base64,…` URL. */
+  | { kind: "image"; data_url: string }
+
+export type AssistantOptionKind = "select" | "boolean"
+
+/** One option of a saved selection, with the names the editor showed. */
+export interface AssistantOptionLabel {
+  id: string
+  kind: AssistantOptionKind
+  name: string
+  /** The picked value's display name. A boolean's is drawn from its value. */
+  value_label: string
+}
+
+/** The option list a selection was saved against. The settings list reads its
+ *  names without probing; the backend checks the selection is complete
+ *  against it. */
+export interface AssistantLabelSnapshot {
+  agent: string
+  mode: string | null
+  options: AssistantOptionLabel[]
+}
+
+/** The agent, its complete selection and the option list — always submitted
+ *  together. */
+export interface AssistantAgentConfig {
+  agent_type: AgentType
+  agent_options: AgentDelegationDefaults
+  label_snapshot: AssistantLabelSnapshot
+}
+
+export interface AssistantInfo {
+  id: number
+  uid: string
+  name: string
+  description: string
+  avatar: AssistantAvatar
+  agent_type: AgentType
+  /** May arrive without `config_values` when empty (serde skips it). */
+  agent_options: AgentDelegationDefaults
+  label_snapshot: AssistantLabelSnapshot
+  instructions: string
+  enabled: boolean
+  sort_order: number
+  /** Bumped by every write; a client keeps the higher one of two copies. */
+  revision: number
+  created_at: string
+  updated_at: string
+  /** Set on a soft-deleted assistant. Tombstones are kept so history can
+   *  still draw it. */
+  deleted_at: string | null
+}
+
+export interface AssistantDraft {
+  name: string
+  description: string
+  avatar: AssistantAvatar
+  agent_config: AssistantAgentConfig
+  instructions: string
+  enabled: boolean
+}
+
+/** An edit: only the fields present change. */
+export interface AssistantPatch {
+  name?: string
+  description?: string
+  avatar?: AssistantAvatar
+  agent_config?: AssistantAgentConfig
+  instructions?: string
+  enabled?: boolean
+}
+
+/** Payload for `assistant://changed` — always whole rows. Mirrors the Rust
+ *  `AssistantChange` (serde `tag = "kind"`). `resync`: re-read the list. */
+export type AssistantChange =
+  | { kind: "upsert"; assistant: AssistantInfo }
+  | { kind: "reordered"; assistants: AssistantInfo[] }
+  | { kind: "resync" }
+
+export const ASSISTANT_CHANGED_EVENT = "assistant://changed"
 
 // ─── Automations ───────────────────────────────────────────────────────────
 // Mirrors src-tauri/src/models/automation.rs. Wire form is snake_case (serde
@@ -3019,6 +3136,10 @@ export type AcpEvent =
       task_preview?: string | null
       /** Broker-minted task id (the `task_id=` embedded in the running ack). */
       task_id?: string | null
+      /** The assistant the child runs as (`agent_type` is then its agent).
+       *  Absent for a plain agent delegation. */
+      assistant_id?: number | null
+      assistant_name?: string | null
     }
   /**
    * The child sub-session has finished (or errored / timed out / been
@@ -3036,6 +3157,9 @@ export type AcpEvent =
        *  snapshot replay) can bind the correct agent instead of a default. */
       agent_type: AgentType
       result: DelegationResultSummary
+      /** Mirrors `delegation_started`'s assistant identity. */
+      assistant_id?: number | null
+      assistant_name?: string | null
     }
   /**
    * The user's submitted prompt, broadcast on the connection stream so OTHER
@@ -3252,6 +3376,9 @@ export interface ActiveDelegationState {
    *  hosts whose tool call `raw_input` never carries the arguments). */
   task_preview?: string | null
   task_id?: string | null
+  /** The assistant the child runs as, mirrored for the same reason. */
+  assistant_id?: number | null
+  assistant_name?: string | null
 }
 
 /** Lifecycle of a live-feedback note (mirror of Rust `FeedbackStatus`). */

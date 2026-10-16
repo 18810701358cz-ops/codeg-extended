@@ -768,7 +768,93 @@
       "noConfigAvailable": "このエージェントには設定可能な項目がありません。",
       "modeLabel": "モード",
       "agentDefaultHint": "エージェント既定: {value}",
-      "defaultOptionLabel": "既定（{value}）"
+      "defaultOptionLabel": "既定（{value}）",
+      "tabAssistants": "アシスタント",
+      "booleanOn": "オン",
+      "booleanOff": "オフ",
+      "modelNotSwitched": "エージェントが選択したモデルに切り替わらなかったため、これらのオプションは別のモデルのものである可能性があります。",
+      "unsavedChanges": "未保存の変更があります",
+      "assistants": {
+        "description": "アシスタントは @ で呼び出せる委任プリセットです。エージェントとそのすべてのオプション、常設の指示をまとめたもので、委任するとその設定どおりに実行されます。",
+        "create": "新しいアシスタント",
+        "delegationOff": "マルチエージェント連携がオフのため、現在アシスタントに委任できません。",
+        "unsavedElsewhere": "{tabs}に未保存の変更があります。",
+        "unsavedGoBack": "戻る",
+        "loadFailed": "アシスタントの読み込みに失敗しました：{detail}",
+        "empty": "アシスタントはまだありません。作成すると、エージェントに固定の設定と常設の指示を持たせ、どの会話からでも @ で呼び出せます。",
+        "reorderFailed": "アシスタントの並べ替えに失敗しました",
+        "saveFailed": "アシスタントを保存できませんでした",
+        "duplicated": "{name} を作成しました",
+        "deleteFailed": "アシスタントを削除できませんでした",
+        "deleteTitle": "{name} を削除しますか？",
+        "deleteDescription": "設定とメンションパネルから消え、委任先として使えなくなります。会話中の既存の委任カードには引き続き表示されます。",
+        "cancel": "キャンセル",
+        "delete": "削除",
+        "duplicate": "複製",
+        "move": "{name} を移動",
+        "enableAssistant": "{name} を有効にする",
+        "edit": "{name} を編集",
+        "more": "{name} のその他の操作",
+        "agentNotInstalled": "未インストール",
+        "agentDisabled": "無効",
+        "createTitle": "新しいアシスタント",
+        "editTitle": "アシスタントを編集",
+        "editorDescription": "エージェントとそのすべてのオプションを選んでください（すべて必須）。このアシスタントに委任すると、この設定どおりに実行されます。",
+        "nameLabel": "名前",
+        "namePlaceholder": "例：コードレビュアー",
+        "descriptionLabel": "説明",
+        "descriptionPlaceholder": "このアシスタントを使う場面",
+        "descriptionHint": "メンションパネルに表示され、委任する側のエージェントにもいつこのアシスタントを選ぶべきかを伝えます。",
+        "agentLabel": "エージェント",
+        "agentPlaceholder": "エージェントを選択",
+        "instructionsLabel": "常設の指示",
+        "instructionsPlaceholder": "このアシスタントがすべてのタスクで従う役割と作業ルール",
+        "instructionsHint": "委任のたびにタスクと一緒にエージェントへ渡されます。サブセッションのメッセージには表示されません。",
+        "charCount": "{count} / {max}",
+        "enabledLabel": "有効",
+        "save": "保存",
+        "pickAgentFirst": "エージェントを選ぶとオプションが表示されます。",
+        "pickModelFirst": "モデルを選ぶと残りのオプションが表示されます。",
+        "modelNotSwitched": "エージェントがこのモデルに切り替わらなかったため、残りのオプションを読み取れません。再試行するか、別のモデルを選んでください。",
+        "agentUnavailableHint": "このエージェントは無効か未インストールのため、オプションを確認できません。保存済みのオプションを下に表示します。変更するには別のエージェントを選んでください。",
+        "optionsChanged": "保存後にエージェントのオプションが変わりました。印の付いた {count} 項目を選び直してください。",
+        "missingCount": "未選択の項目があと {count} 件あります",
+        "cannotSaveProbeFailed": "保存できません：エージェントのオプションを読み込めず、すべて選択済みか確認できません。先に再試行してください。",
+        "cannotSaveModelNotSwitched": "保存できません：エージェントが選択したモデルに切り替わりませんでした。再試行するか、別のモデルを選んでください。",
+        "cannotSaveStillLoading": "エージェントのオプションを読み込み中…",
+        "savedOptions": "保存済みのオプション",
+        "savedNoOptions": "このエージェントには保存済みのオプションがありません。",
+        "required": "必須",
+        "selectPlaceholder": "選択してください",
+        "noValuesOffered": "選択肢がありません",
+        "recommended": "推奨",
+        "optionNew": "新規",
+        "optionUnavailable": "利用不可（元は {value}）",
+        "avatarChange": "アバターを変更",
+        "avatarMonogram": "文字",
+        "avatarEmoji": "絵文字",
+        "avatarImage": "画像",
+        "avatarMonogramHint": "名前の最初の文字を使います。",
+        "avatarUseMonogram": "文字を使う",
+        "avatarEmojiPlaceholder": "絵文字を入力または貼り付け",
+        "avatarEmojiUse": "使う",
+        "avatarUpload": "画像をアップロード",
+        "avatarUploadHint": "正方形に切り抜き、128×128 に縮小します。",
+        "avatarTooLarge": "縮小してもこの画像は大きすぎます。別の画像を試してください。",
+        "avatarUnreadable": "このファイルを画像として読み込めませんでした。",
+        "avatarColor": "色",
+        "errors": {
+          "emptyName": "アシスタントの名前を入力してください。",
+          "nameTooLong": "名前は {max} 文字以内にしてください。",
+          "duplicateName": "「{name}」という名前のアシスタントは既にあります。",
+          "descriptionTooLong": "説明は {max} 文字以内にしてください。",
+          "instructionsTooLong": "指示は {max} 文字以内にしてください。",
+          "invalidAvatar": "このアバターは使用できません。別のものを選んでください。",
+          "avatarTooLarge": "アバター画像が大きすぎます。",
+          "invalidAgentOptions": "エージェントのオプションが揃っていません。アシスタントを開き直して、すべての項目を選んでください。",
+          "notFound": "このアシスタントはもう存在しません。"
+        }
+      }
     },
     "actions": {
       "dragSort": "ドラッグして並べ替え",
@@ -2117,7 +2203,8 @@
       "updatedAt": "更新日時",
       "none": "—",
       "copyField": "{field}をコピー",
-      "copiedField": "{field}をコピーしました"
+      "copiedField": "{field}をコピーしました",
+      "assistant": "アシスタント"
     },
     "conversationCard": {
       "untitledConversation": "無題の会話",
@@ -3217,7 +3304,8 @@
         "mentionGroupAgent": "エージェント",
         "mentionGroupSession": "セッション",
         "mentionGroupCommit": "コミット",
-        "mentionGroupSkill": "スキル"
+        "mentionGroupSkill": "スキル",
+        "mentionGroupAssistant": "アシスタント"
       },
       "messageQueue": {
         "addToQueue": "キューに追加",
@@ -3584,9 +3672,14 @@
             "child_auth_required": "サブエージェント要サインイン",
             "child_rejected": "サブエージェント: 要求拒否",
             "child_unknown": "サブエージェント: エラー",
-            "unknown": "不明なタスク"
+            "unknown": "不明なタスク",
+            "assistant_not_found": "アシスタントなし",
+            "assistants_unsupported": "再起動が必要",
+            "assistant_support_unknown": "応答なし"
           }
-        }
+        },
+        "unknownAssistant": "アシスタント #{id}",
+        "deletedAssistant": "（削除済み）"
       },
       "contentParts": {
         "showingTailOutput": "パフォーマンスのため、ストリーミング中は末尾出力を表示しています。",
@@ -5008,7 +5101,8 @@
       "customAgents": "カスタムエージェント",
       "quickMessages": "クイックメッセージ",
       "taskTemplates": "タスクテンプレート",
-      "preferences": "アプリ設定（言語・外観・切り替え）"
+      "preferences": "アプリ設定（言語・外観・切り替え）",
+      "assistants": "アシスタント"
     },
     "scopeExcluded": {
       "conversations": "会話履歴",
@@ -5078,7 +5172,8 @@
       "customAgents": "カスタムエージェント {count} 件",
       "quickMessages": "クイックメッセージ {count} 件",
       "taskTemplates": "タスクテンプレート {count} 件",
-      "preferences": "アプリ設定 {count} 件"
+      "preferences": "アプリ設定 {count} 件",
+      "assistants": "アシスタント {count} 件"
     },
     "rollbackTitle": "インポートを元に戻す",
     "rollbackHint": "インポートと復元のたびに、直前のこのマシンの設定を保存します。最新の 10 件が残ります。",
@@ -5094,7 +5189,8 @@
     "passphrase": "パスフレーズ",
     "passphraseKeep": "空のままにすると保存済みのパスフレーズを使います",
     "passphrasePlaceholder": "暗号化パスフレーズ",
-    "passphraseHint": "このマシンのキーチェーンにのみ保存され、アップロードされません。他のマシンでも同じパスフレーズを入力してください。"
+    "passphraseHint": "このマシンのキーチェーンにのみ保存され、アップロードされません。他のマシンでも同じパスフレーズを入力してください。",
+    "assistantsRenamed": "このマシンに同じ名前のアシスタントがあったため、{count} 件の名前を変更しました。"
   },
   "backup": {
     "restore": {
@@ -5801,7 +5897,10 @@
     "cronApply": "適用",
     "cronPreviewLabel": "プレビュー",
     "cronOpenBuilder": "スケジュールビルダーを開く",
-    "branchDefault": "デフォルトブランチ"
+    "branchDefault": "デフォルトブランチ",
+    "booleanOn": "オン",
+    "booleanOff": "オフ",
+    "modelNotSwitched": "エージェントが選択したモデルに切り替わらなかったため、これらのオプションは別のモデルのものである可能性があります。"
   },
   "Tasks": {
     "title": "ToDo タスク",

@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod assistant;
 pub mod automation;
 pub mod background;
 pub mod canvas;
@@ -15,6 +16,10 @@ pub mod token_usage;
 pub mod work_task;
 
 pub use agent::AgentType;
+pub use assistant::{
+    AssistantAgentConfig, AssistantAvatar, AssistantDraft, AssistantInfo, AssistantLabelSnapshot,
+    AssistantOptionKind, AssistantOptionLabel, AssistantPatch, AssistantRunSnapshot,
+};
 pub use automation::{
     AutomationAction, AutomationConfig, AutomationDraft, AutomationInfo, AutomationRunInfo,
     AutomationRunStatus, IsolationMode, TriggerKind,

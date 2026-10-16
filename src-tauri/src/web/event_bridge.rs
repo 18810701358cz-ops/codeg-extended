@@ -324,6 +324,35 @@ pub enum ConversationTagChange {
     },
 }
 
+/// Global side-channel for assistant definitions. Assistants are edited in the
+/// settings window but drawn in every window and client — the mention panel,
+/// delegation cards, sub-session rows.
+pub const ASSISTANT_CHANGED_EVENT: &str = "assistant://changed";
+
+/// Payload for [`ASSISTANT_CHANGED_EVENT`].
+///
+/// Always WHOLE rows, never a partial update: a client keeps a row only when
+/// it carries a higher `revision` than the copy it holds, and one revision
+/// always names one content. A nudge carrying only the changed fields would
+/// break that — it would advance a stale copy's revision past the broadcast
+/// that carried the content it missed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AssistantChange {
+    /// Insert-or-replace by id: create, edit, enable/disable, and delete (the
+    /// row then carries `deleted_at`).
+    Upsert {
+        assistant: Box<crate::models::AssistantInfo>,
+    },
+    /// The rows whose position changed in a reorder, whole.
+    Reordered {
+        assistants: Vec<crate::models::AssistantInfo>,
+    },
+    /// Rows changed without a per-row broadcast (a config snapshot applied
+    /// here): re-fetch the whole list.
+    Resync,
+}
+
 /// Per-agent progress of the import picker's local-session scan. Emitted by
 /// `scan_importable_sessions` once per parser so the picker window can render
 /// a live checklist while the (potentially seconds-long) filesystem walk runs.
@@ -826,6 +855,71 @@ mod tests {
         assert_eq!(p["kind"], "layout");
         assert!(p["group"].is_null(), "the layout nudge carries no payload");
         assert!(p["id"].is_null(), "the layout nudge carries no payload");
+    }
+
+    #[test]
+    fn emit_event_broadcasts_assistant_change_wire_shapes() {
+        // The shapes the assistant store switches on: whole rows under
+        // `assistant` / `assistants`, and a bare `resync` nudge.
+        use crate::models::assistant::selection;
+        use crate::models::{AgentType, AssistantAvatar, AssistantInfo, AssistantLabelSnapshot};
+
+        let broadcaster = Arc::new(WebEventBroadcaster::new());
+        let mut rx = broadcaster.subscribe();
+        let emitter = EventEmitter::test_web_only(broadcaster.clone());
+        let now = chrono::Utc::now();
+        let row = AssistantInfo {
+            id: 3,
+            uid: "u-3".to_string(),
+            name: "Reviewer".to_string(),
+            description: String::new(),
+            avatar: AssistantAvatar::Monogram {
+                color: "teal".to_string(),
+            },
+            agent_type: AgentType::Codex,
+            agent_options: selection(None, &[]),
+            label_snapshot: AssistantLabelSnapshot::default(),
+            instructions: String::new(),
+            enabled: true,
+            sort_order: 1,
+            revision: 2,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        };
+
+        emit_event(
+            &emitter,
+            ASSISTANT_CHANGED_EVENT,
+            AssistantChange::Upsert {
+                assistant: Box::new(row.clone()),
+            },
+        );
+        let evt = rx.try_recv().expect("assistant upsert should broadcast");
+        assert_eq!(evt.channel, ASSISTANT_CHANGED_EVENT);
+        let p = &*evt.payload;
+        assert_eq!(p["kind"], "upsert");
+        assert_eq!(p["assistant"]["id"], 3);
+        assert_eq!(p["assistant"]["revision"], 2);
+        assert!(p["assistant"].get("deleted_at").is_some_and(|v| v.is_null()));
+
+        emit_event(
+            &emitter,
+            ASSISTANT_CHANGED_EVENT,
+            AssistantChange::Reordered {
+                assistants: vec![row],
+            },
+        );
+        let evt = rx.try_recv().expect("assistant reorder should broadcast");
+        let p = &*evt.payload;
+        assert_eq!(p["kind"], "reordered");
+        assert_eq!(p["assistants"][0]["name"], "Reviewer");
+
+        emit_event(&emitter, ASSISTANT_CHANGED_EVENT, AssistantChange::Resync);
+        let evt = rx.try_recv().expect("assistant resync should broadcast");
+        let p = &*evt.payload;
+        assert_eq!(p["kind"], "resync");
+        assert!(p["assistant"].is_null(), "the resync nudge carries no rows");
     }
 
     #[test]

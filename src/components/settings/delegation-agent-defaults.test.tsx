@@ -359,3 +359,144 @@ describe("DelegationAgentDefaultsPanel probes", () => {
     ).toBeInTheDocument()
   })
 })
+
+describe("DelegationAgentDefaultsPanel staleness and switches", () => {
+  beforeEach(() => {
+    describeAgentOptions.mockReset()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** For the whole debounce window after a model change the snapshot on
+   *  screen is the previous model's; a value picked off it would be stored
+   *  against the new one. */
+  it("offers nothing off the previous model's snapshot while the new one loads", async () => {
+    vi.useFakeTimers()
+    describeAgentOptions.mockImplementation(
+      (_agent: AgentType, _dir: string | null, cfg: { model: string } | null) =>
+        Promise.resolve(answer(cfg?.model ?? "no-model"))
+    )
+    const first = `model-a-${unique()}`
+    const second = `model-b-${unique()}`
+    const saved = (model: string): Defaults => ({
+      claude_code: { config_values: { model } },
+    })
+
+    const { rerender } = render(panel(saved(first)))
+    await settle()
+    expect(screen.getByRole("combobox")).toBeInTheDocument()
+
+    rerender(panel(saved(second)))
+    // Inside the debounce window: nothing to pick, only the loading line.
+    expect(screen.queryByRole("combobox")).toBeNull()
+    expect(
+      screen.getByText("Loading available options from the agent…")
+    ).toBeInTheDocument()
+
+    await settle()
+    expect(screen.getByRole("combobox")).toBeInTheDocument()
+    expect(
+      screen.getByText(`Agent default: ${second} effort`)
+    ).toBeInTheDocument()
+  })
+
+  /** The agent kept its own model: the options on screen are that model's.
+   *  They stay editable (every row may stay on Default), but the user is
+   *  told, and can ask again. */
+  it("says when the agent did not switch to the saved model, and retries on request", async () => {
+    vi.useFakeTimers()
+    const model = `model-${unique()}`
+    describeAgentOptions.mockResolvedValue({
+      ...answer("own"),
+      unapplied_config_ids: ["model"],
+    })
+    render(panel({ claude_code: { config_values: { model } } }))
+    await settle()
+    expect(
+      screen.getByText(/didn't switch to the selected model/)
+    ).toBeInTheDocument()
+    expect(screen.getByRole("combobox")).toBeInTheDocument()
+    expect(describeAgentOptions).toHaveBeenCalledTimes(1)
+
+    describeAgentOptions.mockResolvedValue({
+      ...answer("switched"),
+      unapplied_config_ids: [],
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+    await settle()
+    expect(describeAgentOptions).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText(/didn't switch to the selected model/)).toBeNull()
+    expect(
+      screen.getByText("Agent default: switched effort")
+    ).toBeInTheDocument()
+  })
+
+  /** A switch is tri-state here: Default stores nothing, On and Off are real
+   *  overrides — an explicit Off is stored as "false". */
+  it("edits a switch as Default / On / Off", async () => {
+    const tag = unique()
+    describeAgentOptions.mockResolvedValue({
+      modes: null,
+      config_options: [
+        {
+          id: `fast-${tag}`,
+          name: "Fast",
+          description: null,
+          category: null,
+          kind: { type: "boolean", current_value: true },
+        },
+      ],
+      available_commands: [],
+      unapplied_config_ids: [],
+    } satisfies AgentOptionsSnapshot)
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const { rerender } = render(
+      panel({ claude_code: { config_values: { model: `m-${tag}` } } }, onChange)
+    )
+    await screen.findByText("Agent default: On")
+    expect(screen.getByRole("combobox")).toHaveTextContent("Default (On)")
+
+    await user.click(screen.getByRole("combobox"))
+    const list = await screen.findByRole("listbox")
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .map((o) => o.textContent)
+    ).toEqual(["Default (On)", "On", "Off"])
+    await user.click(within(list).getByRole("option", { name: "Off" }))
+    expect(onChange).toHaveBeenLastCalledWith({
+      claude_code: {
+        mode_id: undefined,
+        config_values: { model: `m-${tag}`, [`fast-${tag}`]: "false" },
+      },
+    })
+
+    // Back to Default drops the key.
+    rerender(
+      panel(
+        {
+          claude_code: {
+            config_values: { model: `m-${tag}`, [`fast-${tag}`]: "false" },
+          },
+        },
+        onChange
+      )
+    )
+    expect(screen.getByRole("combobox")).toHaveTextContent("Off")
+    await user.click(screen.getByRole("combobox"))
+    await user.click(
+      within(await screen.findByRole("listbox")).getByRole("option", {
+        name: "Default (On)",
+      })
+    )
+    expect(onChange).toHaveBeenLastCalledWith({
+      claude_code: {
+        mode_id: undefined,
+        config_values: { model: `m-${tag}` },
+      },
+    })
+  })
+})

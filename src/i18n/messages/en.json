@@ -768,7 +768,93 @@
       "noConfigAvailable": "This agent has no configurable options.",
       "modeLabel": "Mode",
       "agentDefaultHint": "Agent default: {value}",
-      "defaultOptionLabel": "Default ({value})"
+      "defaultOptionLabel": "Default ({value})",
+      "tabAssistants": "Assistants",
+      "booleanOn": "On",
+      "booleanOff": "Off",
+      "modelNotSwitched": "The agent didn't switch to the selected model, so these options may belong to another model.",
+      "unsavedChanges": "Unsaved changes",
+      "assistants": {
+        "description": "Assistants are delegation presets you can @-mention: an agent with every option picked, plus standing instructions. Delegating to one runs exactly that setup.",
+        "create": "New assistant",
+        "delegationOff": "Multi-Agent Collaboration is off, so assistants can't be delegated to for now.",
+        "unsavedElsewhere": "{tabs} has unsaved changes.",
+        "unsavedGoBack": "Go back",
+        "loadFailed": "Failed to load assistants: {detail}",
+        "empty": "No assistants yet. Create one to give an agent a fixed setup and standing instructions you can @-mention in any conversation.",
+        "reorderFailed": "Failed to reorder assistants",
+        "saveFailed": "Failed to save the assistant",
+        "duplicated": "Created {name}",
+        "deleteFailed": "Failed to delete the assistant",
+        "deleteTitle": "Delete {name}?",
+        "deleteDescription": "It disappears from settings and the mention panel, and can no longer be delegated to. Delegation cards already in conversations keep showing it.",
+        "cancel": "Cancel",
+        "delete": "Delete",
+        "duplicate": "Duplicate",
+        "move": "Move {name}",
+        "enableAssistant": "Enable {name}",
+        "edit": "Edit {name}",
+        "more": "More actions for {name}",
+        "agentNotInstalled": "not installed",
+        "agentDisabled": "disabled",
+        "createTitle": "New assistant",
+        "editTitle": "Edit assistant",
+        "editorDescription": "Pick the agent and every one of its options — each is required. Delegating to this assistant runs exactly this setup.",
+        "nameLabel": "Name",
+        "namePlaceholder": "e.g. Code reviewer",
+        "descriptionLabel": "Description",
+        "descriptionPlaceholder": "When to use this assistant",
+        "descriptionHint": "Shown in the mention panel, and given to the delegating agent so it knows when to pick this assistant.",
+        "agentLabel": "Agent",
+        "agentPlaceholder": "Select an agent",
+        "instructionsLabel": "Standing instructions",
+        "instructionsPlaceholder": "The role and working rules this assistant follows on every task",
+        "instructionsHint": "Handed to the agent with every delegated task. It is not shown in the sub-session's messages.",
+        "charCount": "{count} / {max}",
+        "enabledLabel": "Enabled",
+        "save": "Save",
+        "pickAgentFirst": "Select an agent to see its options.",
+        "pickModelFirst": "Select a model to see the other options.",
+        "modelNotSwitched": "The agent didn't switch to this model, so its other options can't be read. Retry, or pick another model.",
+        "agentUnavailableHint": "This agent is disabled or not installed, so its options can't be checked. The saved options are shown below; pick another agent to change them.",
+        "optionsChanged": "{count, plural, one {The agent's options changed since this was saved — pick the marked option.} other {The agent's options changed since this was saved — pick the # marked options.}}",
+        "missingCount": "{count, plural, one {# option still to pick} other {# options still to pick}}",
+        "cannotSaveProbeFailed": "Can't save: the agent's options couldn't be loaded, so they can't be checked. Retry first.",
+        "cannotSaveModelNotSwitched": "Can't save: the agent didn't switch to the selected model. Retry, or pick another model.",
+        "cannotSaveStillLoading": "Still reading the agent's options…",
+        "savedOptions": "Saved options",
+        "savedNoOptions": "No options were saved for this agent.",
+        "required": "Required",
+        "selectPlaceholder": "Select",
+        "noValuesOffered": "No values offered",
+        "recommended": "Recommended",
+        "optionNew": "New",
+        "optionUnavailable": "Unavailable (was {value})",
+        "avatarChange": "Change avatar",
+        "avatarMonogram": "Letter",
+        "avatarEmoji": "Emoji",
+        "avatarImage": "Image",
+        "avatarMonogramHint": "The first character of the name.",
+        "avatarUseMonogram": "Use the letter",
+        "avatarEmojiPlaceholder": "Type or paste an emoji",
+        "avatarEmojiUse": "Use",
+        "avatarUpload": "Upload image",
+        "avatarUploadHint": "Cropped to a square and scaled down to 128×128.",
+        "avatarTooLarge": "This image is too large even after scaling down. Try another one.",
+        "avatarUnreadable": "This file couldn't be read as an image.",
+        "avatarColor": "Color",
+        "errors": {
+          "emptyName": "Give the assistant a name.",
+          "nameTooLong": "The name can be at most {max} characters.",
+          "duplicateName": "An assistant named “{name}” already exists.",
+          "descriptionTooLong": "The description can be at most {max} characters.",
+          "instructionsTooLong": "The instructions can be at most {max} characters.",
+          "invalidAvatar": "This avatar can't be used. Pick another one.",
+          "avatarTooLarge": "The avatar image is too large.",
+          "invalidAgentOptions": "The agent's options aren't complete. Reopen the assistant and pick every option.",
+          "notFound": "This assistant no longer exists."
+        }
+      }
     },
     "actions": {
       "dragSort": "Drag to reorder",
@@ -2117,7 +2203,8 @@
       "updatedAt": "Updated",
       "none": "—",
       "copyField": "Copy {field}",
-      "copiedField": "Copied {field}"
+      "copiedField": "Copied {field}",
+      "assistant": "Assistant"
     },
     "conversationCard": {
       "untitledConversation": "Untitled conversation",
@@ -3217,7 +3304,8 @@
         "mentionGroupAgent": "Agents",
         "mentionGroupSession": "Sessions",
         "mentionGroupCommit": "Commits",
-        "mentionGroupSkill": "Skills"
+        "mentionGroupSkill": "Skills",
+        "mentionGroupAssistant": "Assistants"
       },
       "messageQueue": {
         "addToQueue": "Queue message",
@@ -3584,9 +3672,14 @@
             "child_auth_required": "subagent needs sign-in",
             "child_rejected": "subagent rejected",
             "child_unknown": "subagent unknown error",
-            "unknown": "unknown task"
+            "unknown": "unknown task",
+            "assistant_not_found": "assistant not found",
+            "assistants_unsupported": "needs restart",
+            "assistant_support_unknown": "no answer"
           }
-        }
+        },
+        "unknownAssistant": "Assistant #{id}",
+        "deletedAssistant": "(deleted)"
       },
       "contentParts": {
         "showingTailOutput": "Showing tail output while streaming for performance.",
@@ -5008,7 +5101,8 @@
       "customAgents": "Custom agents",
       "quickMessages": "Quick messages",
       "taskTemplates": "Task templates",
-      "preferences": "App preferences (language, appearance, toggles)"
+      "preferences": "App preferences (language, appearance, toggles)",
+      "assistants": "Assistants"
     },
     "scopeExcluded": {
       "conversations": "Conversations and history",
@@ -5078,7 +5172,8 @@
       "customAgents": "{count, plural, one {# custom agent} other {# custom agents}}",
       "quickMessages": "{count, plural, one {# quick message} other {# quick messages}}",
       "taskTemplates": "{count, plural, one {# task template} other {# task templates}}",
-      "preferences": "{count, plural, one {# preference} other {# preferences}}"
+      "preferences": "{count, plural, one {# preference} other {# preferences}}",
+      "assistants": "{count, plural, one {# assistant} other {# assistants}}"
     },
     "rollbackTitle": "Undo an import",
     "rollbackHint": "Every import and every restore saves what this machine looked like beforehand. The last ten are kept.",
@@ -5094,7 +5189,8 @@
     "passphrase": "Passphrase",
     "passphraseKeep": "Leave empty to keep the saved passphrase",
     "passphrasePlaceholder": "Encryption passphrase",
-    "passphraseHint": "Kept in this machine's keychain and never uploaded. Enter the same passphrase on your other machines."
+    "passphraseHint": "Kept in this machine's keychain and never uploaded. Enter the same passphrase on your other machines.",
+    "assistantsRenamed": "{count, plural, one {# assistant was renamed: one here already had its name.} other {# assistants were renamed: ones here already had their names.}}"
   },
   "backup": {
     "restore": {
@@ -5801,7 +5897,10 @@
     "cronApply": "Apply",
     "cronPreviewLabel": "Preview",
     "cronOpenBuilder": "Open schedule builder",
-    "branchDefault": "Default branch"
+    "branchDefault": "Default branch",
+    "booleanOn": "On",
+    "booleanOff": "Off",
+    "modelNotSwitched": "The agent didn't switch to the selected model, so these options may belong to another model."
   },
   "Tasks": {
     "title": "To-dos",

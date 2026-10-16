@@ -23,6 +23,7 @@ const custom: MentionPanelPrefs = {
     { kind: "file", visible: true },
     { kind: "commit", visible: true },
     { kind: "agent", visible: false },
+    { kind: "assistant", visible: true },
     { kind: "session", visible: true },
   ],
 }
@@ -46,6 +47,7 @@ describe("mention panel preferences", () => {
     expect(loadMentionPanelPrefs()).toEqual(DEFAULT_MENTION_PANEL_PREFS)
     expect(visibleMentionTabKinds(loadMentionPanelPrefs())).toEqual([
       "agent",
+      "assistant",
       "file",
       "session",
       "commit",
@@ -68,6 +70,7 @@ describe("mention panel preferences", () => {
     expect(visibleMentionTabKinds(loadMentionPanelPrefs())).toEqual([
       "file",
       "commit",
+      "assistant",
       "session",
     ])
   })
@@ -86,7 +89,7 @@ describe("mention panel preferences", () => {
     expect(stored.tabs).toContainEqual({ kind: "file", visible: true })
   })
 
-  it("drops unknown and repeated kinds and appends missing ones, shown", () => {
+  it("drops unknown and repeated kinds, and adds missing ones beside their neighbours, shown", () => {
     const parsed = parseMentionPanelPrefs({
       tabs: [
         { kind: "commit", visible: false },
@@ -98,15 +101,60 @@ describe("mention panel preferences", () => {
       ],
     })
     expect(parsed.tabs).toEqual([
+      // Kinds the value never mentioned (a tab added after it was written)
+      // join right after the nearest kind before them in the built-in order
+      // that is there — first when none is — shown.
+      { kind: "agent", visible: true },
+      { kind: "assistant", visible: true },
+      { kind: "file", visible: true },
       // First occurrence wins.
       { kind: "commit", visible: false },
       // Only an explicit `false` hides a tab.
       { kind: "session", visible: true },
-      // Kinds the value never mentioned (a tab added after it was written)
-      // join at the end, in the built-in order, shown.
-      { kind: "agent", visible: true },
-      { kind: "file", visible: true },
     ])
+  })
+
+  it("reads a list written before the assistant tab as the built-in one", () => {
+    const old = parseMentionPanelPrefs({
+      tabs: ["agent", "file", "session", "commit"].map((kind) => ({
+        kind,
+        visible: true,
+      })),
+    })
+    // So "Reset" does not light up for someone who never customized it.
+    expect(old).toEqual(DEFAULT_MENTION_PANEL_PREFS)
+  })
+
+  it("puts a new tab after its neighbour, a hidden one included", () => {
+    const parsed = parseMentionPanelPrefs({
+      tabs: [
+        { kind: "file", visible: true },
+        { kind: "agent", visible: false },
+        { kind: "session", visible: true },
+        { kind: "commit", visible: true },
+      ],
+    })
+    expect(parsed.tabs.map((tab) => tab.kind)).toEqual([
+      "file",
+      "agent",
+      "assistant",
+      "session",
+      "commit",
+    ])
+    expect(parsed.tabs[2]).toEqual({ kind: "assistant", visible: true })
+  })
+
+  it("changes nothing on a second pass", () => {
+    const once = parseMentionPanelPrefs({
+      tabs: [
+        { kind: "commit", visible: true },
+        { kind: "file", visible: false },
+        { kind: "file", visible: true },
+      ],
+    })
+    expect(parseMentionPanelPrefs(once)).toEqual(once)
+    // The file tab cannot be hidden, by a duplicate or otherwise.
+    expect(once.tabs.find((tab) => tab.kind === "file")?.visible).toBe(true)
   })
 
   it("falls back to the defaults on a corrupt or unreadable value", () => {
@@ -206,13 +254,13 @@ describe("mention panel preferences", () => {
     it("hands a hook a visible-tab list that only changes with the value", () => {
       const { result } = renderHook(() => useVisibleMentionTabs())
       const first = result.current
-      expect(first).toEqual(["agent", "file", "session", "commit"])
+      expect(first).toEqual(["agent", "assistant", "file", "session", "commit"])
 
       act(() => writeFromAnotherWindow("unrelated", "x"))
       expect(result.current).toBe(first)
 
       act(() => saveMentionPanelPrefs(custom))
-      expect(result.current).toEqual(["file", "commit", "session"])
+      expect(result.current).toEqual(["file", "commit", "assistant", "session"])
     })
   })
 })

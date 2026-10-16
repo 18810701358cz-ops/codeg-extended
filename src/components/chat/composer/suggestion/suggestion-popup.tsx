@@ -32,6 +32,7 @@ const FETCH_DEBOUNCE_MS = 150
 // is kept for type completeness (`ReferenceKind`) though it is not a shown tab.
 const DEFAULT_TAB_LABELS: Record<ReferenceKind, string> = {
   agent: "Agents",
+  assistant: "Assistants",
   file: "Files",
   session: "Sessions",
   commit: "Commits",

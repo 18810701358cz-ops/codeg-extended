@@ -227,6 +227,12 @@ pub struct ActiveDelegationState {
     pub task_preview: String,
     #[serde(default)]
     pub task_id: String,
+    /// The assistant the child runs as, mirrored from `DelegationStarted` for
+    /// the same re-attach reason as the task label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_id: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_name: Option<String>,
 }
 
 /// The in-flight user prompt for the current turn. Captured from
@@ -1349,6 +1355,8 @@ impl SessionState {
                 agent_type,
                 task_preview,
                 task_id,
+                assistant_id,
+                assistant_name,
                 ..
             } => {
                 // Record the running delegation so the binding is snapshot-
@@ -1366,6 +1374,8 @@ impl SessionState {
                         agent_type: *agent_type,
                         task_preview: task_preview.clone(),
                         task_id: task_id.clone(),
+                        assistant_id: *assistant_id,
+                        assistant_name: assistant_name.clone(),
                     },
                 );
             }
@@ -4221,6 +4231,8 @@ mod tests {
             agent_type: AgentType::Codex,
             task_preview: "run the tests".into(),
             task_id: "task-ss-1".into(),
+            assistant_id: None,
+            assistant_name: None,
         }
     }
 
@@ -4235,6 +4247,8 @@ mod tests {
                 duration_ms: 1,
                 text_preview: None,
             },
+            assistant_id: None,
+            assistant_name: None,
         }
     }
 
