@@ -355,6 +355,15 @@ export function CommandManageDialog({
     setDraft(EMPTY_DRAFT)
   }, [])
 
+  // A save holds the form until it settles, so what it ends in — the saved
+  // command, or why it wasn't — shows on the command that was saved.
+  const selectCommand = useCallback(
+    (id: number) => {
+      if (!saving) setSelectedId(id)
+    },
+    [saving]
+  )
+
   const persistReorder = useCallback(
     async (ids: number[]) => {
       if (ids.length === 0) return
@@ -505,7 +514,7 @@ export function CommandManageDialog({
                         onChange={(event) => setSearchQuery(event.target.value)}
                         placeholder={t("searchPlaceholder")}
                       />
-                      <Button size="sm" onClick={startNew}>
+                      <Button size="sm" onClick={startNew} disabled={saving}>
                         <Plus className="h-3.5 w-3.5" />
                         {t("newCommand")}
                       </Button>
@@ -544,7 +553,7 @@ export function CommandManageDialog({
                             command={command}
                             selected={selectedId === command.id}
                             disabled={dragDisabled}
-                            onSelect={setSelectedId}
+                            onSelect={selectCommand}
                             onDragEnd={() => {
                               const order = pendingOrderRef.current
                               pendingOrderRef.current = null

@@ -232,6 +232,37 @@ describe("CommandManageDialog", () => {
     ])
   })
 
+  it("keeps a save's failure on its own command, whatever is clicked meanwhile", async () => {
+    h.hostCommands = [
+      hostCommand(3, "dev", "pnpm dev"),
+      hostCommand(4, "test", "pnpm test"),
+    ]
+    let fail: (err: Error) => void = () => {}
+    h.update.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject
+        })
+    )
+    renderDialog()
+    await screen.findByText("test")
+    // "dev", listed first, is the one selected.
+    fireEvent.change(screen.getByLabelText(md.commandLabel), {
+      target: { value: "pnpm dev --port 3001" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    fireEvent.click(screen.getByText("test"))
+    expect(screen.getByRole("button", { name: md.newCommand })).toBeDisabled()
+    fail(new Error("host down"))
+    expect(
+      await screen.findByText(`${md.saveFailed}: host down`)
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText(md.nameLabel)).toHaveValue("dev")
+    expect(screen.getByLabelText(md.commandLabel)).toHaveValue(
+      "pnpm dev --port 3001"
+    )
+  })
+
   it("keeps a global command whose move to the folder the host answers badly", async () => {
     createGlobalCommand("mine", "pnpm mine")
     h.create.mockResolvedValue(hostCommand(-2, "x", "local: echo injected"))
