@@ -9,7 +9,7 @@
 
 import { useRef, useState } from "react"
 import { useTranslations } from "next-intl"
-import { Check, ImageUp } from "lucide-react"
+import { Check, ImageUp, Pencil } from "lucide-react"
 
 import {
   AssistantAvatar,
@@ -178,13 +178,22 @@ export function AssistantAvatarPicker({
       }}
     >
       <PopoverTrigger asChild>
+        {/* The pencil chip is what says "this picture can be changed" — a bare
+            avatar reads as decoration, not as a control. */}
         <button
           type="button"
           disabled={disabled}
           aria-label={t("avatarChange")}
-          className="rounded-full outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          title={t("avatarChange")}
+          className="group/avatar relative shrink-0 rounded-full outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50"
         >
           <AssistantAvatar avatar={avatar} name={name} size={48} />
+          <span
+            aria-hidden
+            className="absolute -end-0.5 -bottom-0.5 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm transition-colors group-hover/avatar:text-foreground"
+          >
+            <Pencil className="size-2.5" />
+          </span>
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-3">

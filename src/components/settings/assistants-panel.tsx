@@ -6,10 +6,19 @@
  * delete — and the entry to create one. Every change is written at once (there
  * is no section-wide save for this tab), and the list stays live across windows
  * through the assistants store.
+ *
+ * Layout follows the settings house style (`SettingCard`): the rows share one
+ * bordered surface with a hairline between them, rather than each floating in
+ * a box of its own. A row reads left to right as handle → who (avatar, name,
+ * description, the agent and its picks) → its on/off switch → the actions on
+ * it (edit, and the rarer ones behind "more"). Clicking anywhere on the row
+ * outside a control opens the editor too; the pencil is the keyboard's (and
+ * the discoverable) way to the same place.
  */
 
 import {
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   useCallback,
   useMemo,
@@ -32,6 +41,7 @@ import { toast } from "sonner"
 
 import { AgentIcon } from "@/components/agent-icon"
 import { AssistantAvatar } from "@/components/assistants/assistant-avatar"
+import { SettingsError } from "@/components/shared/settings-section"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,15 +50,19 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
+  AlertDialogMedia,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useAcpAgents } from "@/hooks/use-acp-agents"
 import {
@@ -64,6 +78,7 @@ import {
   useAssistantsSync,
 } from "@/stores/assistants-store"
 import { AssistantEditorDialog, NAME_MAX } from "./assistant-editor-dialog"
+import { PanelNotice } from "./panel-notice"
 
 export interface AssistantsPanelProps {
   /** The SAVED multi-agent switch (not the form's draft): while it is off, an
@@ -73,7 +88,21 @@ export interface AssistantsPanelProps {
   unsavedTabs: string[]
   /** Go back to the first tab with unsaved changes. */
   onShowUnsaved?: () => void
+  /** Go to the tab that holds the multi-agent switch. */
+  onShowGeneral?: () => void
 }
+
+/** The shared surface of the list, its loading placeholder and nothing else:
+ *  `SettingCard`'s look, without its `overflow-hidden` — a row being dragged
+ *  has to be able to leave the box. */
+const LIST_SURFACE =
+  "divide-y divide-border/60 rounded-xl border border-border/70 bg-muted/40"
+
+/** What a click on a row must leave alone: its own controls, and anything a
+ *  control portals out (React bubbles a menu item's click through the menu's
+ *  owner, i.e. into the row). */
+const ROW_CONTROLS =
+  "button, a, input, textarea, select, [role=switch], [role=menu], [role=menuitem], [role=dialog], [role=alertdialog]"
 
 function sameOrder(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((id, idx) => id === b[idx])
@@ -117,6 +146,7 @@ export function AssistantsPanel({
   delegationEnabled,
   unsavedTabs,
   onShowUnsaved,
+  onShowGeneral,
 }: AssistantsPanelProps) {
   // The settings window has no workspace layout to keep this store live.
   useAssistantsSync()
@@ -135,7 +165,16 @@ export function AssistantsPanel({
     assistant: AssistantInfo | null
   } | null>(null)
   const editorSeq = useRef(0)
-  const [deleting, setDeleting] = useState<AssistantInfo | null>(null)
+  // What the confirmation shows. The target outlives `open`, so the dialog
+  // keeps its name and avatar while it animates closed.
+  const [deletion, setDeletion] = useState<{
+    open: boolean
+    target: AssistantInfo | null
+  }>({ open: false, target: null })
+  /** What the confirmation deletes: taken — and cleared — by the first press
+   *  of Delete, so a second press while the dialog animates out (its button
+   *  still under the pointer) finds nothing left to delete. */
+  const pendingDeleteRef = useRef<AssistantInfo | null>(null)
   const tErr = t as unknown as AppErrorTranslator
   const booleanLabels = { on: tm("booleanOn"), off: tm("booleanOff") }
 
@@ -247,9 +286,20 @@ export function AssistantsPanel({
     [assistants, t, tErr]
   )
 
+  const askDelete = (assistant: AssistantInfo) => {
+    pendingDeleteRef.current = assistant
+    setDeletion({ open: true, target: assistant })
+  }
+
+  const closeDelete = () => {
+    pendingDeleteRef.current = null
+    setDeletion((prev) => ({ ...prev, open: false }))
+  }
+
   const confirmDelete = useCallback(() => {
-    const target = deleting
-    setDeleting(null)
+    const target = pendingDeleteRef.current
+    pendingDeleteRef.current = null
+    setDeletion((prev) => ({ ...prev, open: false }))
     if (!target) return
     useAssistantsStore
       .getState()
@@ -259,57 +309,129 @@ export function AssistantsPanel({
           description: toLocalizedErrorMessage(err, tErr),
         })
       )
-  }, [deleting, t, tErr])
+  }, [t, tErr])
 
   const openEditor = (assistant: AssistantInfo | null) => {
     editorSeq.current += 1
     setEditor({ key: editorSeq.current, assistant })
   }
 
+  const empty = hydrated && shown.length === 0
+  // Nothing read yet: hold the list's place instead of leaving a gap that the
+  // rows then push everything down into.
+  const loading = !hydrated && !loadError && shown.length === 0
+
   return (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs leading-5 text-muted-foreground">
+    // A container, so the header can stack by the width this panel actually
+    // gets (the settings sidebar takes its share of the window).
+    <div className="@container space-y-3">
+      <div className="flex flex-col items-start gap-3 @lg:flex-row @lg:items-center @lg:justify-between @lg:gap-4">
+        <p className="min-w-0 text-xs leading-5 text-muted-foreground">
           {t("description")}
         </p>
-        <Button size="sm" onClick={() => openEditor(null)}>
-          <Plus className="size-3.5" aria-hidden />
-          {t("create")}
-        </Button>
+        {/* The empty state carries its own, larger way in — two "New" buttons
+            on one screen would only compete. */}
+        {empty ? null : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            onClick={() => openEditor(null)}
+          >
+            <Plus aria-hidden />
+            {t("create")}
+          </Button>
+        )}
       </div>
 
       {delegationEnabled === false ? (
-        <p className="flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-          <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
+        <PanelNotice
+          tone="warning"
+          icon={<AlertTriangle className="size-3.5" aria-hidden />}
+          action={
+            onShowGeneral ? (
+              <Button
+                size="xs"
+                variant="outline"
+                className="bg-background"
+                onClick={onShowGeneral}
+              >
+                {t("delegationOffAction", { tab: tm("tabGeneral") })}
+              </Button>
+            ) : null
+          }
+        >
           {t("delegationOff")}
-        </p>
+        </PanelNotice>
       ) : null}
 
       {unsavedTabs.length > 0 ? (
-        <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
-          <span className="text-muted-foreground">
-            {t("unsavedElsewhere", { tabs: unsavedTabs.join(" / ") })}
-          </span>
-          {onShowUnsaved ? (
-            <Button size="xs" variant="ghost" onClick={onShowUnsaved}>
-              {t("unsavedGoBack")}
-            </Button>
-          ) : null}
-        </div>
+        <PanelNotice
+          tone="muted"
+          // The same amber dot the tab strip marks those tabs with.
+          icon={
+            <span className="size-1.5 rounded-full bg-amber-500" aria-hidden />
+          }
+          action={
+            onShowUnsaved ? (
+              <Button
+                size="xs"
+                variant="outline"
+                className="bg-background"
+                onClick={onShowUnsaved}
+              >
+                {t("unsavedGoBack")}
+              </Button>
+            ) : null
+          }
+        >
+          {t("unsavedElsewhere", { tabs: unsavedTabs.join(" / ") })}
+        </PanelNotice>
       ) : null}
 
       {loadError && !hydrated ? (
-        <p className="text-xs text-destructive">
-          {t("loadFailed", { detail: loadError })}
-        </p>
+        <SettingsError>
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>{t("loadFailed", { detail: loadError })}</span>
+            <Button
+              size="xs"
+              variant="outline"
+              className="bg-background text-foreground"
+              onClick={() => void useAssistantsStore.getState().fetchAll()}
+            >
+              {tm("retry")}
+            </Button>
+          </span>
+        </SettingsError>
       ) : null}
 
-      {hydrated && shown.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed px-6 py-8 text-center">
-          <UserRound className="size-6 text-muted-foreground" aria-hidden />
-          <p className="max-w-sm text-xs text-muted-foreground">{t("empty")}</p>
-          <Button size="sm" variant="outline" onClick={() => openEditor(null)}>
-            <Plus className="size-3.5" aria-hidden />
+      {loading ? (
+        <div className={LIST_SURFACE} aria-hidden>
+          {[0, 1].map((i) => (
+            <div key={i} className="flex items-center gap-3 px-3 py-3">
+              <Skeleton className="ms-6 size-9 shrink-0 rounded-full" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-3 w-28 rounded-full" />
+                <Skeleton className="h-2.5 w-52 rounded-full" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {empty ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border/70 px-6 py-10 text-center">
+          <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <UserRound className="size-5" aria-hidden />
+          </span>
+          <div className="space-y-1">
+            <p className="text-sm font-medium">{t("emptyTitle")}</p>
+            <p className="max-w-sm text-xs leading-5 text-balance text-muted-foreground">
+              {t("empty")}
+            </p>
+          </div>
+          <Button size="sm" onClick={() => openEditor(null)}>
+            <Plus aria-hidden />
             {t("create")}
           </Button>
         </div>
@@ -322,7 +444,7 @@ export function AssistantsPanel({
           values={shownIds}
           onReorder={handleReorder}
           aria-label={tm("tabAssistants")}
-          className="space-y-1.5"
+          className={LIST_SURFACE}
         >
           {shown.map((assistant, index) => (
             <AssistantRow
@@ -338,7 +460,7 @@ export function AssistantsPanel({
               onToggle={toggle}
               onEdit={() => openEditor(assistant)}
               onDuplicate={() => duplicate(assistant)}
-              onDelete={() => setDeleting(assistant)}
+              onDelete={() => askDelete(assistant)}
             />
           ))}
         </Reorder.Group>
@@ -356,15 +478,24 @@ export function AssistantsPanel({
       ) : null}
 
       <AlertDialog
-        open={deleting !== null}
+        open={deletion.open}
         onOpenChange={(open) => {
-          if (!open) setDeleting(null)
+          if (!open) closeDelete()
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
+            {/* Whose deletion this is, at a glance — the name alone can be one
+                of several similar ones. */}
+            <AlertDialogMedia className="bg-transparent">
+              <AssistantAvatar
+                avatar={deletion.target?.avatar}
+                name={deletion.target?.name ?? ""}
+                size={56}
+              />
+            </AlertDialogMedia>
             <AlertDialogTitle>
-              {t("deleteTitle", { name: deleting?.name ?? "" })}
+              {t("deleteTitle", { name: deletion.target?.name ?? "" })}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {t("deleteDescription")}
@@ -372,10 +503,7 @@ export function AssistantsPanel({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={confirmDelete}
-            >
+            <AlertDialogAction variant="destructive" onClick={confirmDelete}>
               {t("delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -417,6 +545,11 @@ function AssistantRow({
 }: AssistantRowProps) {
   const t = useTranslations("AcpAgentSettings.multiAgent.assistants")
   const dragControls = useDragControls()
+  const [dragging, setDragging] = useState(false)
+  /** The press that ends in the next click started on the drag handle: that
+   *  click (wherever the row has carried the pointer to) is the drop, not a
+   *  request to open the editor. */
+  const pressedHandleRef = useRef(false)
   const agentProblem = !agentsKnown
     ? null
     : !agent || !agent.available
@@ -424,6 +557,9 @@ function AssistantRow({
       : !agent.enabled
         ? t("agentDisabled")
         : null
+  const agentLabel = agent
+    ? getAgentLabel(assistant.agent_type)
+    : assistant.label_snapshot.agent || getAgentLabel(assistant.agent_type)
 
   const startDrag = (event: PointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
@@ -439,6 +575,14 @@ function AssistantRow({
       onMove(assistant.id, 1)
     }
   }
+  const onRowClick = (event: MouseEvent<HTMLLIElement>) => {
+    if (pressedHandleRef.current) return
+    const target = event.target as Element | null
+    if (target?.closest(ROW_CONTROLS)) return
+    // Selecting the description to copy it is not a request to edit.
+    if (window.getSelection()?.toString()) return
+    onEdit()
+  }
 
   return (
     <Reorder.Item
@@ -449,89 +593,136 @@ function AssistantRow({
       dragControls={dragControls}
       dragMomentum={false}
       layout="position"
-      onDragEnd={onDragEnd}
+      onDragStart={() => setDragging(true)}
+      onDragEnd={() => {
+        setDragging(false)
+        onDragEnd()
+      }}
+      onPointerDownCapture={(event: PointerEvent<HTMLLIElement>) => {
+        pressedHandleRef.current = !!(event.target as Element | null)?.closest(
+          "[data-drag-handle]"
+        )
+      }}
+      onClick={onRowClick}
       data-assistant-row={assistant.id}
-      className="flex items-center gap-2.5 rounded-lg border border-border/70 bg-background px-2 py-2"
+      className={cn(
+        "group/row relative flex cursor-pointer items-center gap-3 py-2.5 ps-2 pe-3 transition-colors first:rounded-t-xl last:rounded-b-xl",
+        // Lifted while dragged: opaque (the rows it passes over must not show
+        // through), its own outline instead of the hairline it shared.
+        dragging
+          ? "z-10 cursor-grabbing rounded-xl border-transparent bg-card shadow-lg ring-1 ring-border"
+          : "hover:bg-muted/60"
+      )}
     >
       <button
         type="button"
+        data-drag-handle
         onPointerDown={startDrag}
         onKeyDown={onHandleKeyDown}
         title={t("move", { name: assistant.name })}
         aria-label={t("move", { name: assistant.name })}
-        className="cursor-grab touch-none rounded p-0.5 text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none active:cursor-grabbing"
+        className="flex h-8 w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/50 transition-colors group-hover/row:text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none active:cursor-grabbing"
       >
-        <GripVertical className="size-3.5" />
+        <GripVertical className="size-3.5" aria-hidden />
       </button>
-      <AssistantAvatar
-        avatar={assistant.avatar}
-        name={assistant.name}
-        size={32}
-      />
-      <div className={cn("min-w-0 flex-1", !assistant.enabled && "opacity-60")}>
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-sm font-medium">{assistant.name}</span>
-          {agentProblem ? (
-            <span
-              className="flex shrink-0 items-center gap-0.5 text-[0.625rem] text-amber-700 dark:text-amber-400"
-              title={agentProblem}
-            >
-              <AlertTriangle className="size-3" aria-hidden />
-              {agentProblem}
-            </span>
-          ) : null}
-        </div>
-        {assistant.description ? (
-          <p className="truncate text-xs text-muted-foreground">
-            {assistant.description}
+
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-3",
+          // An assistant that is off fades as a whole — its picture included —
+          // so the switch beside it is not the only sign.
+          !assistant.enabled && "opacity-55"
+        )}
+      >
+        <AssistantAvatar
+          avatar={assistant.avatar}
+          name={assistant.name}
+          size={36}
+        />
+        <div className="min-w-0 flex-1">
+          {/* What the user typed keeps its own direction (`dir="auto"`, an
+              isolated inline run) while the line stays aligned to the row's
+              start — a Chinese name in an Arabic window still ends with its
+              own full stop, and still sits next to its avatar. */}
+          <p className="truncate text-sm leading-5 font-medium">
+            <span dir="auto">{assistant.name}</span>
           </p>
-        ) : null}
-        <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[0.6875rem] text-muted-foreground">
-          <AgentIcon agentType={assistant.agent_type} className="size-3" />
-          <span className="truncate">
-            {agent
-              ? getAgentLabel(assistant.agent_type)
-              : assistant.label_snapshot.agent ||
-                getAgentLabel(assistant.agent_type)}
-            {summary ? ` · ${summary}` : ""}
-          </span>
+          {assistant.description ? (
+            <p className="truncate text-xs leading-5 text-muted-foreground">
+              <span dir="auto">{assistant.description}</span>
+            </p>
+          ) : null}
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
+            {/* The label right beside it already names the agent. */}
+            <span aria-hidden className="flex shrink-0">
+              <AgentIcon
+                agentType={assistant.agent_type}
+                className="size-3.5"
+              />
+            </span>
+            <span className="truncate">
+              {agentLabel}
+              {summary ? ` · ${summary}` : ""}
+            </span>
+            {/* On the agent's line, so it reads as the agent's state rather
+                than the assistant's — the switch says that one. */}
+            {agentProblem ? (
+              <Badge
+                variant="outline"
+                className="h-4 gap-0.5 border-amber-500/40 bg-amber-500/10 px-1.5 text-[0.625rem] text-amber-700 dark:text-amber-400"
+              >
+                <AlertTriangle aria-hidden />
+                {agentProblem}
+              </Badge>
+            ) : null}
+          </div>
         </div>
       </div>
-      <Switch
-        className="shrink-0"
-        checked={assistant.enabled}
-        aria-label={t("enableAssistant", { name: assistant.name })}
-        onCheckedChange={(enabled) => onToggle(assistant, enabled)}
-      />
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        aria-label={t("edit", { name: assistant.name })}
-        onClick={onEdit}
-      >
-        <Pencil className="size-3.5" />
-      </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+
+      {/* State, then actions: the switch stands apart from the two buttons
+          that act on the row, which sit together as one group. */}
+      <div className="flex shrink-0 items-center gap-1.5 @lg:gap-3">
+        <Switch
+          checked={assistant.enabled}
+          aria-label={t("enableAssistant", { name: assistant.name })}
+          onCheckedChange={(enabled) => onToggle(assistant, enabled)}
+        />
+        <div className="flex items-center gap-0.5">
           <Button
-            size="icon-xs"
+            size="icon-sm"
             variant="ghost"
-            aria-label={t("more", { name: assistant.name })}
+            className="text-muted-foreground"
+            title={t("edit", { name: assistant.name })}
+            aria-label={t("edit", { name: assistant.name })}
+            onClick={onEdit}
           >
-            <MoreHorizontal className="size-3.5" />
+            <Pencil className="size-3.5" aria-hidden />
           </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={onDuplicate}>
-            <Copy className="size-3.5" />
-            {t("duplicate")}
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-            <Trash2 className="size-3.5" />
-            {t("delete")}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="text-muted-foreground"
+                aria-label={t("more", { name: assistant.name })}
+              >
+                <MoreHorizontal aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-40">
+              <DropdownMenuItem onSelect={onDuplicate}>
+                <Copy className="size-3.5" aria-hidden />
+                {t("duplicate")}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                <Trash2 className="size-3.5" aria-hidden />
+                {t("delete")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
     </Reorder.Item>
   )
 }

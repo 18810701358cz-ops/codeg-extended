@@ -1,9 +1,17 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { NextIntlClientProvider } from "next-intl"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type {
+  AcpAgentInfo,
   AgentDelegationDefaults,
   AgentOptionsSnapshot,
   AgentType,
@@ -12,16 +20,47 @@ import type {
 } from "@/lib/types"
 
 const describeAgentOptions = vi.hoisted(() => vi.fn())
+const agents = vi.hoisted(() => ({ list: [] as unknown[] }))
 
 vi.mock("@/lib/api", () => ({ describeAgentOptions }))
 vi.mock("@/hooks/use-acp-agents", () => ({
-  useAcpAgents: () => ({ agents: [], fresh: true, refresh: () => {} }),
+  useAcpAgents: () => ({ agents: agents.list, fresh: true, refresh: () => {} }),
 }))
 
-import { DelegationAgentDefaultsPanel } from "./delegation-agent-defaults"
+import {
+  DelegationAgentDefaultsPanel,
+  type DelegationAgentDefaultsPanelProps,
+} from "./delegation-agent-defaults"
 import enMessages from "@/i18n/messages/en.json"
 
 type Defaults = Partial<Record<AgentType, AgentDelegationDefaults>>
+
+function agent(
+  agentType: AgentType,
+  patch: Partial<AcpAgentInfo> = {}
+): AcpAgentInfo {
+  return {
+    agent_type: agentType,
+    name: agentType,
+    enabled: true,
+    available: true,
+    sort_order: 0,
+    ...patch,
+  } as AcpAgentInfo
+}
+
+/** The registry the panel lists, in the user's order: one disabled agent
+ *  (not a delegation target) and one not installed. */
+const REGISTRY = [
+  agent("claude_code"),
+  agent("codex"),
+  agent("gemini", { enabled: false }),
+  agent("cline", { available: false }),
+]
+
+beforeEach(() => {
+  agents.list = REGISTRY
+})
 
 /** A probe answer whose effort default is named after `tag`, so the
  *  "Agent default: …" hint on screen says which answer is showing. */
@@ -52,12 +91,78 @@ function answer(tag: string): AgentOptionsSnapshot {
   }
 }
 
-function panel(value: Defaults, onChange: (next: Defaults) => void = () => {}) {
+function panel(
+  value: Defaults,
+  onChange: (next: Defaults) => void = () => {},
+  props: Partial<DelegationAgentDefaultsPanelProps> = {}
+) {
   return (
     <NextIntlClientProvider locale="en" messages={enMessages}>
-      <DelegationAgentDefaultsPanel value={value} onChange={onChange} />
+      <DelegationAgentDefaultsPanel
+        value={value}
+        onChange={onChange}
+        {...props}
+      />
     </NextIntlClientProvider>
   )
+}
+
+/** The option rows' controls, top to bottom (the agent picker left out). */
+const optionRows = () =>
+  screen
+    .getAllByRole("combobox")
+    .map((combobox) => combobox.getAttribute("aria-label"))
+    .filter((name) => name !== "Agent")
+
+/** Picks an agent with plain events, which a fake clock does not stall. */
+function chooseAgent(name: string) {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "Agent" }), {
+    key: "Enter",
+  })
+  fireEvent.click(
+    within(screen.getByRole("listbox")).getByRole("option", { name })
+  )
+}
+
+/** A probe answer listing `effort` before the model, effort's default named
+ *  after the model it was probed for. */
+function modelAnswer(
+  model: string | null,
+  models: string[],
+  unapplied: string[] = []
+): AgentOptionsSnapshot {
+  const effort = `${model ?? "no-model"}-effort`
+  return {
+    modes: null,
+    config_options: [
+      {
+        id: "effort",
+        name: "Effort",
+        description: null,
+        category: "thought_level",
+        kind: {
+          type: "select",
+          current_value: effort,
+          options: [choice(effort, effort)],
+          groups: [],
+        },
+      },
+      {
+        id: "model",
+        name: "Model",
+        description: null,
+        category: "model",
+        kind: {
+          type: "select",
+          current_value: models[0],
+          options: models.map((m) => choice(m, m)),
+          groups: [],
+        },
+      },
+    ],
+    available_commands: [],
+    unapplied_config_ids: unapplied,
+  }
 }
 
 const choice = (value: string, name: string) => ({
@@ -88,6 +193,10 @@ function selectAnswer(
     available_commands: [],
   }
 }
+
+/** Real-clock waits for a probe to land: past the panel's 250ms debounce, on
+ *  a machine a full run keeps busy — the default 1s does not leave enough. */
+const PROBED = { timeout: 5000 }
 
 /** Past the panel's 250ms debounce, settling the probe's promise chain. */
 async function settle() {
@@ -172,10 +281,10 @@ describe("DelegationAgentDefaultsPanel probes", () => {
 
     // Codex's probe is still running when the user goes back to Claude Code,
     // whose snapshot is cached.
-    fireEvent.click(screen.getByRole("tab", { name: "Codex" }))
+    chooseAgent("Codex")
     await settle()
     expect(describeAgentOptions).toHaveBeenLastCalledWith("codex", null, null)
-    fireEvent.click(screen.getByRole("tab", { name: "Claude Code" }))
+    chooseAgent("Claude Code")
     await settle()
     expect(
       screen.getByText(`Agent default: ${claudeModel} effort`)
@@ -247,12 +356,13 @@ describe("DelegationAgentDefaultsPanel probes", () => {
 
     // The hint keeps the full channel-qualified default (the header can't
     // carry the channel there)…
-    await screen.findByText(`Agent default: ${chanA}/glm-5`)
+    await screen.findByText(`Agent default: ${chanA}/glm-5`, {}, PROBED)
     // …the trigger shows the selected row as the list does…
-    expect(screen.getByRole("combobox")).toHaveTextContent(/^glm-5$/)
+    const model = screen.getByRole("combobox", { name: "Model" })
+    expect(model).toHaveTextContent(/^glm-5$/)
 
     // …and the picker groups by channel and strips the prefix from rows.
-    await user.click(screen.getByRole("combobox"))
+    await user.click(model)
     const list = await screen.findByRole("listbox")
     expect(within(list).getByText(chanA)).toBeInTheDocument()
     expect(within(list).getByText(chanB)).toBeInTheDocument()
@@ -324,8 +434,8 @@ describe("DelegationAgentDefaultsPanel probes", () => {
       ])
     )
     const { unmount } = render(panel(saved(`effort-probe-${tag}`)))
-    await screen.findByText(`Agent default: low/${tag}`)
-    await user.click(screen.getByRole("combobox"))
+    await screen.findByText(`Agent default: low/${tag}`, {}, PROBED)
+    await user.click(screen.getByRole("combobox", { name: "effort" }))
     let list = await screen.findByRole("listbox")
     expect(within(list).queryAllByRole("group")).toHaveLength(0)
     expect(within(list).getByText(`high/${tag}`)).toBeInTheDocument()
@@ -346,8 +456,8 @@ describe("DelegationAgentDefaultsPanel probes", () => {
       )
     )
     render(panel(saved(`fast-${tag}`)))
-    await screen.findByText("Agent default: Fast")
-    await user.click(screen.getByRole("combobox"))
+    await screen.findByText("Agent default: Fast", {}, PROBED)
+    await user.click(screen.getByRole("combobox", { name: "model" }))
     list = await screen.findByRole("listbox")
     expect(
       within(
@@ -370,36 +480,73 @@ describe("DelegationAgentDefaultsPanel staleness and switches", () => {
   })
 
   /** For the whole debounce window after a model change the snapshot on
-   *  screen is the previous model's; a value picked off it would be stored
-   *  against the new one. */
-  it("offers nothing off the previous model's snapshot while the new one loads", async () => {
+   *  screen is the previous model's; a value picked off its other rows would
+   *  be stored against the new one. The model row is not one of them: which
+   *  models the agent offers does not depend on the one picked. */
+  it("keeps only the model offered while the rest is probed for a newly picked one", async () => {
     vi.useFakeTimers()
+    const tag = unique()
+    const models = [`model-a-${tag}`, `model-b-${tag}`]
     describeAgentOptions.mockImplementation(
       (_agent: AgentType, _dir: string | null, cfg: { model: string } | null) =>
-        Promise.resolve(answer(cfg?.model ?? "no-model"))
+        Promise.resolve(modelAnswer(cfg?.model ?? null, models))
     )
-    const first = `model-a-${unique()}`
-    const second = `model-b-${unique()}`
     const saved = (model: string): Defaults => ({
       claude_code: { config_values: { model } },
     })
 
-    const { rerender } = render(panel(saved(first)))
+    const { rerender } = render(panel(saved(models[0])))
     await settle()
-    expect(screen.getByRole("combobox")).toBeInTheDocument()
+    // The model comes first, though the agent lists it second.
+    expect(optionRows()).toEqual(["Model", "Effort"])
 
-    rerender(panel(saved(second)))
-    // Inside the debounce window: nothing to pick, only the loading line.
-    expect(screen.queryByRole("combobox")).toBeNull()
+    rerender(panel(saved(models[1])))
+    // Inside the debounce window: the model as just picked, then the loading
+    // line in place of the rest.
+    expect(optionRows()).toEqual(["Model"])
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      models[1]
+    )
     expect(
       screen.getByText("Loading available options from the agent…")
     ).toBeInTheDocument()
 
     await settle()
-    expect(screen.getByRole("combobox")).toBeInTheDocument()
+    expect(optionRows()).toEqual(["Model", "Effort"])
     expect(
-      screen.getByText(`Agent default: ${second} effort`)
+      screen.getByText(`Agent default: ${models[1]}-effort`)
     ).toBeInTheDocument()
+  })
+
+  /** A failed probe for the picked model leaves the model offered, so another
+   *  one can be picked without retrying first. */
+  it("keeps the model offered when the probe for a picked one fails", async () => {
+    vi.useFakeTimers()
+    const tag = unique()
+    const models = [`model-a-${tag}`, `model-b-${tag}`]
+    describeAgentOptions.mockImplementation(
+      (
+        _agent: AgentType,
+        _dir: string | null,
+        cfg: { model: string } | null
+      ) =>
+        cfg?.model === models[1]
+          ? Promise.reject(new Error("agent exited"))
+          : Promise.resolve(modelAnswer(cfg?.model ?? null, models))
+    )
+    const saved = (model: string): Defaults => ({
+      claude_code: { config_values: { model } },
+    })
+
+    const { rerender } = render(panel(saved(models[0])))
+    await settle()
+    rerender(panel(saved(models[1])))
+    await settle()
+    expect(
+      screen.getByText("Failed to load options: agent exited")
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument()
+    expect(optionRows()).toEqual(["Model"])
   })
 
   /** The agent kept its own model: the options on screen are that model's.
@@ -417,7 +564,7 @@ describe("DelegationAgentDefaultsPanel staleness and switches", () => {
     expect(
       screen.getByText(/didn't switch to the selected model/)
     ).toBeInTheDocument()
-    expect(screen.getByRole("combobox")).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: "Effort" })).toBeEnabled()
     expect(describeAgentOptions).toHaveBeenCalledTimes(1)
 
     describeAgentOptions.mockResolvedValue({
@@ -456,10 +603,11 @@ describe("DelegationAgentDefaultsPanel staleness and switches", () => {
     const { rerender } = render(
       panel({ claude_code: { config_values: { model: `m-${tag}` } } }, onChange)
     )
-    await screen.findByText("Agent default: On")
-    expect(screen.getByRole("combobox")).toHaveTextContent("Default (On)")
+    await screen.findByText("Agent default: On", {}, PROBED)
+    const fast = () => screen.getByRole("combobox", { name: "Fast" })
+    expect(fast()).toHaveTextContent("Default (On)")
 
-    await user.click(screen.getByRole("combobox"))
+    await user.click(fast())
     const list = await screen.findByRole("listbox")
     expect(
       within(list)
@@ -485,8 +633,8 @@ describe("DelegationAgentDefaultsPanel staleness and switches", () => {
         onChange
       )
     )
-    expect(screen.getByRole("combobox")).toHaveTextContent("Off")
-    await user.click(screen.getByRole("combobox"))
+    expect(fast()).toHaveTextContent("Off")
+    await user.click(fast())
     await user.click(
       within(await screen.findByRole("listbox")).getByRole("option", {
         name: "Default (On)",
@@ -498,5 +646,157 @@ describe("DelegationAgentDefaultsPanel staleness and switches", () => {
         config_values: { model: `m-${tag}` },
       },
     })
+  })
+})
+
+describe("DelegationAgentDefaultsPanel agent picker and notices", () => {
+  beforeEach(() => {
+    describeAgentOptions.mockReset()
+  })
+
+  /** The agents a delegation can go to, in the user's order — a disabled one
+   *  is not in `delegate_to_agent`'s enum — with the ones carrying overrides
+   *  marked, so nobody has to open each agent to find them. */
+  it("offers the agents that can be delegated to and marks the ones with overrides", async () => {
+    describeAgentOptions.mockResolvedValue(answer(`picker-${unique()}`))
+    const user = userEvent.setup()
+    render(
+      panel({
+        codex: { config_values: { model: "m", effort: "high" } },
+      })
+    )
+    const picker = screen.getByRole("combobox", { name: "Agent" })
+    expect(picker).toHaveTextContent("Claude Code")
+
+    await user.click(picker)
+    const list = await screen.findByRole("listbox")
+    const offered = within(list).getAllByRole("option")
+    expect(offered).toHaveLength(3)
+    expect(offered[0]).toHaveAccessibleName("Claude Code")
+    expect(offered[1]).toHaveAccessibleName(/^Codex/)
+    expect(within(offered[1]).getByText("2 overrides")).toBeInTheDocument()
+    expect(offered[2]).toHaveAccessibleName("Cline (not installed)")
+    expect(offered[2]).toHaveAttribute("aria-disabled", "true")
+
+    await user.click(offered[1])
+    await waitFor(
+      () =>
+        expect(describeAgentOptions).toHaveBeenLastCalledWith("codex", null, {
+          model: "m",
+        }),
+      PROBED
+    )
+  })
+
+  it("starts on the first agent that can run", async () => {
+    agents.list = [
+      agent("cline", { available: false }),
+      agent("gemini", { enabled: false }),
+      agent("codex"),
+      agent("claude_code"),
+    ]
+    describeAgentOptions.mockResolvedValue(answer(`first-${unique()}`))
+    render(panel({}))
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      "Codex"
+    )
+    await waitFor(
+      () =>
+        expect(describeAgentOptions).toHaveBeenCalledWith("codex", null, null),
+      PROBED
+    )
+    expect(describeAgentOptions).toHaveBeenCalledTimes(1)
+  })
+
+  /** The warning is about the model, so it sits under the model row, above
+   *  the options that may be another model's. */
+  it("says right under the model row that the agent did not switch to it", async () => {
+    const tag = unique()
+    const models = [`own-${tag}`, `picked-${tag}`]
+    describeAgentOptions.mockResolvedValue(
+      modelAnswer(models[0], models, ["model"])
+    )
+    render(panel({ claude_code: { config_values: { model: models[1] } } }))
+    const warning = await screen.findByText(
+      /didn't switch to the selected model/,
+      {},
+      PROBED
+    )
+    const model = screen.getByRole("combobox", { name: "Model" })
+    const effort = screen.getByRole("combobox", { name: "Effort" })
+    expect(
+      model.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      warning.compareDocumentPosition(effort) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  /** An override saved for a value the agent has since withdrawn: the
+   *  trigger still says what is stored, the row says it is gone, and Default
+   *  clears it. */
+  it("shows a stored override the agent no longer offers, and clears it", async () => {
+    const tag = unique()
+    describeAgentOptions.mockResolvedValue(
+      selectAnswer("effort", "thought_level", `low-${tag}`, [
+        choice(`low-${tag}`, "Low"),
+        choice(`high-${tag}`, "High"),
+      ])
+    )
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      panel(
+        {
+          claude_code: {
+            config_values: { model: `m-${tag}`, effort: `max-${tag}` },
+          },
+        },
+        onChange
+      )
+    )
+    const effort = await screen.findByRole(
+      "combobox",
+      { name: "effort" },
+      PROBED
+    )
+    expect(effort).toHaveTextContent(`max-${tag}`)
+    expect(screen.getByText(`Unavailable (was max-${tag})`)).toBeInTheDocument()
+
+    await user.click(effort)
+    await user.click(
+      within(await screen.findByRole("listbox")).getByRole("option", {
+        name: "Default (Low)",
+      })
+    )
+    expect(onChange).toHaveBeenLastCalledWith({
+      claude_code: { config_values: { model: `m-${tag}` } },
+    })
+  })
+
+  it("says why everything is disabled while multi-agent is off, and leads to General", () => {
+    describeAgentOptions.mockReturnValue(new Promise(() => {}))
+    const onShowGeneral = vi.fn()
+    const { rerender } = render(
+      panel({}, () => {}, {
+        disabled: true,
+        delegationEnabled: false,
+        onShowGeneral,
+      })
+    )
+    expect(
+      screen.getByText(
+        "Multi-Agent Collaboration is off. Turn it on to edit these defaults."
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: "Agent" })).toBeDisabled()
+    fireEvent.click(screen.getByRole("button", { name: "Go to General" }))
+    expect(onShowGeneral).toHaveBeenCalledTimes(1)
+
+    // Still loading, or on: nothing to explain.
+    rerender(panel({}, () => {}, { disabled: true, delegationEnabled: null }))
+    expect(screen.queryByText(/Multi-Agent Collaboration is off/)).toBeNull()
+    rerender(panel({}, () => {}, { delegationEnabled: true }))
+    expect(screen.queryByText(/Multi-Agent Collaboration is off/)).toBeNull()
   })
 })

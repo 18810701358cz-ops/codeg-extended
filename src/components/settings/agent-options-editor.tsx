@@ -1,8 +1,8 @@
 "use client"
 
 /**
- * The rows that edit an agent's probed options (`describeAgentOptions`), in the
- * two ways settings need them:
+ * Editing an agent's probed options (`describeAgentOptions`), in the two ways
+ * settings need it:
  *
  *   * `override` — the delegation "Agent defaults" tab. Every row may stay on
  *     "Default (X)", which stores nothing and leaves the agent's own value.
@@ -10,13 +10,15 @@
  *     no default item, nothing preselected, a placeholder until chosen.
  *
  * Both share the row model ({@link buildOptionRows}), the grouped model list
- * (`modelListGroups`), the agent's localised vocabulary and the row layout, so
- * the two surfaces cannot drift apart in what they offer.
+ * (`modelListGroups`), the agent's localised vocabulary, the row layout and
+ * the parts around the rows — the agent picker, the status lines — so the two
+ * surfaces cannot drift apart in what they offer or in how they read.
  */
 
 import { useMemo } from "react"
 import { useTranslations } from "next-intl"
 
+import { AgentIcon } from "@/components/agent-icon"
 import { Badge } from "@/components/ui/badge"
 import {
   Select,
@@ -28,12 +30,16 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useAgentVocabulary } from "@/hooks/use-agent-vocabulary"
+import { getAgentLabel } from "@/lib/custom-agents"
 import {
   deriveModelGroups,
+  isModelConfigOption,
+  MODEL_CONFIG_OPTION_ID,
   modelListGroups,
   type ModelOptionGroup,
 } from "@/lib/model-config-groups"
 import type {
+  AcpAgentInfo,
   AgentOptionsSnapshot,
   AgentType,
   SessionConfigKindInfo,
@@ -48,11 +54,25 @@ export const MODE_ROW_ID = "__codeg_mode__"
 // Must not collide with any real option id an agent could emit.
 const DEFAULT_SENTINEL = "__codeg_default__"
 
+/** One width for every control of an options card — the agent picker's too —
+ *  so the controls form a single column down the card's trailing edge. */
+export const OPTION_CONTROL_CLASS = "w-40 shrink-0 bg-background sm:w-56"
+
 type SelectOption = SessionConfigOptionInfo & {
   kind: Extract<SessionConfigKindInfo, { type: "select" }>
 }
 type BooleanOption = SessionConfigOptionInfo & {
   kind: Extract<SessionConfigKindInfo, { type: "boolean" }>
+}
+
+type SelectRow = {
+  kind: "select"
+  id: string
+  option: SelectOption
+  groups: ModelOptionGroup[]
+  /** Advertised with no values at all: shown, but nothing can be picked
+   *  (and nothing is required or stored for it). */
+  empty: boolean
 }
 
 export type OptionRow =
@@ -63,15 +83,7 @@ export type OptionRow =
       /** The agent's own current mode. */
       currentId: string
     }
-  | {
-      kind: "select"
-      id: string
-      option: SelectOption
-      groups: ModelOptionGroup[]
-      /** Advertised with no values at all: shown, but nothing can be picked
-       *  (and nothing is required or stored for it). */
-      empty: boolean
-    }
+  | SelectRow
   | {
       kind: "boolean"
       id: string
@@ -81,11 +93,31 @@ export type OptionRow =
 type Vocabulary = ReturnType<typeof useAgentVocabulary>
 
 /**
- * The rows a snapshot is edited through, in display order. The standalone mode
- * row only appears when the agent advertises modes and NO config options —
- * the chat composer's rule (`message-input.tsx`): agents that have both expose
- * the mode as one of the config options, and a second "Mode" row would
- * duplicate it.
+ * The model selector among `rows`, if any: the row the others can hang off
+ * (opencode lists `effort` per model). The `model` id wins over the `model`
+ * category, as in `model-label-store` — qoder hung its effort selector off
+ * that category through 1.1.66.
+ */
+export function findModelRow(rows: readonly OptionRow[]): OptionRow | null {
+  const selects = rows.filter((row): row is SelectRow => row.kind === "select")
+  return (
+    selects.find((row) => row.id === MODEL_CONFIG_OPTION_ID) ??
+    selects.find((row) => isModelConfigOption(row.option)) ??
+    null
+  )
+}
+
+/**
+ * The rows a snapshot is edited through, in display order: the model first,
+ * then the rest in the agent's own order. The model decides what the other
+ * rows offer, so it is the one picked first — and the rows that appear once
+ * it is picked then land below it, instead of pushing it down under the
+ * pointer.
+ *
+ * The standalone mode row only appears when the agent advertises modes and NO
+ * config options — the chat composer's rule (`message-input.tsx`): agents that
+ * have both expose the mode as one of the config options, and a second "Mode"
+ * row would duplicate it.
  */
 export function buildOptionRows(
   snapshot: AgentOptionsSnapshot,
@@ -121,17 +153,18 @@ export function buildOptionRows(
       empty: groups.every((g) => g.options.length === 0),
     })
   }
-  return rows
+  const model = findModelRow(rows)
+  return model ? [model, ...rows.filter((row) => row !== model)] : rows
 }
 
 /** {@link buildOptionRows} for a component, localised for `agentType`. */
 export function useOptionRows(
-  agentType: AgentType,
-  snapshot: AgentOptionsSnapshot
-): OptionRow[] {
+  agentType: AgentType | null,
+  snapshot: AgentOptionsSnapshot | null
+): OptionRow[] | null {
   const vocabulary = useAgentVocabulary(agentType)
   return useMemo(
-    () => buildOptionRows(snapshot, vocabulary),
+    () => (snapshot ? buildOptionRows(snapshot, vocabulary) : null),
     [snapshot, vocabulary]
   )
 }
@@ -253,6 +286,27 @@ function SelectRowItems({
   )
 }
 
+/** The chip shape every mark on a row shares, so the marks read as one
+ *  family; colour alone says which. */
+const MARK_CLASS = "h-4 px-1.5 text-[0.625rem]"
+
+/** "Unavailable (was X)": a value saved before that the agent no longer
+ *  offers. */
+function UnavailableMark({ label }: { label: string }) {
+  const ta = useTranslations("AcpAgentSettings.multiAgent.assistants")
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        MARK_CLASS,
+        "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+      )}
+    >
+      {ta("optionUnavailable", { value: label })}
+    </Badge>
+  )
+}
+
 function RowShell({
   label,
   hint,
@@ -265,161 +319,144 @@ function RowShell({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex items-start justify-between gap-3">
+    // `SettingRow`'s rule: with a hint under the label the control aligns to
+    // the label's line; without one the two centre on each other, instead of
+    // the label hanging off the taller control's top edge.
+    <div
+      className={cn(
+        "flex justify-between gap-3",
+        hint ? "items-start" : "items-center"
+      )}
+    >
+      {/* The label and hint are often the agent's own words (English option
+          names and descriptions in an Arabic window): an isolated inline run
+          keeps their punctuation in place without pulling the line away from
+          the row's start. */}
       <div className="min-w-0 space-y-0.5">
         <div className="flex flex-wrap items-center gap-1.5">
-          <label className="text-sm font-medium">{label}</label>
+          <label className="text-sm font-medium">
+            <span dir="auto">{label}</span>
+          </label>
           {badges}
         </div>
-        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+        {hint ? (
+          <p className="text-xs text-muted-foreground">
+            <span dir="auto">{hint}</span>
+          </p>
+        ) : null}
       </div>
       {children}
     </div>
   )
 }
 
-export interface OverrideOptionsEditorProps {
-  agentType: AgentType
-  snapshot: AgentOptionsSnapshot
-  modeId: string | null
-  configValues: Record<string, string>
-  onModeChange: (modeId: string | null) => void
-  onConfigChange: (optionId: string, valueId: string | null) => void
+export interface OverrideOptionRowProps {
+  row: OptionRow
+  /** The override, or `null` to leave the agent's own value. */
+  value: string | null
+  onChange: (value: string | null) => void
   disabled?: boolean
 }
 
 /**
- * The `override` variant: each row offers "Default (X)" first — the agent's
- * own value, stored as nothing — then every value the agent lists. A switch is
- * the same tri-state: Default, On, Off (an explicit Off is stored as
- * `"false"`, a real override).
+ * One row of the `override` variant: "Default (X)" first — the agent's own
+ * value, stored as nothing — then every value the agent lists. A switch is the
+ * same tri-state: Default, On, Off (an explicit Off is stored as `"false"`, a
+ * real override).
  *
  * With no override the trigger shows the Default item, so "inheriting" reads
  * apart from "picked the agent's current default explicitly" — the latter
- * sticks to that literal value even if the agent later changes its own.
+ * sticks to that literal value even if the agent later changes its own. The
+ * Default item is drawn muted, so the rows that do override stand out.
  */
-export function OverrideOptionsEditor({
-  agentType,
-  snapshot,
-  modeId,
-  configValues,
-  onModeChange,
-  onConfigChange,
+export function OverrideOptionRow({
+  row,
+  value,
+  onChange,
   disabled,
-}: OverrideOptionsEditorProps) {
+}: OverrideOptionRowProps) {
   const t = useTranslations("AcpAgentSettings.multiAgent")
-  const rows = useOptionRows(agentType, snapshot)
-  if (rows.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">{t("noConfigAvailable")}</p>
-    )
-  }
   const booleanLabels = { on: t("booleanOn"), off: t("booleanOff") }
+  const label = rowName(row, t("modeLabel"))
+
+  // The agent's own value, as the hint names it and as the Default item
+  // does. For a select the two can differ: the hint names the default with
+  // the provider in it — no group header stands beside the hint to supply it
+  // — while the Default item and the trigger resolve against the RENDERED
+  // rows (`modelListGroups` groups `provider/model` ids under their provider
+  // and strips the prefix: two providers can offer the same model id), so a
+  // selected model shows its prefix-stripped name exactly as the composer
+  // does.
+  let hintDefault: string
+  let itemDefault: string
+  switch (row.kind) {
+    case "mode":
+      hintDefault = itemDefault =
+        row.modes.find((m) => m.id === row.currentId)?.name ?? row.currentId
+      break
+    case "boolean":
+      hintDefault = itemDefault = row.option.kind.current_value
+        ? booleanLabels.on
+        : booleanLabels.off
+      break
+    case "select": {
+      const agentDefault = row.option.kind.current_value
+      hintDefault = agentDefaultHintLabel(row.option, agentDefault)
+      itemDefault =
+        row.groups
+          .flatMap((group) => group.options)
+          .find((o) => o.value === agentDefault)?.name ?? hintDefault
+      break
+    }
+  }
+  // An override saved for a value the agent no longer lists: the trigger
+  // still says what is stored (the list has no item to name it), and the mark
+  // says it is gone.
+  const withdrawn = value !== null && !rowOffers(row, value)
+
   return (
-    <div className="space-y-4">
-      {rows.map((row) => {
-        if (row.kind === "mode") {
-          const defaultName =
-            row.modes.find((m) => m.id === row.currentId)?.name ?? row.currentId
-          return (
-            <RowShell
-              key={row.id}
-              label={t("modeLabel")}
-              hint={t("agentDefaultHint", { value: defaultName })}
-            >
-              <Select
-                value={modeId ?? DEFAULT_SENTINEL}
-                onValueChange={(v) =>
-                  onModeChange(v === DEFAULT_SENTINEL ? null : v)
-                }
-                disabled={disabled}
-              >
-                <SelectTrigger size="sm" className="w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={DEFAULT_SENTINEL}>
-                    {t("defaultOptionLabel", { value: defaultName })}
-                  </SelectItem>
-                  {row.modes.map((mode) => (
-                    <SelectItem key={mode.id} value={mode.id}>
-                      {mode.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </RowShell>
-          )
-        }
-        if (row.kind === "boolean") {
-          const current = row.option.kind.current_value
-          const defaultName = current ? booleanLabels.on : booleanLabels.off
-          return (
-            <RowShell
-              key={row.id}
-              label={row.option.name}
-              hint={t("agentDefaultHint", { value: defaultName })}
-            >
-              <Select
-                value={configValues[row.id] ?? DEFAULT_SENTINEL}
-                onValueChange={(v) =>
-                  onConfigChange(row.id, v === DEFAULT_SENTINEL ? null : v)
-                }
-                disabled={disabled}
-              >
-                <SelectTrigger size="sm" className="w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={DEFAULT_SENTINEL}>
-                    {t("defaultOptionLabel", { value: defaultName })}
-                  </SelectItem>
-                  <SelectItem value="true">{booleanLabels.on}</SelectItem>
-                  <SelectItem value="false">{booleanLabels.off}</SelectItem>
-                </SelectContent>
-              </Select>
-            </RowShell>
-          )
-        }
-        const agentDefault = row.option.kind.current_value
-        // The hint names the agent's default with the provider in it — no
-        // group header stands beside the hint to supply it. The Default item
-        // and the trigger resolve against the RENDERED rows (`modelListGroups`
-        // groups `provider/model` ids under their provider and strips the
-        // prefix: two providers can offer the same model id), so a selected
-        // model shows its prefix-stripped name exactly as the composer does.
-        const defaultHint = agentDefaultHintLabel(row.option, agentDefault)
-        const defaultRendered =
-          row.groups
-            .flatMap((group) => group.options)
-            .find((o) => o.value === agentDefault)?.name ?? defaultHint
-        return (
-          <RowShell
-            key={row.id}
-            label={row.option.name}
-            hint={t("agentDefaultHint", { value: defaultHint })}
-          >
-            <Select
-              value={configValues[row.id] ?? DEFAULT_SENTINEL}
-              onValueChange={(v) =>
-                onConfigChange(row.id, v === DEFAULT_SENTINEL ? null : v)
-              }
-              disabled={disabled}
-            >
-              <SelectTrigger size="sm" className="w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={DEFAULT_SENTINEL}>
-                  {t("defaultOptionLabel", { value: defaultRendered })}
+    <RowShell
+      label={label}
+      hint={t("agentDefaultHint", { value: hintDefault })}
+      badges={withdrawn ? <UnavailableMark label={value} /> : null}
+    >
+      <Select
+        value={value ?? DEFAULT_SENTINEL}
+        onValueChange={(v) => onChange(v === DEFAULT_SENTINEL ? null : v)}
+        disabled={disabled}
+      >
+        <SelectTrigger
+          size="sm"
+          className={OPTION_CONTROL_CLASS}
+          aria-label={label}
+        >
+          <SelectValue>{withdrawn ? value : undefined}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={DEFAULT_SENTINEL}>
+            <span className="text-muted-foreground">
+              {t("defaultOptionLabel", { value: itemDefault })}
+            </span>
+          </SelectItem>
+          {row.kind === "mode"
+            ? row.modes.map((mode) => (
+                <SelectItem key={mode.id} value={mode.id}>
+                  {mode.name}
                 </SelectItem>
-                <SelectRowItems groups={row.groups} />
-              </SelectContent>
-            </Select>
-          </RowShell>
-        )
-      })}
-    </div>
+              ))
+            : null}
+          {row.kind === "boolean" ? (
+            <>
+              <SelectItem value="true">{booleanLabels.on}</SelectItem>
+              <SelectItem value="false">{booleanLabels.off}</SelectItem>
+            </>
+          ) : null}
+          {row.kind === "select" ? (
+            <SelectRowItems groups={row.groups} />
+          ) : null}
+        </SelectContent>
+      </Select>
+    </RowShell>
   )
 }
 
@@ -472,27 +509,25 @@ export function RequiredOptionRow({
   const badges = (
     <>
       {mark?.kind === "new" ? (
-        <Badge variant="secondary" className="text-[0.625rem]">
+        <Badge variant="secondary" className={MARK_CLASS}>
           {ta("optionNew")}
         </Badge>
       ) : null}
       {mark?.kind === "unavailable" ? (
-        <Badge
-          variant="outline"
-          className="border-amber-500/40 text-[0.625rem] text-amber-700 dark:text-amber-400"
-        >
-          {ta("optionUnavailable", { value: mark.savedLabel })}
-        </Badge>
+        <UnavailableMark label={mark.savedLabel} />
       ) : null}
       {unpicked && !empty && !mark ? (
-        <span
+        <Badge
+          variant="outline"
           className={cn(
-            "text-[0.625rem]",
-            invalid ? "text-destructive" : "text-muted-foreground"
+            MARK_CLASS,
+            invalid
+              ? "border-destructive/40 bg-destructive/10 text-destructive"
+              : "border-border/70 bg-transparent font-normal text-muted-foreground"
           )}
         >
           {ta("required")}
-        </span>
+        </Badge>
       ) : null}
     </>
   )
@@ -507,7 +542,7 @@ export function RequiredOptionRow({
         <SelectTrigger
           ref={triggerRef}
           size="sm"
-          className={row.kind === "select" ? "w-56" : "w-44"}
+          className={OPTION_CONTROL_CLASS}
           aria-label={label}
           aria-invalid={invalid ? true : undefined}
         >
@@ -545,5 +580,140 @@ export function RequiredOptionRow({
         </SelectContent>
       </Select>
     </RowShell>
+  )
+}
+
+/** An agent's mark in a list or on a trigger — decorative: the label next to
+ *  it names the agent (the marks carry an SVG title of their own). */
+export function AgentGlyph({ agentType }: { agentType: AgentType }) {
+  return (
+    <span aria-hidden className="flex shrink-0">
+      <AgentIcon agentType={agentType} className="size-4" />
+    </span>
+  )
+}
+
+export interface AgentSelectProps {
+  value: AgentType | null
+  onChange: (agent: AgentType) => void
+  /** The agents to offer, in order. One that is not installed or is
+   *  disabled is listed with the reason, and cannot be picked. */
+  agents: readonly AcpAgentInfo[]
+  /** What the trigger calls `value` when `agents` does not hold it — an
+   *  agent no longer registered, named as it was saved. */
+  fallbackLabel?: string | null
+  /** A chip after an agent's name in the open list. */
+  badge?: (agent: AcpAgentInfo) => string | null
+  disabled?: boolean
+}
+
+/** The agent picker heading an options card: each agent with its mark, the
+ *  trigger as wide as the option controls below it. */
+export function AgentSelect({
+  value,
+  onChange,
+  agents,
+  fallbackLabel,
+  badge,
+  disabled,
+}: AgentSelectProps) {
+  const t = useTranslations("AcpAgentSettings.multiAgent.assistants")
+  const listed = value !== null && agents.some((a) => a.agent_type === value)
+  return (
+    <Select
+      value={value ?? ""}
+      onValueChange={(v) => onChange(v as AgentType)}
+      disabled={disabled}
+    >
+      <SelectTrigger
+        size="sm"
+        className={OPTION_CONTROL_CLASS}
+        aria-label={t("agentLabel")}
+      >
+        <SelectValue placeholder={t("agentPlaceholder")}>
+          {value ? (
+            <>
+              <AgentGlyph agentType={value} />
+              <span className="truncate">
+                {listed
+                  ? getAgentLabel(value)
+                  : (fallbackLabel ?? getAgentLabel(value))}
+              </span>
+            </>
+          ) : undefined}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {agents.map((agent) => {
+          const label = getAgentLabel(agent.agent_type)
+          const problem = !agent.available
+            ? t("agentNotInstalled")
+            : !agent.enabled
+              ? t("agentDisabled")
+              : null
+          return (
+            <SelectItem
+              key={agent.agent_type}
+              value={agent.agent_type}
+              disabled={problem !== null}
+              textValue={label}
+              badge={badge?.(agent) ?? null}
+            >
+              {/* One flex line of its own: with a badge beside it the item
+                  text is no longer the item's flex row. */}
+              <span className="flex items-center gap-2">
+                <AgentGlyph agentType={agent.agent_type} />
+                {label}
+                {problem ? (
+                  <span className="text-muted-foreground">{` (${problem})`}</span>
+                ) : null}
+              </span>
+            </SelectItem>
+          )
+        })}
+      </SelectContent>
+    </Select>
+  )
+}
+
+/** One row of an options card under the agent row — an option, or a line of
+ *  status — padded like the `SettingRow`s around it, so every title in the
+ *  card starts at the same edge. */
+export function OptionBlock({ children }: { children: React.ReactNode }) {
+  return <div className="p-3">{children}</div>
+}
+
+/** A line of status in an options card — what is happening, what went
+ *  wrong — with the way to act on it at the end. */
+export function StatusLine({
+  tone,
+  icon,
+  action,
+  children,
+}: {
+  tone: "muted" | "warning" | "error"
+  icon?: React.ReactNode
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <p
+        className={cn(
+          "flex min-w-0 items-start gap-1.5 text-xs leading-5",
+          tone === "error"
+            ? "text-destructive"
+            : tone === "warning"
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-muted-foreground"
+        )}
+      >
+        {icon ? (
+          <span className="flex h-5 shrink-0 items-center">{icon}</span>
+        ) : null}
+        <span className="min-w-0 break-words">{children}</span>
+      </p>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
   )
 }

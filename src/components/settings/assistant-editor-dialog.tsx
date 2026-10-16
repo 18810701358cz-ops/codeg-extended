@@ -2,8 +2,9 @@
 
 /**
  * Create or edit an assistant: avatar and name, description, the agent and
- * EVERY option it advertises (each one required, nothing preselected), the
- * standing instructions, and whether it is enabled.
+ * EVERY option it advertises (each one required, nothing preselected), and
+ * the standing instructions. Whether it is enabled is the list's switch: a new
+ * assistant starts enabled, and an edit leaves that state alone.
  *
  * The options come from a live probe of the agent (`useAgentOptions`). Agents
  * that list one option's values per model (opencode's `effort`) make the order
@@ -16,9 +17,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslations } from "next-intl"
-import { AlertTriangle, Loader2 } from "lucide-react"
+import {
+  AlertCircle,
+  AlertTriangle,
+  AlignLeft,
+  Bot,
+  Loader2,
+  RotateCw,
+  ScrollText,
+} from "lucide-react"
 
 import { useAgentOptions } from "@/components/automations/use-agent-options"
+import { SettingCard, SettingRow } from "@/components/shared/setting-card"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -29,14 +39,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useAcpAgents } from "@/hooks/use-acp-agents"
 import { useAgentVocabulary } from "@/hooks/use-agent-vocabulary"
@@ -47,7 +50,6 @@ import {
   type AppErrorTranslator,
 } from "@/lib/app-error"
 import { getAgentLabel } from "@/lib/custom-agents"
-import { isModelConfigOption } from "@/lib/model-config-groups"
 import type {
   AgentOptionsSnapshot,
   AgentType,
@@ -55,10 +57,15 @@ import type {
   AssistantAvatar,
   AssistantInfo,
 } from "@/lib/types"
+import { cn } from "@/lib/utils"
 import { useAssistantsStore } from "@/stores/assistants-store"
 import {
+  AgentSelect,
   buildOptionRows,
+  findModelRow,
+  OptionBlock,
   RequiredOptionRow,
+  StatusLine,
   type OptionRow,
 } from "./agent-options-editor"
 import {
@@ -79,11 +86,6 @@ export const DESCRIPTION_MAX = 200
 export const INSTRUCTIONS_MAX = 20_000
 
 const charCount = (text: string) => Array.from(text).length
-
-/** Whether a row is the model selector (the row everything else hangs off). */
-function isModelRow(row: OptionRow): boolean {
-  return row.kind === "select" && isModelConfigOption(row.option)
-}
 
 /**
  * Where the options part of the editor stands. Everything but `ready` means
@@ -120,7 +122,12 @@ export function AssistantEditorDialog({
 }: AssistantEditorDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-[40rem]">
+      {/* Header, scrolling body and footer as three bands — the body is the
+          only part that scrolls, between hairlines, so Save stays in reach and
+          the cards never slide under the title unannounced. The header keeps
+          room for the close button (the content's own rule, widened for the
+          padding this layout moves off the content box). */}
+      <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-[40rem] [&_[data-slot=dialog-header]]:pr-16">
         {open ? (
           <AssistantEditorBody
             assistant={assistant}
@@ -159,7 +166,6 @@ function AssistantEditorBody({
   const [instructions, setInstructions] = useState(
     assistant?.instructions ?? ""
   )
-  const [enabled, setEnabled] = useState(assistant?.enabled ?? true)
   const [agentType, setAgentType] = useState<AgentType | null>(
     assistant?.agent_type ?? null
   )
@@ -173,11 +179,19 @@ function AssistantEditorBody({
   const [pickedLabels, setPickedLabels] = useState<Record<string, string>>({})
   const [invalidIds, setInvalidIds] = useState<ReadonlySet<string>>(new Set())
   const [nameError, setNameError] = useState<string | null>(null)
+  // A text over its limit is reported on its own field, like the name — and
+  // cleared by the next edit of it, not by the next submit.
+  const [descriptionError, setDescriptionError] = useState<string | null>(null)
+  const [instructionsError, setInstructionsError] = useState<string | null>(
+    null
+  )
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const submittingRef = useRef(false)
   const triggerRefs = useRef(new Map<string, HTMLButtonElement | null>())
   const nameRef = useRef<HTMLInputElement | null>(null)
+  const descriptionRef = useRef<HTMLInputElement | null>(null)
+  const instructionsRef = useRef<HTMLTextAreaElement | null>(null)
   // A refused save that points at the name focuses it once the form is
   // enabled again — a disabled input cannot take focus.
   const focusNameAfterSaveRef = useRef(false)
@@ -225,7 +239,9 @@ function AssistantEditorBody({
     () => (agentSnapshot ? buildOptionRows(agentSnapshot, vocabulary) : null),
     [agentSnapshot, vocabulary]
   )
-  const freshModelRow = agentSnapshotRows?.find(isModelRow) ?? null
+  const freshModelRow = agentSnapshotRows
+    ? findModelRow(agentSnapshotRows)
+    : null
   useEffect(() => {
     if (freshModelRow && agentType) {
       setModelRowCache({ agent: agentType, row: freshModelRow })
@@ -259,7 +275,7 @@ function AssistantEditorBody({
       return { kind: "error", message: probe.error, modelRow }
     }
     if (currentRows && currentSnapshot) {
-      const currentModelRow = currentRows.find(isModelRow)
+      const currentModelRow = findModelRow(currentRows)
       if (
         !currentModelRow ||
         (currentModelRow.kind === "select" && currentModelRow.empty)
@@ -373,18 +389,19 @@ function AssistantEditorBody({
   }
 
   const renderRow = (row: OptionRow, disabled = false) => (
-    <RequiredOptionRow
-      key={row.id}
-      row={row}
-      value={effectivePick(row, selection)}
-      onChange={(value) => pickValue(row, value)}
-      disabled={disabled || saving}
-      invalid={invalidIds.has(row.id)}
-      mark={rowMark(row, selection, saved, pickedLabels)}
-      triggerRef={(el) => {
-        triggerRefs.current.set(row.id, el)
-      }}
-    />
+    <OptionBlock key={row.id}>
+      <RequiredOptionRow
+        row={row}
+        value={effectivePick(row, selection)}
+        onChange={(value) => pickValue(row, value)}
+        disabled={disabled || saving}
+        invalid={invalidIds.has(row.id)}
+        mark={rowMark(row, selection, saved, pickedLabels)}
+        triggerRef={(el) => {
+          triggerRefs.current.set(row.id, el)
+        }}
+      />
+    </OptionBlock>
   )
 
   const tRoot = t as unknown as AppErrorTranslator
@@ -404,11 +421,17 @@ function AssistantEditorBody({
       return
     }
     if (charCount(description) > DESCRIPTION_MAX) {
-      setSubmitError(t("errors.descriptionTooLong", { max: DESCRIPTION_MAX }))
+      setDescriptionError(
+        t("errors.descriptionTooLong", { max: DESCRIPTION_MAX })
+      )
+      descriptionRef.current?.focus()
       return
     }
     if (charCount(instructions) > INSTRUCTIONS_MAX) {
-      setSubmitError(t("errors.instructionsTooLong", { max: INSTRUCTIONS_MAX }))
+      setInstructionsError(
+        t("errors.instructionsTooLong", { max: INSTRUCTIONS_MAX })
+      )
+      instructionsRef.current?.focus()
       return
     }
     if (agentType === null) {
@@ -480,7 +503,6 @@ function AssistantEditorBody({
           description,
           avatar: avatarToSave,
           instructions,
-          enabled,
           ...(agentConfig ? { agent_config: agentConfig } : {}),
         })
       } else {
@@ -491,7 +513,7 @@ function AssistantEditorBody({
           avatar: avatarToSave,
           agent_config: agentConfig,
           instructions,
-          enabled,
+          enabled: true,
         })
       }
       onSaved?.(row)
@@ -510,19 +532,23 @@ function AssistantEditorBody({
     }
   }
 
-  const agentChoices = agents.filter(
-    (a) => a.enabled || a.agent_type === agentType
-  )
+  const instructionsLength = charCount(instructions)
+  // What the footer says while nothing has gone wrong: how far the selection
+  // is from complete. A refused save replaces it with the reason.
+  const footerHint =
+    readyRows && missing.length > 0
+      ? t("missingCount", { count: missing.length })
+      : null
 
   return (
     <>
-      <DialogHeader>
+      <DialogHeader className="px-4 pt-6 pb-4 sm:px-6">
         <DialogTitle>{editing ? t("editTitle") : t("createTitle")}</DialogTitle>
         <DialogDescription>{t("editorDescription")}</DialogDescription>
       </DialogHeader>
 
       <form
-        className="flex min-h-0 flex-1 flex-col gap-4"
+        className="flex min-h-0 flex-1 flex-col"
         onSubmit={(e) => {
           e.preventDefault()
           void save()
@@ -530,184 +556,183 @@ function AssistantEditorBody({
       >
         {/* Only the fields scroll: the footer stays in view, so Save is
             reachable however many options the agent has. `relative` keeps
-            the hidden native inputs behind the selects and the switch
-            inside this box; positioned against the dialog, they would make
-            it scroll as well. */}
-        <div className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
-          <div className="flex items-start gap-3">
-            <AssistantAvatarPicker
-              avatar={avatarTouched ? avatar : defaultAvatarFor(name)}
-              name={name}
-              onChange={(next) => {
-                setAvatar(next)
-                setAvatarTouched(true)
-              }}
-              disabled={saving}
-            />
-            <div className="min-w-0 flex-1 space-y-1">
-              <label htmlFor="assistant-name" className="text-sm font-medium">
-                {t("nameLabel")}
-              </label>
-              <Input
-                id="assistant-name"
-                ref={nameRef}
-                value={name}
-                maxLength={NAME_MAX * 2}
-                onChange={(e) => {
-                  setName(e.target.value)
-                  setNameError(null)
-                }}
-                placeholder={t("namePlaceholder")}
-                aria-invalid={nameError ? true : undefined}
-                disabled={saving}
-              />
-              {nameError ? (
-                <p className="text-xs text-destructive">{nameError}</p>
-              ) : null}
-            </div>
-          </div>
+            the hidden native inputs behind the selects inside this box;
+            positioned against the dialog, they would make it scroll as well.
 
-          <div className="space-y-1">
-            <label
+            Three cards, in the settings house style: who the assistant is,
+            what it runs, and what it is told. */}
+        <div className="relative min-h-0 flex-1 space-y-3 overflow-y-auto border-y border-border/60 px-4 py-4 sm:px-6">
+          <SettingCard>
+            {/* The name and the avatar drawn from it, side by side. Top-aligned
+                (the avatar is as tall as label + field), so an error line
+                appearing under the field does not shift the avatar. */}
+            <div className="flex items-start gap-3 p-3">
+              <div className="mt-0.5 shrink-0">
+                <AssistantAvatarPicker
+                  avatar={avatarTouched ? avatar : defaultAvatarFor(name)}
+                  name={name}
+                  onChange={(next) => {
+                    setAvatar(next)
+                    setAvatarTouched(true)
+                  }}
+                  disabled={saving}
+                />
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <Label htmlFor="assistant-name" className="text-sm">
+                  {t("nameLabel")}
+                </Label>
+                <Input
+                  id="assistant-name"
+                  ref={nameRef}
+                  dir="auto"
+                  value={name}
+                  maxLength={NAME_MAX * 2}
+                  onChange={(e) => {
+                    setName(e.target.value)
+                    setNameError(null)
+                  }}
+                  placeholder={t("namePlaceholder")}
+                  aria-invalid={nameError ? true : undefined}
+                  disabled={saving}
+                  className="h-8 bg-background"
+                />
+                {nameError ? (
+                  <p className="text-xs leading-5 text-destructive">
+                    {nameError}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <SettingRow
+              icon={AlignLeft}
+              title={t("descriptionLabel")}
+              description={t("descriptionHint")}
               htmlFor="assistant-description"
-              className="text-sm font-medium"
             >
-              {t("descriptionLabel")}
-            </label>
-            <Input
-              id="assistant-description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder={t("descriptionPlaceholder")}
-              disabled={saving}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t("descriptionHint")}
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <label className="text-sm font-medium">{t("agentLabel")}</label>
-              <Select
-                value={agentType ?? ""}
-                onValueChange={(v) => pickAgent(v as AgentType)}
+              <Input
+                id="assistant-description"
+                ref={descriptionRef}
+                dir="auto"
+                value={description}
+                onChange={(e) => {
+                  setDescription(e.target.value)
+                  setDescriptionError(null)
+                }}
+                placeholder={t("descriptionPlaceholder")}
+                aria-invalid={descriptionError ? true : undefined}
                 disabled={saving}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-56"
-                  aria-label={t("agentLabel")}
-                >
-                  <SelectValue placeholder={t("agentPlaceholder")}>
-                    {agentType
-                      ? agentInfo
-                        ? getAgentLabel(agentType)
-                        : (assistant?.label_snapshot.agent ??
-                          getAgentLabel(agentType))
-                      : undefined}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {agentChoices.map((a) => (
-                    <SelectItem
-                      key={a.agent_type}
-                      value={a.agent_type}
-                      disabled={!a.available || !a.enabled}
-                    >
-                      {getAgentLabel(a.agent_type)}
-                      {!a.available
-                        ? ` (${t("agentNotInstalled")})`
-                        : !a.enabled
-                          ? ` (${t("agentDisabled")})`
-                          : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                className="h-8 bg-background"
+              />
+              {descriptionError ? (
+                <p className="text-xs leading-5 text-destructive">
+                  {descriptionError}
+                </p>
+              ) : null}
+            </SettingRow>
+          </SettingCard>
 
-            <div className="min-h-[5rem] space-y-4 rounded-lg border bg-card/50 p-3">
+          {/* The agent and its options share the card: every option is a
+              row of it, on the same edge as the agent row above, so the card
+              reads as one decision. */}
+          <SettingCard>
+            <SettingRow
+              icon={Bot}
+              title={t("agentLabel")}
+              description={
+                agentType === null ? t("pickAgentFirst") : t("agentHint")
+              }
+              control={
+                <AgentSelect
+                  value={agentType}
+                  onChange={pickAgent}
+                  agents={agents.filter(
+                    (a) => a.enabled || a.agent_type === agentType
+                  )}
+                  fallbackLabel={assistant?.label_snapshot.agent}
+                  disabled={saving}
+                />
+              }
+            />
+            {agentType !== null ? (
               <OptionsSection
                 gate={gate}
                 loading={probe.loading}
                 savedAssistant={editing && !agentTouched ? assistant : null}
                 driftCount={driftCount}
-                missingCount={readyRows ? missing.length : null}
                 renderRow={renderRow}
                 onRetry={() => probe.reload()}
               />
-            </div>
-          </div>
+            ) : null}
+          </SettingCard>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <label
-                htmlFor="assistant-instructions"
-                className="text-sm font-medium"
-              >
-                {t("instructionsLabel")}
-              </label>
-              <span
-                className={
-                  charCount(instructions) > INSTRUCTIONS_MAX
-                    ? "text-xs text-destructive"
-                    : "text-xs text-muted-foreground"
-                }
-              >
-                {t("charCount", {
-                  count: charCount(instructions),
-                  max: INSTRUCTIONS_MAX,
-                })}
-              </span>
-            </div>
-            <Textarea
-              id="assistant-instructions"
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              placeholder={t("instructionsPlaceholder")}
-              className="min-h-[7rem] text-sm"
-              disabled={saving}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t("instructionsHint")}
-            </p>
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <label htmlFor="assistant-enabled" className="text-sm font-medium">
-              {t("enabledLabel")}
-            </label>
-            <Switch
-              id="assistant-enabled"
-              checked={enabled}
-              onCheckedChange={setEnabled}
-              disabled={saving}
-            />
-          </div>
+          <SettingCard>
+            <SettingRow
+              icon={ScrollText}
+              title={t("instructionsLabel")}
+              description={t("instructionsHint")}
+              htmlFor="assistant-instructions"
+              control={
+                <span
+                  className={cn(
+                    "text-xs tabular-nums",
+                    instructionsLength > INSTRUCTIONS_MAX
+                      ? "text-destructive"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  {t("charCount", {
+                    count: instructionsLength,
+                    max: INSTRUCTIONS_MAX,
+                  })}
+                </span>
+              }
+            >
+              <Textarea
+                id="assistant-instructions"
+                ref={instructionsRef}
+                dir="auto"
+                value={instructions}
+                onChange={(e) => {
+                  setInstructions(e.target.value)
+                  setInstructionsError(null)
+                }}
+                placeholder={t("instructionsPlaceholder")}
+                aria-invalid={instructionsError ? true : undefined}
+                className="max-h-72 min-h-28 bg-background text-sm"
+                disabled={saving}
+              />
+              {instructionsError ? (
+                <p className="text-xs leading-5 text-destructive">
+                  {instructionsError}
+                </p>
+              ) : null}
+            </SettingRow>
+          </SettingCard>
         </div>
 
-        <DialogFooter className="items-center gap-2 sm:justify-between">
+        <DialogFooter className="items-center gap-3 px-4 py-4 sm:justify-between sm:px-6">
           <p
-            className="min-h-4 text-xs text-destructive"
+            className={cn(
+              "min-w-0 text-xs leading-5",
+              submitError ? "text-destructive" : "text-muted-foreground"
+            )}
             role={submitError ? "alert" : undefined}
           >
-            {submitError}
+            {submitError ?? footerHint}
           </p>
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-2">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               onClick={onClose}
               disabled={saving}
             >
               {t("cancel")}
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              ) : null}
-              {t("save")}
+              {saving ? <Loader2 className="animate-spin" aria-hidden /> : null}
+              {editing ? t("save") : t("createSubmit")}
             </Button>
           </div>
         </DialogFooter>
@@ -716,12 +741,13 @@ function AssistantEditorBody({
   )
 }
 
+/** The agent's options, as rows of the agent's card — or the line saying why
+ *  they are not there yet. */
 function OptionsSection({
   gate,
   loading,
   savedAssistant,
   driftCount,
-  missingCount,
   renderRow,
   onRetry,
 }: {
@@ -731,108 +757,124 @@ function OptionsSection({
    *  whose saved names stand in when the options cannot be read. */
   savedAssistant: AssistantInfo | null
   driftCount: number
-  missingCount: number | null
   renderRow: (row: OptionRow, disabled?: boolean) => React.ReactNode
   onRetry: () => void
 }) {
   const t = useTranslations("AcpAgentSettings.multiAgent.assistants")
   const tm = useTranslations("AcpAgentSettings.multiAgent")
   const probing = (
-    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <Loader2 className="size-3.5 animate-spin" aria-hidden />
-      {tm("probing")}
-    </div>
+    <OptionBlock>
+      <StatusLine
+        tone="muted"
+        icon={<Loader2 className="size-3.5 animate-spin" aria-hidden />}
+      >
+        {tm("probing")}
+      </StatusLine>
+    </OptionBlock>
+  )
+  const retry = (disabled: boolean) => (
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      className="bg-background"
+      onClick={onRetry}
+      disabled={disabled}
+    >
+      <RotateCw aria-hidden />
+      {tm("retry")}
+    </Button>
   )
   switch (gate.kind) {
     case "no-agent":
-      return (
-        <p className="text-xs text-muted-foreground">{t("pickAgentFirst")}</p>
-      )
+      // The agent row says to pick one; there is nothing to show under it.
+      return null
     case "unavailable-agent":
       return (
-        <div className="space-y-2">
-          <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-            <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
-            {t("agentUnavailableHint")}
-          </p>
+        <>
+          <OptionBlock>
+            <StatusLine
+              tone="warning"
+              icon={<AlertTriangle className="size-3.5" aria-hidden />}
+            >
+              {t("agentUnavailableHint")}
+            </StatusLine>
+          </OptionBlock>
           <SavedLabels assistant={savedAssistant} />
-        </div>
+        </>
       )
     case "loading":
       return probing
     case "error":
       return (
-        <div className="space-y-3">
+        <>
           {gate.modelRow ? renderRow(gate.modelRow) : null}
-          <div className="flex flex-col items-start gap-2">
-            <p className="text-xs text-destructive">
+          <OptionBlock>
+            <StatusLine
+              tone="error"
+              icon={<AlertCircle className="size-3.5" aria-hidden />}
+              action={retry(false)}
+            >
               {tm("probeFailed", { detail: gate.message })}
-            </p>
-            <Button type="button" size="sm" variant="outline" onClick={onRetry}>
-              {tm("retry")}
-            </Button>
-          </div>
+            </StatusLine>
+          </OptionBlock>
           <SavedLabels assistant={savedAssistant} />
-        </div>
+        </>
       )
     case "pick-model":
       return (
-        <div className="space-y-3">
+        <>
           {renderRow(gate.modelRow)}
-          <p className="text-xs text-muted-foreground">{t("pickModelFirst")}</p>
-        </div>
+          <OptionBlock>
+            <StatusLine tone="muted">{t("pickModelFirst")}</StatusLine>
+          </OptionBlock>
+        </>
       )
     case "confirming":
       return (
-        <div className="space-y-3">
+        <>
           {renderRow(gate.modelRow)}
           {probing}
-        </div>
+        </>
       )
     case "not-switched":
       return (
-        <div className="space-y-3">
+        <>
           {renderRow(gate.modelRow)}
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              {t("modelNotSwitched")}
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={onRetry}
-              disabled={loading}
+          <OptionBlock>
+            <StatusLine
+              tone="warning"
+              icon={<AlertTriangle className="size-3.5" aria-hidden />}
+              action={retry(loading)}
             >
-              {tm("retry")}
-            </Button>
-          </div>
+              {t("modelNotSwitched")}
+            </StatusLine>
+          </OptionBlock>
           <SavedLabels assistant={savedAssistant} />
-        </div>
+        </>
       )
     case "ready":
       if (gate.rows.length === 0) {
         return (
-          <p className="text-xs text-muted-foreground">
-            {tm("noConfigAvailable")}
-          </p>
+          <OptionBlock>
+            <StatusLine tone="muted">{tm("noConfigAvailable")}</StatusLine>
+          </OptionBlock>
         )
       }
       return (
-        <div className="space-y-4">
+        <>
           {driftCount > 0 ? (
-            <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-              <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
-              {t("optionsChanged", { count: driftCount })}
-            </p>
+            <OptionBlock>
+              <StatusLine
+                tone="warning"
+                icon={<AlertTriangle className="size-3.5" aria-hidden />}
+              >
+                {t("optionsChanged", { count: driftCount })}
+              </StatusLine>
+            </OptionBlock>
           ) : null}
           {gate.rows.map((row) => renderRow(row))}
-          {missingCount !== null && missingCount > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {t("missingCount", { count: missingCount })}
-            </p>
-          ) : null}
-        </div>
+        </>
       )
   }
 }
@@ -865,18 +907,24 @@ function SavedLabels({ assistant }: { assistant: AssistantInfo | null }) {
   ]
   if (items.length === 0) {
     return (
-      <p className="text-xs text-muted-foreground">{t("savedNoOptions")}</p>
+      <OptionBlock>
+        <StatusLine tone="muted">{t("savedNoOptions")}</StatusLine>
+      </OptionBlock>
     )
   }
   return (
-    <dl className="space-y-1">
-      <p className="text-xs text-muted-foreground">{t("savedOptions")}</p>
-      {items.map((item, idx) => (
-        <div key={idx} className="flex justify-between gap-3 text-xs">
-          <dt className="text-muted-foreground">{item.name}</dt>
-          <dd className="truncate">{item.value}</dd>
-        </div>
-      ))}
-    </dl>
+    <OptionBlock>
+      <p className="mb-2 text-xs font-medium text-muted-foreground">
+        {t("savedOptions")}
+      </p>
+      <dl className="space-y-1.5">
+        {items.map((item, idx) => (
+          <div key={idx} className="flex justify-between gap-3 text-xs">
+            <dt className="text-muted-foreground">{item.name}</dt>
+            <dd className="truncate font-medium">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </OptionBlock>
   )
 }

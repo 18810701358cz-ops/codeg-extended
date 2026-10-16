@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react"
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import type { ReactNode } from "react"
 import { NextIntlClientProvider } from "next-intl"
@@ -242,6 +249,30 @@ describe("AssistantsPanel", () => {
     expect(onShowUnsaved).toHaveBeenCalledTimes(1)
   })
 
+  it("offers one way in from the empty state, and the way to turn delegation on", async () => {
+    api.assistantList.mockResolvedValue([])
+    api.describeAgentOptions.mockReturnValue(new Promise(() => {}))
+    const onShowGeneral = vi.fn()
+    const user = userEvent.setup()
+    renderPanel({ delegationEnabled: false, onShowGeneral })
+    await waitFor(() =>
+      expect(screen.getByText("No assistants yet")).toBeInTheDocument()
+    )
+    // The header's button stands down while the empty state shows its own.
+    const create = screen.getAllByRole("button", { name: "New assistant" })
+    expect(create).toHaveLength(1)
+
+    await user.click(screen.getByRole("button", { name: "Go to General" }))
+    expect(onShowGeneral).toHaveBeenCalledTimes(1)
+
+    await user.click(create[0])
+    expect(
+      within(await screen.findByRole("dialog")).getByRole("heading", {
+        name: "New assistant",
+      })
+    ).toBeInTheDocument()
+  })
+
   it("says nothing about delegation while it is on or not yet known", async () => {
     const { unmount } = renderPanel({ delegationEnabled: true })
     await waitFor(() => expect(shownNames()).toHaveLength(3))
@@ -262,6 +293,55 @@ describe("AssistantsPanel", () => {
       ).toBeInTheDocument()
     )
     spy.mockRestore()
+  })
+
+  it("retries a failed load from the error", async () => {
+    api.assistantList.mockRejectedValueOnce(new Error("db locked"))
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const user = userEvent.setup()
+    renderPanel()
+    await waitFor(() =>
+      expect(
+        screen.getByText("Failed to load assistants: db locked")
+      ).toBeInTheDocument()
+    )
+    await user.click(screen.getByRole("button", { name: "Retry" }))
+    await waitFor(() => expect(shownNames()).toHaveLength(3))
+    expect(screen.queryByText(/Failed to load assistants/)).toBeNull()
+    spy.mockRestore()
+  })
+
+  it("opens the editor from a click on the row, but not from its controls or a drag", async () => {
+    api.describeAgentOptions.mockReturnValue(new Promise(() => {}))
+    api.assistantUpdate.mockResolvedValue(
+      row(2, "Planner", { enabled: false, revision: 2 })
+    )
+    api.assistantCreate.mockImplementation((draft) =>
+      Promise.resolve(row(9, draft.name, { sort_order: 9 }))
+    )
+    const user = userEvent.setup()
+    renderPanel()
+    await waitFor(() => expect(shownNames()).toHaveLength(3))
+
+    // The switch and the menu — its items included, whose clicks bubble to
+    // the row through the portal — act on the row without opening it.
+    await user.click(screen.getByRole("switch", { name: "Enable Planner" }))
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Planner" })
+    )
+    await user.click(await screen.findByRole("menuitem", { name: "Duplicate" }))
+    await waitFor(() => expect(api.assistantCreate).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole("dialog")).toBeNull()
+    // A press that started on the drag handle ends in a click on the row when
+    // the drag is dropped: that is the drop, not a request to edit.
+    const handle = screen.getByRole("button", { name: "Move Planner" })
+    fireEvent.pointerDown(handle)
+    fireEvent.click(rowOf("Planner"))
+    expect(screen.queryByRole("dialog")).toBeNull()
+
+    await user.click(within(rowOf("Planner")).getByText("Planner blurb"))
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Planner")
   })
 
   it("enables and disables an assistant in place", async () => {
@@ -308,6 +388,30 @@ describe("AssistantsPanel", () => {
     await user.click(within(confirm).getByRole("button", { name: "Delete" }))
     expect(api.assistantDelete).toHaveBeenCalledWith(2)
     await waitFor(() => expect(shownNames()).toEqual(["Reviewer", "Tester"]))
+  })
+
+  it("deletes once however many times Delete is pressed before the confirmation closes", async () => {
+    api.assistantDelete.mockResolvedValue(
+      row(2, "Planner", { deleted_at: "2026-10-16T01:00:00Z", revision: 2 })
+    )
+    const user = userEvent.setup()
+    renderPanel()
+    await waitFor(() => expect(shownNames()).toHaveLength(3))
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Planner" })
+    )
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }))
+    const confirm = await screen.findByRole("alertdialog")
+    const press = within(confirm).getByRole("button", { name: "Delete" })
+    // Both presses land before the dialog has closed (in the app: while it
+    // animates out, with its button still under the pointer).
+    act(() => {
+      press.click()
+      press.click()
+    })
+    await waitFor(() => expect(shownNames()).toEqual(["Reviewer", "Tester"]))
+    expect(api.assistantDelete).toHaveBeenCalledTimes(1)
+    expect(api.assistantDelete).toHaveBeenCalledWith(2)
   })
 
   it("duplicates an assistant under the next free name, selection and all", async () => {

@@ -312,6 +312,24 @@ describe("DelegationSettingsSection — tabs and the saved record", () => {
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull()
   })
 
+  it("explains the disabled agent defaults while the switch is off, and leads to it", async () => {
+    mockGetDelegationSettings.mockResolvedValue(settings({ enabled: false }))
+    const user = userEvent.setup()
+    renderWithIntl()
+    await screen.findByLabelText("Enable delegation")
+
+    await user.click(tab(/^Agent defaults/))
+    const notice = /Turn it on to edit these defaults/
+    expect(screen.getByText(notice)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Go to General" }))
+    expect(tab(/^General/)).toHaveAttribute("data-state", "active")
+
+    // Switched on — saved or not — the defaults can be edited.
+    await user.click(screen.getByLabelText("Enable delegation"))
+    await user.click(tab(/^Agent defaults/))
+    expect(screen.queryByText(notice)).toBeNull()
+  })
+
   it("marks a tab with unsaved changes, and the assistants tab points back to it", async () => {
     mockGetDelegationSettings.mockResolvedValue(settings({ enabled: true }))
     const user = userEvent.setup()

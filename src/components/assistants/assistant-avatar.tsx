@@ -88,8 +88,25 @@ export function AssistantAvatar({
       />
     )
   }
-  const glyph =
-    avatar.kind === "emoji" ? avatar.emoji : monogramFor(name) || "?"
+  const glyph = avatar.kind === "emoji" ? avatar.emoji : monogramFor(name)
+  if (!glyph) {
+    // A monogram with no name to draw it from — only a new assistant before
+    // its name is typed: the generic figure, on the colour already chosen.
+    return (
+      <span
+        data-slot="assistant-avatar"
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center rounded-full",
+          DISC_CLASSES[avatar.color] ?? DISC_CLASSES.slate,
+          className
+        )}
+        style={style}
+        aria-hidden
+      >
+        <UserRound style={{ width: size * 0.5, height: size * 0.5 }} />
+      </span>
+    )
+  }
   return (
     <span
       data-slot="assistant-avatar"

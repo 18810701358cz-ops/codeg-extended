@@ -394,6 +394,8 @@ export function DelegationSettingsSection() {
             value={agentDefaults}
             onChange={setAgentDefaults}
             disabled={loading || !enabled}
+            delegationEnabled={loading ? null : enabled}
+            onShowGeneral={() => setTab("general")}
           />
         </TabsContent>
 
@@ -404,6 +406,7 @@ export function DelegationSettingsSection() {
             onShowUnsaved={() =>
               setTab(generalDirty ? "general" : "agentDefaults")
             }
+            onShowGeneral={() => setTab("general")}
           />
         </TabsContent>
       </Tabs>
