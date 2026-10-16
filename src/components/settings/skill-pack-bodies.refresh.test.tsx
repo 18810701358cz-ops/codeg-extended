@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import type { ComponentType } from "react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
 import type { AcpAgentInfo } from "@/lib/types"
@@ -75,7 +75,7 @@ type Body = ComponentType<{ onRegisterRefresh?: (fn: () => void) => void }>
 const PACKS: {
   name: string
   Body: Body
-  list: ReturnType<typeof vi.fn>
+  list: Mock
   item: (name: string) => unknown
 }[] = [
   {

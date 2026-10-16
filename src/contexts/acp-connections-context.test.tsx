@@ -1,7 +1,15 @@
 import { useEffect } from "react"
 import { act, cleanup, render } from "@testing-library/react"
 import { useTranslations } from "next-intl"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from "vitest"
 import {
   AcpConnectionsProvider,
   STREAM_FLUSH_FRAME_MS,
@@ -4795,7 +4803,7 @@ describe("global acp://event listener is mount-once", () => {
   // async IPC, so that churn leaves two listeners live at once and each
   // envelope is delivered twice. The handler must be reached through a
   // latest-ref instead, so the subscription is registered exactly once.
-  let unlisten: ReturnType<typeof vi.fn>
+  let unlisten: Mock
 
   function mountDesktop() {
     return render(
@@ -5144,7 +5152,7 @@ describe("delegation-child attach: mid-turn hydration", () => {
 describe("routing survives every surface watching one connection", () => {
   const CHILD_VIEW = "task-conn-1" // transcript viewer: contextKey === connId
   const CONN = "task-conn-1"
-  let unlisten: ReturnType<typeof vi.fn>
+  let unlisten: Mock
 
   function mountDesktop() {
     return render(
@@ -5358,7 +5366,7 @@ describe("routing survives every surface watching one connection", () => {
 })
 
 describe("a `prompting` state whose connection is gone can always recover", () => {
-  let unlisten: ReturnType<typeof vi.fn>
+  let unlisten: Mock
 
   function mountDesktop() {
     return render(
@@ -5499,7 +5507,7 @@ describe("connect() teardown races", () => {
   // A second contextKey for the same session — what a tab close + sidebar
   // reopen produces, and what orphan rescue exists to reconcile.
   const RESCUE_TAB = "conv-1-claude_code-42-reopened"
-  let unlisten: ReturnType<typeof vi.fn>
+  let unlisten: Mock
 
   function mountDesktop() {
     return render(

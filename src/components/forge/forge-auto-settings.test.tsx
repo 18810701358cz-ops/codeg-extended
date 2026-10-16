@@ -13,7 +13,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { NextIntlClientProvider } from "next-intl"
 import { useState } from "react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
 import { DEFAULT_FORGE_AUTO_SETTINGS } from "@/lib/forge-auto"
@@ -43,7 +43,7 @@ import {
 } from "./forge-auto-settings"
 
 /** The arguments of a mock's latest call. */
-function lastCall(fn: ReturnType<typeof vi.fn>): unknown[] {
+function lastCall(fn: Mock): unknown[] {
   const calls = fn.mock.calls
   return calls[calls.length - 1]
 }

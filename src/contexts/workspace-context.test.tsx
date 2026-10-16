@@ -1,6 +1,14 @@
 import { act, render, screen } from "@testing-library/react"
 import { useEffect } from "react"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from "vitest"
 import {
   WorkspaceProvider,
   useWorkspaceActions,
@@ -256,11 +264,11 @@ beforeEach(() => {
 })
 
 const mockedApi = api as unknown as {
-  getHomeDirectory: ReturnType<typeof vi.fn>
-  readFileForEdit: ReturnType<typeof vi.fn>
-  gitIsTracked: ReturnType<typeof vi.fn>
-  gitShowFile: ReturnType<typeof vi.fn>
-  saveFileContent: ReturnType<typeof vi.fn>
+  getHomeDirectory: Mock
+  readFileForEdit: Mock
+  gitIsTracked: Mock
+  gitShowFile: Mock
+  saveFileContent: Mock
 }
 
 // Tab identity under the unified model: file tabs are keyed by the
