@@ -58,8 +58,13 @@ fn spawn_local_command(
         }
         ShellInvocation::CmdLine(line) => {
             if remote {
-                reject_cmd_syntax("CODEG_FOLDER_PATH", &folder_path)?;
-                reject_cmd_syntax("CODEG_REMOTE_HOST", &remote_host)?;
+                for (name, value) in [
+                    ("CODEG_FOLDER_PATH", &folder_path),
+                    ("CODEG_REMOTE_HOST", &remote_host),
+                ] {
+                    reject_unquoted_cmd_variable(command, name)?;
+                    reject_cmd_syntax(name, value)?;
+                }
             }
             append_cmd_line(&mut child, line)?;
         }
@@ -129,6 +134,52 @@ fn reject_cmd_syntax(name: &str, value: &str) -> Result<(), AppCommandError> {
     }
 }
 
+/// Refuse `command` when it names the variable `name` outside double quotes.
+/// There cmd parses the value it splices in like the rest of the line, so the
+/// value's spaces and parentheses can put a command where cmd expects one: a
+/// remote folder named `C:\Windows calc.exe` makes
+/// `if exist %CODEG_FOLDER_PATH% code .` launch calc.exe. Inside quotes the
+/// value stays one argument, and `reject_cmd_syntax` keeps it from closing
+/// them. Like that check, this one is for a remote window's commands only.
+fn reject_unquoted_cmd_variable(command: &str, name: &str) -> Result<(), AppCommandError> {
+    if cmd_names_unquoted(command, name) {
+        return Err(AppCommandError::invalid_input(format!(
+            "%{name}% is outside double quotes, where cmd.exe would read the remote server's value as part of the command"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether `command` names the variable `name` — `%NAME%`, or `%NAME:…%` for a
+/// substring or substitution, in any case — outside double quotes as cmd.exe
+/// reads them: each `"` opens or closes them, but outside them `^` escapes the
+/// character after it, a `"` included. A reference counts wherever it stands,
+/// a caret before it included: cmd expands `%…%` before it reads carets.
+fn cmd_names_unquoted(command: &str, name: &str) -> bool {
+    let mut quoted = false;
+    let mut escaped = false;
+    for (i, c) in command.char_indices() {
+        if c == '%' && !quoted && names_variable(&command[i + 1..], name) {
+            return true;
+        }
+        if escaped {
+            escaped = false;
+        } else if c == '"' {
+            quoted = !quoted;
+        } else if c == '^' && !quoted {
+            escaped = true;
+        }
+    }
+    false
+}
+
+/// Whether `rest`, the text after a `%`, starts with the variable `name`.
+fn names_variable(rest: &str, name: &str) -> bool {
+    rest.get(..name.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(name))
+        && rest[name.len()..].starts_with(['%', ':'])
+}
+
 /// `requested` when it is a directory on this machine, else the home directory.
 /// Never trimmed: a path is used exactly as given.
 fn resolve_working_dir(requested: Option<&str>) -> Option<PathBuf> {
@@ -172,7 +223,7 @@ enum ShellInvocation {
 /// command is the command line itself instead, as if typed at a prompt; `/S`
 /// strips only the outer quotes around it, and `/V:OFF` keeps a `!` literal
 /// even where the registry turns delayed expansion on. Splicing values into the
-/// line is what `reject_cmd_syntax` guards.
+/// line is what `reject_unquoted_cmd_variable` and `reject_cmd_syntax` guard.
 fn shell_invocation(shell: &str, command: &str) -> ShellInvocation {
     let args: Vec<&str> = match classify_shell_family(shell) {
         ShellFamily::PowerShell => vec![
@@ -262,7 +313,83 @@ mod tests {
             None,
         )
         .expect_err("refused");
-        assert!(err.message.contains("CODEG_FOLDER_PATH"), "{err:?}");
+        // Off Windows, cmd.exe not running would be an error naming the
+        // variable too, through the command line it quotes.
+        assert!(
+            err.message
+                .contains(r#"CODEG_FOLDER_PATH from the remote server holds '"'"#),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn cmd_refuses_a_remote_variable_outside_double_quotes() {
+        for (command, folder, refused) in [
+            // Spaces alone put `calc.exe` where `if` expects its command.
+            (
+                "if exist %CODEG_FOLDER_PATH% code .",
+                r"C:\Windows calc.exe",
+                "%CODEG_FOLDER_PATH%",
+            ),
+            (
+                "for %i in (%CODEG_FOLDER_PATH%) do echo %i",
+                "/srv/repo) do calc.exe #",
+                "%CODEG_FOLDER_PATH%",
+            ),
+            (
+                r#"zed ssh://%CODEG_REMOTE_HOST%"%CODEG_FOLDER_PATH%""#,
+                "/srv/repo",
+                "%CODEG_REMOTE_HOST%",
+            ),
+        ] {
+            let err = spawn_local_command(
+                "cmd.exe",
+                command,
+                Some(folder.into()),
+                Some("devbox".into()),
+                None,
+            )
+            .expect_err(command);
+            assert!(
+                err.message
+                    .contains(&format!("{refused} is outside double quotes")),
+                "{command}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cmd_reads_quotes_and_carets_as_cmd_does() {
+        for command in [
+            "code %CODEG_FOLDER_PATH%",
+            "code %codeg_folder_path%",
+            "code %CODEG_FOLDER_PATH:~1%",
+            r#"code "a" %CODEG_FOLDER_PATH% "b""#,
+            // A caret doesn't keep cmd from expanding the reference after it.
+            "code ^%CODEG_FOLDER_PATH%",
+            // Escaped quotes open nothing.
+            r#"code ^"%CODEG_FOLDER_PATH%^""#,
+            // Inside quotes a caret is literal, so the quote after it closes.
+            r#"code "^"%CODEG_FOLDER_PATH%""#,
+        ] {
+            assert!(
+                cmd_names_unquoted(command, "CODEG_FOLDER_PATH"),
+                "{command}"
+            );
+        }
+        for command in [
+            r#"code "%CODEG_FOLDER_PATH%""#,
+            r#"zed "ssh://me@%CODEG_REMOTE_HOST%%CODEG_FOLDER_PATH%""#,
+            // A literal quote, then a quoted reference.
+            r#"code "x"^""%CODEG_FOLDER_PATH%""#,
+            // Other variables, delayed expansion (off) and bare text.
+            "echo %CODEG_FOLDER_PATHS% %OTHER% !CODEG_FOLDER_PATH! CODEG_FOLDER_PATH",
+        ] {
+            assert!(
+                !cmd_names_unquoted(command, "CODEG_FOLDER_PATH"),
+                "{command}"
+            );
+        }
     }
 
     #[test]
