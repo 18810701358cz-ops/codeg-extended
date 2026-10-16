@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use crate::app_error::AppCommandError;
@@ -18,7 +19,9 @@ use crate::terminal::shell_flavor::{classify_shell_family, ShellFamily};
 ///
 /// `folder_path` is the active folder's path *on its host* (the remote path in a
 /// remote-desktop window) and `remote_host` the remote server's host name; both
-/// reach the command as `CODEG_FOLDER_PATH` / `CODEG_REMOTE_HOST`.
+/// reach the command as `CODEG_FOLDER_PATH` / `CODEG_REMOTE_HOST`. It runs in
+/// `working_dir` — the folder, when the window is a local one — or, failing
+/// that, the home directory: a remote folder's path names nothing here.
 ///
 /// `async` because the spawn needs a tokio runtime in scope, not because it
 /// awaits anything.
@@ -27,20 +30,37 @@ pub async fn run_local_command(
     command: String,
     folder_path: Option<String>,
     remote_host: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<(), AppCommandError> {
     let command = validate_local_command(&command)?;
     let shell = crate::terminal::manager::resolve_shell();
     let mut child = tokio::process::Command::new(&shell);
+    match shell_invocation(&shell, command) {
+        ShellInvocation::Args(args) => {
+            child.args(args);
+        }
+        #[cfg(windows)]
+        ShellInvocation::CmdLine(line) => {
+            use std::os::windows::process::CommandExt;
+            child.as_std_mut().raw_arg(line);
+        }
+        // Only a Windows host resolves its shell to cmd.exe.
+        #[cfg(not(windows))]
+        ShellInvocation::CmdLine(_) => {
+            return Err(AppCommandError::invalid_input(format!(
+                "{shell} can only run commands on Windows"
+            )));
+        }
+    }
     child
-        .args(shell_args(&shell, command))
         .env("CODEG_CMD", command)
         .env("CODEG_FOLDER_PATH", folder_path.unwrap_or_default())
         .env("CODEG_REMOTE_HOST", remote_host.unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(home) = dirs::home_dir() {
-        child.current_dir(home);
+    if let Some(dir) = resolve_working_dir(working_dir.as_deref()) {
+        child.current_dir(dir);
     }
     #[cfg(windows)]
     {
@@ -53,6 +73,15 @@ pub async fn run_local_command(
     child.spawn().map(|_| ()).map_err(|err| {
         AppCommandError::external_command("Failed to run local command", format!("{shell}: {err}"))
     })
+}
+
+/// `requested` when it is a directory on this machine, else the home directory.
+/// Never trimmed: a path is used exactly as given.
+fn resolve_working_dir(requested: Option<&str>) -> Option<PathBuf> {
+    requested
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_dir())
+        .or_else(dirs::home_dir)
 }
 
 fn validate_local_command(command: &str) -> Result<&str, AppCommandError> {
@@ -68,11 +97,27 @@ fn validate_local_command(command: &str) -> Result<&str, AppCommandError> {
     Ok(trimmed)
 }
 
-/// Shell arguments that run `$CODEG_CMD` and exit. The command travels in the
-/// env var rather than argv to sidestep quoting — the same indirection the
-/// built-in terminal uses. POSIX shells get `-l` so the user's login profile
-/// (PATH for `zed`, `code`, …) applies; no `-i`, as there is no TTY here.
-fn shell_args(shell: &str, command: &str) -> Vec<OsString> {
+/// How a command is handed to the shell that runs it.
+#[derive(Debug, PartialEq, Eq)]
+enum ShellInvocation {
+    /// Arguments, quoted for the program the usual way.
+    Args(Vec<OsString>),
+    /// cmd.exe's whole command line, appended verbatim (Windows only).
+    CmdLine(String),
+}
+
+/// Run `command` and exit. Where the shell can evaluate a variable, the
+/// command travels in `$CODEG_CMD` rather than argv to sidestep quoting — the
+/// same indirection the built-in terminal uses. POSIX shells get `-l` so the
+/// user's login profile (PATH for `zed`, `code`, …) applies; no `-i`, as there
+/// is no TTY here.
+///
+/// cmd.exe is the exception: it expands `%VAR%` once, over its own command
+/// line, and never inside a value it expanded, so behind `%CODEG_CMD%` the
+/// `%CODEG_FOLDER_PATH%` in a command would reach the program literally. The
+/// command is the command line itself instead, as if typed at a prompt; `/S`
+/// strips only the outer quotes around it.
+fn shell_invocation(shell: &str, command: &str) -> ShellInvocation {
     let args: Vec<&str> = match classify_shell_family(shell) {
         ShellFamily::PowerShell => vec![
             "-NoLogo",
@@ -80,12 +125,12 @@ fn shell_args(shell: &str, command: &str) -> Vec<OsString> {
             "-Command",
             "Invoke-Expression $env:CODEG_CMD",
         ],
-        ShellFamily::Cmd => vec!["/D", "/S", "/C", "%CODEG_CMD%"],
+        ShellFamily::Cmd => return ShellInvocation::CmdLine(format!("/D /S /C \"{command}\"")),
         ShellFamily::Posix if is_bash_like(shell) => vec!["-l", "-c", "eval \"$CODEG_CMD\""],
         // nu / xonsh / elvish: no assumptions about `-l` or `eval`.
         ShellFamily::Posix => vec!["-c", command],
     };
-    args.into_iter().map(OsString::from).collect()
+    ShellInvocation::Args(args.into_iter().map(OsString::from).collect())
 }
 
 fn is_bash_like(shell: &str) -> bool {
@@ -110,41 +155,85 @@ mod tests {
         assert_eq!(validate_local_command("  zed .  ").unwrap(), "zed .");
     }
 
+    fn args(items: &[&str]) -> ShellInvocation {
+        ShellInvocation::Args(items.iter().map(OsString::from).collect())
+    }
+
     #[test]
     fn bash_like_shells_eval_the_env_var_in_a_login_shell() {
-        let args = shell_args("/bin/zsh", "zed .");
-        assert_eq!(args, ["-l", "-c", "eval \"$CODEG_CMD\""]);
+        assert_eq!(
+            shell_invocation("/bin/zsh", "zed ."),
+            args(&["-l", "-c", "eval \"$CODEG_CMD\""])
+        );
+    }
+
+    #[test]
+    fn cmd_runs_the_command_as_its_own_command_line() {
+        // So cmd's one expansion pass reaches the variables in the command.
+        assert_eq!(
+            shell_invocation("cmd.exe", r#"code "%CODEG_FOLDER_PATH%""#),
+            ShellInvocation::CmdLine(r#"/D /S /C "code "%CODEG_FOLDER_PATH%"""#.into())
+        );
+    }
+
+    #[test]
+    fn runs_in_the_requested_directory_when_it_exists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_str().expect("utf-8 temp path");
+        assert_eq!(resolve_working_dir(Some(path)), Some(dir.path().into()));
+    }
+
+    #[test]
+    fn falls_back_to_home_for_a_path_that_names_nothing_here() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("not-here");
+        let missing = missing.to_str().expect("utf-8 temp path");
+        assert_eq!(resolve_working_dir(Some(missing)), dirs::home_dir());
+        assert_eq!(resolve_working_dir(Some("")), dirs::home_dir());
+        assert_eq!(resolve_working_dir(None), dirs::home_dir());
     }
 
     #[test]
     fn unknown_posix_shells_get_the_command_verbatim() {
-        let args = shell_args("/usr/bin/nu", "zed .");
-        assert_eq!(args, ["-c", "zed ."]);
+        assert_eq!(
+            shell_invocation("/usr/bin/nu", "zed ."),
+            args(&["-c", "zed ."])
+        );
     }
 
     #[cfg(not(windows))]
     #[tokio::test]
-    async fn runs_command_with_folder_env() {
+    async fn runs_command_with_folder_env_in_the_working_dir() {
         use std::time::{Duration, Instant};
 
         let dir = tempfile::tempdir().expect("tempdir");
         let marker = dir.path().join("marker.txt");
         run_local_command(
             format!(
-                "printf '%s|%s' \"$CODEG_FOLDER_PATH\" \"$CODEG_REMOTE_HOST\" > '{}'",
+                "printf '%s|%s|%s' \"$CODEG_FOLDER_PATH\" \"$CODEG_REMOTE_HOST\" \"$(pwd -P)\" > '{}'",
                 marker.display()
             ),
             Some("/srv/repo".into()),
             Some("devbox".into()),
+            Some(dir.path().to_str().expect("utf-8 temp path").into()),
         )
         .await
         .expect("spawn");
+        // `pwd -P` resolves symlinks (macOS's /var is one).
+        let expected = format!(
+            "/srv/repo|devbox|{}",
+            std::fs::canonicalize(dir.path())
+                .expect("canonical temp dir")
+                .display()
+        );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Generous: the wait ends as soon as the marker appears, and a login
+        // shell's profile (nvm, conda, …) on a busy machine can take seconds.
+        let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             if let Ok(contents) = std::fs::read_to_string(&marker) {
                 if !contents.is_empty() {
-                    assert_eq!(contents, "/srv/repo|devbox");
+                    assert_eq!(contents, expected);
                     return;
                 }
             }
