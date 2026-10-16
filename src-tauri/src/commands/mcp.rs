@@ -3115,8 +3115,12 @@ fn local_mcp_readers() -> [LocalMcpReader; 16] {
             read_antigravity_servers,
         ),
         LocalMcpReader::new("Qoder", McpAppType::Qoder, read_qoder_servers),
-        LocalMcpReader::new("pi", McpAppType::Pi, read_pi_servers),
         LocalMcpReader::new("ZCode", McpAppType::ZCode, read_zcode_servers),
+        // Scan-only, so it reads last: the merge below is first-writer-wins,
+        // and a pi entry that won would decide the transport every save of
+        // that id is checked against — dropping an assignable agent that
+        // cannot host pi's transport.
+        LocalMcpReader::new("pi", McpAppType::Pi, read_pi_servers),
     ]
 }
 
@@ -8312,5 +8316,51 @@ mod zcode_transport_tests {
         // Existing agents retain their remote transport choices.
         assert!(app_can_host_spec(McpAppType::Codex, &http));
         assert!(app_can_host_spec(McpAppType::KimiCode, &sse));
+    }
+
+    // The scan is first-writer-wins and every save is checked against the
+    // spec it picked. With pi read before ZCode, a pi HTTP entry sharing an
+    // id with ZCode's stdio one won, so the next save excluded ZCode as unable
+    // to host HTTP and deleted its entry.
+    #[test]
+    fn zcode_spec_wins_an_id_shared_with_the_scan_only_pi_source() {
+        fn zcode_stdio() -> LocalMcpReadResult {
+            Ok(BTreeMap::from([(
+                "shared".to_string(),
+                canonicalize_spec(&json!({"command": "zcode-tool"}), "test").unwrap(),
+            )]))
+        }
+        fn pi_http() -> LocalMcpReadResult {
+            Ok(BTreeMap::from([(
+                "shared".to_string(),
+                canonicalize_spec(
+                    &json!({"type": "http", "url": "https://example.test/mcp"}),
+                    "test",
+                )
+                .unwrap(),
+            )]))
+        }
+        let readers = local_mcp_readers();
+        assert_eq!(
+            readers.last().map(|reader| reader.app),
+            Some(McpAppType::Pi),
+            "pi is scan-only and must read after every assignable agent"
+        );
+        let ordered: Vec<LocalMcpReader> = readers
+            .iter()
+            .filter_map(|reader| match reader.app {
+                McpAppType::ZCode => {
+                    Some(LocalMcpReader::new(reader.source, reader.app, zcode_stdio))
+                }
+                McpAppType::Pi => Some(LocalMcpReader::new(reader.source, reader.app, pi_http)),
+                _ => None,
+            })
+            .collect();
+        let scan = scan_local_servers_from_readers(&ordered);
+        assert_eq!(scan.servers.len(), 1);
+        let shared = &scan.servers[0];
+        assert!(shared.apps.contains(&McpAppType::ZCode) && shared.apps.contains(&McpAppType::Pi));
+        assert_eq!(shared.spec["command"], "zcode-tool");
+        assert!(app_can_host_spec(McpAppType::ZCode, &shared.spec));
     }
 }
