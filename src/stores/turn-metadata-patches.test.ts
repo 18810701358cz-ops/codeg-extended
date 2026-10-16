@@ -724,6 +724,7 @@ function seedDetail(turns: MessageTurn[], inFlightUserTurnId?: string) {
       localTurns: [],
       backgroundTurns: [],
       pendingBackgroundSettlements: [],
+      pendingCancelledTurnReports: null,
       optimisticTurns: [],
       liveMessage: null,
       syncState: "idle" as const,

@@ -3959,6 +3959,7 @@
         "cardRunning": "Läuft im Hintergrund",
         "cardLaunchedPending": "Hintergrundaufgabe gestartet",
         "cardCompleted": "Hintergrundaufgabe abgeschlossen",
+        "cardInterim": "Hintergrundaufgabe: Zwischenergebnis",
         "cardFinishedWithStatus": "Hintergrundaufgabe beendet ({status})",
         "cardResultPending": "Ergebnis steht noch aus"
       },

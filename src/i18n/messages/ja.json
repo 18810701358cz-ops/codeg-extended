@@ -3959,6 +3959,7 @@
         "cardRunning": "バックグラウンドで実行中",
         "cardLaunchedPending": "バックグラウンドタスクを開始しました",
         "cardCompleted": "バックグラウンドタスクが完了しました",
+        "cardInterim": "バックグラウンドタスク：途中結果",
         "cardFinishedWithStatus": "バックグラウンドタスクが終了しました（{status}）",
         "cardResultPending": "結果はまだ返っていません"
       },

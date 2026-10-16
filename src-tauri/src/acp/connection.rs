@@ -16315,6 +16315,7 @@ fn map_grok_subagent_notification_inner(
                     summary: None,
                     tool_use_id: Some(call_id),
                     result,
+                    interim: false,
                 }],
                 watermark: 0,
             }])

@@ -3959,6 +3959,7 @@
         "cardRunning": "Executando em segundo plano",
         "cardLaunchedPending": "Tarefa iniciada em segundo plano",
         "cardCompleted": "Tarefa em segundo plano concluída",
+        "cardInterim": "Tarefa em segundo plano: resultado provisório",
         "cardFinishedWithStatus": "Tarefa em segundo plano encerrada ({status})",
         "cardResultPending": "Resultado ainda não retornou"
       },

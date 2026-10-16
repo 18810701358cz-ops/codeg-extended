@@ -3959,6 +3959,7 @@
         "cardRunning": "En cours d'exécution en arrière-plan",
         "cardLaunchedPending": "Tâche lancée en arrière-plan",
         "cardCompleted": "Tâche en arrière-plan terminée",
+        "cardInterim": "Tâche en arrière-plan : résultat provisoire",
         "cardFinishedWithStatus": "Tâche en arrière-plan terminée ({status})",
         "cardResultPending": "Résultat pas encore reçu"
       },

@@ -3959,6 +3959,7 @@
         "cardRunning": "قيد التشغيل في الخلفية",
         "cardLaunchedPending": "بدأت مهمة الخلفية",
         "cardCompleted": "اكتملت مهمة الخلفية",
+        "cardInterim": "مهمة الخلفية: نتيجة مؤقتة",
         "cardFinishedWithStatus": "انتهت مهمة الخلفية ({status})",
         "cardResultPending": "لم تصل النتيجة بعد"
       },

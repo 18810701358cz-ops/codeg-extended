@@ -2697,6 +2697,11 @@ export interface ToolCallImageWire {
  * notification names its `Bash` call too, whose card has no marker to flip (the
  * store leaves it alone); absent when the notification names no call (an MCP
  * call moved to the background).
+ *
+ * `interim` (absent unless true) marks a notification whose note says the
+ * sub-agent will notify again: it stopped while background work of its own
+ * still runs, or it is being resumed. Its result may be interim, it is not the
+ * task's end, and it raises no "finished" notification.
  */
 export interface BackgroundSettledInfo {
   task_id: string
@@ -2704,6 +2709,7 @@ export interface BackgroundSettledInfo {
   summary?: string | null
   tool_use_id?: string | null
   result?: string | null
+  interim?: boolean
 }
 
 export type AcpEvent =

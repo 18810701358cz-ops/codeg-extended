@@ -2727,6 +2727,7 @@ describe("out-of-turn wire guard + background activity", () => {
         status: "completed",
         summary: 'Agent "Run pnpm build" finished',
         result: "Build succeeded (exit code 0).",
+        interim: false,
       },
     ])
 
@@ -2748,6 +2749,270 @@ describe("out-of-turn wire guard + background activity", () => {
     expect(notify).toHaveBeenCalledTimes(1)
 
     resetConversationRuntimeStore()
+  })
+
+  // Claude Code notifies `completed` for a sub-agent that ended its run while
+  // background work of its own still runs, and says it will notify again: no
+  // task ended, so nothing is announced, but its card still flips to the
+  // interim result.
+  it("background_activity announces no interim notification", async () => {
+    const { useConversationRuntimeStore, resetConversationRuntimeStore } =
+      await import("@/stores/conversation-runtime-store")
+    const { notifyDesktop } = await import("@/lib/desktop-notification")
+    const notify = vi.mocked(notifyDesktop)
+    notify.mockClear()
+    h.requestWindowAttention.mockClear()
+    resetConversationRuntimeStore()
+    useConversationRuntimeStore.getState().actions.setExternalId(-9, "sess-1")
+
+    const handlers = await mountOwnerConnection()
+    const interim = {
+      task_id: "agent1",
+      status: "completed",
+      summary: 'Agent "probe" is waiting on its own background work',
+      tool_use_id: "toolu_01",
+      result: "interim",
+      interim: true,
+    }
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "background_activity",
+      session_id: "sess-1",
+      outstanding: 1,
+      settled: [interim],
+      watermark: 100,
+    })
+    expect(notify).not.toHaveBeenCalled()
+    expect(h.requestWindowAttention).not.toHaveBeenCalled()
+    expect(
+      useConversationRuntimeStore.getState().byConversationId.get(-9)
+        ?.pendingBackgroundSettlements
+    ).toEqual([
+      {
+        toolUseId: "toolu_01",
+        taskId: "agent1",
+        status: "completed",
+        summary: 'Agent "probe" is waiting on its own background work',
+        result: "interim",
+        interim: true,
+      },
+    ])
+
+    // In a batch with a task that did finish, only that one is announced.
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "background_activity",
+      session_id: "sess-1",
+      outstanding: 1,
+      settled: [
+        { ...interim, task_id: "agent2", tool_use_id: "toolu_02" },
+        {
+          task_id: "agent3",
+          status: "completed",
+          summary: 'Agent "build" finished',
+          tool_use_id: "toolu_03",
+          result: "ok",
+        },
+      ],
+      watermark: 200,
+    })
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify.mock.calls[0][1].body).toContain('Agent "build" finished')
+
+    resetConversationRuntimeStore()
+  })
+
+  // codeg ends a turn the moment the user stops it, so the reports closing its
+  // open calls arrive out of turn — after the panel promoted it. They settle
+  // that turn's cards, for a turn the user stopped and until the next prompt.
+  it("settles a stopped turn's promoted cards with the reports that close them", async () => {
+    const { useConversationRuntimeStore, resetConversationRuntimeStore } =
+      await import("@/stores/conversation-runtime-store")
+    const originalRaf = globalThis.requestAnimationFrame
+    const originalCancelRaf = globalThis.cancelAnimationFrame
+    // Tool-call updates flush on the next frame; run frames by hand.
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      frames.push(cb)
+      return frames.length
+    })
+    vi.stubGlobal("cancelAnimationFrame", () => {})
+    const runFrames = () =>
+      act(() => {
+        while (frames.length > 0) frames.shift()!(0)
+      })
+    try {
+      resetConversationRuntimeStore()
+      const runtime = useConversationRuntimeStore.getState().actions
+      runtime.setExternalId(-9, "sess-1")
+      const handlers = await mountOwnerConnection()
+      let seq = 0
+      const runTurn = (id: string, stopReason: string, settledId?: string) => {
+        emitAcpEvent(handlers, {
+          seq: ++seq,
+          connection_id: "spawned-conn",
+          type: "status_changed",
+          status: "prompting",
+        })
+        if (settledId) {
+          emitAcpEvent(handlers, {
+            seq: ++seq,
+            connection_id: "spawned-conn",
+            type: "tool_call",
+            tool_call_id: settledId,
+            title: "Read",
+            kind: "read",
+            status: "completed",
+            content: "file body",
+            raw_input: JSON.stringify({ file_path: "/tmp/x/a.txt" }),
+            raw_output: null,
+          })
+        }
+        emitAcpEvent(handlers, {
+          seq: ++seq,
+          connection_id: "spawned-conn",
+          type: "tool_call",
+          tool_call_id: id,
+          title: "sleep 30",
+          kind: "execute",
+          status: "pending",
+          content: null,
+          raw_input: JSON.stringify({ command: "sleep 30" }),
+          raw_output: null,
+        })
+        emitAcpEvent(handlers, {
+          seq: ++seq,
+          connection_id: "spawned-conn",
+          type: "turn_complete",
+          session_id: "sess-1",
+          stop_reason: stopReason,
+        })
+        // The panel's promotion on the prompting→idle edge.
+        runtime.setLiveMessage(
+          -9,
+          h.store!.getConnection(TAB)!.liveMessage,
+          true
+        )
+        runtime.completeTurn(-9)
+      }
+      const closeCall = (id: string) => {
+        emitAcpEvent(handlers, {
+          seq: ++seq,
+          connection_id: "spawned-conn",
+          type: "tool_call_update",
+          tool_call_id: id,
+          title: null,
+          status: "failed",
+          content: "The user doesn't want to proceed with this tool use.",
+          raw_input: null,
+          raw_output: null,
+        })
+        runFrames()
+      }
+      const blocksOf = (id: string) =>
+        (
+          useConversationRuntimeStore.getState().byConversationId.get(-9)
+            ?.localTurns ?? []
+        )
+          .flatMap((turn) => turn.blocks)
+          .filter(
+            (b) =>
+              (b.type === "tool_use" || b.type === "tool_result") &&
+              b.tool_use_id === id
+          )
+
+      emitAcpEvent(handlers, {
+        seq: ++seq,
+        connection_id: "spawned-conn",
+        type: "session_started",
+        session_id: "sess-1",
+      })
+      runTurn("toolu_1", "cancelled")
+      expect(blocksOf("toolu_1")).toMatchObject([
+        { type: "tool_use", status: "pending" },
+      ])
+      closeCall("toolu_1")
+      expect(blocksOf("toolu_1")).toMatchObject([
+        { type: "tool_use", status: "failed" },
+        {
+          type: "tool_result",
+          output_preview:
+            "The user doesn't want to proceed with this tool use.",
+          is_error: true,
+        },
+      ])
+
+      // A progress report folds in and rides along to the one that closes the
+      // call, which lands as it would have inside the turn: streamed output
+      // wins over the closing's text.
+      runTurn("toolu_2", "cancelled")
+      emitAcpEvent(handlers, {
+        seq: ++seq,
+        connection_id: "spawned-conn",
+        type: "tool_call_update",
+        tool_call_id: "toolu_2",
+        title: null,
+        status: "in_progress",
+        content: null,
+        raw_input: null,
+        raw_output: "partial\n",
+        raw_output_append: true,
+      })
+      runFrames()
+      expect(blocksOf("toolu_2")).toMatchObject([
+        { type: "tool_use", status: "pending" },
+      ])
+      closeCall("toolu_2")
+      expect(blocksOf("toolu_2")).toMatchObject([
+        { type: "tool_use", status: "failed" },
+        { type: "tool_result", output_preview: "partial\n", is_error: true },
+      ])
+
+      // A turn that ended on its own leaves a late report out of its cards.
+      runTurn("toolu_3", "end_turn")
+      closeCall("toolu_3")
+      expect(blocksOf("toolu_3")).toMatchObject([
+        { type: "tool_use", status: "pending" },
+      ])
+
+      // The next prompt closes a stopped turn's window, announced by its
+      // status event or by a snapshot that already carries it.
+      const cancelledTurn = () => h.store!.getConnection(TAB)!.cancelledTurn
+      runTurn("toolu_4", "cancelled")
+      expect(cancelledTurn()?.openCalls).toEqual(new Set(["toolu_4"]))
+      emitAcpEvent(handlers, {
+        seq: ++seq,
+        connection_id: "spawned-conn",
+        type: "status_changed",
+        status: "prompting",
+      })
+      expect(cancelledTurn()).toBeNull()
+
+      // Only the calls the turn left open are its reports' to settle.
+      runTurn("toolu_5", "cancelled", "toolu_read")
+      expect(cancelledTurn()?.openCalls).toEqual(new Set(["toolu_5"]))
+      const hydrate = (status: string) => {
+        h.denormalizeSnapshot.mockReturnValue({
+          ...snapshotBase(),
+          status,
+          sessionId: "sess-1",
+          eventSeq: ++seq,
+        })
+        hydrateSnapshot(handlers, {
+          event_seq: seq,
+        } as unknown as LiveSessionSnapshot)
+      }
+      hydrate("connected")
+      expect(cancelledTurn()).not.toBeNull()
+      hydrate("prompting")
+      expect(cancelledTurn()).toBeNull()
+    } finally {
+      vi.stubGlobal("requestAnimationFrame", originalRaf)
+      vi.stubGlobal("cancelAnimationFrame", originalCancelRaf)
+      resetConversationRuntimeStore()
+    }
   })
 })
 

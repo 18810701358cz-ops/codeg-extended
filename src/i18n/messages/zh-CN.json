@@ -3959,6 +3959,7 @@
         "cardRunning": "后台运行中",
         "cardLaunchedPending": "已启动后台任务",
         "cardCompleted": "后台任务已完成",
+        "cardInterim": "后台任务：阶段性结果",
         "cardFinishedWithStatus": "后台任务已结束（{status}）",
         "cardResultPending": "结果尚未返回"
       },

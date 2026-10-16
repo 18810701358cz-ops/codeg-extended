@@ -3959,6 +3959,7 @@
         "cardRunning": "백그라운드에서 실행 중",
         "cardLaunchedPending": "백그라운드 작업 시작됨",
         "cardCompleted": "백그라운드 작업 완료",
+        "cardInterim": "백그라운드 작업: 중간 결과",
         "cardFinishedWithStatus": "백그라운드 작업 종료 ({status})",
         "cardResultPending": "결과가 아직 반환되지 않았습니다"
       },

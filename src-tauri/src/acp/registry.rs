@@ -393,7 +393,7 @@ pub const PI_MIN_RUNTIME_VERSION: &str = "0.81.0";
 
 /// The npm package the built-in Claude Code entry runs — and the name the
 /// adapter reports as `agentInfo.name` at `initialize`, which is its
-/// `packageJson.name` (read from the 0.58.1 to 0.90.0 sources). A custom agent
+/// `packageJson.name` (read from the 0.58.1 to 0.91.0 sources). A custom agent
 /// whose running adapter reports exactly this name follows the Claude Code
 /// steering policy (`connection.rs::steering_policy_agent`).
 pub const CLAUDE_AGENT_ACP_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
@@ -2098,17 +2098,18 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // want to proceed with this tool use. …" text and
             // `nonExecutionKind: "user-rejected"`, as the transcript records
             // it), a foreground subagent's call with "The turn was cancelled
-            // before this tool call returned a result." None of it needs codeg
-            // code. codeg emits its own `TurnComplete` the moment the user
-            // stops a turn, so the closings and the follow-up arrive out of
-            // turn: the closings stay out of the finished turn
-            // (`outOfTurnToolCalls`), whose cards read as before until the
-            // conversation is reloaded from the transcript, which carries the
-            // same results; the follow-up is a turn Claude Code started on its
-            // own, as when a background command finishes while idle. A
-            // background subagent's calls get no closing on either version
-            // (it may run on through a cancel), and the CLI reports its stop
-            // after the response.
+            // before this tool call returned a result." codeg emits its own
+            // `TurnComplete` the moment the user stops a turn, so the closings
+            // and the follow-up arrive out of turn. The frontend folds the
+            // closings into the stopped turn's message and settles the cards of
+            // the turn it already promoted with them, as they would have
+            // settled inside it (`cancelledTurn`; before that, a stopped
+            // command read as completed until the conversation was reloaded
+            // from the transcript, which carries the same results). The
+            // follow-up is a turn Claude Code started on its own, as when a
+            // background command finishes while idle. A background subagent's
+            // calls get no closing on either version (it may run on through a
+            // cancel), and the CLI reports its stop after the response.
             //
             // (ttt) The subagents RFD form (#1320–#1322, #1324, #1328) goes only
             // to a client that declares `subagents` and is not AIR. An AIR
@@ -2144,9 +2145,111 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             //     but its absence proves nothing, since a gateway session runs
             //     at 1M without one, so the history gauge keeps assuming 1M and
             //     labels and pricing keep the answering model.
+            //
+            // 0.91.0 moves the Claude SDK 0.3.296 → 0.3.300, i.e. CLI 2.1.296 →
+            // **2.1.300** (the CLI changelog has no 2.1.297 or 2.1.298). The
+            // ACP SDK stays 1.8.0 and `engines.node` stays ">=22". The
+            // published package differs from 0.90.0's in exactly the files the
+            // tag diff touches (`turn-events.ts` changed a comment only and
+            // compiles the same). The scenario harness, the same in both tags,
+            // is byte-identical in all 40 scenarios with codeg's exact
+            // `clientCapabilities`, `initialize` included. It has no cancel,
+            // fork or self-started-cycle scenario, which is where the adapter
+            // moved; the probes below ran live against the local fake Anthropic
+            // API (no model call), 0.90.0 and 0.91.0 side by side.
+            //
+            // (vvv) **Cancel** (#1334, #1336, #1339, #1342, #1344, #1345).
+            // Measured with codeg's capabilities: a root Bash and a foreground
+            // subagent's command are closed before the `cancelled` response
+            // exactly as on 0.90.0. A background subagent the cancel stops
+            // (an AIR client's interrupt still stops them; #1348 spares them
+            // only for a subagents RFD client) now gets its open command
+            // closed `failed`, with "The turn was cancelled before this tool
+            // call returned a result.", after the response, where 0.90.0 left
+            // it open for good. codeg ends the turn itself when the user stops
+            // it, so this closing lands out of turn like (sss)'s, but the call
+            // sits in the subagent's launch card, which settled when the launch
+            // was acknowledged and which such closings never revise
+            // (`applyLateToolCallReports`): it reads as before until a reload.
+            // #1339, #1342 and #1344 close the tool calls of a model cycle
+            // Claude Code started on its own (its follow-up after a background
+            // task) at the cycle's end, which a cancel codeg sends between its
+            // prompts can stop (a `/goal` that lands, say); codeg renders those
+            // cycles from the transcript (`background_watch`), never from the
+            // wire, so the closings change nothing it shows. #1334 (read from
+            // the source and its tests, a race no probe hits on demand): a tool
+            // that the stopped work asks to run after the cancel was reported,
+            // such as one of a steer the CLI had already taken in, is denied
+            // with "The user cancelled this prompt." and shows nothing, where
+            // it used to raise a permission request with no tool call behind
+            // it.
+            //
+            // (www) Nothing to change in codeg, each checked:
+            //   * The subagents RFD surface (#1332, #1337, #1347, #1348) and
+            //     the ACP v2 one (#1346) serve neither an AIR client nor v1;
+            //     see (ttt).
+            //   * #1340 narrows the model picker to what a `providers/set`
+            //     gateway lists. codeg routes Claude through a gateway with
+            //     `ANTHROPIC_BASE_URL`, which the adapter does not list, and
+            //     the picker is the same on both versions, values included
+            //     (`opus` recommended, `fable`, `sonnet`, `haiku`).
+            //   * #1338 races an elicitation against Claude Code withdrawing
+            //     it. codeg declares no elicitation to Claude, and a withdrawn
+            //     permission request (`$/cancel_request`) already closes its
+            //     card.
+            //   * #1335 ends a terminal for a client that renders terminals;
+            //     codeg takes no terminal `_meta` from Claude (see
+            //     `hosted_terminal_output_key`).
+            //   * #1351 (`session/delete`) and #1352 (`agentWorktree`, for a
+            //     `sessionIndex` client) answer requests codeg never sends.
+            //   * #1353 keeps a live session that was never prompted when a
+            //     resume or load names other settings. codeg's resume of a fork
+            //     names the settings the fork did (see (rrr)); measured, a fork
+            //     and its resume run one CLI process on both versions, and the
+            //     resume answers in 2 to 4 ms.
+            //   * The SDK now runs adaptive thinking for `MAX_THINKING_TOKENS=0`
+            //     on a model that cannot turn thinking off; codeg never sets it.
+            //
+            // (xxx) **CLI 2.1.299 and 2.1.300.** What reaches codeg:
+            //   * Transcripts record each main-loop API request (2.1.300):
+            //     `api-request-shape` (the system prompt and tools, once per
+            //     shape; 69 KB in the probe), `api-request-blob` (the messages
+            //     the transcript does not already hold, the prompt as sent with
+            //     its system reminders among them) and `api-request` (the
+            //     parameters and a digest), and the reply's assistant records
+            //     name theirs in `requestRef`. Title and compaction requests are
+            //     not recorded (measured: 4 of the probe's 11 requests). Every
+            //     codeg reader of a Claude transcript dispatches on the record
+            //     `type`, so none of these is conversation, though a blob
+            //     carries a user `message`; a parser test pins that such a
+            //     transcript parses exactly as the same session without them.
+            //   * A background sub-agent that ends its run while background work
+            //     of its own still runs notifies `completed`, then notifies
+            //     again once that work is done and the agent has finished
+            //     (measured on both CLIs). The first notification's note says
+            //     its result "may be interim", 2.1.300 words its summary "… is
+            //     waiting on its own background work", and 2.1.300's note says
+            //     an agent resumed with messages that reached it too late "will
+            //     notify again". codeg took the first one for the end: the card
+            //     read "Background task completed" over that summary, a
+            //     "finished" notification went out, and the task left the count
+            //     that holds off the idle sweeps (the adapter's async-task table
+            //     still covers a background shell of the sub-agent, not a
+            //     sub-agent of its own). `task_notification_is_interim` reads
+            //     the note: the card reads as an interim result, nothing is
+            //     announced, and the task stays counted until the final one.
+            //   * A `/compact` writes the same records as on 2.1.296. Tool
+            //     inputs and the `latest_per_family` catalog are unchanged (the
+            //     one new input repair is the Claude Projects `project_write`
+            //     tool's), so the model placeholders stand.
+            //   * A steered message now keeps its documents and sends its images
+            //     at reduced size, and `ScheduleWakeup` fires while a background
+            //     task runs in an SDK session. codeg already sends both kinds of
+            //     attachment with a steer and renders such wakeups from the
+            //     transcript.
             distribution: AgentDistribution::Npx {
-                version: "0.90.0",
-                package: "@agentclientprotocol/claude-agent-acp@0.90.0",
+                version: "0.91.0",
+                package: "@agentclientprotocol/claude-agent-acp@0.91.0",
                 cmd: "claude-agent-acp",
                 args: &[],
                 env: &[],
@@ -4783,8 +4886,8 @@ mod tests {
     fn registry_pins_current_acp_agent_versions() {
         assert_npx_version(
             AgentType::ClaudeCode,
-            "0.90.0",
-            "@agentclientprotocol/claude-agent-acp@0.90.0",
+            "0.91.0",
+            "@agentclientprotocol/claude-agent-acp@0.91.0",
             Some("22.0.0"),
         );
         assert_npx_version(

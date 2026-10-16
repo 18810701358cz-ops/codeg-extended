@@ -3959,6 +3959,7 @@
         "cardRunning": "Running in background",
         "cardLaunchedPending": "Launched in background",
         "cardCompleted": "Background task completed",
+        "cardInterim": "Background task: interim result",
         "cardFinishedWithStatus": "Background task finished ({status})",
         "cardResultPending": "Result not returned yet"
       },

@@ -882,6 +882,12 @@ pub struct BackgroundSettledInfo {
     /// parse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    /// The notification says the task will notify again
+    /// ([`crate::parsers::claude::task_notification_is_interim`]): the task is
+    /// still alive, so it stays in the watcher's outstanding count, the card
+    /// reads its result as interim, and no "finished" notification is raised.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interim: bool,
 }
 
 /// Which settings surface drifted, so the frontend can word the

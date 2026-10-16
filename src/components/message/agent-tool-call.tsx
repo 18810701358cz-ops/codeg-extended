@@ -42,6 +42,7 @@ import {
   isAsyncLaunchAckText,
   parseBackgroundTaskMarker,
 } from "@/lib/background-agent"
+import { unwrapWholeFence } from "@/lib/fenced-text"
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -425,7 +426,12 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
           status: backgroundLifecycle.status ?? "",
         })
       : backgroundSettled
-        ? tBg("cardCompleted")
+        ? // The sub-agent said it will notify again: its result may be
+          // interim. Neither "completed" nor "running" (the transcript can't
+          // prove it still runs).
+          backgroundLifecycle.interim
+          ? tBg("cardInterim")
+          : tBg("cardCompleted")
         : tBg("cardLaunchedPending")
     : isLiveBackgroundLaunch
       ? tBg("cardRunning")
@@ -814,7 +820,7 @@ export const AgentToolCallPart = memo(function AgentToolCallPart({
         {isError && part.errorText && (
           <div className="rounded-md bg-destructive/10 p-3">
             <pre className="whitespace-pre-wrap break-words text-xs text-destructive">
-              {part.errorText}
+              {unwrapWholeFence(part.errorText)}
             </pre>
           </div>
         )}
