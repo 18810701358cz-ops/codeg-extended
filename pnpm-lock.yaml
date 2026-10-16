@@ -41,6 +41,9 @@ importers:
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@plantuml/core':
+        specifier: 1.2026.8
+        version: 1.2026.8
       '@radix-ui/react-use-controllable-state':
         specifier: ^1.2.2
         version: 1.2.3(@types/react@19.2.13)(react@19.2.4)
@@ -95,6 +98,9 @@ importers:
       '@tiptap/suggestion':
         specifier: 3.26.0
         version: 3.26.0(@tiptap/core@3.26.0(@tiptap/pm@3.26.0))(@tiptap/pm@3.26.0)
+      '@viz-js/viz':
+        specifier: 3.24.0
+        version: 3.24.0
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -1565,6 +1571,9 @@ packages:
   '@pkgr/core@0.2.9':
     resolution: {integrity: sha512-QNqXyfVS2wm9hweSYD2O7F0G06uurj9kZ96TRQE5Y9hU7+tgdZwIkbAKc5Ocy1HxEY2kuDQa6cQ1WRs/O5LFKA==}
     engines: {node: ^12.20.0 || ^14.18.0 || >=16.0.0}
+
+  '@plantuml/core@1.2026.8':
+    resolution: {integrity: sha512-md2wGuaIJnAq1yKkedSpQE68cLsvZvctwzWHkDAnC3DTVLe/MSd/2vr4ETwr6jtc1av8cdxCohFuW4VGejMHyw==}
 
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
@@ -3509,6 +3518,9 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
+
+  '@viz-js/viz@3.24.0':
+    resolution: {integrity: sha512-sTRz2cFN6PwICVC7GVlF2aYNAZ/LwF7Y1mp3B+8LXQ7otyHrzQYSzNBwJ4lctL/aS3x97ppw59z6zIW+wPs6bQ==}
 
   '@xterm/addon-fit@0.11.0':
     resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
@@ -8363,6 +8375,8 @@ snapshots:
 
   '@pkgr/core@0.2.9': {}
 
+  '@plantuml/core@1.2026.8': {}
+
   '@polka/url@1.0.0-next.29': {}
 
   '@radix-ui/number@1.1.2': {}
@@ -10282,6 +10296,8 @@ snapshots:
       '@vitest/pretty-format': 2.1.9
       loupe: 3.2.1
       tinyrainbow: 1.2.0
+
+  '@viz-js/viz@3.24.0': {}
 
   '@xterm/addon-fit@0.11.0': {}
 

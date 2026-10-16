@@ -183,7 +183,10 @@ describe("spec fences in messages", () => {
     expect(screen.getByText("Builds per day")).toBeInTheDocument()
     expect(container.textContent).not.toContain('"op"')
     measure.mockRestore()
-  })
+    // The wait above allows 10s, so the test's own budget has to cover it:
+    // under a loaded full run, drawing the chart can outlast vitest's 5s
+    // default before the bars appear.
+  }, 30_000)
 
   it("grow while the reply streams, from the first line on", async () => {
     const onlyRoot = `Here it is:\n\n\`\`\`spec\n${ROOT}\n`
