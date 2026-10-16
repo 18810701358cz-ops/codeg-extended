@@ -21,6 +21,8 @@ pub enum RuntimeError {
     NodeInvalid(String),
     #[error("The ZCode Node runtime must be Node.js 22 or newer with node:sqlite available. Check ZCODE_NODE in Agent Settings.")]
     NodeUnsupported,
+    #[error("{0} must be an absolute path or a command name on PATH: {1}")]
+    RelativeOverride(&'static str, String),
 }
 
 fn same_env_key(name: &str, key: &str) -> bool {
@@ -76,15 +78,28 @@ fn effective_env(overrides: &BTreeMap<String, String>) -> BTreeMap<String, Strin
     env
 }
 
+/// A relative path has no base an override could mean: each workspace would
+/// resolve it against its own folder, and preflight has no workspace at all.
+/// Windows also reads `C:node.exe` against drive C's current folder.
+fn is_relative_path(value: &str) -> bool {
+    let value = value.trim();
+    let path = Path::new(value);
+    !path.is_absolute()
+        && (value.contains('/')
+            || value.contains('\\')
+            || matches!(
+                path.components().next(),
+                Some(std::path::Component::Prefix(_))
+            ))
+}
+
 fn resolve_program(value: &str, env: &BTreeMap<String, String>, cwd: &Path) -> Option<PathBuf> {
     let value = value.trim();
     let path = Path::new(value);
-    let resolved = if path.is_absolute() || value.contains('/') || value.contains('\\') {
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            cwd.join(path)
-        }
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else if is_relative_path(value) {
+        return None;
     } else {
         which::which_in(
             value,
@@ -203,6 +218,12 @@ fn resolve_cli(
     platform: &str,
 ) -> Result<PathBuf, RuntimeError> {
     let cli = if let Some(explicit) = env.get("ZCODE_BIN") {
+        if is_relative_path(explicit) {
+            return Err(RuntimeError::RelativeOverride(
+                "ZCODE_BIN",
+                explicit.clone(),
+            ));
+        }
         resolve_program(explicit, env, cwd)
             .and_then(|path| cli_entry(&path))
             .ok_or_else(|| RuntimeError::CliInvalid(explicit.clone()))?
@@ -238,6 +259,12 @@ fn node_candidates(
     platform: &str,
 ) -> Result<Vec<PathBuf>, RuntimeError> {
     if let Some(explicit) = env.get("ZCODE_NODE") {
+        if is_relative_path(explicit) {
+            return Err(RuntimeError::RelativeOverride(
+                "ZCODE_NODE",
+                explicit.clone(),
+            ));
+        }
         return resolve_program(explicit, env, cwd)
             .map(|node| vec![node])
             .ok_or_else(|| RuntimeError::NodeInvalid(explicit.clone()));
@@ -601,6 +628,60 @@ mod tests {
             resolve_paths(&env, dir.path(), None, "windows"),
             Err(RuntimeError::NodeInvalid(_))
         ));
+    }
+
+    #[test]
+    fn a_relative_override_is_refused_rather_than_read_from_one_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        // Both exist relative to this cwd, as they might in one workspace.
+        let cli = dir.path().join("tools/zcode.cjs");
+        let node = dir.path().join("tools/node.exe");
+        file(&cli);
+        file(&node);
+        let refusal = |bin: String, node: String| {
+            let env = BTreeMap::from([("ZCODE_BIN".into(), bin), ("ZCODE_NODE".into(), node)]);
+            match resolve_paths(&env, dir.path(), None, "test") {
+                Err(error) => error.to_string(),
+                Ok(runtime) => panic!("a relative override resolved to {runtime:?}"),
+            }
+        };
+        assert_eq!(
+            refusal("tools/zcode.cjs".into(), node.display().to_string()),
+            "ZCODE_BIN must be an absolute path or a command name on PATH: tools/zcode.cjs"
+        );
+        assert_eq!(
+            refusal(cli.display().to_string(), "./tools/node.exe".into()),
+            "ZCODE_NODE must be an absolute path or a command name on PATH: ./tools/node.exe"
+        );
+        assert!(is_relative_path("~/zcode.cjs"));
+        assert!(!is_relative_path("node"));
+        // Windows reads a drive without a root against that drive's current
+        // folder; elsewhere `C:node.exe` is an ordinary command name.
+        assert_eq!(is_relative_path("C:node.exe"), cfg!(windows));
+        if cfg!(windows) {
+            assert_eq!(
+                refusal(cli.display().to_string(), "C:node.exe".into()),
+                "ZCODE_NODE must be an absolute path or a command name on PATH: C:node.exe"
+            );
+        }
+        // A command name is still looked up on PATH.
+        let bin = dir.path().join("bin");
+        let path_node = bin.join(if cfg!(windows) { "node.exe" } else { "node" });
+        file(&path_node);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path_node, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let env = BTreeMap::from([
+            ("ZCODE_BIN".into(), cli.display().to_string()),
+            ("ZCODE_NODE".into(), "node".into()),
+            ("PATH".into(), bin.display().to_string()),
+        ]);
+        assert_eq!(
+            resolve_paths(&env, dir.path(), None, "test").unwrap().node,
+            path_node
+        );
     }
 
     #[test]
