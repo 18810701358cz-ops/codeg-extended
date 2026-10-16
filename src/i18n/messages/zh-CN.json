@@ -3731,6 +3731,8 @@
         "limit": "限制：{limit}",
         "pages": "页码：{pages}",
         "allowLarge": "超出大小限制",
+        "readImageLoading": "正在加载图片…",
+        "readImageError": "无法加载图片",
         "mode": "模式：{mode}",
         "cell": "单元：{cell}",
         "shellSession": "会话 {id}",

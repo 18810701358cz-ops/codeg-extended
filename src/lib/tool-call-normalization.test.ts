@@ -518,6 +518,23 @@ describe("normalizeToolName collapses delegate_to_agent across hosts", () => {
   })
 })
 
+describe("codex view_image", () => {
+  // codex-acp streams it as `kind: "read"` titled `View Image <path>` with
+  // `{path}` as its input; the rollout records the raw function name. Both
+  // must land on the same Read card, which shows the picture.
+  it("is a read live and on reload", () => {
+    const path = "/tmp/nanguang-login/login-qr-new.png"
+    expect(
+      inferLiveToolName({
+        title: `View Image ${path}`,
+        kind: "read",
+        rawInput: JSON.stringify({ path }),
+      })
+    ).toBe("read")
+    expect(normalizeToolName("view_image")).toBe("read")
+  })
+})
+
 describe("normalizeToolName collapses delegation companion tools across hosts", () => {
   it.each([
     "get_delegation_status",

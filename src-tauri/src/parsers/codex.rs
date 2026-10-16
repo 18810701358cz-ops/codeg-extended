@@ -14574,6 +14574,84 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// `view_image` returns the picture itself: an `input_image` holding a
+    /// base64 data URL, and no text. That used to land on the card as the whole
+    /// JSON object, base64 included, under a card that showed no picture. The
+    /// call keeps the path it viewed, which is how the card shows the picture.
+    #[test]
+    fn view_image_output_carries_no_base64_text() {
+        let image = serde_json::json!({
+            "type": "input_image",
+            "image_url": "data:image/png;base64,iVBORw0KGgo=",
+            "detail": "high",
+        });
+        let lines = vec![
+            rollout_line(
+                "2026-07-20T08:40:00Z",
+                "event_msg",
+                serde_json::json!({"type": "user_message", "message": "look"}),
+            ),
+            rollout_line(
+                "2026-07-20T08:40:01Z",
+                "response_item",
+                serde_json::json!({
+                    "type": "function_call",
+                    "name": "view_image",
+                    "call_id": "call_v",
+                    "arguments": "{\"path\":\"/tmp/shot.png\",\"detail\":\"high\"}",
+                }),
+            ),
+            rollout_line(
+                "2026-07-20T08:40:02Z",
+                "response_item",
+                serde_json::json!({
+                    "type": "function_call_output",
+                    "call_id": "call_v",
+                    "output": [image],
+                }),
+            ),
+            // Code mode: the script hands the same picture back with `image()`.
+            rollout_line(
+                "2026-07-20T08:40:03Z",
+                "response_item",
+                serde_json::json!({
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "call_id": "call_s",
+                    "input": "const r = await tools.view_image({path:\"/tmp/other.png\", detail:\"original\"});\nimage(r.image_url);\n",
+                }),
+            ),
+            rollout_line(
+                "2026-07-20T08:40:04Z",
+                "response_item",
+                serde_json::json!({
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_s",
+                    "output": [
+                        {"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"},
+                        image,
+                    ],
+                }),
+            ),
+        ];
+        let detail = parse_lines(&lines, "view-image");
+
+        let uses = tool_uses(&detail);
+        for path in ["/tmp/shot.png", "/tmp/other.png"] {
+            assert!(
+                uses.iter().any(|(_, name, input)| name == "view_image"
+                    && input.as_deref().is_some_and(|i| i.contains(path))),
+                "a view_image card for {path}: {uses:?}"
+            );
+        }
+        let results = tool_results(&detail);
+        assert_eq!(results.len(), 2, "{results:?}");
+        for (id, output, is_error) in &results {
+            assert_eq!(output, &None, "{id}");
+            assert!(!is_error, "{id}");
+        }
+    }
+
     /// `wait` / `write_stdin` carry a session id, never a command — which is
     /// why their cards used to be titled by the bare tool name. The command
     /// that started the session is recovered from the announcement in that

@@ -3731,6 +3731,8 @@
         "limit": "Limit: {limit}",
         "pages": "Pages: {pages}",
         "allowLarge": "Over size limit",
+        "readImageLoading": "Loading image…",
+        "readImageError": "Could not load the image",
         "mode": "Mode: {mode}",
         "cell": "Cell: {cell}",
         "shellSession": "Session {id}",

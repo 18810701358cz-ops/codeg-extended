@@ -59,6 +59,10 @@ const EXACT_TOOL_NAME_ALIASES: Record<string, string> = {
   read_text_file: "read",
   readfile: "read",
   "read file": "read",
+  // Codex's image viewer. codex-acp streams it as `kind: "read"` with the path
+  // as its input, so the live card is already a Read; the rollout keeps the raw
+  // function name, which made the reloaded card a generic tool instead.
+  view_image: "read",
   edit_file: "edit",
   update_file: "edit",
   write_file: "write",

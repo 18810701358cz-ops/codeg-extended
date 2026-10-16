@@ -3731,6 +3731,8 @@
         "limit": "Grenze: {limit}",
         "pages": "Seiten: {pages}",
         "allowLarge": "Über dem Größenlimit",
+        "readImageLoading": "Bild wird geladen…",
+        "readImageError": "Das Bild konnte nicht geladen werden",
         "mode": "Modus: {mode}",
         "cell": "Zelle: {cell}",
         "shellSession": "Sitzung {id}",

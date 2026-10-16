@@ -3731,6 +3731,8 @@
         "limit": "الحد: {limit}",
         "pages": "الصفحات: {pages}",
         "allowLarge": "تجاوز حد الحجم",
+        "readImageLoading": "جارٍ تحميل الصورة…",
+        "readImageError": "تعذّر تحميل الصورة",
         "mode": "الوضع: {mode}",
         "cell": "الخلية: {cell}",
         "shellSession": "الجلسة {id}",

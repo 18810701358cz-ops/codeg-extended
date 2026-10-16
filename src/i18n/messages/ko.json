@@ -3731,6 +3731,8 @@
         "limit": "제한: {limit}",
         "pages": "페이지: {pages}",
         "allowLarge": "크기 제한 초과",
+        "readImageLoading": "이미지를 불러오는 중…",
+        "readImageError": "이미지를 불러올 수 없습니다",
         "mode": "모드: {mode}",
         "cell": "셀: {cell}",
         "shellSession": "세션 {id}",

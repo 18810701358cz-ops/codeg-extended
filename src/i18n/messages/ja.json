@@ -3731,6 +3731,8 @@
         "limit": "上限: {limit}",
         "pages": "ページ: {pages}",
         "allowLarge": "サイズ上限超過",
+        "readImageLoading": "画像を読み込み中…",
+        "readImageError": "画像を読み込めませんでした",
         "mode": "モード: {mode}",
         "cell": "セル: {cell}",
         "shellSession": "セッション {id}",
