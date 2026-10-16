@@ -4658,6 +4658,16 @@ async fn configure_new_zcode_session(
     Ok((Some(options), preferred))
 }
 
+/// The saved mode a new session still replays once established. ZCode's gate
+/// has already applied and confirmed it, while the session's mode list is
+/// still the placeholder's, so replaying would only send set_mode again.
+fn mode_to_replay_after_gate(
+    agent_type: AgentType,
+    preferred_mode_id: Option<String>,
+) -> Option<String> {
+    preferred_mode_id.filter(|_| agent_type != AgentType::ZCode)
+}
+
 /// Emit the composer's session config-option selectors. For Grok this reads the
 /// synthesized `x.ai/sessionConfig` (parity path); for every other agent it runs
 /// the standard preference-application + schema-mapping pipeline unchanged.
@@ -7273,11 +7283,8 @@ async fn run_connection(
                             agent_type, &cx, &session, &handshake, preferred_mode_id.as_deref(),
                             &preferred_config_values, initial_config_options,
                         ).await?;
-                        let preferred_mode_id = if agent_type == AgentType::ZCode {
-                            preferred_config_values.get("mode").cloned()
-                        } else {
-                            preferred_mode_id.clone()
-                        };
+                        let preferred_mode_id =
+                            mode_to_replay_after_gate(agent_type, preferred_mode_id.clone());
                         // Same conversation, new agent session: link the fresh
                         // transcript to the one the failed load was for, so the
                         // turns codeg already recorded keep rendering.
@@ -7395,11 +7402,8 @@ async fn run_connection(
                     agent_type, &cx, &session, &handshake, preferred_mode_id.as_deref(),
                     &preferred_config_values, initial_config_options,
                 ).await?;
-                let preferred_mode_id = if agent_type == AgentType::ZCode {
-                    preferred_config_values.get("mode").cloned()
-                } else {
-                    preferred_mode_id.clone()
-                };
+                let preferred_mode_id =
+                    mode_to_replay_after_gate(agent_type, preferred_mode_id.clone());
                 record_transcript_header(agent_type, &sid, &cwd.to_string_lossy());
                 emit_with_state(
                     &state,
@@ -36613,6 +36617,19 @@ mod zcode_mode_tests {
         .await
         .expect("a cancelled ZCode handshake must not wait for mode confirmation");
         assert_eq!(observed, vec!["mode:build"]);
+    }
+
+    #[test]
+    fn zcode_does_not_replay_the_mode_its_gate_applied() {
+        assert_eq!(
+            mode_to_replay_after_gate(AgentType::ZCode, Some("plan".into())),
+            None
+        );
+        assert_eq!(
+            mode_to_replay_after_gate(AgentType::OpenCode, Some("plan".into())),
+            Some("plan".to_string())
+        );
+        assert_eq!(mode_to_replay_after_gate(AgentType::OpenCode, None), None);
     }
 
     #[test]
