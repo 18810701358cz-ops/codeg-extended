@@ -19,8 +19,37 @@ interface StoredGlobalCommand {
   command: string
 }
 
+interface StoredGlobalCommands {
+  /**
+   * The last id handed out. Ids are never reused: a deleted command's id can
+   * still be a folder's remembered selection, or linked to a terminal it is
+   * running in, and either would pass to the next command created.
+   */
+  lastId: number
+  commands: StoredGlobalCommand[]
+}
+
 export function isGlobalCommandId(id: number): boolean {
   return id < 0
+}
+
+/**
+ * Drop entries that claim a global command's id from a list the folder's host
+ * returned. Its database hands out positive ids only, so such an entry is not
+ * the host's own; letting it through would pass it off as one of the commands
+ * kept on this computer.
+ */
+export function withoutGlobalIds(commands: FolderCommand[]): FolderCommand[] {
+  return commands.filter((command) => !isGlobalCommandId(command.id))
+}
+
+/** A command the folder's host returned from a save, refused for the same
+ *  reason `withoutGlobalIds` drops one: it claims a global command's id. */
+export function requireHostCommand(command: FolderCommand): FolderCommand {
+  if (isGlobalCommandId(command.id)) {
+    throw new Error(`the folder's host returned command id ${command.id}`)
+  }
+  return command
 }
 
 /** One stored entry, or null when it isn't `{id<0, name, command}` — the
@@ -33,28 +62,41 @@ function parseEntry(value: unknown): StoredGlobalCommand | null {
   return { id: id as number, name, command }
 }
 
-function readStored(): StoredGlobalCommand[] {
+function readStored(): StoredGlobalCommands {
+  const empty: StoredGlobalCommands = { lastId: 0, commands: [] }
   try {
     const raw = localStorage.getItem(GLOBAL_COMMANDS_STORAGE_KEY)
-    if (!raw) return []
+    if (!raw) return empty
     const value: unknown = JSON.parse(raw)
-    if (!Array.isArray(value)) return []
+    // Builds before `lastId` stored the bare list.
+    const record = Array.isArray(value) ? { commands: value } : value
+    if (!record || typeof record !== "object") return empty
+    const { lastId, commands } = record as Record<string, unknown>
+    if (!Array.isArray(commands)) return empty
     const seen = new Set<number>()
     const out: StoredGlobalCommand[] = []
-    for (const item of value) {
+    for (const item of commands) {
       const entry = parseEntry(item)
       if (!entry || seen.has(entry.id)) continue
       seen.add(entry.id)
       out.push(entry)
     }
-    return out
+    // Never above an id in use, whatever the stored mark says.
+    const floor = out.reduce((min, entry) => Math.min(min, entry.id), 0)
+    return {
+      lastId:
+        Number.isSafeInteger(lastId) && (lastId as number) < floor
+          ? (lastId as number)
+          : floor,
+      commands: out,
+    }
   } catch {
-    return []
+    return empty
   }
 }
 
-function writeStored(entries: StoredGlobalCommand[]): void {
-  localStorage.setItem(GLOBAL_COMMANDS_STORAGE_KEY, JSON.stringify(entries))
+function writeStored(stored: StoredGlobalCommands): void {
+  localStorage.setItem(GLOBAL_COMMANDS_STORAGE_KEY, JSON.stringify(stored))
 }
 
 function toFolderCommand(
@@ -73,17 +115,17 @@ function toFolderCommand(
 }
 
 export function listGlobalCommands(): FolderCommand[] {
-  return readStored().map(toFolderCommand)
+  return readStored().commands.map(toFolderCommand)
 }
 
 export function createGlobalCommand(
   name: string,
   command: string
 ): FolderCommand {
-  const entries = readStored()
-  const id = Math.min(0, ...entries.map((entry) => entry.id)) - 1
-  const next = [...entries, { id, name, command }]
-  writeStored(next)
+  const { lastId, commands } = readStored()
+  const id = lastId - 1
+  const next = [...commands, { id, name, command }]
+  writeStored({ lastId: id, commands: next })
   return toFolderCommand(next[next.length - 1], next.length - 1)
 }
 
@@ -92,27 +134,31 @@ export function updateGlobalCommand(
   name: string,
   command: string
 ): FolderCommand {
-  const entries = readStored()
-  const index = entries.findIndex((entry) => entry.id === id)
+  const { lastId, commands } = readStored()
+  const index = commands.findIndex((entry) => entry.id === id)
   if (index < 0) throw new Error("Command not found")
-  entries[index] = { id, name, command }
-  writeStored(entries)
-  return toFolderCommand(entries[index], index)
+  commands[index] = { id, name, command }
+  writeStored({ lastId, commands })
+  return toFolderCommand(commands[index], index)
 }
 
 export function deleteGlobalCommand(id: number): void {
-  writeStored(readStored().filter((entry) => entry.id !== id))
+  const { lastId, commands } = readStored()
+  writeStored({
+    lastId,
+    commands: commands.filter((entry) => entry.id !== id),
+  })
 }
 
 /** Reorder to `ids`; entries missing from it keep their place at the end. */
 export function reorderGlobalCommands(ids: number[]): void {
-  const entries = readStored()
-  const byId = new Map(entries.map((entry) => [entry.id, entry]))
+  const { lastId, commands } = readStored()
+  const byId = new Map(commands.map((entry) => [entry.id, entry]))
   const ordered = ids.flatMap((id) => {
     const entry = byId.get(id)
     if (!entry) return []
     byId.delete(id)
     return [entry]
   })
-  writeStored([...ordered, ...byId.values()])
+  writeStored({ lastId, commands: [...ordered, ...byId.values()] })
 }

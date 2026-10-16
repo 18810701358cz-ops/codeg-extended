@@ -3242,6 +3242,7 @@
       "stopCommandTitle": "停止：{command}",
       "localUnavailable": "本機命令僅在桌面應用程式中可用",
       "localRunFailed": "執行本機命令失敗",
+      "localRemoteFolderCommand": "這條本機命令儲存在遠端伺服器上，無法在本機執行。開啟「在所有資料夾中顯示」即可將它儲存到本機。",
       "globalCommand": "所有資料夾可用",
       "manageDialog": {
         "title": "管理命令",
@@ -3251,7 +3252,8 @@
         "newCommand": "新增命令",
         "nameLabel": "名稱",
         "commandLabel": "命令",
-        "localCommandHint": "以 \"local:\" 開頭的命令會在本機而非專案所在主機上執行；$CODEG_FOLDER_PATH 為目錄的絕對路徑，$CODEG_REMOTE_HOST 為遠端主機名稱，例如 local: zed \"ssh://user@$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH\"",
+        "localCommandHint": "以 <code>local:</code> 開頭的命令會在本機而非專案所在主機上執行；<code>{folderVar}</code> 為目錄的絕對路徑，<code>{hostVar}</code> 為遠端主機名稱，例如 <code>{example}</code>",
+        "localNeedsGlobal": "儲存在遠端伺服器上的本機命令不會在本機執行。開啟「在所有資料夾中顯示」即可將它儲存到本機。",
         "globalLabel": "在所有資料夾中顯示",
         "globalHint": "在所有資料夾、worktree 和遠端連線中都可用，儲存在本機",
         "dragSort": "拖曳排序",

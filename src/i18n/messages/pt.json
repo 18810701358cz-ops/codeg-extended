@@ -3242,6 +3242,7 @@
       "stopCommandTitle": "Parar: {command}",
       "localUnavailable": "Comandos locais estão disponíveis apenas no aplicativo de desktop",
       "localRunFailed": "Falha ao executar o comando local",
+      "localRemoteFolderCommand": "Este comando local está salvo no servidor remoto, por isso não pode ser executado neste computador. Ative “Mostrar em todas as pastas” para salvá-lo neste computador.",
       "globalCommand": "Disponível em todas as pastas",
       "manageDialog": {
         "title": "Gerenciar comandos",
@@ -3251,7 +3252,8 @@
         "newCommand": "Novo comando",
         "nameLabel": "Nome",
         "commandLabel": "Comando",
-        "localCommandHint": "Use o prefixo \"local:\" para executar neste computador em vez do host do projeto; $CODEG_FOLDER_PATH é o caminho absoluto da pasta e $CODEG_REMOTE_HOST o nome do host remoto, ex.: local: zed \"ssh://user@$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH\"",
+        "localCommandHint": "Use o prefixo <code>local:</code> para executar neste computador em vez do host do projeto; <code>{folderVar}</code> é o caminho absoluto da pasta e <code>{hostVar}</code> o nome do host remoto, ex.: <code>{example}</code>",
+        "localNeedsGlobal": "Salvo no servidor remoto, um comando local não é executado neste computador. Ative “Mostrar em todas as pastas” para salvá-lo neste computador.",
         "globalLabel": "Mostrar em todas as pastas",
         "globalHint": "Disponível em todas as pastas, worktrees e conexões remotas; salvo neste computador",
         "dragSort": "Arraste para ordenar",

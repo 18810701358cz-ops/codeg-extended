@@ -21,11 +21,17 @@ import {
   terminalStop,
 } from "@/lib/api"
 import { toErrorMessage } from "@/lib/app-error"
-import { isGlobalCommandId, listGlobalCommands } from "@/lib/global-commands"
+import {
+  GLOBAL_COMMANDS_STORAGE_KEY,
+  isGlobalCommandId,
+  listGlobalCommands,
+  withoutGlobalIds,
+} from "@/lib/global-commands"
 import { getRemoteHostName, parseLocalCommand } from "@/lib/local-command"
-import { isDesktop } from "@/lib/transport"
+import { isDesktop, isRemoteDesktopMode } from "@/lib/transport"
 import type { FolderCommand } from "@/lib/types"
 import {
+  commandLinkKey,
   resolveLiveCommandTerminalId,
   useCommandTerminalLinkStore,
 } from "@/stores/command-terminal-link-store"
@@ -174,6 +180,20 @@ export function CommandDropdown() {
     }
   }, [folderId, folderPath])
 
+  // Another window added, edited or removed a global command (`key` is null
+  // when it cleared the whole storage). Re-read rather than trust the event's
+  // value, which can be older than what is stored by the time it arrives.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== GLOBAL_COMMANDS_STORAGE_KEY) {
+        return
+      }
+      setGlobalCommands(listGlobalCommands())
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [])
+
   const runCommand = useCallback(
     async (cmd: FolderCommand) => {
       if (!folderPath) return
@@ -187,8 +207,22 @@ export function CommandDropdown() {
           toast.error(t("localUnavailable"))
           return
         }
+        // A remote-desktop window lists the remote server's folder commands,
+        // which anything on that host can rewrite. From such a window only the
+        // commands kept on this computer — the global ones — may run on it.
+        const remote = isRemoteDesktopMode()
+        if (remote && !isGlobalCommandId(cmd.id)) {
+          toast.error(t("localRemoteFolderCommand"))
+          return
+        }
         try {
-          await runLocalCommand(localCommand, folderPath, getRemoteHostName())
+          await runLocalCommand(
+            localCommand,
+            folderPath,
+            getRemoteHostName(),
+            // Only a local window's folder exists on this computer to run in.
+            remote ? null : folderPath
+          )
         } catch (err) {
           toast.error(t("localRunFailed"), {
             description: toErrorMessage(err),
@@ -200,10 +234,11 @@ export function CommandDropdown() {
       // Don't double-launch a command that already has a *live* terminal; a
       // stale link (dead terminal) must not block a restart, hence the liveness
       // check rather than a bare presence check.
+      const linkKey = commandLinkKey(folderId, cmd.id)
       if (
         resolveLiveCommandTerminalId(
           useCommandTerminalLinkStore.getState().links,
-          cmd.id,
+          linkKey,
           isTerminalLive
         )
       )
@@ -217,10 +252,11 @@ export function CommandDropdown() {
       )
       if (!terminalId) return
 
-      setLink(cmd.id, terminalId)
+      setLink(linkKey, terminalId)
     },
     [
       createTerminalWithCommand,
+      folderId,
       folderPath,
       isTerminalLive,
       selectCommand,
@@ -231,10 +267,11 @@ export function CommandDropdown() {
 
   const stopCommand = useCallback(
     async (cmd: FolderCommand) => {
-      const terminalId = useCommandTerminalLinkStore.getState().links[cmd.id]
+      const linkKey = commandLinkKey(folderId, cmd.id)
+      const terminalId = useCommandTerminalLinkStore.getState().links[linkKey]
       if (!terminalId) return
 
-      clearLink(cmd.id)
+      clearLink(linkKey)
       try {
         // The tab stays open with what the command printed, so the backend
         // keeps that output for it — a reload of the tab still shows it.
@@ -243,12 +280,12 @@ export function CommandDropdown() {
         console.error("Failed to stop command terminal:", err)
       }
     },
-    [clearLink]
+    [clearLink, folderId]
   )
 
   // The folder's own commands first, then the ones shown in every folder.
   const allCommands = useMemo(
-    () => [...commands, ...globalCommands],
+    () => [...withoutGlobalIds(commands), ...globalCommands],
     [commands, globalCommands]
   )
   const activeCmd = useMemo(
@@ -259,7 +296,11 @@ export function CommandDropdown() {
     [allCommands, selectedCommandId]
   )
   const activeTerminalId = activeCmd
-    ? resolveLiveCommandTerminalId(links, activeCmd.id, isTerminalLive)
+    ? resolveLiveCommandTerminalId(
+        links,
+        commandLinkKey(folderId, activeCmd.id),
+        isTerminalLive
+      )
     : undefined
   const isActiveCommandRunning = Boolean(activeTerminalId)
 

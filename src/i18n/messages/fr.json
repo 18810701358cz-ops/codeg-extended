@@ -3242,6 +3242,7 @@
       "stopCommandTitle": "Arrêter : {command}",
       "localUnavailable": "Les commandes locales ne sont disponibles que dans l'application de bureau",
       "localRunFailed": "Échec de l'exécution de la commande locale",
+      "localRemoteFolderCommand": "Cette commande locale est enregistrée sur le serveur distant et ne peut donc pas s'exécuter sur cet ordinateur. Activez « Afficher dans tous les dossiers » pour l'enregistrer sur cet ordinateur.",
       "globalCommand": "Disponible dans tous les dossiers",
       "manageDialog": {
         "title": "Gérer les commandes",
@@ -3251,7 +3252,8 @@
         "newCommand": "Nouvelle commande",
         "nameLabel": "Nom",
         "commandLabel": "Commande",
-        "localCommandHint": "Préfixez par \"local:\" pour exécuter sur cet ordinateur plutôt que sur l'hôte du projet ; $CODEG_FOLDER_PATH est le chemin absolu du dossier et $CODEG_REMOTE_HOST le nom de l'hôte distant, par ex. local: zed \"ssh://user@$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH\"",
+        "localCommandHint": "Préfixez par <code>local:</code> pour exécuter sur cet ordinateur plutôt que sur l'hôte du projet ; <code>{folderVar}</code> est le chemin absolu du dossier et <code>{hostVar}</code> le nom de l'hôte distant, par ex. <code>{example}</code>",
+        "localNeedsGlobal": "Enregistrée sur le serveur distant, une commande locale ne s'exécute pas sur cet ordinateur. Activez « Afficher dans tous les dossiers » pour l'enregistrer sur cet ordinateur.",
         "globalLabel": "Afficher dans tous les dossiers",
         "globalHint": "Disponible dans chaque dossier, worktree et connexion distante ; enregistré sur cet ordinateur",
         "dragSort": "Glisser pour trier",

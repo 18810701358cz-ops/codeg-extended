@@ -3242,6 +3242,7 @@
       "stopCommandTitle": "停止: {command}",
       "localUnavailable": "ローカルコマンドはデスクトップアプリでのみ利用できます",
       "localRunFailed": "ローカルコマンドの実行に失敗しました",
+      "localRemoteFolderCommand": "このローカルコマンドはリモートサーバーに保存されているため、このコンピューターでは実行できません。「すべてのフォルダーに表示」をオンにすると、このコンピューターに保存されます。",
       "globalCommand": "すべてのフォルダーで利用可能",
       "manageDialog": {
         "title": "コマンド管理",
@@ -3251,7 +3252,8 @@
         "newCommand": "新しいコマンド",
         "nameLabel": "名前",
         "commandLabel": "コマンド",
-        "localCommandHint": "\"local:\" で始めると、プロジェクトのホストではなくこのコンピューターで実行します。$CODEG_FOLDER_PATH はフォルダーの絶対パス、$CODEG_REMOTE_HOST はリモートホスト名です。例: local: zed \"ssh://user@$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH\"",
+        "localCommandHint": "<code>local:</code> で始めると、プロジェクトのホストではなくこのコンピューターで実行します。<code>{folderVar}</code> はフォルダーの絶対パス、<code>{hostVar}</code> はリモートホスト名です。例: <code>{example}</code>",
+        "localNeedsGlobal": "リモートサーバーに保存されたローカルコマンドは、このコンピューターでは実行されません。「すべてのフォルダーに表示」をオンにすると、このコンピューターに保存されます。",
         "globalLabel": "すべてのフォルダーに表示",
         "globalHint": "すべてのフォルダー、worktree、リモート接続で利用できます。このコンピューターに保存されます",
         "dragSort": "ドラッグして並び替え",

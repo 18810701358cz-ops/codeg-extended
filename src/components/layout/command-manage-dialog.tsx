@@ -12,6 +12,7 @@ import {
 import { GripVertical, Globe, Loader2, Plus, Save, Trash2 } from "lucide-react"
 import { Reorder, useDragControls } from "motion/react"
 import { useTranslations } from "next-intl"
+import { detectPlatform } from "@/hooks/use-platform"
 import {
   createFolderCommand,
   deleteFolderCommand,
@@ -26,8 +27,12 @@ import {
   isGlobalCommandId,
   listGlobalCommands,
   reorderGlobalCommands,
+  requireHostCommand,
   updateGlobalCommand,
+  withoutGlobalIds,
 } from "@/lib/global-commands"
+import { parseLocalCommand } from "@/lib/local-command"
+import { isDesktop, isRemoteDesktopMode } from "@/lib/transport"
 import type { FolderCommand } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -58,6 +63,28 @@ import { cn } from "@/lib/utils"
 
 const LEFT_MIN_WIDTH = 260
 const RIGHT_MIN_WIDTH = 380
+
+// A value in a hint, set apart from the prose so its punctuation is not read
+// as the sentence's. `dir="ltr"` keeps it intact in Arabic.
+const hintLiteral = (chunks: ReactNode) => (
+  <code dir="ltr" className="rounded bg-muted px-1 font-mono break-words">
+    {chunks}
+  </code>
+)
+
+/** The variables a `local:` command reads, spelled the way the shell it runs
+ *  in on this machine expects: cmd.exe on Windows, a POSIX shell elsewhere. */
+function localCommandHintValues() {
+  const windows = detectPlatform() === "windows"
+  const variable = (name: string) => (windows ? `%${name}%` : `$${name}`)
+  const folderVar = variable("CODEG_FOLDER_PATH")
+  const hostVar = variable("CODEG_REMOTE_HOST")
+  return {
+    folderVar,
+    hostVar,
+    example: `local: zed "ssh://user@${hostVar}${folderVar}"`,
+  }
+}
 
 interface CommandManageDialogProps {
   open: boolean
@@ -199,7 +226,7 @@ export function CommandManageDialog({
     setLoadError(null)
     try {
       const list = [
-        ...(await listFolderCommands(folderId)),
+        ...withoutGlobalIds(await listFolderCommands(folderId)),
         ...listGlobalCommands(),
       ]
       if (seq !== loadSeqRef.current) return
@@ -290,6 +317,13 @@ export function CommandManageDialog({
   }, [commands, searchQuery])
 
   const searchActive = searchQuery.trim().length > 0
+  const localHintValues = useMemo(localCommandHintValues, [])
+  // A remote-desktop window keeps this folder's commands on the remote
+  // server, and the launcher won't run a `local:` one from there.
+  const localNeedsGlobal =
+    isRemoteDesktopMode() &&
+    !draft.global &&
+    parseLocalCommand(draft.command) !== null
   const safeContainerWidth = panelContainerWidth > 0 ? panelContainerWidth : 900
   const leftMinSize = clamp(
     toPercent(LEFT_MIN_WIDTH, safeContainerWidth),
@@ -364,13 +398,17 @@ export function CommandManageDialog({
       if (previousId !== null && !scopeChanged) {
         saved = isGlobalCommandId(previousId)
           ? updateGlobalCommand(previousId, name, command)
-          : await updateFolderCommand(previousId, name, command)
+          : requireHostCommand(
+              await updateFolderCommand(previousId, name, command)
+            )
       } else {
         // New, or moving between this folder and every folder: create it in
         // its new home first, so a failure there loses nothing.
         saved = draft.global
           ? createGlobalCommand(name, command)
-          : await createFolderCommand(folderId, name, command)
+          : requireHostCommand(
+              await createFolderCommand(folderId, name, command)
+            )
         if (previousId !== null) {
           if (isGlobalCommandId(previousId)) deleteGlobalCommand(previousId)
           else await deleteFolderCommand(previousId)
@@ -587,9 +625,15 @@ export function CommandManageDialog({
                           updateDraft({ command: event.target.value })
                         }
                       />
-                      <p className="text-xs text-muted-foreground">
-                        {t("localCommandHint")}
-                      </p>
+                      {/* Local commands run only from the desktop app. */}
+                      {isDesktop() ? (
+                        <p className="text-xs text-muted-foreground">
+                          {t.rich("localCommandHint", {
+                            ...localHintValues,
+                            code: hintLiteral,
+                          })}
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-0.5">
@@ -611,6 +655,11 @@ export function CommandManageDialog({
                         }
                       />
                     </div>
+                    {localNeedsGlobal ? (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {t("localNeedsGlobal")}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="space-y-3 border-t px-4 py-3">
