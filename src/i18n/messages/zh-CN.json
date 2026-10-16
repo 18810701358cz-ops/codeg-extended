@@ -1328,7 +1328,7 @@
         "defaultAgent": "默认智能体",
         "defaultAgentHint": "新会话使用哪个主智能体。留空或填了无效名称时回落到 build。",
         "share": "会话分享",
-        "shareHint": "会话是否可以发布成分享链接。",
+        "shareHint": "会话是否可以发布成分享链接。OpenCode 已在 1.19.1 停止会话分享，从该版本起此项不再生效。",
         "shareManual": "手动（需要时才分享）",
         "shareAuto": "自动（每个新会话都分享）",
         "shareDisabled": "禁用",

@@ -1328,7 +1328,7 @@
         "defaultAgent": "Agent par défaut",
         "defaultAgentHint": "Agent principal utilisé par une nouvelle session. Vide ou inconnu retombe sur build.",
         "share": "Partage",
-        "shareHint": "Si une session peut être publiée sous forme de lien partagé.",
+        "shareHint": "Si une session peut être publiée sous forme de lien partagé. OpenCode a abandonné le partage de sessions dans la version 1.19.1 : à partir de cette version, ce réglage n'a plus d'effet.",
         "shareManual": "Manuel (à la demande)",
         "shareAuto": "Automatique (chaque nouvelle session)",
         "shareDisabled": "Désactivé",

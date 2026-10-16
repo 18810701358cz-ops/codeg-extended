@@ -1328,7 +1328,7 @@
         "defaultAgent": "預設智慧體",
         "defaultAgentHint": "新工作階段使用哪個主要智慧體。留空或名稱無效時回落到 build。",
         "share": "工作階段分享",
-        "shareHint": "工作階段是否可以發佈成分享連結。",
+        "shareHint": "工作階段是否可以發佈成分享連結。OpenCode 已在 1.19.1 停止工作階段分享，從該版本起此項不再生效。",
         "shareManual": "手動（需要時才分享）",
         "shareAuto": "自動（每個新工作階段都分享）",
         "shareDisabled": "停用",

@@ -141,8 +141,12 @@ impl SessionMessage {
     /// `metadata: {displayOnly: true, displayRole: "error"}`. It is not part of
     /// the model conversation — cline keeps it out of agent state, compaction
     /// and its own ACP history replay ("do not present display-only failures as
-    /// assistant responses"), and a live ACP turn reports the failure as an
-    /// error, never as a message. Rendering it would put the error in the
+    /// assistant responses"), and a live ACP turn never sends it as a message.
+    /// Live, the failure usually comes back as the `session/prompt` error, but
+    /// cline only checks for one after the turn's `send()` settles, so an error
+    /// event that arrives later is missed and the turn answers `end_turn` (seen
+    /// on 3.0.71 and 3.0.72 with a hub daemon an earlier process left running);
+    /// this record is written either way. Rendering it would put the error in the
     /// model's mouth on every reopen, the same trap as the `<synthetic>` /
     /// `isApiErrorMessage` records `parsers::claude` and `parsers::qoder` turn
     /// into a failure line instead — which is what [`Self::display_error`]

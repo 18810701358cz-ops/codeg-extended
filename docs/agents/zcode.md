@@ -1,6 +1,6 @@
 # ZCode
 
-Codeg connects to [official ZCode](https://github.com/zai-org/ZCode) through the community [zcode-acp-server](https://github.com/william0wang/zcode-acp) bridge. The bundled registry pins the bridge to `0.69.2`.
+Codeg connects to [official ZCode](https://github.com/zai-org/ZCode) through the community [zcode-acp-server](https://github.com/william0wang/zcode-acp) bridge. The bundled registry pins the bridge to `0.72.0`.
 
 ## Setup
 
@@ -29,4 +29,4 @@ Manage stdio MCP servers through Codeg's MCP settings and assign them to ZCode. 
 
 ## Current scope
 
-The first integration covers ACP conversations, permission requests, cancellation, Codeg transcript history, and stdio MCP. Message-level fork is disabled while the bridge's fork response and checkpoint behavior are incompatible with Codeg's typed flow. Native history import, a ZCode provider/configuration panel, HTTP MCP, attachments, native Goal/queue extensions and remote hub are outside this phase. Runtime validation has been performed on Windows; macOS and Linux discovery paths still need platform testing.
+The first integration covers ACP conversations, permission requests, cancellation, Codeg transcript history, and stdio MCP. Message-level fork is disabled while the bridge's fork response and checkpoint behavior are incompatible with Codeg's typed flow. Native history import, a ZCode provider/configuration panel, HTTP MCP, attachments, native Goal/queue extensions and remote hub are outside this phase. Runtime validation with official ZCode has been performed on Windows, with bridge 0.69.2; macOS and Linux discovery paths still need platform testing.

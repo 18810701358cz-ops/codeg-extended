@@ -628,6 +628,11 @@ fn decode_hermes_content(raw: Option<&str>) -> Vec<ContentBlock> {
             // (`_encode_content`), and read back verbatim. It is text, never
             // parts: decoding it a second time would let a crafted message
             // choose its own structure, which is what the escape prevents.
+            // Upstream keeps that promise only until the session is reopened:
+            // `session/load` and `session/resume` rewrite the session's rows
+            // from the decoded history (seen on v0.22.0 and v0.22.2), and a
+            // literal that decodes as a parts array is then stored as one,
+            // which the arm above cannot tell from a real one.
             Ok(serde_json::Value::String(literal)) => {
                 return text_block(literal.trim_start_matches('\u{0000}').trim());
             }

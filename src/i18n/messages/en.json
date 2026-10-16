@@ -1328,7 +1328,7 @@
         "defaultAgent": "Default agent",
         "defaultAgentHint": "Which primary agent a new session opens in. Falls back to build when empty or unknown.",
         "share": "Sharing",
-        "shareHint": "How a session may be published to a share link.",
+        "shareHint": "How a session may be published to a share link. OpenCode discontinued session sharing in 1.19.1, so this setting has no effect from that version on.",
         "shareManual": "Manual (on request)",
         "shareAuto": "Automatic (every new session)",
         "shareDisabled": "Disabled",

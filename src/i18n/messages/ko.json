@@ -1328,7 +1328,7 @@
         "defaultAgent": "기본 에이전트",
         "defaultAgentHint": "새 세션이 시작할 기본 에이전트. 비어 있거나 알 수 없으면 build로 되돌아갑니다.",
         "share": "공유",
-        "shareHint": "세션을 공유 링크로 게시할 수 있는지 여부입니다.",
+        "shareHint": "세션을 공유 링크로 게시할 수 있는지 여부입니다. OpenCode는 1.19.1에서 세션 공유를 중단했으므로 이 버전부터는 이 설정이 적용되지 않습니다.",
         "shareManual": "수동(요청할 때만)",
         "shareAuto": "자동(모든 새 세션)",
         "shareDisabled": "사용 안 함",

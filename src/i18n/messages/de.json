@@ -1328,7 +1328,7 @@
         "defaultAgent": "Standard-Agent",
         "defaultAgentHint": "Mit welchem Primär-Agenten eine neue Sitzung startet. Leer oder unbekannt fällt auf build zurück.",
         "share": "Teilen",
-        "shareHint": "Ob eine Sitzung als Freigabelink veröffentlicht werden darf.",
+        "shareHint": "Ob eine Sitzung als Freigabelink veröffentlicht werden darf. OpenCode hat das Teilen von Sitzungen mit 1.19.1 eingestellt, daher hat diese Einstellung ab dieser Version keine Wirkung.",
         "shareManual": "Manuell (nur auf Anfrage)",
         "shareAuto": "Automatisch (jede neue Sitzung)",
         "shareDisabled": "Deaktiviert",

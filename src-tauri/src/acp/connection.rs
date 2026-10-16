@@ -5734,7 +5734,7 @@ fn build_client_capabilities(
     // it denies `AskUserQuestion` for the session, so the model never gets the
     // tool. Verified on the real 1.1.67 wire, MCP tool-call approvals staying
     // on `session/request_permission`; the same form and answer handling ship
-    // in every release from 1.1.23 through 1.1.71, which matters because codeg
+    // in every release from 1.1.23 through 1.1.72, which matters because codeg
     // launches a `qoder` found on PATH ahead of the pinned package). Agents
     // without the bit fall back to their own `request_permission` button path.
     if matches!(
@@ -6193,8 +6193,36 @@ async fn send_new_session_capturing_models(
 /// (`feedback_tool_available`, a registered delegation token pi can never use).
 /// `supports_mcp` stays `true` for pi (session/new tolerates the field), so this
 /// is a separate, narrower gate. Gate codeg-mcp injection on it.
+///
+/// Cline drops them the same way. Its ACP agent (`apps/cli/src/acp/acpAgent.ts`)
+/// keeps the `mcpServers` of `session/new` and `session/load` in its session
+/// state and never reads them back: the config it starts each session with
+/// carries no MCP servers, and the SDK connects only the servers in cline's own
+/// `cline_mcp_settings.json` and its plugins. Checked in the source of every
+/// release from 3.0.55 through 3.0.72, and live on 3.0.71 and 3.0.72: a stdio
+/// server sent on `session/new` is never started, while one in the settings
+/// file is, and its tools reach the model. User servers still reach Cline,
+/// through that file (see [`agent_reads_own_mcp_config`]); the codeg-mcp
+/// companion, which only travels over the wire, cannot.
 fn agent_delivers_wire_mcp(agent_type: AgentType) -> bool {
-    !matches!(agent_type, AgentType::Pi)
+    !matches!(agent_type, AgentType::Pi | AgentType::Cline)
+}
+
+/// Agents that load the MCP servers codeg's MCP settings manage from their OWN
+/// config file, so [`load_mcp_servers_for_agent`] forwards none of them over
+/// the wire; see the notes there for each one.
+fn agent_reads_own_mcp_config(agent_type: AgentType) -> bool {
+    matches!(
+        agent_type,
+        AgentType::Hermes
+            | AgentType::KimiCode
+            | AgentType::Grok
+            | AgentType::Cursor
+            | AgentType::Qoder
+            | AgentType::Antigravity
+            | AgentType::Kiro
+            | AgentType::Cline
+    )
 }
 
 /// Load MCP servers configured for `agent_type` and convert them into the
@@ -6233,16 +6261,13 @@ fn load_mcp_servers_for_agent(agent_type: AgentType) -> Vec<McpServer> {
     // against 2.24.1, a stdio server declared only there is initialized and
     // listed (`_kiro.dev/mcp/server_initialized`) on a `session/new` that
     // carries `mcpServers: []`. codeg's MCP settings UI manages that file.
-    if matches!(
-        agent_type,
-        AgentType::Hermes
-            | AgentType::KimiCode
-            | AgentType::Grok
-            | AgentType::Cursor
-            | AgentType::Qoder
-            | AgentType::Antigravity
-            | AgentType::Kiro
-    ) {
+    //
+    // Cline joins it as well: it connects the servers in
+    // `~/.cline/data/settings/cline_mcp_settings.json`, which codeg's MCP
+    // settings UI manages, and ignores the wire list altogether (see
+    // `agent_delivers_wire_mcp`), so forwarding that file's servers again only
+    // sends entries nobody reads.
+    if agent_reads_own_mcp_config(agent_type) {
         return Vec::new();
     }
     let entries = match crate::commands::mcp::read_servers_for_agent_type(agent_type) {
@@ -10103,9 +10128,11 @@ async fn set_session_config_option_inner(
     config_id: String,
     value: SessionConfigOptionValue,
 ) -> Result<Vec<SessionConfigOption>, agent_client_protocol::Error> {
-    // Bridge 0.69.2 only refreshes its plan-enabled mirror through standard
-    // set_mode. Do that first for mode changes, then read the config response;
-    // the initial-mode gate still requires an exact confirmation before prompt.
+    // Of the two ACP mode requests, only session/set_mode refreshes the
+    // bridge's plan-enabled mirror; set_config_option("mode") keeps reporting
+    // "plan" while that mirror is set (bridge 0.69.2 through 0.72.0). Send
+    // set_mode first for mode changes, then read the config response; the
+    // initial-mode gate still requires an exact confirmation before prompt.
     if agent_type == AgentType::ZCode && config_id == "mode" {
         if let Some(mode) = value.as_value_id() {
             let req = SetSessionModeRequest::new(session_id.clone(), mode.to_string());
@@ -38876,5 +38903,42 @@ mod zcode_mode_tests {
         assert_eq!(transcript_dir_for(AgentType::ClaudeCode), None);
         assert_eq!(transcript_dir_for(AgentType::DeepSeek), None);
         assert!(transcript_dir_for(AgentType::custom("example").unwrap()).is_some());
+    }
+}
+
+#[cfg(test)]
+mod wire_mcp_gate_tests {
+    use super::*;
+
+    // Cline keeps the `mcpServers` it is sent and never connects them, so the
+    // codeg-mcp companion must not be injected: its delegation and feedback
+    // tools would be advertised to a model that never gets them. Its user
+    // servers travel through its own settings file instead.
+    #[test]
+    fn cline_takes_mcp_from_its_settings_file_not_the_wire() {
+        assert!(!agent_delivers_wire_mcp(AgentType::Cline));
+        assert!(agent_reads_own_mcp_config(AgentType::Cline));
+        assert!(load_mcp_servers_for_agent(AgentType::Cline).is_empty());
+    }
+
+    #[test]
+    fn pi_stays_off_the_wire_and_the_rest_stay_on_it() {
+        assert!(!agent_delivers_wire_mcp(AgentType::Pi));
+        for agent_type in [
+            AgentType::ClaudeCode,
+            AgentType::Codex,
+            AgentType::OpenCode,
+            AgentType::Hermes,
+            AgentType::CodeBuddy,
+            AgentType::Grok,
+            AgentType::Cursor,
+            AgentType::Qoder,
+            AgentType::DeepSeek,
+            AgentType::ZCode,
+        ] {
+            assert!(agent_delivers_wire_mcp(agent_type), "{agent_type}");
+        }
+        // DeepSeek reads no MCP file at all: the wire is its only channel.
+        assert!(!agent_reads_own_mcp_config(AgentType::DeepSeek));
     }
 }

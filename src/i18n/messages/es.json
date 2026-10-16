@@ -1328,7 +1328,7 @@
         "defaultAgent": "Agente por defecto",
         "defaultAgentHint": "Con qué agente principal se abre una sesión nueva. Si está vacío o no existe, se usa build.",
         "share": "Compartir",
-        "shareHint": "Si una sesión puede publicarse como enlace compartido.",
+        "shareHint": "Si una sesión puede publicarse como enlace compartido. OpenCode dejó de ofrecer el uso compartido de sesiones en la versión 1.19.1, así que a partir de esa versión este ajuste no tiene efecto.",
         "shareManual": "Manual (solo a petición)",
         "shareAuto": "Automático (cada sesión nueva)",
         "shareDisabled": "Desactivado",
