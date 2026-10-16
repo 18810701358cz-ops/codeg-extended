@@ -9201,6 +9201,25 @@ pub(crate) fn skill_storage_spec(agent_type: AgentType) -> Option<SkillStorageSp
             global_dirs: vec![crate::parsers::kiro::resolve_kiro_home_dir().join("skills")],
             project_rel_dirs: vec![".kiro/skills"],
         }),
+        // TRAE CLI loads `<id>/SKILL.md` bundles — never a flat `<id>.md` —
+        // from `<TRAE_HOME>/skills` and the shared `~/.agents/skills` store,
+        // plus `.trae/skills` and `.agents/skills` in a trusted workspace.
+        // Verified against 0.209.1 by planting one skill in each candidate
+        // directory: exactly those four appeared in the catalog it sends the
+        // model, while `.codex/skills`, `.claude/skills` and the flat file
+        // were ignored. The TRAE-native directory leads so linking targets it
+        // without touching the shared store (the pi / Cursor ordering). Note
+        // that `~/.trae/skills` is also where the TRAE IDE keeps its skills,
+        // so the CLI — and this list — sees those too. Its bundled skills in
+        // `<TRAE_HOME>/skills/.system` are left out: the CLI owns them.
+        AgentType::Trae => Some(SkillStorageSpec {
+            kind: SkillStorageKind::SkillDirectoryOnly,
+            global_dirs: vec![
+                crate::acp::trae::resolve_trae_home_dir().join("skills"),
+                home_dir_or_default().join(".agents").join("skills"),
+            ],
+            project_rel_dirs: vec![".trae/skills", ".agents/skills"],
+        }),
         // codeg cannot detect where an arbitrary ACP agent loads skills from,
         // so custom agents are gated on the user's own declaration: that the
         // agent reads the shared `.agents/skills` store (the cross-agent
@@ -10405,6 +10424,18 @@ fn agent_env_keys(agent_type: AgentType) -> (&'static str, &'static str, &'stati
         // answers with `models`). The two placeholders keep the generic
         // cascade off the OPENAI_* keys, like `QODER_BASE_URL` above.
         AgentType::Kiro => ("KIRO_BASE_URL", "KIRO_API_KEY", "KIRO_MODEL"),
+        // TRAE CLI's non-interactive sign-in is its personal access token,
+        // which the handshake exchanges through the `trae-tob-pat` auth method
+        // (see `acp::trae`), and `TRAECLI_HOST` is the API base URL of an
+        // enterprise's own deployment — both straight from TRAE's docs. The
+        // model is chosen per session over ACP, so the model slot is an inert
+        // `TRAE_MODEL` placeholder that keeps the generic cascade off the
+        // OPENAI_* keys, like `KIRO_MODEL` above.
+        AgentType::Trae => (
+            crate::acp::trae::TRAE_HOST_ENV,
+            crate::acp::trae::TRAE_PAT_ENV,
+            "TRAE_MODEL",
+        ),
         _ => ("OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL"),
     }
 }
@@ -10950,6 +10981,14 @@ fn cascade_update_agent_config(
         }
         AgentType::ZCode => {
             // Authentication and providers belong to the official ZCode runtime.
+        }
+        AgentType::Trae => {
+            // TRAE CLI signs in to TRAE's own service (`traecli login`, or a
+            // PAT in the agent's env, which the handshake exchanges) and its
+            // models come from that account, so it stays off the
+            // model-provider credential cascade. `TRAECLI_HOST` points at an
+            // enterprise deployment of the same service, not at a model
+            // provider.
         }
         AgentType::Custom(_) => {
             // Custom agents are deliberately configuration-free: codeg writes

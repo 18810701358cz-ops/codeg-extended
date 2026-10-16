@@ -439,6 +439,13 @@ pub struct SessionState {
     ///
     /// Backend-internal — not serialized, not carried on `to_snapshot()`.
     pub env_pinned_config_option_ids: Vec<String>,
+    /// TRAE CLI only: whether this launch carries a personal access token
+    /// (`acp::trae::pat_sign_in_requested`), so the handshake signs in with
+    /// TRAE's PAT auth method before it opens a session. TRAE CLI does not
+    /// read the token on its own. Always `false` for every other agent.
+    ///
+    /// Backend-internal — not serialized, not carried on `to_snapshot()`.
+    pub trae_pat_sign_in: bool,
     pub prompt_capabilities: Option<PromptCapabilitiesInfo>,
     pub fork_supported: bool,
     pub available_commands: Vec<AvailableCommandInfo>,
@@ -776,6 +783,7 @@ impl SessionState {
             asserted_config_values: BTreeMap::new(),
             agent_chosen_config_values: BTreeMap::new(),
             env_pinned_config_option_ids: Vec::new(),
+            trae_pat_sign_in: false,
             prompt_capabilities: None,
             fork_supported: false,
             available_commands: Vec::new(),

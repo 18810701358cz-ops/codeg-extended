@@ -1112,6 +1112,19 @@
       "apiKeyHint": "يُمرَّر إلى CLI باسم KIRO_API_KEY. اتركه فارغاً لاستخدام الحساب الذي سجلت الدخول به عبر kiro-cli login؛ لا يلزم إلا حيث يتعذر تسجيل الدخول بالمتصفح (الخوادم، Docker).",
       "saveConfig": "حفظ إعدادات Kiro"
     },
+    "trae": {
+      "configManagement": "إدارة الإعدادات",
+      "configDescription": "يتوفر TRAE CLI 2.0 لعملاء الخطة الرئيسية من TRAE Enterprise فقط. يشغّل Codeg أداة traecli التي ثبّتّها، وهي تحفظ تسجيل الدخول والمهارات وخوادم MCP في ~/.trae. النموذج والوضع ومستوى الاستدلال ليست هنا: يُبلغ عنها TRAE CLI عبر ACP، لذا تديرها محددات المحرّر لكل جلسة.",
+      "signInTitle": "تسجيل الدخول",
+      "signInHint": "شغّل هذا الأمر مرة واحدة في الطرفية لتسجيل الدخول عبر SSO الخاص بمؤسستك. تعيد جلسات Codeg استخدام تسجيل الدخول هذا.",
+      "copyCommand": "نسخ الأمر",
+      "commandCopied": "تم نسخ الأمر",
+      "patLabel": "رمز الوصول الشخصي (اختياري)",
+      "patHint": "للأجهزة التي يتعذر فيها تسجيل الدخول بالمتصفح، مثل الخوادم أو تثبيتات Docker. يمرّره Codeg إلى TRAE CLI باسم TRAECLI_PERSONAL_ACCESS_TOKEN ويسجّل الدخول به عند بدء كل جلسة. اتركه فارغاً لاستخدام تسجيل الدخول من traecli login.",
+      "hostLabel": "عنوان API الخاص بالمؤسسة (اختياري)",
+      "hostHint": "فقط إذا كانت مؤسستك تشغّل TRAE على نطاقها الخاص. يُمرَّر باسم TRAECLI_HOST؛ اتركه فارغاً لاستخدام خدمة TRAE نفسها.",
+      "saveConfig": "حفظ إعدادات TRAE CLI"
+    },
     "deepseek": {
       "configManagement": "إعدادات DeepSeek Harness",
       "configDescription": "نقطة النهاية والمفتاح متغيّرا بيئة يقرأهما deepseek-acp عند الإقلاع. أما النموذج ومستوى الاستدلال فمحدِّدان على مستوى الجلسة، ويُختاران من حقل الإدخال.",
@@ -1607,6 +1620,8 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "تم حفظ إعدادات Kiro",
       "saveKiroFailed": "تعذّر حفظ إعدادات Kiro",
+      "traeSaved": "تم حفظ إعدادات TRAE CLI",
+      "saveTraeFailed": "تعذّر حفظ إعدادات TRAE CLI",
       "systemAgentAlreadyLatest": "{name} محدَّث بالفعل ({version})"
     },
     "distribution": {

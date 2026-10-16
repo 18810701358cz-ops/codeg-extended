@@ -256,7 +256,7 @@ pub fn current_platform() -> &'static str {
     }
 }
 
-/// The seventeen built-in agents. Excludes user-registered custom agents — use
+/// The eighteen built-in agents. Excludes user-registered custom agents — use
 /// [`all_acp_agents`] for the live set.
 pub fn builtin_acp_agents() -> Vec<AgentType> {
     vec![
@@ -277,10 +277,11 @@ pub fn builtin_acp_agents() -> Vec<AgentType> {
         AgentType::Antigravity,
         AgentType::Kiro,
         AgentType::ZCode,
+        AgentType::Trae,
     ]
 }
 
-/// Every agent codeg can currently drive: the seventeen built-ins followed by
+/// Every agent codeg can currently drive: the eighteen built-ins followed by
 /// the user's registered custom ACP agents (sorted by id).
 pub fn all_acp_agents() -> Vec<AgentType> {
     let mut agents = builtin_acp_agents();
@@ -308,6 +309,13 @@ pub fn registry_id_for(agent_type: AgentType) -> &'static str {
         AgentType::Kiro => "kiro-cli",
         // Keep the pre-integration custom:zcode-acp registry and history distinct.
         AgentType::ZCode => "codeg-zcode-acp",
+        // TRAE CLI is not in the ACP registry, so before it was built in it ran
+        // only as a hand-registered custom agent under an id the user picked
+        // (`trae-cli`, `traecli`, …). Prefixed so none of those can collide
+        // with the built-in: a custom definition under a built-in registry id
+        // stops launching (`custom_registry::validate`), and the id also names
+        // the ACP transcript directory both would write to.
+        AgentType::Trae => "codeg-trae-cli",
         // A custom agent's registry id IS its identity.
         AgentType::Custom(id) => id,
     }
@@ -332,6 +340,7 @@ pub fn from_registry_id(id: &str) -> Option<AgentType> {
         "antigravity-acp" => Some(AgentType::Antigravity),
         "kiro-cli" => Some(AgentType::Kiro),
         "codeg-zcode-acp" => Some(AgentType::ZCode),
+        "codeg-trae-cli" => Some(AgentType::Trae),
         // Only ids the user has actually registered resolve. An unregistered
         // id must stay `None` so the ACP-registry picker still offers it as
         // "addable" rather than treating it as already supported.
@@ -4971,6 +4980,61 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
                 update_args: Some(&["update", "--non-interactive"]),
             },
         },
+        AgentType::Trae => AcpAgentMeta {
+            agent_type,
+            supports_mcp: true,
+            name: "TRAE CLI",
+            description: "ByteDance's TRAE coding agent in the terminal (native ACP via traecli acp serve)",
+            // `traecli acp serve` is the CLI's OWN ACP server (the docs also
+            // accept `traecli --acp`; codeg uses the subcommand they lead
+            // with). Verified handshake against 0.209.1: `agentInfo =
+            // {name: "traecli-acp", title: "TRAE CLI"}`, `loadSession: true`,
+            // `sessionCapabilities` with list / additionalDirectories / fork /
+            // resume / close, image + embeddedContext prompts, MCP http but
+            // NOT sse, and two auth methods (`trae-tob-browser`, the
+            // enterprise SSO browser flow, and `trae-tob-pat`; see
+            // `acp::trae`). `session/new` answers with standard `configOptions`
+            // — `mode` (default "Workspace Edit" / plan / auto /
+            // bypass_permissions "Full Access"), `model`, `reasoning_effort` —
+            // beside the older `modes` / `models`, so the composer's generic
+            // selectors cover it. Tool calls, permission requests, diffs and
+            // `usage_update` use the plain ACP shapes (its ACP layer descends
+            // from codex-acp): with codeg's default capabilities it runs
+            // commands and edits files itself and reports them as `execute` /
+            // `read` / `edit` tool calls.
+            //
+            // SYSTEM, NOT BINARY. TRAE CLI 2.0 ships only through its own
+            // install scripts (`install_v2.sh` / `install_v2.ps1`), which stage
+            // each release under `~/.local/share/traecli/releases`, flip a
+            // `current` symlink and link `traex` plus the `traecli` command
+            // into `~/.local/bin`. On Windows the script uses
+            // `%LOCALAPPDATA%\Programs\TraeCLI\bin` instead, adds it to the
+            // user PATH, and writes `traecli.cmd` wrappers that `which`
+            // resolves through PATHEXT. A codeg-managed copy would diverge
+            // from the one the user's terminal runs while both share `~/.trae`
+            // (login, config, skills, sessions). So codeg launches the user's
+            // install and pins none; `~/.local/bin` is probed by the system
+            // resolver even when a Finder-launched app's PATH lacks it.
+            //
+            // History is codeg's own ACP transcript
+            // (`AgentType::uses_acp_transcript`), not TRAE CLI's rollouts —
+            // see `acp::trae` for why. MCP servers
+            // come from `<TRAE_HOME>/traecli.toml`, which the CLI loads itself
+            // and codeg's MCP settings manage, so codeg does not forward the
+            // same servers over `session/new` (see `load_mcp_servers_for_agent`).
+            distribution: AgentDistribution::System {
+                cmd: "traecli",
+                args: &["acp", "serve"],
+                env: &[],
+                install_url: crate::acp::trae::TRAE_INSTALL_URL,
+                // `traecli update` asks the release service for the newest
+                // build and, when there is one, re-runs the official installer
+                // with `TRAECLI_INSTALL_ASSUME_YES=1` (0.209.1's `--dry-run`
+                // prints exactly that command), so nothing prompts. Current
+                // already: "TRAE CLI is already up to date (0.209.1).", exit 0.
+                update_args: Some(&["update"]),
+            },
+        },
         // Handled by the early return above; kept so the match stays
         // exhaustive without a catch-all that could swallow a new built-in.
         AgentType::Custom(_) => unreachable!("custom agents resolve via custom_registry"),
@@ -5232,15 +5296,51 @@ mod tests {
             }
             other => panic!("expected system distribution for Kiro, got {other:?}"),
         }
-        // No other built-in rides the system distribution: every one of them
-        // has a pinned version codeg installs itself.
+        // Only Kiro and TRAE CLI ride the system distribution: every other
+        // built-in has a pinned version codeg installs itself.
         for agent_type in builtin_acp_agents() {
-            if agent_type != AgentType::Kiro {
+            if !matches!(agent_type, AgentType::Kiro | AgentType::Trae) {
                 assert!(
                     get_agent_meta(agent_type).registry_version().is_some(),
                     "{agent_type:?} lost its pin"
                 );
             }
+        }
+    }
+
+    // TRAE CLI is the second SYSTEM agent: only its own install scripts set it
+    // up, so there is no pin, the launch is the user's `traecli acp serve`,
+    // and Upgrade runs the CLI's own `traecli update`. Its registry id must
+    // stay clear of every id a hand-registered custom TRAE entry could carry.
+    #[test]
+    fn trae_launches_the_system_cli_without_a_pin() {
+        let meta = get_agent_meta(AgentType::Trae);
+        assert!(meta.supports_mcp);
+        assert_eq!(meta.name, "TRAE CLI");
+        assert_eq!(registry_id_for(AgentType::Trae), "codeg-trae-cli");
+        assert_eq!(from_registry_id("codeg-trae-cli"), Some(AgentType::Trae));
+        for hand_registered in ["trae", "traecli", "trae-cli"] {
+            assert_ne!(registry_id_for(AgentType::Trae), hand_registered);
+        }
+        assert_eq!(meta.registry_version(), None);
+        assert!(!meta.supports_custom_version());
+        assert!(!uses_cursor_acp_backend(AgentType::Trae));
+        assert!(acp_adapter_relation(AgentType::Trae).is_none());
+        match meta.distribution {
+            AgentDistribution::System {
+                cmd,
+                args,
+                env,
+                install_url,
+                update_args,
+            } => {
+                assert_eq!(cmd, "traecli");
+                assert_eq!(args, &["acp", "serve"]);
+                assert!(env.is_empty());
+                assert!(install_url.starts_with("https://docs.trae.cn/"));
+                assert_eq!(update_args, Some(&["update"][..]));
+            }
+            other => panic!("expected system distribution for TRAE CLI, got {other:?}"),
         }
     }
 

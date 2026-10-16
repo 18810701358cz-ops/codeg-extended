@@ -130,6 +130,7 @@ const APP_OPTIONS: { value: McpAppType; label: string }[] = [
   { value: "antigravity", label: "Google Antigravity" },
   { value: "kiro", label: "Kiro CLI" },
   { value: "zcode", label: "ZCode" },
+  { value: "trae", label: "TRAE CLI" },
   // pi 同理不作为可分配目标：读写的 ~/.pi/agent/mcp.json 属于第三方 pi 扩展，
   // pi 自身没有 MCP，pi-acp 也不转发线缆上的 mcpServers。给没装该扩展的用户
   // 写这个文件只会造出一个没人读的配置。存量 "pi" 条目照样能改能删——
@@ -322,6 +323,7 @@ function appsToDraft(apps: McpAppType[]): Record<McpAppType, boolean> {
     antigravity: appSet.has("antigravity"),
     kiro: appSet.has("kiro"),
     zcode: appSet.has("zcode"),
+    trae: appSet.has("trae"),
     pi: appSet.has("pi"),
   }
 }

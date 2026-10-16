@@ -2509,6 +2509,27 @@ describe("Kiro env keys", () => {
   })
 })
 
+describe("TRAE CLI env keys", () => {
+  // TRAE CLI's sign-in for a browser-less machine is its personal access
+  // token, and `TRAECLI_HOST` points it at an enterprise's own deployment;
+  // the model is chosen over ACP, so there is no model variable.
+  it("offers the token and the API URL under the names TRAE CLI reads", () => {
+    expect(importantEnvKeysByAgent("trae" as AgentType)).toEqual({
+      apiBaseUrl: ["TRAECLI_HOST"],
+      apiKey: ["TRAECLI_PERSONAL_ACCESS_TOKEN"],
+      model: [],
+    })
+    expect(importantFieldsFor("trae" as AgentType)).toEqual({
+      apiBaseUrl: true,
+      apiKey: true,
+      model: false,
+    })
+    expect(
+      patchEnvByImportantKey("trae" as AgentType, "", "apiKey", "pat_1")
+    ).toBe("TRAECLI_PERSONAL_ACCESS_TOKEN=pat_1")
+  })
+})
+
 describe("codex ACP preset disclosures", () => {
   // Every claim the panel makes about the seeded approval preset is only true
   // when a preset is actually seeded. `default_permissions` shadowing means

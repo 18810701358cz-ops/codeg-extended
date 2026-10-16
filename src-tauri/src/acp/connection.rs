@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1::{
-    BlobResourceContents, CancelNotification, ClientCapabilities, ClientSessionCapabilities,
+    AuthMethod, AuthenticateRequest, BlobResourceContents, CancelNotification,
+    ClientCapabilities, ClientSessionCapabilities,
     CloseSessionRequest, CompactionCapabilities, ContentBlock, ContentChunk,
     CreateTerminalRequest, CreateTerminalResponse, ElicitationCapabilities,
     ElicitationFormCapabilities, EmbeddedResource, EmbeddedResourceResource,
@@ -2487,6 +2488,8 @@ pub async fn spawn_agent_connection(
     // this point.
     initial_state.env_pinned_config_option_ids =
         env_pinned_config_option_ids(agent_type, &runtime_env);
+    initial_state.trae_pat_sign_in =
+        agent_type == AgentType::Trae && crate::acp::trae::pat_sign_in_requested(&runtime_env);
 
     let session_state = Arc::new(RwLock::new(initial_state));
 
@@ -6247,7 +6250,79 @@ fn agent_reads_own_mcp_config(agent_type: AgentType) -> bool {
             | AgentType::Antigravity
             | AgentType::Kiro
             | AgentType::Cline
+            | AgentType::Trae
     )
+}
+
+/// How long the handshake waits for TRAE CLI to exchange a PAT. The exchange is
+/// one request to TRAE's service; a stalled one must not hold the session
+/// hostage, since a login the CLI already stored still serves it.
+const TRAE_PAT_SIGN_IN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The auth method a TRAE CLI connection signs in with before `session/new`,
+/// or `None` when there is nothing to do.
+///
+/// TRAE CLI keeps its login in its own store (`traecli login`), which the ACP
+/// server reuses; a `TRAECLI_PERSONAL_ACCESS_TOKEN` in its environment is NOT
+/// read on its own — `session/new` still answers `Authentication required` —
+/// until the PAT method runs through ACP `authenticate` (verified against
+/// 0.209.1, where it attempts the token exchange). So codeg sends it when the
+/// launch carries a PAT and the server advertises the method; a server that
+/// stops advertising it gets nothing it would reject.
+fn trae_pat_sign_in_method(
+    agent_type: AgentType,
+    pat_configured: bool,
+    auth_methods: &[AuthMethod],
+) -> Option<&'static str> {
+    let method = crate::acp::trae::TRAE_PAT_AUTH_METHOD;
+    (agent_type == AgentType::Trae
+        && pat_configured
+        && auth_methods
+            .iter()
+            .any(|advertised| advertised.id().0.as_ref() == method))
+    .then_some(method)
+}
+
+/// Sign TRAE CLI in with its PAT auth method ([`trae_pat_sign_in_method`]).
+///
+/// A failed or stalled exchange is logged and the handshake carries on: an
+/// existing `traecli login` may still serve the session, and when it does not,
+/// `session/new` answers `authRequired`, which already reaches the user as
+/// "sign in from the agent's settings". Only a cancelled handshake stops here.
+async fn sign_in_trae_with_pat(
+    cx: &ConnectionTo<Agent>,
+    handshake: &CancellationToken,
+    method_id: &'static str,
+) -> Result<(), agent_client_protocol::Error> {
+    let started = std::time::Instant::now();
+    let outcome = unless_cancelled(
+        handshake,
+        tokio::time::timeout(
+            TRAE_PAT_SIGN_IN_TIMEOUT,
+            cx.send_request_to(Agent, AuthenticateRequest::new(method_id))
+                .block_task(),
+        ),
+    )
+    .await?;
+    match outcome {
+        Ok(Ok(_)) => tracing::info!(
+            "[ACP][{}] signed in with {method_id} in {:?}",
+            AgentType::Trae,
+            started.elapsed()
+        ),
+        Ok(Err(e)) => tracing::warn!(
+            "[ACP][{}] {method_id} sign-in failed after {:?}: {e}; opening the session \
+             anyway, which an existing login still serves",
+            AgentType::Trae,
+            started.elapsed()
+        ),
+        Err(_) => tracing::warn!(
+            "[ACP][{}] {method_id} sign-in timed out after {:?}; opening the session anyway",
+            AgentType::Trae,
+            TRAE_PAT_SIGN_IN_TIMEOUT
+        ),
+    }
+    Ok(())
 }
 
 /// Load MCP servers configured for `agent_type` and convert them into the
@@ -6292,6 +6367,12 @@ fn load_mcp_servers_for_agent(agent_type: AgentType) -> Vec<McpServer> {
     // settings UI manages, and ignores the wire list altogether (see
     // `agent_delivers_wire_mcp`), so forwarding that file's servers again only
     // sends entries nobody reads.
+    //
+    // TRAE CLI joins it: `traecli acp serve` loads `[mcp_servers]` from
+    // `<TRAE_HOME>/traecli.toml` and ALSO starts what `session/new` carries —
+    // verified against 0.209.1, where a server from each source reached the
+    // model side by side — so forwarding the file's servers would mount every
+    // one of them twice. codeg's MCP settings UI manages that file.
     if agent_reads_own_mcp_config(agent_type) {
         return Vec::new();
     }
@@ -7514,6 +7595,15 @@ async fn run_connection(
                 agent_type,
             )
             .await;
+
+            // TRAE CLI ignores a PAT in its environment until its PAT auth
+            // method runs, so sign in with it before any session is opened.
+            let trae_pat_requested = state.read().await.trae_pat_sign_in;
+            if let Some(method_id) =
+                trae_pat_sign_in_method(agent_type, trae_pat_requested, &init_resp.auth_methods)
+            {
+                sign_in_trae_with_pat(&cx, &handshake, method_id).await?;
+            }
 
             let supports_fork = agent_type != AgentType::ZCode && init_resp
                 .agent_capabilities
@@ -39232,6 +39322,15 @@ mod zcode_mode_tests {
         assert_eq!(transcript_dir_for(AgentType::DeepSeek), None);
         assert!(transcript_dir_for(AgentType::custom("example").unwrap()).is_some());
     }
+
+    #[test]
+    fn trae_records_history_in_its_own_transcript_dir() {
+        assert_eq!(transcript_dir_for(AgentType::Trae), Some("codeg-trae-cli"));
+        assert_ne!(
+            transcript_dir_for(AgentType::Trae),
+            transcript_dir_for(AgentType::ZCode)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -39268,5 +39367,90 @@ mod wire_mcp_gate_tests {
         }
         // DeepSeek reads no MCP file at all: the wire is its only channel.
         assert!(!agent_reads_own_mcp_config(AgentType::DeepSeek));
+    }
+
+    // TRAE CLI starts both the servers in its `traecli.toml` and the ones on
+    // `session/new`, so the file's servers stay off the wire (or each would be
+    // mounted twice) while the wire still carries the codeg-mcp companion.
+    #[test]
+    fn trae_takes_user_servers_from_its_config_and_the_companion_from_the_wire() {
+        assert!(agent_delivers_wire_mcp(AgentType::Trae));
+        assert!(agent_reads_own_mcp_config(AgentType::Trae));
+        assert!(load_mcp_servers_for_agent(AgentType::Trae).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod trae_handshake_tests {
+    use super::*;
+    use agent_client_protocol::schema::v1::InitializeResponse;
+
+    /// The `initialize` result `traecli acp serve` 0.209.1 sends, trimmed to
+    /// what the PAT gate reads.
+    fn trae_initialize() -> InitializeResponse {
+        serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "agentCapabilities": {"loadSession": true},
+            "authMethods": [
+                {
+                    "id": "trae-tob-browser",
+                    "name": "Sign in with Enterprise SSO",
+                    "description": "Open your TRAE enterprise browser login"
+                },
+                {
+                    "id": "trae-tob-pat",
+                    "name": "Sign in with Personal Access Token",
+                    "description": "Requires `TRAECLI_PERSONAL_ACCESS_TOKEN` to be set before starting TRAE CLI."
+                }
+            ],
+            "agentInfo": {"name": "traecli-acp", "title": "TRAE CLI", "version": "0.209.1"}
+        }))
+        .expect("traecli 0.209.1 initialize parses")
+    }
+
+    #[test]
+    fn a_configured_pat_signs_trae_in_with_the_advertised_method() {
+        let init = trae_initialize();
+        assert_eq!(
+            trae_pat_sign_in_method(AgentType::Trae, true, &init.auth_methods),
+            Some("trae-tob-pat")
+        );
+    }
+
+    #[test]
+    fn no_pat_means_no_sign_in_and_the_stored_login_is_left_alone() {
+        let init = trae_initialize();
+        assert_eq!(
+            trae_pat_sign_in_method(AgentType::Trae, false, &init.auth_methods),
+            None
+        );
+    }
+
+    #[test]
+    fn a_server_without_the_method_and_other_agents_get_no_authenticate() {
+        let init = trae_initialize();
+        let browser_only: Vec<_> = init
+            .auth_methods
+            .iter()
+            .filter(|m| m.id().0.as_ref() != "trae-tob-pat")
+            .cloned()
+            .collect();
+        assert_eq!(
+            trae_pat_sign_in_method(AgentType::Trae, true, &browser_only),
+            None
+        );
+        // The flag is only ever set for TRAE CLI, but the gate does not rely
+        // on that: another agent advertising a same-named method is not TRAE.
+        for agent_type in [
+            AgentType::Kiro,
+            AgentType::Codex,
+            AgentType::custom("trae").unwrap(),
+        ] {
+            assert_eq!(
+                trae_pat_sign_in_method(agent_type, true, &init.auth_methods),
+                None,
+                "{agent_type}"
+            );
+        }
     }
 }

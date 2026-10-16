@@ -1112,6 +1112,19 @@
       "apiKeyHint": "Wird der CLI als KIRO_API_KEY übergeben. Leer lassen, um das per kiro-cli login angemeldete Konto zu nutzen; nur nötig, wo keine Browser-Anmeldung möglich ist (Server, Docker).",
       "saveConfig": "Kiro-Konfiguration speichern"
     },
+    "trae": {
+      "configManagement": "Konfiguration",
+      "configDescription": "TRAE CLI 2.0 steht nur Kunden des Flaggschiff-Tarifs von TRAE Enterprise zur Verfügung. Codeg startet das von dir installierte traecli, das Anmeldung, Skills und MCP-Server in ~/.trae speichert. Modell, Modus und Denkaufwand stehen nicht hier: TRAE CLI meldet sie über ACP, daher verwalten die Auswahlfelder im Eingabebereich sie pro Sitzung.",
+      "signInTitle": "Anmelden",
+      "signInHint": "Führe dies einmal in einem Terminal aus, um dich mit dem SSO deines Unternehmens anzumelden. Sitzungen in Codeg verwenden diese Anmeldung wieder.",
+      "copyCommand": "Befehl kopieren",
+      "commandCopied": "Befehl kopiert",
+      "patLabel": "Persönliches Zugriffstoken (optional)",
+      "patHint": "Für Rechner, auf denen keine Browser-Anmeldung möglich ist, etwa Server oder Docker-Installationen. Codeg übergibt es TRAE CLI als TRAECLI_PERSONAL_ACCESS_TOKEN und meldet sich bei jedem Sitzungsstart damit an. Leer lassen, um die Anmeldung aus traecli login zu nutzen.",
+      "hostLabel": "Enterprise-API-URL (optional)",
+      "hostHint": "Nur wenn deine Organisation TRAE unter einer eigenen Domain betreibt. Wird als TRAECLI_HOST übergeben; leer lassen für den Dienst von TRAE.",
+      "saveConfig": "TRAE CLI-Konfiguration speichern"
+    },
     "deepseek": {
       "configManagement": "DeepSeek-Harness-Konfiguration",
       "configDescription": "Endpunkt und Schlüssel sind Umgebungsvariablen, die deepseek-acp beim Start liest. Modell und Denkstufe sind Auswahlfelder pro Sitzung — sie werden im Eingabefeld gewählt.",
@@ -1607,6 +1620,8 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "Kiro-Konfiguration gespeichert",
       "saveKiroFailed": "Kiro-Konfiguration konnte nicht gespeichert werden",
+      "traeSaved": "TRAE CLI-Konfiguration gespeichert",
+      "saveTraeFailed": "TRAE CLI-Konfiguration konnte nicht gespeichert werden",
       "systemAgentAlreadyLatest": "{name} ist bereits aktuell ({version})"
     },
     "distribution": {

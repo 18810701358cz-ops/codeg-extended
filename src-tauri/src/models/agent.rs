@@ -8,10 +8,10 @@ pub const CUSTOM_AGENT_WIRE_PREFIX: &str = "custom:";
 
 /// Which agent backs a conversation.
 ///
-/// The seventeen named variants are compile-time built-ins with hand-written
+/// The eighteen named variants are compile-time built-ins with hand-written
 /// launch metadata (`acp::registry`). Most use a dedicated transcript parser;
-/// ZCode uses the Codeg-owned ACP transcript. [`AgentType::Custom`] is the
-/// open end: a user-registered
+/// ZCode and TRAE CLI use the Codeg-owned ACP transcript. [`AgentType::Custom`]
+/// is the open end: a user-registered
 /// ACP agent whose launch metadata lives in the database
 /// (`acp::custom_registry`) and whose history comes from codeg's own ACP
 /// transcript (`parsers::acp_native`) rather than an agent-specific store.
@@ -39,12 +39,13 @@ pub enum AgentType {
     Antigravity,
     Kiro,
     ZCode,
+    Trae,
     /// A user-registered ACP agent, identified by its ACP-registry id
     /// (interned). Ordered last so built-ins keep their relative order.
     Custom(&'static str),
 }
 
-/// The seventeen compile-time agents, in declaration order. Does NOT include
+/// The eighteen compile-time agents, in declaration order. Does NOT include
 /// custom agents — use [`crate::acp::registry::all_acp_agents`] for the live
 /// set that includes them.
 pub const BUILTIN_AGENT_TYPES: &[AgentType] = &[
@@ -65,6 +66,7 @@ pub const BUILTIN_AGENT_TYPES: &[AgentType] = &[
     AgentType::Antigravity,
     AgentType::Kiro,
     AgentType::ZCode,
+    AgentType::Trae,
 ];
 
 impl AgentType {
@@ -75,7 +77,10 @@ impl AgentType {
 
     /// Whether Codeg owns this agent's history as an ACP transcript.
     pub fn uses_acp_transcript(&self) -> bool {
-        matches!(self, AgentType::Custom(_) | AgentType::ZCode)
+        matches!(
+            self,
+            AgentType::Custom(_) | AgentType::ZCode | AgentType::Trae
+        )
     }
 
     /// The custom agent's registry id, or `None` for a built-in.
@@ -119,6 +124,7 @@ impl AgentType {
             AgentType::Antigravity => Cow::Borrowed("antigravity"),
             AgentType::Kiro => Cow::Borrowed("kiro"),
             AgentType::ZCode => Cow::Borrowed("zcode"),
+            AgentType::Trae => Cow::Borrowed("trae"),
             AgentType::Custom(id) => Cow::Owned(format!("{CUSTOM_AGENT_WIRE_PREFIX}{id}")),
         }
     }
@@ -144,6 +150,7 @@ impl AgentType {
             "antigravity" => Some(AgentType::Antigravity),
             "kiro" => Some(AgentType::Kiro),
             "zcode" => Some(AgentType::ZCode),
+            "trae" => Some(AgentType::Trae),
             other => other
                 .strip_prefix(CUSTOM_AGENT_WIRE_PREFIX)
                 .and_then(AgentType::custom),
@@ -161,6 +168,10 @@ impl AgentType {
 /// ZCode keeps its formerly valid custom ids for persisted registrations:
 /// its builtin registry id is codeg-zcode-acp, keeping registration, launch
 /// caches and ACP transcript directories distinct from the old custom ids.
+/// TRAE CLI follows the same rule: before it was built in, the only way to run
+/// it was a hand-registered custom agent under an id of the user's choosing
+/// (`trae`, `traecli`, …), so those ids stay valid and the built-in's registry
+/// id is codeg-trae-cli.
 pub fn is_valid_custom_agent_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
@@ -227,6 +238,7 @@ impl fmt::Display for AgentType {
             AgentType::Antigravity => write!(f, "Google Antigravity"),
             AgentType::Kiro => write!(f, "Kiro CLI"),
             AgentType::ZCode => write!(f, "ZCode"),
+            AgentType::Trae => write!(f, "TRAE CLI"),
             // Prefer the registered display name; fall back to the raw id when
             // the registry has not been hydrated (or the agent was deleted
             // while conversations still reference it).
@@ -264,6 +276,7 @@ mod tests {
             (AgentType::Antigravity, "antigravity"),
             (AgentType::Kiro, "kiro"),
             (AgentType::ZCode, "zcode"),
+            (AgentType::Trae, "trae"),
         ];
         for (agent, wire) in expected {
             assert_eq!(agent.as_wire(), wire);
@@ -331,6 +344,24 @@ mod tests {
     }
 
     #[test]
+    fn trae_builtin_and_hand_registered_custom_ids_keep_distinct_wire_identities() {
+        assert_eq!(AgentType::from_wire("trae"), Some(AgentType::Trae));
+        assert!(AgentType::Trae.uses_acp_transcript());
+        // The ids a user could have registered TRAE CLI under by hand before it
+        // was built in. They must still parse, or every conversation stored
+        // under them would fail to deserialize.
+        for id in ["trae", "traecli", "trae-cli"] {
+            let custom = AgentType::custom(id).expect("previously valid custom id");
+            let wire = format!("custom:{id}");
+            assert_eq!(custom.as_wire(), wire);
+            assert_eq!(AgentType::from_wire(&wire), Some(custom));
+            let stored = serde_json::to_string(&custom).unwrap();
+            assert_eq!(serde_json::from_str::<AgentType>(&stored).unwrap(), custom);
+            assert_ne!(custom, AgentType::Trae);
+        }
+    }
+
+    #[test]
     fn custom_id_rejects_path_traversal_and_builtin_shadowing() {
         for bad in [
             "",
@@ -367,13 +398,14 @@ mod tests {
 
     #[test]
     fn ordering_places_custom_after_builtins() {
-        assert!(AgentType::ZCode < AgentType::custom("goose").unwrap());
+        assert!(AgentType::Trae < AgentType::custom("goose").unwrap());
         assert!(AgentType::ClaudeCode < AgentType::Cursor);
         assert!(AgentType::Cursor < AgentType::DeepSeek);
         assert!(AgentType::DeepSeek < AgentType::Qoder);
         assert!(AgentType::Qoder < AgentType::Antigravity);
         assert!(AgentType::Antigravity < AgentType::Kiro);
         assert!(AgentType::Kiro < AgentType::ZCode);
+        assert!(AgentType::ZCode < AgentType::Trae);
         // Custom agents order lexicographically among themselves.
         assert!(AgentType::custom("aaa").unwrap() < AgentType::custom("bbb").unwrap());
     }

@@ -530,6 +530,32 @@ const KiroColorIcon = memo(function KiroColorIcon({ size = "1em" }: IconProps) {
   )
 })
 
+const TraeColorIcon = memo(function TraeColorIcon({ size = "1em" }: IconProps) {
+  // TRAE's mark — the notched frame with two diamond eyes — in the brand green
+  // (#32F08C) on a black squircle, the way TRAE's own favicon renders it (the
+  // green alone is too faint on a light background). Vector from LobeHub's
+  // MIT-licensed `trae.svg`; its 24-unit glyph spans y 3.4–20.541, so the
+  // transform scales it to 70% and centers it in the box.
+  return (
+    <svg
+      height={size}
+      style={baseSvgStyle}
+      viewBox="0 0 24 24"
+      width={size}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <title>TRAE CLI</title>
+      <rect width="24" height="24" rx="5.3" fill="#000000" />
+      <path
+        transform="translate(3.6 3.62) scale(0.7)"
+        fill="#32F08C"
+        fillRule="evenodd"
+        d="M24 20.541H3.428v-3.426H0V3.4h24V20.54zM3.428 17.115h17.144V6.827H3.428v10.288zm8.573-5.196l-2.425 2.424-2.424-2.424 2.424-2.424 2.425 2.424zm6.857-.001l-2.424 2.423-2.425-2.423 2.425-2.425 2.424 2.425z"
+      />
+    </svg>
+  )
+})
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyIcon = React.ComponentType<any>
 
@@ -543,6 +569,7 @@ const COLOR_ICONS: Partial<Record<AgentType, AnyIcon>> = {
   deepseek: DeepSeekColorIcon,
   kiro: KiroColorIcon,
   zcode: ZCodeColorIcon,
+  trae: TraeColorIcon,
 }
 
 const MONO_ICONS: Partial<Record<AgentType, AnyIcon>> = {

@@ -161,6 +161,11 @@ import {
   AntigravityConfigPanel,
 } from "./antigravity-config-panel"
 import { KiroConfigPanel } from "./kiro-config-panel"
+import {
+  TRAE_HOST_ENV,
+  TRAE_PAT_ENV,
+  TraeConfigPanel,
+} from "./trae-config-panel"
 import { CodeBuddyConfigPanel } from "./codebuddy-config-panel"
 import { CursorConfigPanel } from "./cursor-config-panel"
 import {
@@ -853,6 +858,19 @@ export function importantEnvKeysByAgent(
     return {
       apiBaseUrl: [],
       apiKey: ["KIRO_API_KEY"],
+      model: [],
+    }
+  }
+  if (agentType === "trae") {
+    // TRAE CLI's non-interactive sign-in is its personal access token, which
+    // codeg exchanges through TRAE's PAT auth method when a session starts;
+    // `TRAECLI_HOST` is the API URL of an enterprise's own deployment. The
+    // model is picked per session over ACP, so there is no model env. Generic
+    // OPENAI_*/API_KEY aliases are absent: TRAE CLI reads neither. Mirrors the
+    // backend `agent_env_keys(Trae)`.
+    return {
+      apiBaseUrl: [TRAE_HOST_ENV],
+      apiKey: [TRAE_PAT_ENV],
       model: [],
     }
   }
@@ -11233,6 +11251,28 @@ supports_websockets = true`}
                         {
                           KIRO_API_KEY: env.KIRO_API_KEY,
                           KIRO_TRUST_ALL_TOOLS: env.KIRO_TRUST_ALL_TOOLS,
+                        }
+                      )
+                    }
+                  />
+                ) : selectedAgent.agent_type === "trae" ? (
+                  <TraeConfigPanel
+                    agent={selectedAgent}
+                    saving={Boolean(savingEnv[selectedAgent.agent_type])}
+                    onSave={(env, enabled) =>
+                      persistEnv(
+                        selectedAgent.agent_type,
+                        enabled,
+                        envMapToText(env),
+                        selectedAgent.model_provider_id,
+                        // The two keys this panel owns, folded into the raw
+                        // editor's draft (see the Kiro panel above): the
+                        // enable switch and the generic env Save persist that
+                        // draft wholesale. `undefined` (a cleared field)
+                        // deletes the line.
+                        {
+                          [TRAE_PAT_ENV]: env[TRAE_PAT_ENV],
+                          [TRAE_HOST_ENV]: env[TRAE_HOST_ENV],
                         }
                       )
                     }

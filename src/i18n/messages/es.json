@@ -1112,6 +1112,19 @@
       "apiKeyHint": "Se pasa a la CLI como KIRO_API_KEY. Déjala vacía para usar la cuenta con la que iniciaste sesión mediante kiro-cli login; solo hace falta donde no se puede iniciar sesión con el navegador (servidores, Docker).",
       "saveConfig": "Guardar configuración de Kiro"
     },
+    "trae": {
+      "configManagement": "Configuración",
+      "configDescription": "TRAE CLI 2.0 solo está disponible para clientes del plan insignia de TRAE Enterprise. Codeg ejecuta el traecli que instalaste, que guarda su inicio de sesión, sus habilidades y sus servidores MCP en ~/.trae. El modelo, el modo y el esfuerzo de razonamiento no están aquí: TRAE CLI los informa por ACP, así que los selectores del compositor los gestionan en cada sesión.",
+      "signInTitle": "Iniciar sesión",
+      "signInHint": "Ejecuta esto una vez en una terminal para iniciar sesión con el SSO de tu empresa. Las sesiones de Codeg reutilizan ese inicio de sesión.",
+      "copyCommand": "Copiar comando",
+      "commandCopied": "Comando copiado",
+      "patLabel": "Token de acceso personal (opcional)",
+      "patHint": "Para una máquina donde no se puede iniciar sesión con el navegador, como un servidor o una instalación de Docker. Codeg lo pasa a TRAE CLI como TRAECLI_PERSONAL_ACCESS_TOKEN e inicia sesión con él cada vez que empieza una sesión. Déjalo vacío para usar el inicio de sesión de traecli login.",
+      "hostLabel": "URL de la API empresarial (opcional)",
+      "hostHint": "Solo si tu organización ejecuta TRAE en su propio dominio. Se pasa como TRAECLI_HOST; déjala vacía para usar el servicio de TRAE.",
+      "saveConfig": "Guardar configuración de TRAE CLI"
+    },
     "deepseek": {
       "configManagement": "Configuración de DeepSeek Harness",
       "configDescription": "El endpoint y la clave son variables de entorno que deepseek-acp lee al arrancar. El modelo y el esfuerzo de razonamiento son selectores por sesión: se eligen en el campo de mensaje.",
@@ -1607,6 +1620,8 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "Configuración de Kiro guardada",
       "saveKiroFailed": "No se pudo guardar la configuración de Kiro",
+      "traeSaved": "Configuración de TRAE CLI guardada",
+      "saveTraeFailed": "No se pudo guardar la configuración de TRAE CLI",
       "systemAgentAlreadyLatest": "{name} ya está al día ({version})"
     },
     "distribution": {

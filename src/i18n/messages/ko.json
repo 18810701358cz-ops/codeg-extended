@@ -1112,6 +1112,19 @@
       "apiKeyHint": "KIRO_API_KEY로 CLI에 전달됩니다. 비워 두면 kiro-cli login으로 로그인한 계정을 사용합니다. 브라우저 로그인이 불가능한 환경(서버, Docker)에서만 필요합니다.",
       "saveConfig": "Kiro 구성 저장"
     },
+    "trae": {
+      "configManagement": "구성 관리",
+      "configDescription": "TRAE CLI 2.0은 TRAE 엔터프라이즈 플래그십 요금제 고객만 사용할 수 있습니다. Codeg는 설치된 traecli를 실행하며, 로그인 정보·스킬·MCP 서버는 ~/.trae에 저장됩니다. 모델, 모드, 추론 강도는 여기에 없습니다. TRAE CLI가 ACP로 보고하므로 입력창의 선택기가 세션별로 관리합니다.",
+      "signInTitle": "로그인",
+      "signInHint": "터미널에서 이 명령을 한 번 실행해 엔터프라이즈 SSO로 로그인하세요. Codeg의 세션은 그 로그인을 재사용합니다.",
+      "copyCommand": "명령 복사",
+      "commandCopied": "명령을 복사했습니다",
+      "patLabel": "개인 액세스 토큰(선택)",
+      "patHint": "서버나 Docker처럼 브라우저 로그인이 불가능한 머신용입니다. Codeg는 TRAECLI_PERSONAL_ACCESS_TOKEN으로 TRAE CLI에 전달하고 세션을 시작할 때마다 이 토큰으로 로그인합니다. 비워 두면 traecli login의 로그인을 사용합니다.",
+      "hostLabel": "엔터프라이즈 API URL(선택)",
+      "hostHint": "조직이 자체 도메인에서 TRAE를 운영하는 경우에만 입력하세요. TRAECLI_HOST로 전달되며, 비워 두면 TRAE 공식 서비스를 사용합니다.",
+      "saveConfig": "TRAE CLI 구성 저장"
+    },
     "deepseek": {
       "configManagement": "DeepSeek Harness 구성",
       "configDescription": "엔드포인트와 API 키는 deepseek-acp가 시작할 때 읽는 환경 변수입니다. 모델과 추론 강도는 세션별 선택기이므로 입력창에서 바꿉니다.",
@@ -1607,6 +1620,8 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "Kiro 구성을 저장했습니다",
       "saveKiroFailed": "Kiro 구성을 저장하지 못했습니다",
+      "traeSaved": "TRAE CLI 구성을 저장했습니다",
+      "saveTraeFailed": "TRAE CLI 구성을 저장하지 못했습니다",
       "systemAgentAlreadyLatest": "{name}은(는) 이미 최신 버전입니다({version})"
     },
     "distribution": {

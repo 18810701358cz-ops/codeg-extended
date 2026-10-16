@@ -1112,6 +1112,19 @@
       "apiKeyHint": "Transmise à la CLI en tant que KIRO_API_KEY. Laissez vide pour utiliser le compte connecté via kiro-cli login ; nécessaire seulement là où la connexion par navigateur est impossible (serveurs, Docker).",
       "saveConfig": "Enregistrer la configuration Kiro"
     },
+    "trae": {
+      "configManagement": "Configuration",
+      "configDescription": "TRAE CLI 2.0 est réservé aux clients de l'offre phare de TRAE Enterprise. Codeg lance le traecli que vous avez installé, qui conserve sa connexion, ses compétences et ses serveurs MCP dans ~/.trae. Le modèle, le mode et l'effort de raisonnement ne sont pas ici : TRAE CLI les communique via ACP, donc les sélecteurs du compositeur les gèrent pour chaque session.",
+      "signInTitle": "Connexion",
+      "signInHint": "Exécutez cette commande une fois dans un terminal pour vous connecter avec le SSO de votre entreprise. Les sessions de Codeg réutilisent cette connexion.",
+      "copyCommand": "Copier la commande",
+      "commandCopied": "Commande copiée",
+      "patLabel": "Jeton d'accès personnel (facultatif)",
+      "patHint": "Pour une machine où la connexion par navigateur est impossible, comme un serveur ou une installation Docker. Codeg le transmet à TRAE CLI en tant que TRAECLI_PERSONAL_ACCESS_TOKEN et se connecte avec lui au démarrage de chaque session. Laissez vide pour utiliser la connexion de traecli login.",
+      "hostLabel": "URL de l'API d'entreprise (facultative)",
+      "hostHint": "Uniquement si votre organisation exploite TRAE sur son propre domaine. Transmise en tant que TRAECLI_HOST ; laissez vide pour le service de TRAE.",
+      "saveConfig": "Enregistrer la configuration TRAE CLI"
+    },
     "deepseek": {
       "configManagement": "Configuration de DeepSeek Harness",
       "configDescription": "Le point de terminaison et la clé sont des variables d'environnement que deepseek-acp lit au démarrage. Le modèle et le niveau de raisonnement sont des sélecteurs par session : ils se choisissent dans le champ de saisie.",
@@ -1607,6 +1620,8 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "Configuration Kiro enregistrée",
       "saveKiroFailed": "Impossible d'enregistrer la configuration Kiro",
+      "traeSaved": "Configuration TRAE CLI enregistrée",
+      "saveTraeFailed": "Impossible d'enregistrer la configuration TRAE CLI",
       "systemAgentAlreadyLatest": "{name} est déjà à jour ({version})"
     },
     "distribution": {

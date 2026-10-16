@@ -1112,6 +1112,19 @@
       "apiKeyHint": "KIRO_API_KEY として CLI に渡されます。空欄なら kiro-cli login でサインインしたアカウントを使います。ブラウザでサインインできない環境（サーバー、Docker）でのみ必要です。",
       "saveConfig": "Kiro 設定を保存"
     },
+    "trae": {
+      "configManagement": "設定管理",
+      "configDescription": "TRAE CLI 2.0 は TRAE エンタープライズ版のフラッグシッププランのお客様のみ利用できます。Codeg はインストール済みの traecli を実行し、サインイン情報・スキル・MCP サーバーは ~/.trae に保存されます。モデル、モード、推論レベルはここにはありません。TRAE CLI が ACP で報告するため、入力欄のセレクターがセッションごとに管理します。",
+      "signInTitle": "サインイン",
+      "signInHint": "ターミナルでこのコマンドを一度実行し、エンタープライズ SSO でサインインしてください。Codeg のセッションはそのサインインを再利用します。",
+      "copyCommand": "コマンドをコピー",
+      "commandCopied": "コマンドをコピーしました",
+      "patLabel": "個人アクセストークン（任意）",
+      "patHint": "サーバーや Docker など、ブラウザでサインインできないマシン向けです。Codeg は TRAECLI_PERSONAL_ACCESS_TOKEN として TRAE CLI に渡し、セッション開始時にこのトークンでサインインします。空欄なら traecli login のサインインを使います。",
+      "hostLabel": "エンタープライズ API URL（任意）",
+      "hostHint": "組織が独自ドメインで TRAE を運用している場合のみ入力します。TRAECLI_HOST として渡されます。空欄なら TRAE の公式サービスを使います。",
+      "saveConfig": "TRAE CLI 設定を保存"
+    },
     "deepseek": {
       "configManagement": "DeepSeek Harness の設定",
       "configDescription": "エンドポイントと API キーは deepseek-acp が起動時に読み込む環境変数です。モデルと推論レベルはセッションごとのセレクターなので、入力欄で切り替えます。",
@@ -1607,6 +1620,8 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "Kiro 設定を保存しました",
       "saveKiroFailed": "Kiro 設定の保存に失敗しました",
+      "traeSaved": "TRAE CLI 設定を保存しました",
+      "saveTraeFailed": "TRAE CLI 設定の保存に失敗しました",
       "systemAgentAlreadyLatest": "{name} は最新です（{version}）"
     },
     "distribution": {
