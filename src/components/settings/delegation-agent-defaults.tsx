@@ -78,6 +78,7 @@ const BUILTIN_AGENT_TYPES: AgentType[] = [
   "qoder",
   "antigravity",
   "kiro",
+  "zcode",
 ]
 
 interface CachedSnapshot {

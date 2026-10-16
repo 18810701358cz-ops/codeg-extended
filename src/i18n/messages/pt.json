@@ -1704,7 +1704,11 @@
     "customAgentRemoveWithData": "Excluir também o histórico de conversas registrado",
     "customAgentRemoved": "{name} removido",
     "customAgentBadge": "Personalizado",
-    "customAgentNotLaunchable": "Este agente não pode ser iniciado aqui: {reason}"
+    "customAgentNotLaunchable": "Este agente não pode ser iniciado aqui: {reason}",
+    "zcode": {
+      "adapterInfo": "O Codeg executa {adapterPackage} como ponte ACP. Instale o ZCode e entre na sua conta primeiro; são usados o ambiente e a configuração existentes.",
+      "runtimeHint": "Instale o ZCode e entre na sua conta primeiro. O Codeg instala apenas a ponte ACP. Se a detecção falhar, indique a entrada CLI com ZCODE_BIN e o Node.js com ZCODE_NODE. Gerencie modelos e credenciais no ZCode."
+    }
   },
   "AgentVocabulary": {
     "deepseekModeDefault": "Normal",

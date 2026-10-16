@@ -1704,7 +1704,11 @@
     "customAgentRemoveWithData": "Also delete its recorded conversation history",
     "customAgentRemoved": "Removed {name}",
     "customAgentBadge": "Custom",
-    "customAgentNotLaunchable": "This agent cannot launch here: {reason}"
+    "customAgentNotLaunchable": "This agent cannot launch here: {reason}",
+    "zcode": {
+      "adapterInfo": "Codeg runs {adapterPackage} as an ACP bridge. Install and sign in to official ZCode first; the bridge uses its runtime and existing configuration.",
+      "runtimeHint": "Install and sign in to official ZCode first. Codeg installs only the ACP bridge. Use ZCODE_BIN for the CLI entry and ZCODE_NODE for Node.js if detection fails. Manage models and credentials in ZCode."
+    }
   },
   "AgentVocabulary": {
     "deepseekModeDefault": "Normal",

@@ -31,7 +31,7 @@
 
 <table>
   <tr>
-    <td width="50%" valign="top">🧩 <strong>One interface for every agent</strong><br/>Sixteen agents built in, and any ACP agent can join — all rendered as the same structured conversation, not a terminal.</td>
+    <td width="50%" valign="top">🧩 <strong>One interface for every agent</strong><br/>Seventeen agents built in, and any ACP agent can join — all rendered as the same structured conversation, not a terminal.</td>
     <td width="50%" valign="top">🔎 <strong>Sessions that travel</strong><br/>Import, search, and resume the history every agent keeps on disk, then hand it to a different agent.</td>
   </tr>
   <tr>
@@ -101,7 +101,7 @@
 
 ### One Interface for Every Agent
 
-Sixteen agents come built in, and any other ACP agent can join from the public registry or its distribution JSON. Codeg speaks the Agent Client Protocol to every one of them, so they all get the same rich conversation — tool cards, live diffs, plans, and permission prompts — instead of a terminal to squint at. Enable UI Render for an agent and it can answer with interactive cards, tables, and charts.
+Seventeen agents come built in, and any other ACP agent can join from the public registry or its distribution JSON. Codeg speaks the Agent Client Protocol to every one of them, so they all get the same rich conversation — tool cards, live diffs, plans, and permission prompts — instead of a terminal to squint at. Enable UI Render for an agent and it can answer with interactive cards, tables, and charts.
 
 [Docs →](https://docs.codeg.app/guide/supported-agents) · [Custom agents →](https://docs.codeg.app/guide/custom-agents) · [UI Render →](https://docs.codeg.app/guide/skills#cards-tables-and-charts-in-replies)
 
@@ -267,7 +267,7 @@ An editor, live and side-by-side diffs, a full git client with a three-pane merg
 
 ## 🤖 Supported Agents
 
-Codeg talks to every agent over the [Agent Client Protocol](https://agentclientprotocol.com), so each one gets the same structured interface. Sixteen come built in, and Codeg installs, pins, and updates most of them for you:
+Codeg talks to every agent over the [Agent Client Protocol](https://agentclientprotocol.com), so each one gets the same structured interface. Seventeen come built in, and Codeg installs, pins, and updates most of them for you:
 
 <p>
   <a href="https://www.anthropic.com/claude-code"><kbd><img src="./docs/images/agents/claude-code.svg" alt="" width="16" valign="middle" /> Claude Code</kbd></a> &nbsp;
@@ -286,6 +286,7 @@ Codeg talks to every agent over the [Agent Client Protocol](https://agentclientp
   <a href="https://qoder.com"><kbd><picture><source media="(prefers-color-scheme: dark)" srcset="./docs/images/agents/qoder-dark.svg" /><img src="./docs/images/agents/qoder.svg" alt="" width="16" valign="middle" /></picture> Qoder</kbd></a> &nbsp;
   <a href="https://antigravity.google"><kbd><picture><source media="(prefers-color-scheme: dark)" srcset="./docs/images/agents/google-antigravity-dark.svg" /><img src="./docs/images/agents/google-antigravity.svg" alt="" width="16" valign="middle" /></picture> Google Antigravity</kbd></a> &nbsp;
   <a href="https://kiro.dev/cli/"><kbd><img src="./docs/images/agents/kiro.svg" alt="" width="16" valign="middle" /> Kiro CLI</kbd></a> &nbsp;
+  <a href="./docs/agents/zcode.md"><kbd>ZCode</kbd></a> &nbsp;
   <a href="https://docs.codeg.app/guide/custom-agents"><kbd>+ any ACP agent</kbd></a>
 </p>
 

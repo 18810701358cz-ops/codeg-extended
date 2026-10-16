@@ -1704,7 +1704,11 @@
     "customAgentRemoveWithData": "記録された会話履歴も削除する",
     "customAgentRemoved": "{name} を削除しました",
     "customAgentBadge": "カスタム",
-    "customAgentNotLaunchable": "この環境では起動できません: {reason}"
+    "customAgentNotLaunchable": "この環境では起動できません: {reason}",
+    "zcode": {
+      "adapterInfo": "Codeg は {adapterPackage} を ACP ブリッジとして起動します。先に公式 ZCode をインストールしてログインしてください。既存の実行環境と設定を使用します。",
+      "runtimeHint": "先に公式 ZCode をインストールしてログインしてください。Codeg は ACP ブリッジのみをインストールします。自動検出に失敗した場合は ZCODE_BIN で CLI、ZCODE_NODE で Node.js を指定できます。モデルと認証情報は ZCode で管理します。"
+    }
   },
   "AgentVocabulary": {
     "deepseekModeDefault": "通常",
