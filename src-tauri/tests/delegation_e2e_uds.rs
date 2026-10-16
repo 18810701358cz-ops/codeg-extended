@@ -39,12 +39,12 @@ use tokio::sync::oneshot;
 /// `$TMPDIR` happens to be.
 ///
 /// `tempfile::tempdir()` honours `$TMPDIR`, and these tests then add
-/// `/.tmpXXXXXX/codeg-e2e-*.sock` on top. That is fine against the ~20-byte
-/// default and fatal against codeg's own per-session `TMPDIR`, which is 72
-/// bytes: `codeg-e2e-batch.sock` composed to exactly 104 there, and `sun_path`
-/// caps at 104 on macOS. Three of these tests went red inside a codeg session
-/// and green outside it, for reasons having nothing to do with the code under
-/// test.
+/// `/.tmpXXXXXX/codeg-e2e-*.sock` on top. That is fine against a stock temp
+/// directory and was fatal against the 72-byte per-session `TMPDIR` codeg
+/// exported before #754: `codeg-e2e-batch.sock` composed to exactly 104 there,
+/// and `sun_path` caps at 104 on macOS. Three of these tests went red inside a
+/// codeg session and green outside it, for reasons having nothing to do with
+/// the code under test — and a hand-set `TMPDIR` can still do the same.
 ///
 /// Rooting in `/tmp` keeps the result near 40 bytes whatever the environment
 /// says. Still unique per test: `tempdir_in` mints a fresh name.

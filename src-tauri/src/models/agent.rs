@@ -8,7 +8,7 @@ pub const CUSTOM_AGENT_WIRE_PREFIX: &str = "custom:";
 
 /// Which agent backs a conversation.
 ///
-/// The sixteen named variants are compile-time built-ins with hand-written
+/// The seventeen named variants are compile-time built-ins with hand-written
 /// launch metadata (`acp::registry`). Most use a dedicated transcript parser;
 /// ZCode uses the Codeg-owned ACP transcript. [`AgentType::Custom`] is the
 /// open end: a user-registered
@@ -37,13 +37,14 @@ pub enum AgentType {
     DeepSeek,
     Qoder,
     Antigravity,
+    Kiro,
     ZCode,
     /// A user-registered ACP agent, identified by its ACP-registry id
     /// (interned). Ordered last so built-ins keep their relative order.
     Custom(&'static str),
 }
 
-/// The sixteen compile-time agents, in declaration order. Does NOT include
+/// The seventeen compile-time agents, in declaration order. Does NOT include
 /// custom agents — use [`crate::acp::registry::all_acp_agents`] for the live
 /// set that includes them.
 pub const BUILTIN_AGENT_TYPES: &[AgentType] = &[
@@ -62,6 +63,7 @@ pub const BUILTIN_AGENT_TYPES: &[AgentType] = &[
     AgentType::DeepSeek,
     AgentType::Qoder,
     AgentType::Antigravity,
+    AgentType::Kiro,
     AgentType::ZCode,
 ];
 
@@ -115,6 +117,7 @@ impl AgentType {
             AgentType::DeepSeek => Cow::Borrowed("deepseek"),
             AgentType::Qoder => Cow::Borrowed("qoder"),
             AgentType::Antigravity => Cow::Borrowed("antigravity"),
+            AgentType::Kiro => Cow::Borrowed("kiro"),
             AgentType::ZCode => Cow::Borrowed("zcode"),
             AgentType::Custom(id) => Cow::Owned(format!("{CUSTOM_AGENT_WIRE_PREFIX}{id}")),
         }
@@ -139,6 +142,7 @@ impl AgentType {
             "deepseek" => Some(AgentType::DeepSeek),
             "qoder" => Some(AgentType::Qoder),
             "antigravity" => Some(AgentType::Antigravity),
+            "kiro" => Some(AgentType::Kiro),
             "zcode" => Some(AgentType::ZCode),
             other => other
                 .strip_prefix(CUSTOM_AGENT_WIRE_PREFIX)
@@ -185,6 +189,7 @@ pub fn is_valid_custom_agent_id(id: &str) -> bool {
                 | "deepseek"
                 | "qoder"
                 | "antigravity"
+                | "kiro"
         )
 }
 
@@ -220,6 +225,7 @@ impl fmt::Display for AgentType {
             AgentType::DeepSeek => write!(f, "DeepSeek Harness"),
             AgentType::Qoder => write!(f, "Qoder"),
             AgentType::Antigravity => write!(f, "Google Antigravity"),
+            AgentType::Kiro => write!(f, "Kiro CLI"),
             AgentType::ZCode => write!(f, "ZCode"),
             // Prefer the registered display name; fall back to the raw id when
             // the registry has not been hydrated (or the agent was deleted
@@ -256,6 +262,7 @@ mod tests {
             (AgentType::DeepSeek, "deepseek"),
             (AgentType::Qoder, "qoder"),
             (AgentType::Antigravity, "antigravity"),
+            (AgentType::Kiro, "kiro"),
             (AgentType::ZCode, "zcode"),
         ];
         for (agent, wire) in expected {
@@ -341,6 +348,7 @@ mod tests {
             "deepseek",
             "qoder",
             "antigravity",
+            "kiro",
         ] {
             assert!(
                 !is_valid_custom_agent_id(bad),
@@ -359,11 +367,13 @@ mod tests {
 
     #[test]
     fn ordering_places_custom_after_builtins() {
-        assert!(AgentType::Antigravity < AgentType::custom("goose").unwrap());
+        assert!(AgentType::ZCode < AgentType::custom("goose").unwrap());
         assert!(AgentType::ClaudeCode < AgentType::Cursor);
         assert!(AgentType::Cursor < AgentType::DeepSeek);
         assert!(AgentType::DeepSeek < AgentType::Qoder);
         assert!(AgentType::Qoder < AgentType::Antigravity);
+        assert!(AgentType::Antigravity < AgentType::Kiro);
+        assert!(AgentType::Kiro < AgentType::ZCode);
         // Custom agents order lexicographically among themselves.
         assert!(AgentType::custom("aaa").unwrap() < AgentType::custom("bbb").unwrap());
     }

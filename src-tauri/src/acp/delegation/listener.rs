@@ -44,7 +44,7 @@ use crate::acp::delegation::types::{
 use crate::acp::feedback::{PendingFeedback, SessionFeedbackAccess};
 use crate::acp::question::{QuestionOutcome, SessionQuestionAccess};
 #[cfg(unix)]
-use crate::acp::scratch_dir::SUN_PATH_CAP;
+use crate::acp::scratch_dir::{is_inside_sweep_scope, SUN_PATH_CAP};
 use crate::acp::chat_authoring::{AuthoringContext, AuthoringOutcome, ChatAuthoringAccess};
 use crate::acp::session_info::{SessionInfo, SessionInfoAccess};
 use crate::acp::work_task_tools::{TaskReportAck, WorkTaskToolAccess};
@@ -1594,12 +1594,24 @@ fn short_socket_dir() -> PathBuf {
 /// codeg instances on the same machine don't collide.
 ///
 /// Unix: a `.sock` file inside `temp_dir`, or — when that would not fit in
-/// `sun_path` — inside [`short_socket_dir`]. The fallback is not hypothetical
-/// housekeeping: codeg exports a ~72-byte per-session `TMPDIR` to the agents it
-/// launches, so a codeg started from inside one is already within a few bytes
-/// of the macOS cap, and a container or a hand-set `TMPDIR` clears it outright.
-/// Without the fallback that produced a socket nobody could dial and no error
-/// anywhere — see [`DelegationListener::bind`].
+/// `sun_path`, or would put the socket inside a scratch root a startup sweep
+/// deletes wholesale ([`is_inside_sweep_scope`]) — inside [`short_socket_dir`].
+/// Neither fallback is hypothetical housekeeping:
+///
+/// * The length budget: a container's or a hand-set `TMPDIR` can clear the
+///   `sun_path` cap outright, and a codeg session's own `TMPDIR` used to come
+///   close — ~72 bytes under `/var/folders/…/T/` until #754 moved it to the
+///   short scratch root, so a codeg started inside one sat a few bytes under
+///   the macOS cap. Without the fallback that produced a socket nobody could
+///   dial and no error anywhere — see [`DelegationListener::bind`].
+/// * The sweep scope: an app launched from inside a codeg-managed session
+///   inherits that session's scratch `TMPDIR`, whose directory is named like a
+///   `<pid>-<8 hex>` launch dir and is deleted wholesale — by the codeg that
+///   owns it when that launch ends, or by any codeg's startup sweep once the
+///   pid in the name is dead. The socket FILE never matches that pattern —
+///   the danger is its PARENT being deleted with it, after which the listener
+///   keeps serving an unlinked vnode and every `delegate_to_agent` fails
+///   `ENOENT` (2026-10-15, twice in a row on this machine).
 ///
 /// Windows: a named pipe address `\\.\pipe\codeg-delegation-<pid>`. Windows
 /// named pipes live in their own kernel namespace and ignore `temp_dir`; the
@@ -1608,22 +1620,43 @@ fn short_socket_dir() -> PathBuf {
 pub fn default_socket_path(temp_dir: &Path) -> PathBuf {
     let name = format!("codeg-delegation-{}.sock", std::process::id());
     let preferred = temp_dir.join(&name);
-    if fits_sun_path(&preferred) {
+    // The guard gets the full `preferred` path rather than `temp_dir`: that is
+    // strictly stronger — it also refuses the corner where `temp_dir` IS a
+    // sweep root, whose socket inside would be just as deletable.
+    let in_sweep_scope = is_inside_sweep_scope(&preferred);
+    if fits_sun_path(&preferred) && !in_sweep_scope {
         return preferred;
     }
     // No third candidate, because there is no third case to handle: this is
     // `/tmp/codeg-` + at most 10 digits of euid + `/codeg-delegation-` + at
     // most 10 digits of pid + `.sock` — 54 bytes at its absolute widest, or
-    // half the smallest `sun_path` any of these platforms has.
+    // half the smallest `sun_path` any of these platforms has. It is also
+    // outside every sweep root by construction, which is the other half of
+    // what the guard above has to be able to promise about its result.
     let short = short_socket_dir().join(&name);
-    tracing::info!(
-        "[delegation] {} is {} bytes, past the {}-byte AF_UNIX limit; \
-         binding {} instead",
-        preferred.display(),
-        preferred.as_os_str().len(),
-        SUN_PATH_CAP - 1,
-        short.display(),
-    );
+    if !fits_sun_path(&preferred) {
+        tracing::info!(
+            "[delegation] {} is {} bytes, past the {}-byte AF_UNIX limit; \
+             binding {} instead",
+            preferred.display(),
+            preferred.as_os_str().len(),
+            SUN_PATH_CAP - 1,
+            short.display(),
+        );
+    }
+    if in_sweep_scope {
+        tracing::warn!(
+            "[delegation] TMPDIR {} sits inside codeg's per-launch scratch \
+             namespace (`<pid>-<8 hex>` directories codeg deletes wholesale when \
+             their launch ends or their owner dies), so the broker socket is bound \
+             at {} instead — bound there it would silently disappear with that \
+             directory. This usually happens when the app is launched from inside \
+             a codeg-managed session environment and inherits its scratch TMPDIR; \
+             if that was not intentional, restart it from a clean environment.",
+            temp_dir.display(),
+            short.display(),
+        );
+    }
     short
 }
 
@@ -1635,6 +1668,8 @@ pub fn default_socket_path(_temp_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::acp::scratch_dir::short_root;
     use crate::acp::delegation::broker::{ConversationDepthLookup, DelegationConfig};
     use crate::acp::delegation::spawner::{
         mock::MockSpawner, ConnectionSpawner, ResumedSpawn, SpawnerError,
@@ -3664,17 +3699,22 @@ mod tests {
     #[test]
     fn an_over_long_temp_dir_falls_back_to_the_short_socket_dir() {
         let name = format!("codeg-delegation-{}.sock", std::process::id());
-        // A macOS `/var/folders/…/T` with codeg's own per-session nesting under
-        // it — the shape that actually produces this — padded so the composed
-        // path lands exactly ONE byte past what `sun_path` can hold. Sized from
-        // the cap rather than hard-coded, so it keeps straddling the boundary
-        // if either side of it moves.
+        // A macOS `/var/folders/…/T` with a per-session directory nested under
+        // it, padded so the composed path lands exactly ONE byte past what
+        // `sun_path` can hold. Sized from the cap rather than hard-coded, so it
+        // keeps straddling the boundary if either side of it moves. NOT codeg's
+        // own `codeg-acp/<pid>-<hex>` nesting: that is refused for its sweep
+        // scope as well, and this has to pin the length budget alone.
         let prefix = "/var/folders/hl/";
-        let suffix = "/T/codeg-acp/12345-deadbeef";
+        let suffix = "/T/agent-tmp/12345-deadbeef";
         let pad = SUN_PATH_CAP - 1 - name.len() - prefix.len() - suffix.len();
         let ambient = PathBuf::from(format!("{prefix}{}{suffix}", "z".repeat(pad)));
         assert_eq!(ambient.as_os_str().len() + 1 + name.len(), SUN_PATH_CAP);
         assert!(!fits_sun_path(&ambient.join(&name)));
+        assert!(
+            !is_inside_sweep_scope(&ambient.join(&name)),
+            "the sweep guard must NOT be what refuses this"
+        );
 
         let path = default_socket_path(&ambient);
         assert_eq!(path.parent(), Some(short_socket_dir().as_path()));
@@ -3685,6 +3725,111 @@ mod tests {
             path.display(),
             path.as_os_str().len()
         );
+    }
+
+    /// The second refusal reason, and the one that actually bit (2026-10-15):
+    /// a `temp_dir` inside codeg's own scratch namespace. Such a path is
+    /// perfectly bindable on length, so only the sweep guard can be what
+    /// refuses it — and it must, because a startup sweep deletes the whole
+    /// `<pid>-<8 hex>` directory it sits in once the owner is dead, leaving
+    /// the listener serving an unlinked vnode while every dial gets `ENOENT`.
+    #[cfg(unix)]
+    #[test]
+    fn a_temp_dir_inside_the_sweep_scope_falls_back_to_the_short_socket_dir() {
+        let ambient = short_root().join(format!("{}-deadbeef", std::process::id()));
+        assert!(is_inside_sweep_scope(&ambient));
+        let composed = ambient.join(format!("codeg-delegation-{}.sock", std::process::id()));
+        assert!(
+            fits_sun_path(&composed),
+            "the length budget must NOT be what refuses this: {}",
+            composed.display()
+        );
+
+        let path = default_socket_path(&ambient);
+        assert_eq!(path.parent(), Some(short_socket_dir().as_path()));
+        assert!(
+            !is_inside_sweep_scope(&path),
+            "the fallback itself must stay out of scope: {}",
+            path.display()
+        );
+    }
+
+    /// ...and so must a launch dir under a root that is NOT among this
+    /// process's own sweep roots. Its owner deletes it when that launch ends,
+    /// and any codeg whose root it is sweeps it at startup — neither needs to
+    /// be this process. Linux's default `/tmp/codeg-acp` is the common shape:
+    /// a `TMPDIR` under it pushes this process to the short root instead.
+    #[cfg(unix)]
+    #[test]
+    fn a_launch_dir_under_another_codegs_root_falls_back_too() {
+        let resolved_short_root = Path::new("/private").join(
+            short_root()
+                .strip_prefix("/")
+                .expect("the short root is absolute"),
+        );
+        for ambient in [
+            PathBuf::from("/tmp/codeg-acp/4242-deadbeef"),
+            PathBuf::from("/srv/elsewhere/codeg-acp/4242-deadbeef"),
+            resolved_short_root.join("4242-deadbeef"),
+        ] {
+            let path = default_socket_path(&ambient);
+            assert_eq!(
+                path.parent(),
+                Some(short_socket_dir().as_path()),
+                "{} must not host the socket",
+                ambient.display()
+            );
+        }
+    }
+
+    /// ...and a launch dir reached through an alias that hides every root
+    /// component — here a symlink; a relative `TMPDIR=.` taken from inside a
+    /// launch dir is the same case. The directory behind it is deleted all the
+    /// same.
+    #[cfg(unix)]
+    #[test]
+    fn an_alias_into_a_launch_dir_falls_back_too() {
+        let holder = tempfile::tempdir_in("/tmp").expect("tempdir");
+        let leaf = holder.path().join("codeg-acp").join("4242-deadbeef");
+        std::fs::create_dir_all(&leaf).expect("create leaf");
+        let alias = holder.path().join("session-tmp");
+        std::os::unix::fs::symlink(&leaf, &alias).expect("symlink");
+
+        let path = default_socket_path(&alias);
+        assert_eq!(path.parent(), Some(short_socket_dir().as_path()));
+    }
+
+    /// Property rather than example: for ANY temp directory, the socket this
+    /// picks must sit outside every sweep root — a parent inside one can be
+    /// deleted wholesale by a startup sweep while the listener is live, which
+    /// is the failure the guard exists to prevent. Every operand is read
+    /// through the same helpers production uses, so it holds whether or not
+    /// these tests themselves run inside a codeg-managed session.
+    #[cfg(unix)]
+    #[test]
+    fn no_chosen_socket_path_is_ever_inside_the_sweep_scope() {
+        for temp_dir in [
+            // The ordinary short case, an over-long macOS one, a scratch
+            // directory of our own, the ambient scratch root, one under
+            // another codeg's root, and TMPDIR.
+            PathBuf::from("/tmp"),
+            PathBuf::from(format!("/var/folders/hl/{}/T", "z".repeat(30))),
+            short_root().join(format!("{}-deadbeef", std::process::id())),
+            std::env::temp_dir().join("codeg-acp").join("4242-deadbeef"),
+            PathBuf::from("/tmp/codeg-acp/4242-deadbeef"),
+            std::env::temp_dir(),
+        ] {
+            let path = default_socket_path(&temp_dir);
+            let parent = path
+                .parent()
+                .expect("a socket path always names a directory");
+            assert!(
+                !is_inside_sweep_scope(parent),
+                "{} would put the socket inside a sweep root: {}",
+                temp_dir.display(),
+                path.display()
+            );
+        }
     }
 
     /// The STAGED path is measured too, not assumed shorter than the real one.

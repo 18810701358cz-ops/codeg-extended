@@ -4183,6 +4183,7 @@ mod tests {
         assert!(agents.iter().any(|a| a == "deepseek"));
         assert!(agents.iter().any(|a| a == "qoder"));
         assert!(agents.iter().any(|a| a == "antigravity"));
+        assert!(agents.iter().any(|a| a == "kiro"));
         assert!(agents.iter().any(|a| a == "zcode"));
         // get_delegation_status takes a single id param — task_ids (required) —
         // plus wait_ms. The legacy single `task_id` param is gone.
@@ -4300,7 +4301,8 @@ mod tests {
         );
         assert_eq!(agents[0], "claude_code");
         assert_eq!(agents[14], "antigravity");
-        assert_eq!(agents[15], "zcode");
+        assert_eq!(agents[15], "kiro");
+        assert_eq!(agents[16], "zcode");
     }
 
     #[tokio::test]
@@ -5815,9 +5817,10 @@ mod tests {
         use tokio::net::UnixListener;
 
         // `/tmp`, not `$TMPDIR`: a socket path has ~104 bytes of `sun_path` to
-        // live in, and codeg exports a 72-byte per-session `TMPDIR` to the
-        // agents it launches. Under `tempdir()` this lands at 92 bytes there —
-        // green, but with very little left for a deeper nesting.
+        // live in, and `$TMPDIR` is whatever the environment hands us. Under
+        // the ~72-byte per-session `TMPDIR` codeg exported before #754 this
+        // landed at 92 bytes — green, but with very little left for a deeper
+        // nesting — and a hand-set one can be longer still.
         let dir = tempfile::tempdir_in("/tmp").unwrap();
         let sock = dir.path().join("fb.sock").to_string_lossy().to_string();
         let listener = UnixListener::bind(&sock).unwrap();
@@ -5888,9 +5891,10 @@ mod tests {
         use tokio::net::UnixListener;
 
         // `/tmp`, not `$TMPDIR`: a socket path has ~104 bytes of `sun_path` to
-        // live in, and codeg exports a 72-byte per-session `TMPDIR` to the
-        // agents it launches. Under `tempdir()` this lands at 92 bytes there —
-        // green, but with very little left for a deeper nesting.
+        // live in, and `$TMPDIR` is whatever the environment hands us. Under
+        // the ~72-byte per-session `TMPDIR` codeg exported before #754 this
+        // landed at 92 bytes — green, but with very little left for a deeper
+        // nesting — and a hand-set one can be longer still.
         let dir = tempfile::tempdir_in("/tmp").unwrap();
         let sock = dir.path().join("fb.sock").to_string_lossy().to_string();
         let listener = UnixListener::bind(&sock).unwrap();

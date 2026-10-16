@@ -543,6 +543,27 @@ export async function acpDownloadAgentBinary(
   })
 }
 
+/**
+ * Upgrade an agent codeg launches but does not install (Kiro CLI) through the
+ * vendor's own updater, streaming its output on the install topic. Resolves to
+ * the version found afterwards — the same one when nothing newer existed.
+ */
+export async function acpUpdateSystemAgent(
+  agentType: AgentType,
+  taskId: string
+): Promise<string | null> {
+  // The updater downloads a whole build (Kiro's are 150–360 MB), and the
+  // backend gives it up to 15 minutes (`SYSTEM_UPDATE_TIMEOUT`). Outlast that,
+  // so a slow update ends with the backend's own answer instead of the default
+  // 60 s web-call timeout — which would report a failure and free the Upgrade
+  // button while the updater is still running.
+  return getTransport().call(
+    "acp_update_system_agent",
+    { agentType, taskId },
+    { timeoutMs: 16 * 60_000 }
+  )
+}
+
 export async function acpInstallUvTool(taskId: string): Promise<void> {
   // uv install downloads + extracts the toolchain from GitHub; allow well
   // beyond the default 60s web-call timeout so slow networks don't surface a
@@ -2174,11 +2195,16 @@ export async function mcpUpsertLocalServer(params: {
   serverId: string
   spec: Record<string, unknown>
   apps: McpAppType[]
+  /** The spec the editor loaded before the edit (omit for a new server): an
+   * agent that keeps per-server settings of its own (Kiro) keeps them for
+   * every field the edit left alone. */
+  shownSpec?: Record<string, unknown> | null
 }): Promise<LocalMcpServer> {
   return getTransport().call("mcp_upsert_local_server", {
     serverId: params.serverId,
     spec: params.spec,
     apps: params.apps,
+    shownSpec: params.shownSpec ?? null,
   })
 }
 
