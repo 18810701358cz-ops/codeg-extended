@@ -6227,8 +6227,8 @@ async fn send_new_session_capturing_models(
 /// state and never reads them back: the config it starts each session with
 /// carries no MCP servers, and the SDK connects only the servers in cline's own
 /// `cline_mcp_settings.json` and its plugins. Checked in the source of every
-/// release from 3.0.55 through 3.0.72, and live on 3.0.71 and 3.0.72: a stdio
-/// server sent on `session/new` is never started, while one in the settings
+/// release from 3.0.55 through 3.0.73, and live on 3.0.71 through 3.0.73: a
+/// stdio server sent on `session/new` is never started, while one in the settings
 /// file is, and its tools reach the model. User servers still reach Cline,
 /// through that file (see [`agent_reads_own_mcp_config`]); the codeg-mcp
 /// companion, which only travels over the wire, cannot.
@@ -34316,6 +34316,32 @@ mod tests {
             merge_agent_env_with_color(false, &[("FROM_REGISTRY", "registry")], &runtime_env, None);
         assert_eq!(merged_value(&merged, "FROM_REGISTRY"), Some("registry"));
         assert_eq!(merged_value(&merged, "FROM_ROW"), Some("row"));
+    }
+
+    /// Cline's registry env (in-process sessions, no self-update; see the
+    /// Cline registry entry) is what an npx launch merges, and a per-agent row
+    /// can still put Cline back on its hub without losing the other default.
+    #[test]
+    fn cline_launch_env_reaches_the_merge_and_a_row_still_wins() {
+        let AgentDistribution::Npx { env, .. } =
+            registry::get_agent_meta(AgentType::Cline).distribution
+        else {
+            panic!("Cline is an npx agent");
+        };
+        let merged = merge_agent_env_with_color(false, env, &BTreeMap::new(), None);
+        assert_eq!(
+            merged_value(&merged, "CLINE_SESSION_BACKEND_MODE"),
+            Some("local")
+        );
+        assert_eq!(merged_value(&merged, "CLINE_NO_AUTO_UPDATE"), Some("1"));
+
+        let row = BTreeMap::from([("CLINE_SESSION_BACKEND_MODE".to_string(), "auto".to_string())]);
+        let merged = merge_agent_env_with_color(false, env, &row, None);
+        assert_eq!(
+            merged_value(&merged, "CLINE_SESSION_BACKEND_MODE"),
+            Some("auto")
+        );
+        assert_eq!(merged_value(&merged, "CLINE_NO_AUTO_UPDATE"), Some("1"));
     }
 
     /// A launch that carries a proxy leaves with the loopback exception, in

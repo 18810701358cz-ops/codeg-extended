@@ -1428,6 +1428,138 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// CodeBuddy's TUI starts new sessions in PTC mode since 2.168.2: the
+    /// model's only direct tool is `REPL`, whose JavaScript calls the other
+    /// tools. These records are a real 2.168.2 session (ids and paths
+    /// shortened, `providerData` trimmed) that ran one PTC step, was reopened
+    /// by a host without `mainAgentSupport` (which gets standard mode) and
+    /// continued there. The Read and Bash the code called left no records,
+    /// and `session-meta` still says `ptc` after the standard turn; only each
+    /// record's `providerData.agent` (`ptc`, then `cli`) tells the turns apart.
+    #[test]
+    fn ptc_session_shows_each_repl_step_as_one_tool_card() {
+        let root = std::env::temp_dir().join(format!("codeg-cb-ptc-{}", uuid::Uuid::new_v4()));
+        let sid = "01a1490d-c719-7ac6-9dca-77bf22758389";
+        let code = "const r = await Read({ file_path: \"/Users/demo/app/notes.txt\" });\n\
+                    const b = await Bash({ command: \"echo ptc-ok | tee ptc-marker.txt\", description: \"probe echo\" });\n\
+                    return { read: JSON.stringify(r).slice(0, 300), bash: JSON.stringify(b).slice(0, 300) };";
+        let arguments =
+            serde_json::to_string(&json!({"code": code, "description": "read notes and run echo"}))
+                .expect("serialize arguments");
+        let output = r#"{"result":{"read":"\"TEXTFILE_MARKER line one\\nline two\\n\"","bash":"{\"stdout\":\"ptc-ok\\n\",\"stderr\":\"\",\"exitCode\":0,\"signal\":null}"},"stdout":"","stderr":""}"#;
+        write_session(
+            &root,
+            "Users-demo-app",
+            sid,
+            &[
+                json!({"type":"session-meta","id":"m1","sessionId":sid,"timestamp":1792227002225i64,
+                       "meta":{"codebuddy.ai/mainAgent":"ptc"}}),
+                json!({"id":"u1","timestamp":1792227002501i64,"type":"message","role":"user","sessionId":sid,"cwd":"/Users/demo/app",
+                       "content":[{"type":"input_text","text":"PLEASE_PTC read notes and echo"}],"providerData":{"agent":"ptc"}}),
+                json!({"type":"file-history-snapshot","timestamp":1792227002510i64,"messageId":"u1","snapshot":{},
+                       "isSnapshotUpdate":false,"cwd":"/Users/demo/app"}),
+                json!({"id":"c1","parentId":"u1","timestamp":1792227002817i64,"type":"function_call","sessionId":sid,"cwd":"/Users/demo/app",
+                       "callId":"call_ptc_1","name":"REPL","arguments":arguments,
+                       "providerData":{"agent":"ptc","messageId":"r1","requestModelName":"Auto","argumentsDisplayText":code,
+                         "rawUsage":{"prompt_tokens":1001,"completion_tokens":11,"total_tokens":1012}}}),
+                json!({"id":"c2","parentId":"c1","timestamp":1792227002991i64,"type":"function_call_result","sessionId":sid,"cwd":"/Users/demo/app",
+                       "name":"REPL","callId":"call_ptc_1","status":"completed","output":{"type":"text","text":output},
+                       "providerData":{"agent":"ptc","messageId":"r1","requestModelName":"Auto",
+                         "toolResult":{"title":"read notes and run echo","content":output,
+                           "renderer":{"type":"text","value":"· 1s\n{}"}}}}),
+                json!({"id":"a1","parentId":"c2","timestamp":1792227003016i64,"type":"message","role":"assistant","status":"completed",
+                       "sessionId":sid,"cwd":"/Users/demo/app",
+                       "content":[{"providerData":{"annotations":[]},"type":"output_text","text":"FINAL_ANSWER: done after tool result"}],
+                       "providerData":{"agent":"ptc","messageId":"r2","requestModelName":"Auto",
+                         "rawUsage":{"prompt_tokens":1002,"completion_tokens":12,"total_tokens":1014}}}),
+                json!({"type":"session-meta","id":"m2","sessionId":sid,"timestamp":1792227032000i64,
+                       "meta":{"codebuddy.ai/mainAgent":"ptc","codebuddy.ai/hostKind":"unopted"}}),
+                json!({"type":"session-meta","id":"m3","sessionId":sid,"timestamp":1792227032000i64,
+                       "meta":{"codebuddy.ai/mainAgent":"ptc","codebuddy.ai/hostKind":"unopted"}}),
+                json!({"id":"u2","parentId":"a1","timestamp":1792227036112i64,"type":"message","role":"user","sessionId":sid,"cwd":"/Users/demo/app",
+                       "content":[{"type":"input_text","text":"PLEASE_PTC again"}],"providerData":{"agent":"cli"}}),
+                json!({"id":"a2","parentId":"u2","timestamp":1792227036201i64,"type":"message","role":"assistant","status":"completed",
+                       "sessionId":sid,"cwd":"/Users/demo/app",
+                       "content":[{"type":"output_text","text":"hello from fake model"}],
+                       "providerData":{"agent":"cli","messageId":"r3","requestModelName":"Auto",
+                         "rawUsage":{"prompt_tokens":1002,"completion_tokens":12,"total_tokens":1014,
+                           "prompt_tokens_details":{"cached_tokens":100}}}}),
+                json!({"id":"s1","timestamp":1792227036204i64,"type":"summary","summary":"PLEASE_PTC read notes and echo"}),
+            ],
+        );
+
+        let parser = CodeBuddyParser::with_base_dir(root.clone());
+        let summaries = parser.list_conversations().expect("list");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].message_count, 4);
+
+        let detail = parser.get_conversation(sid).expect("detail");
+        let blocks = || detail.turns.iter().flat_map(|t| t.blocks.iter());
+
+        let tool_uses: Vec<_> = blocks()
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse {
+                    tool_use_id,
+                    tool_name,
+                    input_preview,
+                    ..
+                } => Some((
+                    tool_use_id.as_deref(),
+                    tool_name.as_str(),
+                    input_preview.as_deref(),
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_uses.len(), 1, "one card for the step: {tool_uses:?}");
+        let (id, name, input) = tool_uses[0];
+        assert_eq!((id, name), (Some("call_ptc_1"), "REPL"));
+        let input: Value = serde_json::from_str(input.expect("input")).expect("JSON input");
+        assert_eq!(input["code"], code);
+        assert_eq!(input["description"], "read notes and run echo");
+
+        let results: Vec<_> = blocks()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    output_preview,
+                    is_error,
+                    ..
+                } => Some((tool_use_id.as_deref(), output_preview.as_deref(), *is_error)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results, vec![(Some("call_ptc_1"), Some(output), false)]);
+
+        // The prompts and answers of both turns, and nothing from `session-meta`.
+        let texts: Vec<(&str, &str)> = detail
+            .turns
+            .iter()
+            .flat_map(|t| {
+                let role = if matches!(t.role, TurnRole::User) {
+                    "user"
+                } else {
+                    "assistant"
+                };
+                t.blocks.iter().filter_map(move |b| match b {
+                    ContentBlock::Text { text } => Some((role, text.as_str())),
+                    _ => None,
+                })
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                ("user", "PLEASE_PTC read notes and echo"),
+                ("assistant", "FINAL_ANSWER: done after tool result"),
+                ("user", "PLEASE_PTC again"),
+                ("assistant", "hello from fake model"),
+            ]
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// A Responses-API model's record carries the agents SDK's `response_done`
     /// usage, which is what CodeBuddy stores when the raw stream reports none.
     #[test]
