@@ -17,6 +17,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { ModelOptionList } from "@/components/chat/model-option-list"
@@ -56,8 +57,9 @@ interface SessionSettingsPickerProps {
  * selection on WKWebView.
  *
  * The chip fits any composer width on its own: short values never truncate,
- * long ones share the squeeze in proportion to their width, and below a 16rem
- * composer (the `@container` on the composer chrome) only the icon is left.
+ * long ones share the squeeze in proportion to their width, and in a
+ * `@container` narrower than 16rem (the chat composer's chrome is one) only the
+ * icon is left. A host with no container always shows the values.
  */
 export function SessionSettingsPicker({
   agentType,
@@ -109,12 +111,23 @@ export function SessionSettingsPicker({
             variant="ghost"
             size="xs"
             aria-label={label}
-            className="max-w-full min-w-0 shrink gap-1 px-1.5 text-muted-foreground"
+            // A pill tinted with the theme color chosen in Appearance
+            // settings (`--primary`), translucent so it also sits over a
+            // workspace background image. Hover and the open popover deepen
+            // it.
+            // An `xs` Button draws every SVG without a `size-*` class at 12px.
+            // The agent's mark is one, so it would shrink inside its 14px
+            // AgentIcon box, off the line the values are centered on. Hold
+            // such SVGs at the box's size.
+            className="max-w-full min-w-0 shrink gap-1 bg-primary/10 px-2 text-muted-foreground hover:bg-primary/15 hover:text-foreground aria-expanded:bg-primary/15 aria-expanded:text-foreground dark:hover:bg-primary/15 [&_svg:not([class*='size-'])]:size-3.5"
           >
             <TriggerIcon agentType={agentType} />
+            {/* `overflow-hidden`: when even the shortest form of every value
+                does not fit, the last ones are cut at the chevron rather
+                than drawn underneath it. */}
             <span
               data-slot="settings-summary"
-              className="hidden min-w-0 items-center @[16rem]:flex"
+              className="flex min-w-0 items-center overflow-hidden @max-[16rem]:hidden"
             >
               {parts.map((setting, index) => (
                 <Fragment key={setting.key}>
@@ -162,33 +175,42 @@ export function SessionSettingsPicker({
         onFocusOutside={onFocusOutside}
         // `max-h-(--radix-popover-content-available-height)`: the chip sits at
         // the bottom of the composer, so the panel opens upward and scrolls
-        // when the room above it is short.
-        className="max-h-(--radix-popover-content-available-height) w-[22rem] max-w-[calc(100vw-1rem)] gap-1 overflow-y-auto p-1.5"
+        // when the room above it is short. `overflow-hidden` keeps the
+        // scrollbar inside the rounded corners.
+        className="max-h-(--radix-popover-content-available-height) w-[22rem] max-w-[calc(100vw-1rem)] overflow-hidden p-0"
       >
-        {settings.map((setting, index) => {
-          const previous = settings[index - 1]
-          // A rule around each list (it scrolls on its own) and above the
-          // switches, which read as a group of their own.
-          const separated =
-            previous !== undefined &&
-            (setting.kind === "list" ||
-              previous.kind === "list" ||
-              (setting.kind === "switch" && previous.kind !== "switch"))
-          return (
-            <Fragment key={setting.key}>
-              {separated ? (
-                <div aria-hidden className="mx-2 h-px shrink-0 bg-border" />
-              ) : null}
-              {setting.kind === "switch" ? (
-                <SwitchSetting setting={setting} onChange={onChange} />
-              ) : setting.kind === "segmented" ? (
-                <SegmentedSetting setting={setting} onChange={onChange} />
-              ) : (
-                <ListSetting setting={setting} onChange={onChange} />
-              )}
-            </Fragment>
-          )
-        })}
+        {/* The app's own scrollbar, here and in every list below, like the
+            side panel's: a real element inside the content, so grabbing it is
+            not a press outside the popover (see `useScrollbarSafeDismiss`).
+            `min-h-0 flex-1` shrinks it to the capped height. */}
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-1 p-1.5">
+            {settings.map((setting, index) => {
+              const previous = settings[index - 1]
+              // A rule around each list (it scrolls on its own) and above the
+              // switches, which read as a group of their own.
+              const separated =
+                previous !== undefined &&
+                (setting.kind === "list" ||
+                  previous.kind === "list" ||
+                  (setting.kind === "switch" && previous.kind !== "switch"))
+              return (
+                <Fragment key={setting.key}>
+                  {separated ? (
+                    <div aria-hidden className="mx-2 h-px shrink-0 bg-border" />
+                  ) : null}
+                  {setting.kind === "switch" ? (
+                    <SwitchSetting setting={setting} onChange={onChange} />
+                  ) : setting.kind === "segmented" ? (
+                    <SegmentedSetting setting={setting} onChange={onChange} />
+                  ) : (
+                    <ListSetting setting={setting} onChange={onChange} />
+                  )}
+                </Fragment>
+              )
+            })}
+          </div>
+        </ScrollArea>
       </PopoverContent>
     </Popover>
   )
@@ -204,10 +226,11 @@ function TriggerIcon({ agentType }: { agentType: AgentType | null }) {
 
 /**
  * Stand-in for the chip while the session is still being established. It holds
- * the row open at the chip's height (`h-6`, like `Button size="xs"`) so nothing
- * jumps when the settings arrive, and it is visible where they will be: opening
- * a historical conversation spends seconds in exactly this state, and showing
- * nothing there made a live, still-connecting composer look like a dead one.
+ * the row open at the chip's height and fill (`h-6`, like `Button size="xs"`)
+ * so nothing jumps when the settings arrive, and it is visible where they will
+ * be: opening a historical conversation spends seconds in exactly this state,
+ * and showing nothing there made a live, still-connecting composer look like a
+ * dead one.
  */
 function SettingsPlaceholder({
   agentType,
@@ -222,11 +245,18 @@ function SettingsPlaceholder({
       aria-live="polite"
       aria-label={label}
       title={label}
-      className="flex h-6 shrink-0 items-center gap-1.5 px-1.5"
+      // The Button's transparent border and padding-box fill too, so the two
+      // pills are the same size.
+      className="flex h-6 shrink-0 items-center gap-1.5 rounded-4xl border border-transparent bg-primary/10 bg-clip-padding px-2"
     >
       <TriggerIcon agentType={agentType} />
-      <Skeleton className="h-3 w-16 rounded-sm" />
-      <Skeleton className="h-3 w-10 rounded-sm" />
+      {/* Neutral ink, not the Skeleton's own `bg-muted` (lighter than the
+          pill in light mode, so it would all but vanish on it) and not the
+          theme color: the bars pulse, and an animated layer can mis-draw an
+          out-of-gamut primary (orange's came out cyan in Chrome's software
+          compositor). */}
+      <Skeleton className="h-3 w-16 rounded-sm bg-foreground/10" />
+      <Skeleton className="h-3 w-10 rounded-sm bg-foreground/10" />
     </div>
   )
 }
@@ -467,71 +497,73 @@ function PlainList({
       />
       {/* Capped and scrolling on its own, so a long list never pushes the
           settings below it out of the panel. */}
-      <div
-        role="group"
-        aria-labelledby={headerId}
-        {...roving.groupProps}
-        className="flex max-h-52 min-h-0 flex-col gap-0.5 overflow-y-auto"
-      >
-        {rows.map((row, rowIndex) => {
-          if (row.kind === "header") {
+      <ScrollArea className="max-h-52 shrink-0">
+        <div
+          role="group"
+          aria-labelledby={headerId}
+          {...roving.groupProps}
+          className="flex flex-col gap-0.5"
+        >
+          {rows.map((row, rowIndex) => {
+            if (row.kind === "header") {
+              return (
+                <div
+                  key={row.key}
+                  role="presentation"
+                  className={cn(
+                    "shrink-0 truncate px-2 pb-0.5 text-xs font-medium text-muted-foreground",
+                    rowIndex === 0 ? "pt-0.5" : "mt-1 border-t pt-2"
+                  )}
+                >
+                  {row.name}
+                </div>
+              )
+            }
+            const { option } = row
+            const selected = option.value === setting.currentValue
             return (
-              <div
+              <button
                 key={row.key}
-                role="presentation"
+                type="button"
+                aria-current={selected ? "true" : undefined}
+                title={
+                  option.description
+                    ? `${option.name} — ${option.description}`
+                    : option.name
+                }
+                {...roving.itemProps(row.key)}
+                onClick={() => onPick(option.value)}
                 className={cn(
-                  "shrink-0 truncate px-2 pb-0.5 text-xs font-medium text-muted-foreground",
-                  rowIndex === 0 ? "pt-0.5" : "mt-1 border-t pt-2"
+                  "flex w-full shrink-0 items-start gap-2 rounded-md px-2 py-1 text-left text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground",
+                  selected && "bg-accent/60"
                 )}
               >
-                {row.name}
-              </div>
-            )
-          }
-          const { option } = row
-          const selected = option.value === setting.currentValue
-          return (
-            <button
-              key={row.key}
-              type="button"
-              aria-current={selected ? "true" : undefined}
-              title={
-                option.description
-                  ? `${option.name} — ${option.description}`
-                  : option.name
-              }
-              {...roving.itemProps(row.key)}
-              onClick={() => onPick(option.value)}
-              className={cn(
-                "flex w-full shrink-0 items-start gap-2 rounded-md px-2 py-1 text-left text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground",
-                selected && "bg-accent/60"
-              )}
-            >
-              <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
-                {selected ? <Check className="size-4" /> : null}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="min-w-0 truncate">{option.name}</span>
-                  {option.value === setting.recommendedValue ? (
-                    <Badge
-                      variant="outline"
-                      className="px-1 text-3xs font-normal"
-                    >
-                      {recommendedLabel}
-                    </Badge>
+                <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
+                  {selected ? <Check className="size-4" /> : null}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="min-w-0 truncate">{option.name}</span>
+                    {option.value === setting.recommendedValue ? (
+                      <Badge
+                        variant="outline"
+                        className="px-1 text-3xs font-normal"
+                      >
+                        {recommendedLabel}
+                      </Badge>
+                    ) : null}
+                  </span>
+                  {option.description ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {option.description}
+                    </span>
                   ) : null}
                 </span>
-                {option.description ? (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {option.description}
-                  </span>
-                ) : null}
-              </span>
-            </button>
-          )
-        })}
-      </div>
+              </button>
+            )
+          })}
+        </div>
+      </ScrollArea>
     </div>
   )
 }

@@ -589,10 +589,20 @@ const MONO_ICONS: Partial<Record<AgentType, AnyIcon>> = {
 const AGENT_TEXT_COLORS: Partial<Record<AgentType, string>> = {}
 
 export function AgentIcon({ agentType, className }: AgentIconProps) {
+  // The mark fills its box — unless the icon sits in a control that sizes
+  // every SVG without a `size-*` class itself (Button, SelectItem, menu
+  // items), which can leave it smaller or larger than the box. Centered, it
+  // still shares the box's center line with the label beside it, rather than
+  // hanging off the box's top corner.
   const ColorIcon = COLOR_ICONS[agentType]
   if (ColorIcon) {
     return (
-      <span className={cn("inline-flex shrink-0", className)}>
+      <span
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center",
+          className
+        )}
+      >
         <ColorIcon size="100%" />
       </span>
     )
@@ -608,7 +618,7 @@ export function AgentIcon({ agentType, className }: AgentIconProps) {
     return (
       <span
         className={cn(
-          "inline-flex shrink-0 text-foreground",
+          "inline-flex shrink-0 items-center justify-center text-foreground",
           AGENT_TEXT_COLORS[agentType],
           className
         )}

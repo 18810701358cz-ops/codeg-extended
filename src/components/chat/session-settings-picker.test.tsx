@@ -13,7 +13,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 // A long list renders `ModelOptionList`, which needs the same three stand-ins
 // as its own suite: the zoom level (it sizes in rem, and throws outside an
 // AppearanceProvider), a Virtualizer that renders every row (virtua renders
-// none without layout), and a ScrollArea that reports its viewport.
+// none without layout), and a ScrollArea that reports its viewport. The
+// ScrollArea stand-in keeps a marked box, so a test can see what scrolls in it.
 vi.mock("@/hooks/use-appearance", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/hooks/use-appearance")>()),
   useZoomLevel: () => ({ zoomLevel: 100, setZoomLevel: () => {} }),
@@ -40,7 +41,7 @@ vi.mock("@/components/ui/scroll-area", () => ({
     useEffect(() => {
       onViewportRef?.(document.createElement("div"))
     }, [onViewportRef])
-    return <>{children}</>
+    return <div data-slot="scroll-area">{children}</div>
   },
 }))
 
@@ -288,6 +289,27 @@ describe("SessionSettingsPicker — the popover", () => {
     expect(opus).not.toHaveTextContent(MSGS.recommendedBadge)
     expect(sonnet).not.toHaveAttribute("aria-current")
     expect(sonnet).toHaveTextContent(MSGS.recommendedBadge)
+  })
+
+  it("scrolls the panel and a short list in the app's scrollbar, not the native one", async () => {
+    const user = userEvent.setup()
+    renderPicker()
+    const popover = await openPopover(user)
+    // The plain model list scrolls in a ScrollArea of its own, inside the
+    // panel's.
+    const list = within(popover)
+      .getByRole("group", { name: "Model" })
+      .closest('[data-slot="scroll-area"]')
+    expect(list).not.toBeNull()
+    expect(
+      list?.parentElement?.closest('[data-slot="scroll-area"]')
+    ).not.toBeNull()
+    // Nothing in the popover scrolls with a native scrollbar.
+    for (const element of [popover, ...popover.querySelectorAll("*")]) {
+      expect(element.getAttribute("class") ?? "").not.toMatch(
+        /overflow-(y-)?(auto|scroll)/
+      )
+    }
   })
 
   it("does not re-send the value that is already selected", async () => {
