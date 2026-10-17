@@ -469,6 +469,13 @@ async fn async_main() -> ExitCode {
         });
     }
 
+    // [codeg-extended] plugin host
+    tokio::spawn(async move {
+        if let Err(e) = codeg_lib::plugin_host::init().await {
+            tracing::error!("[plugin_host] init error: {e}");
+        }
+    });
+
     // Install bundled expert skills into the central store
     // (`~/.codeg/skills/`). Runs in the background; failures are logged
     // but non-fatal.
@@ -724,6 +731,8 @@ async fn async_main() -> ExitCode {
     // Graceful shutdown: release any live office watch preview servers
     // (kill_on_drop is the backstop, but this frees their ports promptly).
     codeg_lib::office_watch::stop_all_office_watches();
+    // [codeg-extended] plugin host
+    codeg_lib::plugin_host::stop_all();
     ExitCode::SUCCESS
 }
 

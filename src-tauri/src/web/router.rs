@@ -1968,6 +1968,8 @@ pub fn build_router(
         )
         .route("/terminal_kill", post(handlers::terminal::terminal_kill))
         .route("/terminal_list", post(handlers::terminal::terminal_list))
+        // [codeg-extended] plugin host
+        .merge(handlers::plugin_host::routes())
         // Catch-all
         .fallback(api_not_found)
         .layer(middleware::from_fn(move |req, next| {
