@@ -144,32 +144,32 @@ const PLUGIN_STYLES = `
   background: rgba(239, 68, 68, 0.05);
   border-radius: 6px;
 }
-`;
+`
 
 function getStatusLabel(state) {
   switch (state) {
     case "running":
-      return "运行中 (Running)";
+      return "运行中 (Running)"
     case "starting":
-      return "启动中 (Starting)";
+      return "启动中 (Starting)"
     case "crashed":
-      return "已崩溃 (Crashed)";
+      return "已崩溃 (Crashed)"
     case "unhealthy":
-      return "不健康 (Unhealthy)";
+      return "不健康 (Unhealthy)"
     case "setup_failed":
-      return "初始化失败 (Setup Failed)";
+      return "初始化失败 (Setup Failed)"
     case "stopped":
     default:
-      return "已停止 (Stopped)";
+      return "已停止 (Stopped)"
   }
 }
 
-let activeDisposers = [];
+let activeDisposers = []
 
 export function activate(ctx) {
   // Inject plugin styles if injectCSS is available
   if (typeof ctx.injectCSS === "function") {
-    ctx.injectCSS(PLUGIN_STYLES);
+    ctx.injectCSS(PLUGIN_STYLES)
   }
 
   // 1. Statusbar Right Slot Contribution
@@ -177,257 +177,288 @@ export function activate(ctx) {
     id: "workbuddy-status",
     order: 100,
     mount(el) {
-      let mounted = true;
-      let currentStatus = null;
+      let mounted = true
+      let currentStatus = null
 
-      const container = document.createElement("div");
-      container.className = "wb-statusbar-item";
-      container.setAttribute("role", "button");
-      container.setAttribute("tabindex", "0");
+      const container = document.createElement("div")
+      container.className = "wb-statusbar-item"
+      container.setAttribute("role", "button")
+      container.setAttribute("tabindex", "0")
 
-      const dot = document.createElement("span");
-      dot.className = "wb-status-dot stopped";
+      const dot = document.createElement("span")
+      dot.className = "wb-status-dot stopped"
 
-      const text = document.createElement("span");
-      text.className = "wb-status-text";
-      text.textContent = "WorkBuddy";
+      const text = document.createElement("span")
+      text.className = "wb-status-text"
+      text.textContent = "WorkBuddy"
 
-      container.appendChild(dot);
-      container.appendChild(text);
-      el.appendChild(container);
+      container.appendChild(dot)
+      container.appendChild(text)
+      el.appendChild(container)
 
       const renderStatus = (status) => {
-        if (!mounted) return;
-        currentStatus = status || { state: "stopped" };
-        const state = currentStatus.state || "stopped";
-        dot.className = "wb-status-dot " + state;
-        const label = getStatusLabel(state);
-        const titleText = "WorkBuddy: " + label + (currentStatus.port ? " (" + currentStatus.port + ")" : "");
-        container.setAttribute("title", titleText);
-        container.setAttribute("aria-label", titleText);
-      };
+        if (!mounted) return
+        currentStatus = status || { state: "stopped" }
+        const state = currentStatus.state || "stopped"
+        dot.className = "wb-status-dot " + state
+        const label = getStatusLabel(state)
+        const titleText =
+          "WorkBuddy: " +
+          label +
+          (currentStatus.port ? " (" + currentStatus.port + ")" : "")
+        container.setAttribute("title", titleText)
+        container.setAttribute("aria-label", titleText)
+      }
 
       const onClick = () => {
-        const state = currentStatus ? currentStatus.state : "stopped";
-        const label = getStatusLabel(state);
-        let msg = "WorkBuddy 状态: " + label;
+        const state = currentStatus ? currentStatus.state : "stopped"
+        const label = getStatusLabel(state)
+        let msg = "WorkBuddy 状态: " + label
         if (currentStatus && currentStatus.port) {
-          msg += " | 端口: " + currentStatus.port;
+          msg += " | 端口: " + currentStatus.port
         }
         if (currentStatus && currentStatus.pid) {
-          msg += " | PID: " + currentStatus.pid;
+          msg += " | PID: " + currentStatus.pid
         }
         if (currentStatus && currentStatus.lastError) {
-          msg += "\n错误: " + currentStatus.lastError;
+          msg += "\n错误: " + currentStatus.lastError
         }
 
-        const notifyType = state === "running" ? "success" : state === "starting" ? "info" : "warning";
+        const notifyType =
+          state === "running"
+            ? "success"
+            : state === "starting"
+              ? "info"
+              : "warning"
         if (typeof ctx.notify === "function") {
-          ctx.notify(msg, notifyType);
+          ctx.notify(msg, notifyType)
         }
-      };
+      }
 
-      container.addEventListener("click", onClick);
+      container.addEventListener("click", onClick)
 
       // Fetch initial status
       if (ctx.backend && typeof ctx.backend.status === "function") {
-        ctx.backend.status().then((st) => {
-          if (mounted) renderStatus(st);
-        }).catch(() => {
-          if (mounted) renderStatus({ state: "stopped" });
-        });
+        ctx.backend
+          .status()
+          .then((st) => {
+            if (mounted) renderStatus(st)
+          })
+          .catch(() => {
+            if (mounted) renderStatus({ state: "stopped" })
+          })
       }
 
       // Listen for status changes
       if (ctx.backend && typeof ctx.backend.onStatus === "function") {
         ctx.backend.onStatus((st) => {
-          if (mounted) renderStatus(st);
-        });
+          if (mounted) renderStatus(st)
+        })
       }
 
       // Return cleanup function to guarantee 0 DOM leakage
       return () => {
-        mounted = false;
-        container.removeEventListener("click", onClick);
+        mounted = false
+        container.removeEventListener("click", onClick)
         if (container.parentNode === el) {
-          el.removeChild(container);
+          el.removeChild(container)
         }
-        el.innerHTML = "";
-      };
+        el.innerHTML = ""
+      }
     },
-  });
+  })
 
   // 2. Settings Plugin Detail Slot Contribution
   ctx.registerSlot("settings.plugin-detail", {
     id: "workbuddy-detail",
     order: 10,
     mount(el) {
-      let mounted = true;
+      let mounted = true
 
-      const container = document.createElement("div");
-      container.className = "wb-detail-container";
+      const container = document.createElement("div")
+      container.className = "wb-detail-container"
 
       // Header
-      const header = document.createElement("div");
-      header.className = "wb-detail-header";
+      const header = document.createElement("div")
+      header.className = "wb-detail-header"
 
-      const title = document.createElement("div");
-      title.className = "wb-detail-title";
-      title.textContent = "WorkBuddy 本机模型服务";
+      const title = document.createElement("div")
+      title.className = "wb-detail-title"
+      title.textContent = "WorkBuddy 本机模型服务"
 
-      const refreshBtn = document.createElement("button");
-      refreshBtn.className = "wb-detail-btn";
-      refreshBtn.textContent = "刷新模型";
+      const refreshBtn = document.createElement("button")
+      refreshBtn.className = "wb-detail-btn"
+      refreshBtn.textContent = "刷新模型"
 
-      header.appendChild(title);
-      header.appendChild(refreshBtn);
-      container.appendChild(header);
+      header.appendChild(title)
+      header.appendChild(refreshBtn)
+      container.appendChild(header)
 
       // Probe banner (conditionally rendered)
-      const probeBanner = document.createElement("div");
-      probeBanner.className = "wb-probe-banner";
-      probeBanner.textContent = "⚡ 已允许探测推理档位（注意：探测可能会消耗少量额度）";
-      probeBanner.style.display = "none";
-      container.appendChild(probeBanner);
+      const probeBanner = document.createElement("div")
+      probeBanner.className = "wb-probe-banner"
+      probeBanner.textContent =
+        "⚡ 已允许探测推理档位（注意：探测可能会消耗少量额度）"
+      probeBanner.style.display = "none"
+      container.appendChild(probeBanner)
 
       // Content Area for models
-      const content = document.createElement("div");
-      content.className = "wb-detail-content";
-      container.appendChild(content);
+      const content = document.createElement("div")
+      content.className = "wb-detail-content"
+      container.appendChild(content)
 
-      el.appendChild(container);
+      el.appendChild(container)
 
       const updateProbeBanner = (consent) => {
-        if (!mounted) return;
-        probeBanner.style.display = (consent === true || consent === "true") ? "flex" : "none";
-      };
+        if (!mounted) return
+        probeBanner.style.display =
+          consent === true || consent === "true" ? "flex" : "none"
+      }
 
       // Read initial config
       if (ctx.config && typeof ctx.config.get === "function") {
-        ctx.config.get().then((cfg) => {
-          if (mounted && cfg) {
-            updateProbeBanner(cfg.probeConsent);
-          }
-        }).catch(() => {});
+        ctx.config
+          .get()
+          .then((cfg) => {
+            if (mounted && cfg) {
+              updateProbeBanner(cfg.probeConsent)
+            }
+          })
+          .catch(() => {})
       }
 
       // Listen for config changes
       if (ctx.config && typeof ctx.config.onChange === "function") {
         ctx.config.onChange((cfg) => {
           if (mounted && cfg) {
-            updateProbeBanner(cfg.probeConsent);
+            updateProbeBanner(cfg.probeConsent)
           }
-        });
+        })
       }
 
       const loadModels = () => {
-        if (!mounted) return;
-        content.innerHTML = '<div class="wb-detail-loading">正在获取已连接模型列表...</div>';
+        if (!mounted) return
+        content.innerHTML =
+          '<div class="wb-detail-loading">正在获取已连接模型列表...</div>'
 
         if (!ctx.backend || typeof ctx.backend.fetch !== "function") {
-          content.innerHTML = '<div class="wb-detail-error">插件后端服务未就绪</div>';
-          return;
+          content.innerHTML =
+            '<div class="wb-detail-error">插件后端服务未就绪</div>'
+          return
         }
 
-        ctx.backend.fetch("/v1/models")
+        ctx.backend
+          .fetch("/v1/models")
           .then((res) => {
-            if (!mounted) return;
+            if (!mounted) return
             if (res.status !== 200) {
-              content.innerHTML = '<div class="wb-detail-error">获取模型列表失败 (HTTP ' + res.status + '): ' + (res.body || "服务异常") + '</div>';
-              return;
+              content.innerHTML =
+                '<div class="wb-detail-error">获取模型列表失败 (HTTP ' +
+                res.status +
+                "): " +
+                (res.body || "服务异常") +
+                "</div>"
+              return
             }
 
-            let data;
+            let data
             try {
-              data = JSON.parse(res.body);
+              data = JSON.parse(res.body)
             } catch (e) {
-              content.innerHTML = '<div class="wb-detail-error">响应解析失败: ' + e.message + '</div>';
-              return;
+              content.innerHTML =
+                '<div class="wb-detail-error">响应解析失败: ' +
+                e.message +
+                "</div>"
+              return
             }
 
-            const models = (data && data.data) || [];
+            const models = (data && data.data) || []
             if (models.length === 0) {
-              content.innerHTML = '<div class="wb-detail-empty">未发现可用模型，请确认 WorkBuddy 桌面端已登录并启动</div>';
-              return;
+              content.innerHTML =
+                '<div class="wb-detail-empty">未发现可用模型，请确认 WorkBuddy 桌面端已登录并启动</div>'
+              return
             }
 
-            const list = document.createElement("div");
-            list.className = "wb-models-list";
+            const list = document.createElement("div")
+            list.className = "wb-models-list"
 
             models.forEach((m) => {
-              const card = document.createElement("div");
-              card.className = "wb-model-card";
+              const card = document.createElement("div")
+              card.className = "wb-model-card"
 
-              const idSpan = document.createElement("span");
-              idSpan.className = "wb-model-id";
-              idSpan.textContent = m.name || m.id;
+              const idSpan = document.createElement("span")
+              idSpan.className = "wb-model-id"
+              idSpan.textContent = m.name || m.id
 
-              const badgesDiv = document.createElement("div");
-              badgesDiv.className = "wb-model-badges";
+              const badgesDiv = document.createElement("div")
+              badgesDiv.className = "wb-model-badges"
 
               if (m.credits) {
-                const creditBadge = document.createElement("span");
-                creditBadge.className = "wb-badge wb-badge-free";
-                creditBadge.textContent = m.credits;
-                badgesDiv.appendChild(creditBadge);
+                const creditBadge = document.createElement("span")
+                creditBadge.className = "wb-badge wb-badge-free"
+                creditBadge.textContent = m.credits
+                badgesDiv.appendChild(creditBadge)
               }
 
               if (Array.isArray(m.badges)) {
                 m.badges.forEach((b) => {
-                  const promoBadge = document.createElement("span");
-                  promoBadge.className = "wb-badge wb-badge-promo";
-                  promoBadge.textContent = b;
-                  badgesDiv.appendChild(promoBadge);
-                });
+                  const promoBadge = document.createElement("span")
+                  promoBadge.className = "wb-badge wb-badge-promo"
+                  promoBadge.textContent = b
+                  badgesDiv.appendChild(promoBadge)
+                })
               }
 
-              card.appendChild(idSpan);
-              card.appendChild(badgesDiv);
-              list.appendChild(card);
-            });
+              card.appendChild(idSpan)
+              card.appendChild(badgesDiv)
+              list.appendChild(card)
+            })
 
-            content.innerHTML = "";
-            content.appendChild(list);
+            content.innerHTML = ""
+            content.appendChild(list)
           })
           .catch((err) => {
-            if (!mounted) return;
-            content.innerHTML = '<div class="wb-detail-error">网络请求失败: ' + (err.message || String(err)) + '</div>';
-          });
-      };
+            if (!mounted) return
+            content.innerHTML =
+              '<div class="wb-detail-error">网络请求失败: ' +
+              (err.message || String(err)) +
+              "</div>"
+          })
+      }
 
-      refreshBtn.addEventListener("click", loadModels);
+      refreshBtn.addEventListener("click", loadModels)
 
       // Initial models fetch
-      loadModels();
+      loadModels()
 
       // Return cleanup function to guarantee 0 DOM leakage
       return () => {
-        mounted = false;
-        refreshBtn.removeEventListener("click", loadModels);
+        mounted = false
+        refreshBtn.removeEventListener("click", loadModels)
         if (container.parentNode === el) {
-          el.removeChild(container);
+          el.removeChild(container)
         }
-        el.innerHTML = "";
-      };
+        el.innerHTML = ""
+      }
     },
-  });
+  })
 
   // Track disposal
   const disposeHandler = () => {
     // any plugin-wide cleanup
-  };
-  activeDisposers.push(disposeHandler);
+  }
+  activeDisposers.push(disposeHandler)
 
   if (typeof ctx.onDispose === "function") {
-    ctx.onDispose(disposeHandler);
+    ctx.onDispose(disposeHandler)
   }
 }
 
 export function deactivate() {
   for (const d of activeDisposers) {
     try {
-      d();
-    } catch (_) {}
+      d()
+    } catch {}
   }
-  activeDisposers = [];
+  activeDisposers = []
 }
