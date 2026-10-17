@@ -1,14 +1,10 @@
 "use client"
 
-import { useCallback, useState } from "react"
+import { useCallback, useState, useSyncExternalStore } from "react"
 import { Palette, Puzzle, RefreshCw, Search, Settings } from "lucide-react"
 import { toast } from "sonner"
 
-import {
-  SettingCard,
-  SettingNote,
-  SettingRow,
-} from "@/components/shared/setting-card"
+import { SettingCard, SettingRow } from "@/components/shared/setting-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -38,7 +34,6 @@ export interface PluginManifest {
   endpoint?: string
   homepage?: string
   tags?: string[]
-  css?: string
 }
 
 const DEFAULT_PLUGINS: PluginManifest[] = [
@@ -72,7 +67,7 @@ const DEFAULT_PLUGINS: PluginManifest[] = [
     version: "1.0.0",
     author: "codeg-community",
     description:
-      "在右下角挂载快捷指令胶囊，支持随时切换模型、清理会话并提供插件交互。",
+      "在右下角挂载示例快捷悬浮胶囊，点击展示通知提示（前端挂件与交互示例）。",
     category: "utility",
     enabled: false,
     status: "idle",
@@ -80,8 +75,17 @@ const DEFAULT_PLUGINS: PluginManifest[] = [
   },
 ]
 
-function getInitialPlugins(): PluginManifest[] {
-  return DEFAULT_PLUGINS.map((p) => {
+let cachedManifests: PluginManifest[] | null = null
+let lastEnabledMapKey = ""
+
+function getClientManifests(): PluginManifest[] {
+  if (typeof window === "undefined") return DEFAULT_PLUGINS
+  const raw = localStorage.getItem("codeg_plugins_enabled_v1") || ""
+  if (cachedManifests && lastEnabledMapKey === raw) {
+    return cachedManifests
+  }
+  lastEnabledMapKey = raw
+  cachedManifests = DEFAULT_PLUGINS.map((p) => {
     const isEn = pluginManager.isPluginEnabled(p.id)
     return {
       ...p,
@@ -89,10 +93,19 @@ function getInitialPlugins(): PluginManifest[] {
       status: isEn ? "running" : "idle",
     }
   })
+  return cachedManifests
+}
+
+function getServerManifests(): PluginManifest[] {
+  return DEFAULT_PLUGINS
 }
 
 export function PluginsSettings() {
-  const [plugins, setPlugins] = useState<PluginManifest[]>(getInitialPlugins)
+  const plugins = useSyncExternalStore(
+    (cb) => pluginManager.subscribe(cb),
+    getClientManifests,
+    getServerManifests
+  )
   const [searchQuery, setSearchQuery] = useState("")
   const [activeCategory, setActiveCategory] = useState<string>("all")
   const [selectedPlugin, setSelectedPlugin] = useState<PluginManifest | null>(
@@ -101,38 +114,34 @@ export function PluginsSettings() {
   const [isThemeEditorOpen, setIsThemeEditorOpen] = useState(false)
   const [themeCSS, setThemeCSS] = useState("")
 
-  const handleToggle = useCallback((id: string) => {
-    setPlugins((prev) =>
-      prev.map((p) => {
-        if (p.id === id) {
-          const nextState = !p.enabled
-          pluginManager.setPluginEnabled(id, nextState)
-          toast.success(
-            nextState
-              ? `插件「${p.name}」已启用并即时生效`
-              : `插件「${p.name}」已停用`
-          )
-          return {
-            ...p,
-            enabled: nextState,
-            status: nextState ? "running" : "idle",
-          }
-        }
-        return p
-      })
-    )
-  }, [])
+  const handleToggle = useCallback(
+    (id: string) => {
+      const plugin = plugins.find((p) => p.id === id)
+      if (!plugin) return
+      const nextState = !plugin.enabled
+      pluginManager.setPluginEnabled(id, nextState)
+      toast.success(
+        nextState
+          ? `插件「${plugin.name}」已启用并即时生效`
+          : `插件「${plugin.name}」已停用`
+      )
+    },
+    [plugins]
+  )
 
-  const handleApplyCustomCSS = () => {
+  const handleApplyCustomCSS = useCallback(() => {
     if (!themeCSS.trim()) {
-      pluginManager.removeCSS("custom-user-theme")
-      toast.info("已清空自定义样式")
-    } else {
-      pluginManager.injectCSS("custom-user-theme", themeCSS)
-      toast.success("自定义 CSS 样式已即时注入生效！")
+      toast.error("CSS 内容不能为空")
+      return
     }
-    setIsThemeEditorOpen(false)
-  }
+    try {
+      pluginManager.injectCSS("custom-user-theme", themeCSS)
+      toast.success("自定义 CSS 样式已临时生效（重启后失效）")
+      setIsThemeEditorOpen(false)
+    } catch {
+      toast.error("注入 CSS 失败")
+    }
+  }, [themeCSS])
 
   const filteredPlugins = plugins.filter((plugin) => {
     const matchesSearch =
@@ -151,14 +160,15 @@ export function PluginsSettings() {
   return (
     <div className="space-y-6">
       {/* Header Info */}
-      <SettingNote className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2.5 rounded-xl border border-border/70 bg-muted/40 p-3">
         <div>
           <span className="font-medium text-foreground">
             插件系统开发中：目前仅内置 3
             个界面修饰示例，目录安装和仓库安装将在后续版本提供
           </span>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            插件系统 v2 正在重构中，支持界面修饰与外部扩展热插拔。
+            插件系统 v2 正在重构推进中，当前内置轻量 UI
+            修饰示例，外部插件热插拔与完整宿主能力将在后续版本陆续推出。
           </p>
         </div>
         <div className="flex gap-2">
@@ -176,7 +186,7 @@ export function PluginsSettings() {
             variant="outline"
             onClick={() => {
               pluginManager.boot(true)
-              toast.success("已重新扫描并热应用所有插件与样式")
+              toast.success("已重新应用当前启用的插件与样式")
             }}
             className="h-8 gap-1.5 text-xs"
           >
@@ -184,7 +194,7 @@ export function PluginsSettings() {
             热重载
           </Button>
         </div>
-      </SettingNote>
+      </div>
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

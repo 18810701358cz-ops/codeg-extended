@@ -60,7 +60,7 @@ export const BUILTIN_DSH_PLUGINS: PluginMetadata[] = [
     name: "DSH Quick Tools (浮动快捷挂件)",
     version: "1.0.0",
     description:
-      "在右下角挂载快捷指令浮动小图标，支持随时切换模型、清理会话和一键注入",
+      "在右下角挂载示例快捷悬浮胶囊，点击展示通知提示（前端挂件与交互示例）",
     author: "codeg-community",
     category: "utility",
     icon: "terminal",
@@ -89,11 +89,28 @@ class PluginRuntimeManager {
   private hooks: Map<string, PluginUIHook> = new Map()
   private cleanupMap: Map<string, () => void> = new Map()
   private booted = false
+  private listeners: Set<() => void> = new Set()
 
   constructor() {
     if (typeof window !== "undefined") {
       this.initGlobalAPI()
+      window.addEventListener("storage", (e) => {
+        if (e.key === STORAGE_KEY_ENABLED) {
+          this.notifyListeners()
+        }
+      })
     }
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  public notifyListeners() {
+    this.listeners.forEach((fn) => fn())
   }
 
   private initGlobalAPI() {
@@ -114,10 +131,10 @@ class PluginRuntimeManager {
     ;(window as unknown as { codegPlugins: CodegPluginAPI }).codegPlugins = api
   }
 
-  public boot(force = false) {
+  public boot(force = false, currentPath?: string) {
     if (this.booted && !force) return
     if (typeof window === "undefined") return
-    const pathname = window.location.pathname
+    const pathname = currentPath ?? window.location.pathname
     if (
       !pathname.startsWith("/workspace") &&
       !pathname.startsWith("/settings")
@@ -132,6 +149,19 @@ class PluginRuntimeManager {
         this.activatePlugin(p)
       }
     })
+  }
+
+  public teardown() {
+    if (!this.booted) return
+    const plugins = this.getPlugins()
+    plugins.forEach((p) => {
+      this.deactivatePlugin(p)
+    })
+    this.booted = false
+  }
+
+  public isBooted(): boolean {
+    return this.booted
   }
 
   public getPlugins(): PluginMetadata[] {
@@ -180,6 +210,7 @@ class PluginRuntimeManager {
           this.deactivatePlugin(plugin)
         }
       }
+      this.notifyListeners()
     } catch (e) {
       console.error("[PluginManager] Failed to toggle plugin:", e)
     }
