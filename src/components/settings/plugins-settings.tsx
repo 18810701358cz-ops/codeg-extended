@@ -2,20 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react"
 import {
-  Boxes,
-  Layers,
   Palette,
   Plus,
   Puzzle,
   RefreshCw,
   Search,
   Settings,
-  Sparkles,
-  Terminal,
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { SettingCard, SettingNote } from "@/components/shared/setting-card"
+import { SettingCard, SettingNote, SettingRow } from "@/components/shared/setting-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -32,7 +28,6 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { pluginManager } from "@/lib/plugins/manager"
-import { PluginMetadata } from "@/lib/plugins/types"
 
 export interface PluginManifest {
   id: string
@@ -192,7 +187,7 @@ export function PluginsSettings() {
   return (
     <div className="space-y-6">
       {/* Header Info */}
-      <SettingNote variant="info" className="flex items-center justify-between">
+      <SettingNote className="flex items-center justify-between">
         <div>
           <span className="font-medium text-foreground">DSH 模块化插件系统与 UI 动态修饰已就绪</span>
           <p className="mt-0.5 text-xs text-muted-foreground">
@@ -258,44 +253,39 @@ export function PluginsSettings() {
       {/* Plugin Cards Grid */}
       <div className="grid gap-4 md:grid-cols-2">
         {filteredPlugins.map((plugin) => (
-          <SettingCard
-            key={plugin.id}
-            title={
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm">{plugin.name}</span>
-                <Badge variant="outline" className="text-[10px] font-mono h-4 px-1.5">
-                  v{plugin.version}
-                </Badge>
-              </div>
-            }
-            description={plugin.description}
-            action={
-              <div className="flex items-center gap-3">
-                <Switch
-                  checked={plugin.enabled}
-                  onCheckedChange={() => handleToggle(plugin.id)}
-                />
-              </div>
-            }
-          >
-            <div className="mt-3 flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={cn(
-                    "inline-block h-2 w-2 rounded-full",
-                    plugin.status === "running"
-                      ? "bg-emerald-500 animate-pulse"
-                      : "bg-muted-foreground/40"
-                  )}
-                />
-                <span className="capitalize">
-                  {plugin.status === "running" ? "运行中 / 已注入" : "未启动"}
-                </span>
-                <span className="mx-1">•</span>
-                <span>{plugin.author}</span>
-              </div>
+          <SettingCard key={plugin.id}>
+            <SettingRow
+              title={plugin.name}
+              description={plugin.description}
+              control={
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-[10px] font-mono h-4 px-1.5">
+                    v{plugin.version}
+                  </Badge>
+                  <Switch
+                    checked={plugin.enabled}
+                    onCheckedChange={() => handleToggle(plugin.id)}
+                  />
+                </div>
+              }
+            >
+              <div className="mt-2 flex items-center justify-between border-t border-border/40 pt-2 text-xs text-muted-foreground">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={cn(
+                      "inline-block h-2 w-2 rounded-full",
+                      plugin.status === "running"
+                        ? "bg-emerald-500 animate-pulse"
+                        : "bg-muted-foreground/40"
+                    )}
+                  />
+                  <span className="capitalize">
+                    {plugin.status === "running" ? "运行中 / 已注入" : "未启动"}
+                  </span>
+                  <span className="mx-1">•</span>
+                  <span>{plugin.author}</span>
+                </div>
 
-              <div className="flex items-center gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -306,20 +296,20 @@ export function PluginsSettings() {
                   配置与代码
                 </Button>
               </div>
-            </div>
 
-            {plugin.tags && plugin.tags.length > 0 && (
-              <div className="mt-2.5 flex flex-wrap gap-1">
-                {plugin.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="inline-flex items-center rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
+              {plugin.tags && plugin.tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {plugin.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </SettingRow>
           </SettingCard>
         ))}
       </div>
