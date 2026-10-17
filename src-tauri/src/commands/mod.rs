@@ -71,3 +71,6 @@ pub mod work_task;
 pub mod workspace_state;
 #[cfg(feature = "tauri-runtime")]
 pub mod workspace_windows;
+
+// [codeg-extended] plugin host
+pub mod plugin_host;

@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 
 const CODEG_DIR_NAME: &str = ".codeg";
 const PETS_DIR_NAME: &str = "pets";
+// [codeg-extended] plugin host
+const PLUGINS_DIR_NAME: &str = "plugins";
 const BROWSER_PROFILES_DIR_NAME: &str = "browser-profiles";
 const UPLOADS_DIR_NAME: &str = "uploads";
 const LOGS_DIR_NAME: &str = "logs";
@@ -52,6 +54,25 @@ pub fn codeg_pets_root() -> PathBuf {
     dirs::home_dir()
         .map(|h| h.join(CODEG_DIR_NAME).join(PETS_DIR_NAME))
         .unwrap_or_else(|| PathBuf::from(CODEG_DIR_NAME).join(PETS_DIR_NAME))
+}
+
+// [codeg-extended] plugin host
+/// Root directory for plugin packages (`codeg-plugin.json`).
+///
+/// Resolution order matches [`codeg_pets_root`] exactly:
+/// 1. `$CODEG_HOME/plugins` (explicit override, used in tests and custom installs)
+/// 2. `$CODEG_DATA_DIR/plugins` (the data directory, see the module docs)
+/// 3. `~/.codeg/plugins` (neither set)
+pub fn codeg_plugins_root() -> PathBuf {
+    if let Some(custom) = std::env::var_os("CODEG_HOME").filter(|s| !s.is_empty()) {
+        return PathBuf::from(custom).join(PLUGINS_DIR_NAME);
+    }
+    if let Some(data) = std::env::var_os("CODEG_DATA_DIR").filter(|s| !s.is_empty()) {
+        return PathBuf::from(data).join(PLUGINS_DIR_NAME);
+    }
+    dirs::home_dir()
+        .map(|h| h.join(CODEG_DIR_NAME).join(PLUGINS_DIR_NAME))
+        .unwrap_or_else(|| PathBuf::from(CODEG_DIR_NAME).join(PLUGINS_DIR_NAME))
 }
 
 /// Root directory for built-in browser profiles (WebView2 user-data folders

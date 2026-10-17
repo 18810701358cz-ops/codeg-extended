@@ -48,3 +48,6 @@ pub mod web_server;
 pub mod work_task;
 pub mod workspace_files;
 pub mod workspace_state;
+
+// [codeg-extended] plugin host
+pub mod plugin_host;

@@ -47,6 +47,8 @@ pub mod paths;
 pub mod pet_sessions;
 pub mod pet_state_mapper;
 pub mod pets;
+// [codeg-extended] plugin host
+pub mod plugin_host;
 #[cfg(feature = "tauri-runtime")]
 pub mod preferences;
 pub mod process;
@@ -157,6 +159,8 @@ mod tauri_app {
             tm.kill_all();
         }
         crate::office_watch::stop_all_office_watches();
+        // [codeg-extended] plugin host
+        crate::plugin_host::stop_all();
         if let Some(cm) = app.try_state::<ConnectionManager>() {
             tauri::async_runtime::block_on(cm.disconnect_all());
         }
@@ -812,6 +816,13 @@ mod tauri_app {
                 // turning off idle disconnects must not also turn off disk
                 // reclamation on a machine leaking gigabytes per launch.
                 tauri::async_runtime::spawn(crate::scratch_sweep_task());
+
+                // [codeg-extended] plugin host
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::plugin_host::init().await {
+                        tracing::error!("[plugin_host] init error: {e}");
+                    }
+                });
 
                 // Install bundled expert skills into the central store
                 // (`~/.codeg/skills/`). Runs in the background and does
@@ -2249,6 +2260,16 @@ mod tauri_app {
                 web::get_web_service_config,
                 web::update_web_service_config,
                 web::probe_web_service_port,
+                // [codeg-extended] plugin host
+                crate::commands::plugin_host::plugin_host_list,
+                crate::commands::plugin_host::plugin_host_read_entry,
+                crate::commands::plugin_host::plugin_host_read_asset,
+                crate::commands::plugin_host::plugin_host_set_enabled,
+                crate::commands::plugin_host::plugin_host_get_config,
+                crate::commands::plugin_host::plugin_host_set_config,
+                crate::commands::plugin_host::plugin_host_report_error,
+                crate::commands::plugin_host::plugin_host_report_activated,
+                crate::commands::plugin_host::plugin_host_disable_all,
             ])
             .build(context)
             .expect("error while building tauri application")
