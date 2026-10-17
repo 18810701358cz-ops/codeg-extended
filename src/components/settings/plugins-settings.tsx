@@ -3,28 +3,18 @@
 import { useCallback, useEffect, useState } from "react"
 import {
   Boxes,
-  CheckCircle2,
-  ExternalLink,
-  FolderOpen,
-  Info,
   Layers,
-  Loader2,
-  Play,
   Plus,
-  Power,
   Puzzle,
   RefreshCw,
   Search,
   Settings,
   Sparkles,
   Terminal,
-  XCircle,
 } from "lucide-react"
-import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
-import { SettingCard, SettingNote, SettingRow } from "@/components/shared/setting-card"
-import { SettingsSection } from "@/components/shared/settings-section"
+import { SettingCard, SettingNote } from "@/components/shared/setting-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -36,9 +26,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
 export interface PluginManifest {
