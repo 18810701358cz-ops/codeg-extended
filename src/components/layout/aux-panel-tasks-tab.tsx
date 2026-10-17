@@ -5,9 +5,9 @@ import { useTranslations } from "next-intl"
 import {
   ChevronRight,
   ListTodo,
-  Maximize2,
   Plus,
   Search,
+  SquareArrowOutUpRight,
   X,
 } from "lucide-react"
 import {
@@ -217,7 +217,7 @@ export function TasksAuxTab() {
           aria-label={tAux("openFullPage")}
           onClick={openBoard}
         >
-          <Maximize2 className="size-3.5" aria-hidden />
+          <SquareArrowOutUpRight className="size-3.5" aria-hidden />
         </Button>
       </div>
 

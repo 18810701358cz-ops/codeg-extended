@@ -14,10 +14,10 @@ import {
   ExternalLink,
   Funnel,
   GitPullRequestArrow,
-  Maximize2,
   Plus,
   RefreshCw,
   Search,
+  SquareArrowOutUpRight,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -1972,7 +1972,7 @@ function EmbeddedHeader({
         aria-label={tAux("openFullPage")}
         onClick={onOpenFullPage}
       >
-        <Maximize2 className="size-3.5" aria-hidden />
+        <SquareArrowOutUpRight className="size-3.5" aria-hidden />
       </Button>
     </div>
   )

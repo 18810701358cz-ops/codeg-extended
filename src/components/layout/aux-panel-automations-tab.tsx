@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
-import { ArrowLeft, Folder, Maximize2, Plus, Zap } from "lucide-react"
+import {
+  ArrowLeft,
+  Folder,
+  Plus,
+  SquareArrowOutUpRight,
+  Zap,
+} from "lucide-react"
 import {
   AutomationDetail,
   AutomationListItem,
@@ -165,7 +171,7 @@ export function AutomationsAuxTab() {
             aria-label={tAux("openFullPage")}
             onClick={() => openPage({ automation: selected })}
           >
-            <Maximize2 className="size-3.5" aria-hidden />
+            <SquareArrowOutUpRight className="size-3.5" aria-hidden />
           </Button>
         </div>
         <div className="min-h-0 flex-1">
@@ -217,7 +223,7 @@ export function AutomationsAuxTab() {
           aria-label={tAux("openFullPage")}
           onClick={() => openPage()}
         >
-          <Maximize2 className="size-3.5" aria-hidden />
+          <SquareArrowOutUpRight className="size-3.5" aria-hidden />
         </Button>
       </div>
 
