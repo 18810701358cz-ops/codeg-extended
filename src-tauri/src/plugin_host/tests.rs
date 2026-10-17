@@ -1,5 +1,14 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::io::{Cursor, Write};
+use super::git_source::{
+    parse_and_validate_git_version, parse_repo_url, validate_git_protocol,
+};
+use super::installer::{
+    acquire_install_lock, check_update_internal, commit_install, discard_staging,
+    extract_zip_archive, sink_single_root_level, stage_source, stage_zip_bytes, uninstall,
+    validate_extracted_directory, InstallSource,
+};
 use std::path::Path;
 
 use tempfile::tempdir;
@@ -627,4 +636,523 @@ async fn test_builtin_plugins_installation() {
 
     // Call builtin installation on empty root; should succeed without error
     super::builtin::ensure_builtin_plugins_installed(root).await.unwrap();
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// WP4 Tests: Git Source, Installer, Staging, Rollback, Updates
+// ─────────────────────────────────────────────────────────────
+
+fn create_test_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buf);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, content) in files {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(content).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+fn sample_manifest_json(id: &str, version: &str) -> String {
+    format!(
+        r#"{{
+  "id": "{id}",
+  "name": "Plugin {id}",
+  "version": "{version}",
+  "apiVersion": 1,
+  "engines": {{ "pluginHost": ">=1.0.0 <2.0.0" }},
+  "description": "Test plugin {id}",
+  "permissions": ["ui", "network"],
+  "main": "dist/index.js",
+  "styles": [],
+  "configSchema": {{
+    "type": "object",
+    "properties": {{
+      "secretToken": {{
+        "type": "string",
+        "format": "secret"
+      }},
+      "plainValue": {{
+        "type": "string"
+      }}
+    }}
+  }}
+}}"#
+    )
+}
+
+#[tokio::test]
+async fn test_wp4_parse_repo_url() {
+    // Normal HTTPS without .git
+    let p1 = parse_repo_url("https://github.com/alice/test-repo").unwrap();
+    assert_eq!(p1.url, "https://github.com/alice/test-repo");
+    assert_eq!(p1.r#ref, None);
+    assert_eq!(p1.subdir, None);
+
+    // Normal HTTPS with .git
+    let p2 = parse_repo_url("https://github.com/alice/test-repo.git").unwrap();
+    assert_eq!(p2.url, "https://github.com/alice/test-repo.git");
+    assert_eq!(p2.r#ref, None);
+    assert_eq!(p2.subdir, None);
+
+    // GitHub tree URL: branch only
+    let p3 = parse_repo_url("https://github.com/alice/test-repo/tree/main").unwrap();
+    assert_eq!(p3.url, "https://github.com/alice/test-repo");
+    assert_eq!(p3.r#ref.as_deref(), Some("main"));
+    assert_eq!(p3.subdir, None);
+
+    // GitHub tree URL: branch and subdir
+    let p4 = parse_repo_url("https://github.com/alice/test-repo/tree/main/plugins/workbuddy").unwrap();
+    assert_eq!(p4.url, "https://github.com/alice/test-repo");
+    assert_eq!(p4.r#ref.as_deref(), Some("main"));
+    assert_eq!(p4.subdir.as_deref(), Some("plugins/workbuddy"));
+
+    // Gitee tree URL: branch and multi-level subdir
+    let p5 = parse_repo_url("https://gitee.com/company/project/tree/dev/tools/subtool").unwrap();
+    assert_eq!(p5.url, "https://gitee.com/company/project");
+    assert_eq!(p5.r#ref.as_deref(), Some("dev"));
+    assert_eq!(p5.subdir.as_deref(), Some("tools/subtool"));
+
+    // GitLab tree URL: /-/tree/ syntax
+    let p6 = parse_repo_url("https://gitlab.com/group/repo/-/tree/v1.0.0/pkgs/my-addon").unwrap();
+    assert_eq!(p6.url, "https://gitlab.com/group/repo");
+    assert_eq!(p6.r#ref.as_deref(), Some("v1.0.0"));
+    assert_eq!(p6.subdir.as_deref(), Some("pkgs/my-addon"));
+
+    // SSH SCP-style
+    let p7 = parse_repo_url("git@github.com:alice/test-repo.git").unwrap();
+    assert_eq!(p7.url, "git@github.com:alice/test-repo.git");
+    assert_eq!(p7.r#ref, None);
+    assert_eq!(p7.subdir, None);
+
+    // SSH standard URL
+    let p8 = parse_repo_url("ssh://git@gitlab.com:2222/group/repo.git").unwrap();
+    assert_eq!(p8.url, "ssh://git@gitlab.com:2222/group/repo.git");
+    assert_eq!(p8.r#ref, None);
+    assert_eq!(p8.subdir, None);
+}
+
+#[tokio::test]
+async fn test_wp4_protocol_rejection_security() {
+    // Dangerous ext:: protocol
+    assert!(validate_git_protocol("ext::sh -c touch /tmp/pwned", false).is_err());
+    assert!(validate_git_protocol("ext::git-helper%20something", false).is_err());
+
+    // file:// protocol
+    assert!(validate_git_protocol("file:///etc/passwd", false).is_err());
+    assert!(validate_git_protocol("file://C:/Windows/System32", false).is_err());
+
+    // Local filesystem paths
+    assert!(validate_git_protocol("/var/repos/test.git", false).is_err());
+    assert!(validate_git_protocol(r"C:\Users\test\repo", false).is_err());
+    assert!(validate_git_protocol("./local/repo", false).is_err());
+    assert!(validate_git_protocol("../parent/repo", false).is_err());
+
+    // Insecure HTTP
+    assert!(validate_git_protocol("http://insecure.org/repo.git", false).is_err());
+
+    // Empty URL
+    assert!(parse_repo_url("").is_err());
+    assert!(parse_repo_url("   ").is_err());
+
+    // When allow_file is explicitly true (for tests)
+    assert!(validate_git_protocol("file:///tmp/repo.git", true).is_ok());
+    assert!(validate_git_protocol(r"C:\test\repo.git", true).is_ok());
+}
+
+#[test]
+fn test_wp4_git_version_validation() {
+    assert_eq!(
+        parse_and_validate_git_version("git version 2.25.0").unwrap(),
+        (2, 25)
+    );
+    assert_eq!(
+        parse_and_validate_git_version("git version 2.43.0.windows.1").unwrap(),
+        (2, 43)
+    );
+    assert_eq!(
+        parse_and_validate_git_version("git version 3.0.0").unwrap(),
+        (3, 0)
+    );
+
+    // Below 2.25
+    assert!(parse_and_validate_git_version("git version 2.24.9").is_err());
+    assert!(parse_and_validate_git_version("git version 1.8.3").is_err());
+    assert!(parse_and_validate_git_version("not a git version string").is_err());
+}
+
+#[tokio::test]
+async fn test_wp4_zip_slip_security() {
+    let tmp = tempdir().unwrap();
+    let target = tmp.path().join("extracted");
+
+    // Zip with traversal parent ../
+    let bad_zip_1 = create_test_zip(&[("../evil.txt", b"malicious content")]);
+    let err1 = extract_zip_archive(Cursor::new(bad_zip_1), &target).unwrap_err();
+    assert!(err1.message.contains("Zip-slip detected") || err1.message.contains("forbidden"));
+    assert!(!tmp.path().join("evil.txt").exists());
+
+    // Zip with deep traversal ../../outside.txt
+    let bad_zip_2 = create_test_zip(&[("../../outside.txt", b"evil")]);
+    let err2 = extract_zip_archive(Cursor::new(bad_zip_2), &target).unwrap_err();
+    assert!(err2.message.contains("Zip-slip detected") || err2.message.contains("forbidden"));
+
+    // Zip with absolute path entry
+    let bad_zip_3 = create_test_zip(&[("/absolute/evil.txt", b"evil")]);
+    let err3 = extract_zip_archive(Cursor::new(bad_zip_3), &target).unwrap_err();
+    assert!(err3.message.contains("Zip-slip detected") || err3.message.contains("forbidden"));
+}
+
+#[tokio::test]
+async fn test_wp4_zip_size_and_file_limits() {
+    let tmp = tempdir().unwrap();
+    let test_dir = tmp.path().join("test_limits");
+    fs::create_dir_all(&test_dir).unwrap();
+    fs::write(test_dir.join("normal.txt"), "hello").unwrap();
+    assert!(validate_extracted_directory(&test_dir).is_ok());
+}
+
+#[tokio::test]
+async fn test_wp4_single_root_dir_sink() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path().join("work");
+    fs::create_dir_all(&root).unwrap();
+
+    let nested = root.join("my-plugin-v1");
+    fs::create_dir_all(nested.join("dist")).unwrap();
+    fs::write(
+        nested.join(MANIFEST_FILE_NAME),
+        sample_manifest_json("nested-plugin", "1.0.0"),
+    )
+    .unwrap();
+    fs::write(nested.join("dist").join("index.js"), "export function activate() {}").unwrap();
+
+    assert!(!root.join(MANIFEST_FILE_NAME).exists());
+    sink_single_root_level(&root).unwrap();
+
+    // After sink, manifest is at the root
+    assert!(root.join(MANIFEST_FILE_NAME).exists());
+    assert!(root.join("dist").join("index.js").exists());
+}
+
+#[tokio::test]
+async fn test_wp4_stage_and_commit_install() {
+    let tmp = tempdir().unwrap();
+    let plugins_root = tmp.path();
+
+    let manifest_content = sample_manifest_json("wp4-stage-test", "1.0.0");
+    let zip_bytes = create_test_zip(&[
+        (MANIFEST_FILE_NAME, manifest_content.as_bytes()),
+        ("dist/index.js", b"export function activate(ctx) {}"),
+    ]);
+
+    let stage_res = stage_zip_bytes(plugins_root, &zip_bytes, Some("test.zip"))
+        .await
+        .unwrap();
+
+    assert_eq!(stage_res.preview.id, "wp4-stage-test");
+    assert_eq!(stage_res.preview.version, "1.0.0");
+    assert!(!stage_res.preview.is_upgrade);
+    assert!(stage_res.preview.problems.is_empty());
+
+    let broadcaster = std::sync::Arc::new(WebEventBroadcaster::new());
+    let emitter = EventEmitter::test_web_only(broadcaster);
+
+    let info = commit_install(plugins_root, &stage_res.staging_id, &emitter)
+        .await
+        .unwrap();
+
+    assert_eq!(info.id, "wp4-stage-test");
+    assert_eq!(info.version, "1.0.0");
+    assert!(info.enabled);
+    assert!(plugins_root.join("wp4-stage-test").exists());
+
+    let state = load_state(plugins_root).await;
+    let entry = state.plugins.get("wp4-stage-test").unwrap();
+    assert!(entry.enabled);
+    assert_eq!(entry.installed_version.as_deref(), Some("1.0.0"));
+}
+
+#[tokio::test]
+async fn test_wp4_upgrade_and_rollback_on_failure() {
+    let tmp = tempdir().unwrap();
+    let plugins_root = tmp.path();
+
+    let broadcaster = std::sync::Arc::new(WebEventBroadcaster::new());
+    let emitter = EventEmitter::test_web_only(broadcaster);
+
+    // Install v1.0.0
+    let v1_manifest = sample_manifest_json("wp4-upgrade-test", "1.0.0");
+    let v1_zip = create_test_zip(&[
+        (MANIFEST_FILE_NAME, v1_manifest.as_bytes()),
+        ("dist/index.js", b"export function activate() { return 'v1'; }"),
+    ]);
+    let stage1 = stage_zip_bytes(plugins_root, &v1_zip, Some("v1.zip"))
+        .await
+        .unwrap();
+    commit_install(plugins_root, &stage1.staging_id, &emitter)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(plugins_root.join("wp4-upgrade-test").join("dist/index.js")).unwrap(),
+        "export function activate() { return 'v1'; }"
+    );
+
+    // Stage v2.0.0
+    let v2_manifest = sample_manifest_json("wp4-upgrade-test", "2.0.0");
+    let v2_zip = create_test_zip(&[
+        (MANIFEST_FILE_NAME, v2_manifest.as_bytes()),
+        ("dist/index.js", b"export function activate() { return 'v2'; }"),
+    ]);
+    let stage2 = stage_zip_bytes(plugins_root, &v2_zip, Some("v2.zip"))
+        .await
+        .unwrap();
+
+    assert!(stage2.preview.is_upgrade);
+    assert_eq!(stage2.preview.installed_version.as_deref(), Some("1.0.0"));
+
+    // Successfully upgrade to v2.0.0
+    let info2 = commit_install(plugins_root, &stage2.staging_id, &emitter)
+        .await
+        .unwrap();
+    assert_eq!(info2.version, "2.0.0");
+    assert_eq!(
+        fs::read_to_string(plugins_root.join("wp4-upgrade-test").join("dist/index.js")).unwrap(),
+        "export function activate() { return 'v2'; }"
+    );
+
+    let state = load_state(plugins_root).await;
+    assert_eq!(
+        state.plugins.get("wp4-upgrade-test").unwrap().installed_version.as_deref(),
+        Some("2.0.0")
+    );
+}
+
+#[tokio::test]
+async fn test_wp4_staging_expiration_and_discard() {
+    let tmp = tempdir().unwrap();
+    let plugins_root = tmp.path();
+
+    let manifest = sample_manifest_json("wp4-discard-test", "1.0.0");
+    let zip_bytes = create_test_zip(&[
+        (MANIFEST_FILE_NAME, manifest.as_bytes()),
+        ("dist/index.js", b"export function activate() {}"),
+    ]);
+
+    let stage = stage_zip_bytes(plugins_root, &zip_bytes, None)
+        .await
+        .unwrap();
+
+    let staging_dir = plugins_root.join(super::STAGING_DIR_NAME).join(&stage.staging_id);
+    assert!(staging_dir.exists());
+
+    // Discard staging
+    discard_staging(plugins_root, &stage.staging_id).unwrap();
+    assert!(!staging_dir.exists());
+
+    // Attempt to commit discarded staging
+    let broadcaster = std::sync::Arc::new(WebEventBroadcaster::new());
+    let emitter = EventEmitter::test_web_only(broadcaster);
+    let err = commit_install(plugins_root, &stage.staging_id, &emitter)
+        .await
+        .unwrap_err();
+    assert!(matches!(err.code, crate::app_error::AppErrorCode::NotFound));
+}
+
+#[tokio::test]
+async fn test_wp4_concurrent_install_locks() {
+    let lock1 = acquire_install_lock("test-lock").await;
+    let lock2 = acquire_install_lock("test-lock").await;
+    assert!(std::sync::Arc::ptr_eq(&lock1, &lock2));
+
+    let lock_other = acquire_install_lock("other-lock").await;
+    assert!(!std::sync::Arc::ptr_eq(&lock1, &lock_other));
+}
+
+#[tokio::test]
+async fn test_wp4_uninstall_flow() {
+    let tmp = tempdir().unwrap();
+    let plugins_root = tmp.path();
+
+    let broadcaster = std::sync::Arc::new(WebEventBroadcaster::new());
+    let emitter = EventEmitter::test_web_only(broadcaster);
+
+    let manifest = sample_manifest_json("wp4-uninstall-test", "1.0.0");
+    let zip_bytes = create_test_zip(&[
+        (MANIFEST_FILE_NAME, manifest.as_bytes()),
+        ("dist/index.js", b"export function activate() {}"),
+    ]);
+
+    let stage = stage_zip_bytes(plugins_root, &zip_bytes, None)
+        .await
+        .unwrap();
+    commit_install(plugins_root, &stage.staging_id, &emitter)
+        .await
+        .unwrap();
+
+    // Set secret in keyring
+    crate::keyring_store::set_secret("plugin:wp4-uninstall-test:secretToken", "secret123").unwrap();
+    assert_eq!(
+        crate::keyring_store::get_secret("plugin:wp4-uninstall-test:secretToken")
+            .unwrap()
+            .as_deref(),
+        Some("secret123")
+    );
+
+    // Uninstall plugin
+    uninstall(plugins_root, "wp4-uninstall-test", true, &emitter)
+        .await
+        .unwrap();
+
+    // Verify plugin directory removed
+    assert!(!plugins_root.join("wp4-uninstall-test").exists());
+
+    // Verify secret removed
+    assert_eq!(
+        crate::keyring_store::get_secret("plugin:wp4-uninstall-test:secretToken").unwrap(),
+        None
+    );
+
+    // Verify state removed
+    let state = load_state(plugins_root).await;
+    assert!(!state.plugins.contains_key("wp4-uninstall-test"));
+}
+
+#[tokio::test]
+async fn test_wp4_git_clone_and_check_update_with_local_bare_repo() {
+    let tmp = tempdir().unwrap();
+    let bare_repo = tmp.path().join("bare.git");
+    let work_repo = tmp.path().join("work_git");
+    let plugins_root = tmp.path().join("plugins_root");
+    fs::create_dir_all(&plugins_root).unwrap();
+
+    // Initialize bare repository
+    let s = std::process::Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&bare_repo)
+        .status()
+        .unwrap();
+    assert!(s.success());
+
+    // Clone bare repository into work_repo to make initial commit
+    let s = std::process::Command::new("git")
+        .arg("clone")
+        .arg(&bare_repo)
+        .arg(&work_repo)
+        .status()
+        .unwrap();
+    assert!(s.success());
+
+    // Configure user name and email in work_repo
+    let _ = std::process::Command::new("git")
+        .current_dir(&work_repo)
+        .args(["config", "user.name", "Tester"])
+        .status();
+    let _ = std::process::Command::new("git")
+        .current_dir(&work_repo)
+        .args(["config", "user.email", "tester@example.com"])
+        .status();
+
+    // Commit v1.0.0 plugin files
+    fs::create_dir_all(work_repo.join("dist")).unwrap();
+    fs::write(
+        work_repo.join(MANIFEST_FILE_NAME),
+        sample_manifest_json("wp4-git-test", "1.0.0"),
+    )
+    .unwrap();
+    fs::write(
+        work_repo.join("dist/index.js"),
+        "export function activate() { return 1; }",
+    )
+    .unwrap();
+
+    let _ = std::process::Command::new("git")
+        .current_dir(&work_repo)
+        .args(["add", "."])
+        .status();
+    let _ = std::process::Command::new("git")
+        .current_dir(&work_repo)
+        .args(["commit", "-m", "v1.0.0"])
+        .status();
+    let _ = std::process::Command::new("git")
+        .current_dir(&work_repo)
+        .args(["push", "origin", "HEAD:main"])
+        .status();
+
+    // Stage using InstallSource::Git with allow_file = true
+    let bare_url = format!("file://{}", bare_repo.to_str().unwrap().replace('\\', "/"));
+    let stage_res = stage_source(
+        &plugins_root,
+        InstallSource::Git {
+            url: bare_url.clone(),
+            r#ref: Some("main".to_string()),
+            subdir: None,
+        },
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(stage_res.preview.id, "wp4-git-test");
+    assert_eq!(stage_res.preview.version, "1.0.0");
+    assert!(!stage_res.preview.is_upgrade);
+
+    let broadcaster = std::sync::Arc::new(WebEventBroadcaster::new());
+    let emitter = EventEmitter::test_web_only(broadcaster);
+
+    commit_install(&plugins_root, &stage_res.staging_id, &emitter)
+        .await
+        .unwrap();
+
+    // Check update when no new version exists
+    let update1 = check_update_internal(&plugins_root, "wp4-git-test", true)
+        .await
+        .unwrap();
+    assert_eq!(update1.current, "1.0.0");
+    assert_eq!(update1.latest.as_deref(), Some("1.0.0"));
+    assert!(!update1.updatable);
+    assert!(update1.staging_id.is_none());
+
+    // Commit v1.1.0 in work_repo and push to bare_repo
+    fs::write(
+        work_repo.join(MANIFEST_FILE_NAME),
+        sample_manifest_json("wp4-git-test", "1.1.0"),
+    )
+    .unwrap();
+    let _ = std::process::Command::new("git")
+        .current_dir(&work_repo)
+        .args(["commit", "-am", "v1.1.0"])
+        .status();
+    let _ = std::process::Command::new("git")
+        .current_dir(&work_repo)
+        .args(["push", "origin", "HEAD:main"])
+        .status();
+
+    // Check update when newer version exists
+    let update2 = check_update_internal(&plugins_root, "wp4-git-test", true)
+        .await
+        .unwrap();
+    assert_eq!(update2.current, "1.0.0");
+    assert_eq!(update2.latest.as_deref(), Some("1.1.0"));
+    assert!(update2.updatable);
+    assert!(update2.staging_id.is_some());
+
+    // Commit update using the returned stagingId!
+    let info_updated = commit_install(&plugins_root, &update2.staging_id.unwrap(), &emitter)
+        .await
+        .unwrap();
+    assert_eq!(info_updated.version, "1.1.0");
+
+    // Check update again: now up to date
+    let update3 = check_update_internal(&plugins_root, "wp4-git-test", true)
+        .await
+        .unwrap();
+    assert!(!update3.updatable);
+    assert!(update3.staging_id.is_none());
 }

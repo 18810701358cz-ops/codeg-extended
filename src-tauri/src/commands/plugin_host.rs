@@ -8,6 +8,11 @@ use sha2::{Digest, Sha256};
 use crate::app_error::AppCommandError;
 #[cfg(feature = "tauri-runtime")]
 use crate::paths::codeg_plugins_root;
+use crate::plugin_host::git_source::{parse_repo_url, RepoUrlParts};
+use crate::plugin_host::installer::{
+    self, commit_install, discard_staging, stage_source, uninstall, InstallSource, StageResult,
+    UpdateCheckResult,
+};
 use crate::plugin_host::manifest::{is_valid_plugin_id, PluginManifest};
 use crate::plugin_host::registry::{
     build_plugin_list_result, scan_plugins, PluginInfo, PluginListResult, MANIFEST_FILE_NAME,
@@ -458,7 +463,51 @@ pub async fn plugin_host_disable_all_core(
     plugin_host_list_core(plugins_root).await
 }
 
-// ─── Tauri Desktop Commands ──────────────────────────────────────────────────
+pub async fn plugin_host_parse_repo_url_core(
+    url: &str,
+) -> Result<RepoUrlParts, AppCommandError> {
+    parse_repo_url(url)
+}
+
+pub async fn plugin_host_stage_core(
+    plugins_root: &Path,
+    source: InstallSource,
+) -> Result<StageResult, AppCommandError> {
+    stage_source(plugins_root, source, false).await
+}
+
+pub async fn plugin_host_commit_install_core(
+    emitter: &EventEmitter,
+    plugins_root: &Path,
+    staging_id: &str,
+) -> Result<PluginInfo, AppCommandError> {
+    commit_install(plugins_root, staging_id, emitter).await
+}
+
+pub async fn plugin_host_discard_staging_core(
+    plugins_root: &Path,
+    staging_id: &str,
+) -> Result<(), AppCommandError> {
+    discard_staging(plugins_root, staging_id)
+}
+
+pub async fn plugin_host_check_update_core(
+    plugins_root: &Path,
+    id: &str,
+) -> Result<UpdateCheckResult, AppCommandError> {
+    installer::check_update(plugins_root, id).await
+}
+
+pub async fn plugin_host_uninstall_core(
+    emitter: &EventEmitter,
+    plugins_root: &Path,
+    id: &str,
+    remove_contributions: bool,
+) -> Result<(), AppCommandError> {
+    uninstall(plugins_root, id, remove_contributions, emitter).await
+}
+
+// ─────────────────── Tauri Desktop Commands ───────────────────
 
 #[cfg(feature = "tauri-runtime")]
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -550,4 +599,62 @@ pub async fn plugin_host_disable_all(
     let emitter = EventEmitter::Tauri(app);
     let plugins_root = codeg_plugins_root();
     plugin_host_disable_all_core(&emitter, &plugins_root).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_parse_repo_url(
+    url: String,
+) -> Result<RepoUrlParts, AppCommandError> {
+    plugin_host_parse_repo_url_core(&url).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_stage(
+    source: InstallSource,
+) -> Result<StageResult, AppCommandError> {
+    let plugins_root = codeg_plugins_root();
+    plugin_host_stage_core(&plugins_root, source).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_commit_install(
+    app: AppHandle,
+    staging_id: String,
+) -> Result<PluginInfo, AppCommandError> {
+    let emitter = EventEmitter::Tauri(app);
+    let plugins_root = codeg_plugins_root();
+    plugin_host_commit_install_core(&emitter, &plugins_root, &staging_id).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_discard_staging(
+    staging_id: String,
+) -> Result<(), AppCommandError> {
+    let plugins_root = codeg_plugins_root();
+    plugin_host_discard_staging_core(&plugins_root, &staging_id).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_check_update(
+    id: String,
+) -> Result<UpdateCheckResult, AppCommandError> {
+    let plugins_root = codeg_plugins_root();
+    plugin_host_check_update_core(&plugins_root, &id).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_uninstall(
+    app: AppHandle,
+    id: String,
+    remove_contributions: bool,
+) -> Result<(), AppCommandError> {
+    let emitter = EventEmitter::Tauri(app);
+    let plugins_root = codeg_plugins_root();
+    plugin_host_uninstall_core(&emitter, &plugins_root, &id, remove_contributions).await
 }

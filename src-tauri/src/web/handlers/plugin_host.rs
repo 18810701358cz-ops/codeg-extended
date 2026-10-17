@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use axum::extract::Extension;
+use axum::extract::{DefaultBodyLimit, Extension, Multipart};
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -10,6 +10,8 @@ use crate::app_error::AppCommandError;
 use crate::app_state::AppState;
 use crate::commands::plugin_host as plugin_commands;
 use crate::paths::codeg_plugins_root;
+use crate::plugin_host::git_source;
+use crate::plugin_host::installer;
 use crate::plugin_host::registry::{PluginInfo, PluginListResult};
 
 #[derive(Deserialize)]
@@ -47,6 +49,43 @@ pub struct PluginReportErrorParams {
     pub id: String,
     pub phase: String,
     pub message: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginParseRepoUrlParams {
+    pub url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginStageParams {
+    pub source: installer::InstallSource,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCommitInstallParams {
+    pub staging_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginDiscardStagingParams {
+    pub staging_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCheckUpdateParams {
+    pub id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginUninstallParams {
+    pub id: String,
+    pub remove_contributions: bool,
 }
 
 pub async fn plugin_host_list() -> Result<Json<PluginListResult>, AppCommandError> {
@@ -143,6 +182,97 @@ pub async fn plugin_host_disable_all(
         .map(Json)
 }
 
+pub async fn plugin_host_parse_repo_url(
+    Json(params): Json<PluginParseRepoUrlParams>,
+) -> Result<Json<git_source::RepoUrlParts>, AppCommandError> {
+    plugin_commands::plugin_host_parse_repo_url_core(&params.url)
+        .await
+        .map(Json)
+}
+
+pub async fn plugin_host_stage(
+    Json(params): Json<PluginStageParams>,
+) -> Result<Json<installer::StageResult>, AppCommandError> {
+    plugin_commands::plugin_host_stage_core(&codeg_plugins_root(), params.source)
+        .await
+        .map(Json)
+}
+
+pub async fn plugin_host_stage_upload(
+    mut multipart: Multipart,
+) -> Result<Json<installer::StageResult>, AppCommandError> {
+    let mut zip_bytes = Vec::new();
+    let mut file_name = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        AppCommandError::invalid_input(format!("Multipart upload error: {e}"))
+    })? {
+        if field.name() == Some("file") {
+            if let Some(name) = field.file_name() {
+                file_name = Some(name.to_string());
+            }
+            let bytes = field.bytes().await.map_err(|e| {
+                AppCommandError::io_error(format!("Failed to read multipart upload bytes: {e}"))
+            })?;
+            zip_bytes = bytes.to_vec();
+            break;
+        }
+    }
+
+    if zip_bytes.is_empty() {
+        return Err(AppCommandError::invalid_input(
+            "Multipart upload is missing the `file` field",
+        ));
+    }
+
+    installer::stage_zip_bytes(&codeg_plugins_root(), &zip_bytes, file_name.as_deref())
+        .await
+        .map(Json)
+}
+
+pub async fn plugin_host_commit_install(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<PluginCommitInstallParams>,
+) -> Result<Json<PluginInfo>, AppCommandError> {
+    plugin_commands::plugin_host_commit_install_core(
+        &state.emitter,
+        &codeg_plugins_root(),
+        &params.staging_id,
+    )
+    .await
+    .map(Json)
+}
+
+pub async fn plugin_host_discard_staging(
+    Json(params): Json<PluginDiscardStagingParams>,
+) -> Result<Json<()>, AppCommandError> {
+    plugin_commands::plugin_host_discard_staging_core(&codeg_plugins_root(), &params.staging_id)
+        .await
+        .map(Json)
+}
+
+pub async fn plugin_host_check_update(
+    Json(params): Json<PluginCheckUpdateParams>,
+) -> Result<Json<installer::UpdateCheckResult>, AppCommandError> {
+    plugin_commands::plugin_host_check_update_core(&codeg_plugins_root(), &params.id)
+        .await
+        .map(Json)
+}
+
+pub async fn plugin_host_uninstall(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<PluginUninstallParams>,
+) -> Result<Json<()>, AppCommandError> {
+    plugin_commands::plugin_host_uninstall_core(
+        &state.emitter,
+        &codeg_plugins_root(),
+        &params.id,
+        params.remove_contributions,
+    )
+    .await
+    .map(Json)
+}
+
 pub fn routes() -> Router {
     Router::new()
         .route("/plugin_host_list", post(plugin_host_list))
@@ -157,4 +287,26 @@ pub fn routes() -> Router {
             post(plugin_host_report_activated),
         )
         .route("/plugin_host_disable_all", post(plugin_host_disable_all))
+        .route(
+            "/plugin_host_parse_repo_url",
+            post(plugin_host_parse_repo_url),
+        )
+        .route("/plugin_host_stage", post(plugin_host_stage))
+        .route(
+            "/plugin_host_stage_upload",
+            post(plugin_host_stage_upload).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
+        .route(
+            "/plugin_host_commit_install",
+            post(plugin_host_commit_install),
+        )
+        .route(
+            "/plugin_host_discard_staging",
+            post(plugin_host_discard_staging),
+        )
+        .route(
+            "/plugin_host_check_update",
+            post(plugin_host_check_update),
+        )
+        .route("/plugin_host_uninstall", post(plugin_host_uninstall))
 }

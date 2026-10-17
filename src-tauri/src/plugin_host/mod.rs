@@ -7,6 +7,8 @@ use crate::app_error::AppCommandError;
 use crate::paths::codeg_plugins_root;
 
 pub mod builtin;
+pub mod git_source;
+pub mod installer;
 pub mod manifest;
 pub mod registry;
 pub mod state;
