@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
 import type { MessageNavEntry } from "@/components/message/conversation-message-nav"
-import type { DelegationCardSource } from "@/hooks/use-delegation-card-model"
 import {
   publishTranscriptInsights,
   retractTranscriptInsights,
@@ -14,19 +13,15 @@ import {
   type TranscriptInsightsActions,
 } from "@/stores/transcript-insights-store"
 
-// A row's model reads the live connection and delegation stores; what this
-// panel decides is WHICH rows to list, so a row is just its call id here.
-vi.mock("@/components/chat/sub-agent-overlay", () => ({
-  SubAgentRow: ({ source }: { source: DelegationCardSource }) => (
-    <div data-testid="sub-agent-row">{source.parentToolUseId}</div>
-  ),
-}))
 // The real host pulls in every viewer drawer; none is opened here.
 vi.mock("@/components/message/session-viewer-host", () => ({
   SessionViewerHost: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
 vi.mock("@/contexts/workspace-context", () => ({
-  useWorkspaceActions: () => ({ openSessionFileDiff: vi.fn() }),
+  useWorkspaceActions: () => ({
+    openFilePreview: vi.fn(),
+    openSessionFileDiff: vi.fn(),
+  }),
 }))
 vi.mock("@/contexts/active-folder-context", () => ({
   useActiveFolder: () => ({ activeFolder: { path: "/repo" } }),
@@ -40,7 +35,6 @@ function makeActions(): TranscriptInsightsActions {
   return {
     selectNavEntry: vi.fn(),
     retryEarlierNav: vi.fn(),
-    loadEarlierHistory: vi.fn(),
   }
 }
 
@@ -54,16 +48,8 @@ function navEntry(turnId: string, ordinal: number): MessageNavEntry {
     additions: 0,
     deletions: 0,
     files: [],
+    subAgents: [],
     hasChanges: false,
-  }
-}
-
-function source(parentToolUseId: string): DelegationCardSource {
-  return {
-    parentToolUseId,
-    input: null,
-    output: null,
-    state: "output-available",
   }
 }
 
@@ -71,7 +57,6 @@ function insights(
   over: {
     nav?: Partial<TranscriptInsights["nav"]>
     plan?: Partial<TranscriptInsights["plan"]>
-    subAgents?: Partial<TranscriptInsights["subAgents"]>
     actions?: TranscriptInsightsActions
   } = {}
 ): TranscriptInsights {
@@ -81,16 +66,10 @@ function insights(
       entries: [],
       earlier: null,
       revealingTurnId: null,
+      currentTurnId: null,
       ...over.nav,
     },
     plan: { entries: [], streaming: false, ...over.plan },
-    subAgents: {
-      reply: [],
-      conversation: [],
-      partial: false,
-      loadingOlder: false,
-      ...over.subAgents,
-    },
     actions: over.actions ?? makeActions(),
   }
 }
@@ -99,20 +78,21 @@ function publish(value: TranscriptInsights) {
   act(() => publishTranscriptInsights(CONVERSATION, "transcript", value))
 }
 
-function renderPanel(active = true) {
-  return render(
+function panel(active = true, conversationId = CONVERSATION) {
+  return (
     <NextIntlClientProvider locale="en" messages={enMessages}>
-      <SessionDetailsInsights conversationId={CONVERSATION} active={active} />
+      <SessionDetailsInsights conversationId={conversationId} active={active} />
     </NextIntlClientProvider>
   )
+}
+
+function renderPanel(active = true) {
+  return render(panel(active))
 }
 
 function navDemand(): number {
   return useTranscriptInsightsStore.getState().navDemand.get(CONVERSATION) ?? 0
 }
-
-const rowIds = () =>
-  screen.queryAllByTestId("sub-agent-row").map((row) => row.textContent)
 
 beforeEach(() => {
   localStorage.clear()
@@ -120,10 +100,12 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
-  retractTranscriptInsights(CONVERSATION, "transcript")
-  useTranscriptInsightsStore.setState({
-    byConversationId: new Map(),
-    navDemand: new Map(),
+  act(() => {
+    retractTranscriptInsights(CONVERSATION, "transcript")
+    useTranscriptInsightsStore.setState({
+      byConversationId: new Map(),
+      navDemand: new Map(),
+    })
   })
 })
 
@@ -133,7 +115,7 @@ describe("SessionDetailsInsights", () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it("shows nothing while there is no plan, sub-agent or message", () => {
+  it("shows nothing while there is no plan or message", () => {
     publish(insights())
     const { container } = renderPanel()
     expect(container).toBeEmptyDOMElement()
@@ -148,13 +130,35 @@ describe("SessionDetailsInsights", () => {
       streaming: true,
     }
 
-    it("lists the plan under its progress", () => {
+    /** The progress bar's segments, by the status each stands for. */
+    function segments(): (string | null)[] {
+      return Array.from(document.querySelectorAll("[data-plan-segment]")).map(
+        (segment) => segment.getAttribute("data-plan-segment")
+      )
+    }
+
+    it("lists the plan under its progress, a segment per step", () => {
       publish(insights({ plan }))
       renderPanel()
       const header = screen.getByRole("button", { name: /Agent Plan/ })
       expect(header).toHaveAttribute("aria-expanded", "true")
       expect(header).toHaveTextContent("1/2")
+      expect(segments()).toEqual(["completed", "in_progress"])
       expect(screen.getByText("Read the code")).toBeInTheDocument()
+      expect(screen.getByText("Write the fix")).toBeInTheDocument()
+      // The whole step, and where it stands, on hover.
+      expect(screen.getByText("Write the fix").closest("li")).toHaveAttribute(
+        "title",
+        "Write the fix\nIn Progress · Low"
+      )
+    })
+
+    it("still shows its progress and the step under way when collapsed", () => {
+      publish(insights({ plan }))
+      renderPanel()
+      fireEvent.click(screen.getByRole("button", { name: /Agent Plan/ }))
+      expect(segments()).toEqual(["completed", "in_progress"])
+      expect(screen.queryByText("Read the code")).not.toBeInTheDocument()
       expect(screen.getByText("Write the fix")).toBeInTheDocument()
     })
 
@@ -188,85 +192,6 @@ describe("SessionDetailsInsights", () => {
       expect(
         screen.getByRole("button", { name: /Agent Plan/ })
       ).toHaveTextContent("2/2")
-    })
-  })
-
-  describe("sub-agents", () => {
-    const subAgents = {
-      reply: [source("tu-3")],
-      conversation: [source("tu-1"), source("tu-2"), source("tu-3")],
-    }
-
-    it("lists the current message's sub-agents by default", () => {
-      publish(insights({ subAgents }))
-      renderPanel()
-      expect(rowIds()).toEqual(["tu-3"])
-      expect(
-        screen.getByRole("button", { name: "Current message" })
-      ).toHaveAttribute("aria-pressed", "true")
-      expect(
-        screen.getByRole("button", { name: /Sub-agents/ })
-      ).toHaveTextContent("1")
-    })
-
-    it("switches to the whole session's sub-agents, and remembers it", () => {
-      publish(insights({ subAgents }))
-      const { unmount } = renderPanel()
-      fireEvent.click(screen.getByRole("button", { name: "Current session" }))
-      expect(rowIds()).toEqual(["tu-1", "tu-2", "tu-3"])
-      expect(
-        screen.getByRole("button", { name: "Current session" })
-      ).toHaveAttribute("aria-pressed", "true")
-      expect(
-        screen.getByRole("button", { name: /Sub-agents/ })
-      ).toHaveTextContent("3")
-      unmount()
-      renderPanel()
-      expect(rowIds()).toEqual(["tu-1", "tu-2", "tu-3"])
-    })
-
-    it("says so when the current message started none", () => {
-      publish(insights({ subAgents: { ...subAgents, reply: [] } }))
-      renderPanel()
-      expect(rowIds()).toEqual([])
-      expect(
-        screen.getByText("The current message started no sub-agents.")
-      ).toBeInTheDocument()
-    })
-
-    it("is absent while the conversation started none", () => {
-      publish(insights({ subAgents: { reply: [], conversation: [] } }))
-      renderPanel()
-      expect(
-        screen.queryByRole("button", { name: /Sub-agents/ })
-      ).not.toBeInTheDocument()
-    })
-
-    it("offers to load the history above the window in the session scope", () => {
-      const actions = makeActions()
-      publish(insights({ subAgents: { ...subAgents, partial: true }, actions }))
-      renderPanel()
-      // Not in the current-message scope: the latest reply is always loaded.
-      expect(
-        screen.queryByRole("button", { name: "Load all" })
-      ).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole("button", { name: "Current session" }))
-      fireEvent.click(screen.getByRole("button", { name: "Load all" }))
-      expect(actions.loadEarlierHistory).toHaveBeenCalledTimes(1)
-    })
-
-    it("can't be asked twice while that history loads", () => {
-      localStorage.setItem(
-        "workspace:session-details:sub-agent-scope",
-        "conversation"
-      )
-      publish(
-        insights({
-          subAgents: { ...subAgents, partial: true, loadingOlder: true },
-        })
-      )
-      renderPanel()
-      expect(screen.getByRole("button", { name: "Load all" })).toBeDisabled()
     })
   })
 
@@ -312,6 +237,51 @@ describe("SessionDetailsInsights", () => {
       expect(actions.selectNavEntry).toHaveBeenCalledWith(nav.entries[1])
     })
 
+    it("highlights the message the transcript shows", () => {
+      publish(insights({ nav: { ...nav, currentTurnId: "u2" } }))
+      renderPanel()
+      expect(screen.getByText("message 2").closest("button")).toHaveAttribute(
+        "aria-current",
+        "location"
+      )
+    })
+
+    it("opens another conversation's messages its own way", () => {
+      const withFiles = (turnId: string, ordinal: number): MessageNavEntry => ({
+        ...navEntry(turnId, ordinal),
+        additions: 1,
+        files: [
+          {
+            id: `${turnId}-f`,
+            path: `/repo/${turnId}.ts`,
+            additions: 1,
+            deletions: 0,
+            diff: null,
+          },
+        ],
+        hasChanges: true,
+      })
+      const entries = [withFiles("u1", 1), withFiles("u2", 2)]
+      const latest = () => screen.getByText("message 2").closest("button")!
+      publish(insights({ nav: { count: 2, entries } }))
+      const view = render(panel(true, CONVERSATION))
+      expect(latest()).toHaveAttribute("aria-expanded", "true")
+      fireEvent.click(screen.getByRole("button", { name: "Collapse" }))
+      expect(latest()).toHaveAttribute("aria-expanded", "false")
+
+      // Turn ids repeat across conversations; what was closed doesn't.
+      act(() =>
+        publishTranscriptInsights(
+          8,
+          "other",
+          insights({ nav: { count: 2, entries } })
+        )
+      )
+      view.rerender(panel(true, 8))
+      expect(latest()).toHaveAttribute("aria-expanded", "true")
+      act(() => retractTranscriptInsights(8, "other"))
+    })
+
     it("is absent, and asks nothing, while there are no messages", () => {
       publish(insights({ nav: { count: 0, entries: [] } }))
       renderPanel()
@@ -322,13 +292,12 @@ describe("SessionDetailsInsights", () => {
     })
   })
 
-  it("lists plan, sub-agents and messages in that order", () => {
+  it("lists the plan, then the messages", () => {
     publish(
       insights({
         plan: {
           entries: [{ content: "step", status: "pending", priority: "low" }],
         },
-        subAgents: { reply: [source("tu-1")], conversation: [source("tu-1")] },
         nav: { count: 1, entries: [navEntry("u1", 1)] },
       })
     )
@@ -338,7 +307,6 @@ describe("SessionDetailsInsights", () => {
       .map((heading) => heading.textContent)
     expect(headers).toEqual([
       expect.stringContaining("Agent Plan"),
-      expect.stringContaining("Sub-agents"),
       expect.stringContaining("Message navigation"),
     ])
   })

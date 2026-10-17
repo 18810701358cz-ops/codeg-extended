@@ -15,7 +15,6 @@ import {
 const actions: TranscriptInsightsActions = {
   selectNavEntry: vi.fn(),
   retryEarlierNav: vi.fn(),
-  loadEarlierHistory: vi.fn(),
 }
 
 function navEntry(
@@ -31,6 +30,7 @@ function navEntry(
     additions: 0,
     deletions: 0,
     files: [],
+    subAgents: [],
     hasChanges: false,
     ...over,
   }
@@ -57,16 +57,19 @@ function insights(
   over: {
     nav?: Partial<TranscriptInsights["nav"]>
     plan?: Partial<TranscriptInsights["plan"]>
-    subAgents?: Partial<TranscriptInsights["subAgents"]>
     actions?: TranscriptInsightsActions
   } = {}
 ): TranscriptInsights {
   return {
     nav: {
       count: 2,
-      entries: [navEntry("u1"), navEntry("u2", { ordinal: 2 })],
+      entries: [
+        navEntry("u1", { subAgents: [source("tu-1")] }),
+        navEntry("u2", { ordinal: 2, subAgents: [source("tu-2")] }),
+      ],
       earlier: null,
       revealingTurnId: null,
+      currentTurnId: null,
       ...over.nav,
     },
     plan: {
@@ -76,13 +79,6 @@ function insights(
       ],
       streaming: true,
       ...over.plan,
-    },
-    subAgents: {
-      reply: [source("tu-2")],
-      conversation: [source("tu-1"), source("tu-2")],
-      partial: false,
-      loadingOlder: false,
-      ...over.subAgents,
     },
     actions: over.actions ?? actions,
   }
@@ -118,7 +114,6 @@ describe("mergeTranscriptInsights", () => {
     expect(next.plan.streaming).toBe(false)
     expect(next.plan.entries).toBe(prev.plan.entries)
     expect(next.nav).toBe(prev.nav)
-    expect(next.subAgents).toBe(prev.subAgents)
   })
 
   it("keeps the unchanged rows of a changed list, matched by key", () => {
@@ -131,8 +126,8 @@ describe("mergeTranscriptInsights", () => {
           count: 3,
           entries: [
             navEntry("u0", { ordinal: 1 }),
-            navEntry("u1"),
-            navEntry("u2", { ordinal: 2 }),
+            navEntry("u1", { subAgents: [source("tu-1")] }),
+            navEntry("u2", { ordinal: 2, subAgents: [source("tu-2")] }),
           ],
         },
       })
@@ -140,6 +135,29 @@ describe("mergeTranscriptInsights", () => {
     expect(next.nav.entries).toHaveLength(3)
     expect(next.nav.entries[1]).toBe(prev.nav.entries[0])
     expect(next.nav.entries[2]).toBe(prev.nav.entries[1])
+  })
+
+  // What a streaming batch republishes: the entries it holds, in a new list.
+  it("keeps the list when the rows republished are the ones it holds", () => {
+    const prev = insights()
+    const next = mergeTranscriptInsights(
+      prev,
+      insights({ nav: { entries: [...prev.nav.entries] } })
+    )
+    expect(next).toBe(prev)
+  })
+
+  it("finds the kept rows of a list whose rows moved", () => {
+    const prev = insights()
+    const [u1, u2] = prev.nav.entries
+    const u0 = navEntry("u0")
+    const next = mergeTranscriptInsights(
+      prev,
+      insights({ nav: { count: 3, entries: [u0, u1, { ...u2 }] } })
+    )
+    expect(next.nav.entries).toEqual([u0, u1, u2])
+    expect(next.nav.entries[1]).toBe(u1)
+    expect(next.nav.entries[2]).toBe(u2)
   })
 
   it("notices a changed file inside a row", () => {
@@ -171,39 +189,64 @@ describe("mergeTranscriptInsights", () => {
   })
 
   it("treats a sub-agent with equal fields in a new object as unchanged", () => {
+    const meta = () => ({ "codeg.delegation": { a: 1 } })
     const prev = insights({
-      subAgents: {
-        reply: [source("tu-1", { meta: { "codeg.delegation": { a: 1 } } })],
+      nav: {
+        entries: [
+          navEntry("u1", { subAgents: [source("tu-1", { meta: meta() })] }),
+        ],
       },
     })
     const next = mergeTranscriptInsights(
       prev,
       insights({
-        subAgents: {
-          reply: [source("tu-1", { meta: { "codeg.delegation": { a: 1 } } })],
+        nav: {
+          entries: [
+            navEntry("u1", { subAgents: [source("tu-1", { meta: meta() })] }),
+          ],
         },
       })
     )
     expect(next).toBe(prev)
   })
 
-  it("sees a sub-agent's new state", () => {
+  it("sees a sub-agent's new state, and keeps what else its message holds", () => {
+    const file = {
+      id: "f1",
+      path: "/repo/a.ts",
+      additions: 1,
+      deletions: 0,
+      diff: "+a",
+    }
+    const entry = (state: DelegationCardSource["state"]) =>
+      navEntry("u1", {
+        files: [{ ...file }],
+        subAgents: [source("tu-1"), source("tu-2", { state })],
+        hasChanges: true,
+      })
+    const prev = insights({ nav: { entries: [entry("input-available")] } })
+    const next = mergeTranscriptInsights(
+      prev,
+      insights({ nav: { entries: [entry("output-available")] } })
+    )
+    const [before] = prev.nav.entries
+    const [after] = next.nav.entries
+    expect(after).not.toBe(before)
+    expect(after.subAgents[1].state).toBe("output-available")
+    // The rows that didn't change keep their objects, and their render.
+    expect(after.subAgents[0]).toBe(before.subAgents[0])
+    expect(after.files).toBe(before.files)
+  })
+
+  it("follows the message the transcript shows", () => {
     const prev = insights()
     const next = mergeTranscriptInsights(
       prev,
-      insights({
-        subAgents: {
-          conversation: [
-            source("tu-1"),
-            source("tu-2", { state: "output-available", output: "{}" }),
-          ],
-        },
-      })
+      insights({ nav: { currentTurnId: "u2" } })
     )
-    expect(next.subAgents).not.toBe(prev.subAgents)
-    expect(next.subAgents.conversation[0]).toBe(prev.subAgents.conversation[0])
-    expect(next.subAgents.conversation[1].state).toBe("output-available")
-    expect(next.subAgents.reply).toBe(prev.subAgents.reply)
+    expect(next.nav).not.toBe(prev.nav)
+    expect(next.nav.currentTurnId).toBe("u2")
+    expect(next.nav.entries).toBe(prev.nav.entries)
   })
 
   it("counts new actions as a change", () => {

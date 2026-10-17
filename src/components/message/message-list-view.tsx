@@ -94,11 +94,17 @@ import type {
   PlanEntryInfo,
 } from "@/lib/types"
 import { copyTextToClipboard } from "@/lib/utils"
-import { VirtualizedMessageThread } from "@/components/message/virtualized-message-thread"
+import {
+  VirtualizedMessageThread,
+  type ViewportTop,
+} from "@/components/message/virtualized-message-thread"
 import { SelectionActionBubble } from "@/components/message/selection-action-bubble"
 import type { MessageNavEntry } from "@/components/message/conversation-message-nav"
 import type { MessageScrollContextValue } from "@/components/message/message-scroll-context"
-import { buildMessageNavEntries } from "@/components/message/message-nav-entries"
+import {
+  buildMessageNavEntries,
+  type LoadedMessageSubAgents,
+} from "@/components/message/message-nav-entries"
 import { useMessageNavJump } from "@/components/message/use-message-nav-jump"
 import { useConversationOutline } from "@/hooks/use-conversation-outline"
 import {
@@ -570,50 +576,115 @@ export function groupDelegationSources(
   return sources
 }
 
+/** The sub-agents one message's round lists, in order — see
+ *  `extractMessageDelegationSources`. */
+class MessageDelegationList {
+  readonly sources: DelegationCardSource[] = []
+  private readonly indexByCallId = new Map<string, number>()
+  private readonly listedTaskIds = new Set<string>()
+
+  add(source: DelegationCardSource): void {
+    const resumedTaskId = source.taskIdHint ?? null
+    if (resumedTaskId == null) {
+      const startedTaskId = startedTaskIdOf(source)
+      if (startedTaskId) this.listedTaskIds.add(startedTaskId)
+    }
+    // Another copy of a call already listed refreshes that row — before the
+    // task check below, which would otherwise take a resume's second copy for
+    // a second resume of its task and keep the stale first copy.
+    const existing = this.indexByCallId.get(source.parentToolUseId)
+    if (existing != null) {
+      this.sources[existing] = source
+      return
+    }
+    if (resumedTaskId != null) {
+      if (this.listedTaskIds.has(resumedTaskId)) return
+      this.listedTaskIds.add(resumedTaskId)
+    }
+    this.indexByCallId.set(source.parentToolUseId, this.sources.length)
+    this.sources.push(source)
+  }
+}
+
 /**
- * Every sub-agent the loaded thread started or brought back, in order, one
- * source each — the "current conversation" list of the Session Details panel
- * (the "current message" list is the last reply's `groupDelegationSources`).
+ * The sub-agents each loaded user message's round started or brought back, in
+ * order, one source each — what the message navigator of the Session Details
+ * panel lists under a message. The sources are the ones the round's delegation
+ * cards draw (`groupDelegationSources`).
  *
- * A `resume_delegation` is listed only for a task nothing earlier in the
- * thread already lists: the resume re-binds the child to its ORIGINAL
+ * Within a round, a `resume_delegation` is listed only for a task the round
+ * didn't already list: the resume re-binds the child to its ORIGINAL
  * `delegate_to_agent` call, so the original's row already tracks the resumed
- * run. A resume whose original sits above the loaded window is the only row
- * for that sub-agent, and stays. The same call seen twice (a reply rendered
- * from two copies while it settles) keeps its first position and its latest
- * fields.
+ * run. A resume of a task an earlier message started is listed under the
+ * message that resumed it too — that round put the sub-agent back to work.
+ * The same call seen twice (a reply rendered from two copies while it
+ * settles) keeps its first position and its latest fields.
+ *
+ * Replies loaded ahead of the first loaded user message — a round whose prompt
+ * sits above the loaded window — are `leading`.
  */
-export function extractConversationDelegationSources(
+export function extractMessageDelegationSources(
   items: readonly ThreadRenderItem[]
-): DelegationCardSource[] {
-  const out: DelegationCardSource[] = []
-  const indexByCallId = new Map<string, number>()
-  const listedTaskIds = new Set<string>()
+): LoadedMessageSubAgents {
+  // A list only for a round that has a sub-agent: this runs on every
+  // streaming batch, over every loaded message.
+  const lists = new Map<string, MessageDelegationList>()
+  let leading: MessageDelegationList | null = null
+  // The message whose round is being read; null ahead of the first.
+  let currentTurnId: string | null = null
+  let current: MessageDelegationList | null = null
   for (const item of items) {
-    if (item.kind !== "turn" || item.group.role !== "assistant") continue
-    for (const source of groupDelegationSources(item.group)) {
-      const resumedTaskId = source.taskIdHint ?? null
-      if (resumedTaskId == null) {
-        const startedTaskId = startedTaskIdOf(source)
-        if (startedTaskId) listedTaskIds.add(startedTaskId)
-      }
-      // Another copy of a call already listed refreshes that row — before the
-      // task check below, which would otherwise take a resume's second copy
-      // for a second resume of its task and keep the stale first copy.
-      const existing = indexByCallId.get(source.parentToolUseId)
-      if (existing != null) {
-        out[existing] = source
-        continue
-      }
-      if (resumedTaskId != null) {
-        if (listedTaskIds.has(resumedTaskId)) continue
-        listedTaskIds.add(resumedTaskId)
-      }
-      indexByCallId.set(source.parentToolUseId, out.length)
-      out.push(source)
+    if (item.kind !== "turn") continue
+    if (item.group.role === "user") {
+      currentTurnId = item.group.id
+      current = lists.get(currentTurnId) ?? null
+      continue
+    }
+    if (item.group.role !== "assistant") continue
+    const sources = groupDelegationSources(item.group)
+    if (sources.length === 0) continue
+    if (!current) {
+      current = new MessageDelegationList()
+      if (currentTurnId == null) leading = current
+      else lists.set(currentTurnId, current)
+    }
+    for (const source of sources) current.add(source)
+  }
+  const byUserTurnId = new Map<string, readonly DelegationCardSource[]>()
+  for (const [turnId, list] of lists) {
+    if (list.sources.length > 0) byUserTurnId.set(turnId, list.sources)
+  }
+  return {
+    byUserTurnId,
+    leading:
+      leading && leading.sources.length > 0
+        ? leading.sources
+        : EMPTY_DELEGATIONS,
+  }
+}
+
+/**
+ * The user message the transcript is showing, for the navigator's highlight:
+ * the one whose prompt — or whose reply — is at the top of the viewport, or
+ * the latest once the view rests at the end. Replies loaded ahead of the first
+ * loaded message belong to `earlierRoundTurnId`, the message above the loaded
+ * window whose round the window starts inside (null while that is unknown).
+ */
+export function currentNavTurnIdAt(
+  items: readonly ThreadRenderItem[],
+  top: ViewportTop,
+  earlierRoundTurnId: string | null
+): string | null {
+  const from = top.atEnd
+    ? items.length - 1
+    : Math.min(top.index, items.length - 1)
+  for (let i = from; i >= 0; i--) {
+    const item = items[i]
+    if (item.kind === "turn" && item.group.role === "user") {
+      return item.group.id
     }
   }
-  return out.length > 0 ? out : EMPTY_DELEGATIONS
+  return earlierRoundTurnId
 }
 
 function extractTextFromParts(parts: AdaptedContentPart[]): string {
@@ -1663,15 +1734,6 @@ export function MessageListView({
   const subAgentOverlayKey = lastAssistantGroup
     ? `subagents-${lastAssistantGroup.id}`
     : `subagents-history-${conversationId}`
-  // Every sub-agent of the loaded thread: the side panel's "current
-  // conversation" list. Only the conversation page has that panel.
-  const conversationDelegations = useMemo(
-    () =>
-      insightsInSidebar
-        ? extractConversationDelegationSources(threadItems)
-        : EMPTY_DELEGATIONS,
-    [insightsInSidebar, threadItems]
-  )
 
   // --- Message navigator ------------------------------------------------------
   // Lifted scroll handle so the navigator — in the Session Details side panel,
@@ -1724,6 +1786,14 @@ export function MessageListView({
   })
   const earlierOutlineState = earlierOutline.state
 
+  // The sub-agents each loaded message's round ran, from the same sources its
+  // delegation cards draw. Only while the rows are shown, like the rows.
+  const loadedSubAgents = useMemo<LoadedMessageSubAgents | undefined>(
+    () =>
+      navDemanded ? extractMessageDelegationSources(threadItems) : undefined,
+    [navDemanded, threadItems]
+  )
+
   // One entry per user message — including ones with no edits (placeholders).
   // Computed lazily: only while the side panel shows the rows, since grouping
   // parses every turn's diffs. Otherwise it stays EMPTY, keeping the streaming
@@ -1739,6 +1809,7 @@ export function MessageListView({
       earlierUserCount,
       loadedTurns: timelineTurns.map((item) => item.turn),
       threadIndexByTurnId: loadedUserMessages.threadIndexByTurnId,
+      loadedSubAgents,
     })
     return entries.length > 0 ? entries : EMPTY_NAV_ENTRIES
   }, [
@@ -1747,7 +1818,34 @@ export function MessageListView({
     earlierUserCount,
     timelineTurns,
     loadedUserMessages,
+    loadedSubAgents,
   ])
+
+  // The message the transcript is showing, which the navigator highlights:
+  // the one at the top of the viewport (or the one whose reply is there), or
+  // the latest once the view is at the end. Tracked only while the rows are
+  // shown — the list reports its top row only to a listener.
+  const [viewportTop, setViewportTop] = useState<ViewportTop | null>(null)
+  // Forgotten once nobody shows the rows, so showing them again never starts
+  // from where the view was back then.
+  if (!navDemanded && viewportTop !== null) setViewportTop(null)
+  // The last message the outline lists: the one whose replies the loaded
+  // window starts with, when it starts inside a round.
+  const earlierRoundTurnId = useMemo(() => {
+    if (earlierOutlineState.status !== "ready") return null
+    const { turns } = earlierOutlineState
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].role === "user") return turns[i].id
+    }
+    return null
+  }, [earlierOutlineState])
+  const currentNavTurnId = useMemo(
+    () =>
+      navDemanded && viewportTop != null
+        ? currentNavTurnIdAt(threadItems, viewportTop, earlierRoundTurnId)
+        : null,
+    [navDemanded, viewportTop, threadItems, earlierRoundTurnId]
+  )
 
   const navJump = useMessageNavJump({
     conversationId,
@@ -1774,16 +1872,8 @@ export function MessageListView({
     () => ({
       selectNavEntry: navJump.select,
       retryEarlierNav: earlierOutline.retry,
-      loadEarlierHistory: () => {
-        void loadOlderTurnsThrough(conversationId, 0)
-      },
     }),
-    [
-      navJump.select,
-      earlierOutline.retry,
-      loadOlderTurnsThrough,
-      conversationId,
-    ]
+    [navJump.select, earlierOutline.retry]
   )
   const navEarlier =
     earlierOutlineState.status === "loading" ||
@@ -1801,14 +1891,9 @@ export function MessageListView({
               entries: navEntries,
               earlier: navEarlier,
               revealingTurnId: navRevealingTurnId,
+              currentTurnId: currentNavTurnId,
             },
             plan: { entries: sidebarPlanEntries, streaming: replyStreaming },
-            subAgents: {
-              reply: lastAssistantDelegations,
-              conversation: conversationDelegations,
-              partial: hasOlderTurns,
-              loadingOlder: loadingOlderTurns,
-            },
             actions: insightsActions,
           }
         : null,
@@ -1818,12 +1903,9 @@ export function MessageListView({
       navEntries,
       navEarlier,
       navRevealingTurnId,
+      currentNavTurnId,
       sidebarPlanEntries,
       replyStreaming,
-      lastAssistantDelegations,
-      conversationDelegations,
-      hasOlderTurns,
-      loadingOlderTurns,
       insightsActions,
     ]
   )
@@ -1947,6 +2029,7 @@ export function MessageListView({
             loadingOlderLabel={t("loadingEarlier")}
             prependEpoch={session?.olderTurnsPrependEpoch ?? 0}
             prependScopeKey={conversationId}
+            onViewportTopChange={navDemanded ? setViewportTop : undefined}
           />
           {/* Stacked, not overlapping: both pin to the thread's bottom centre,
           so the scroll button steps up while the pill is showing. */}

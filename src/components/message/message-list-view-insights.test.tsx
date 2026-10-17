@@ -29,9 +29,15 @@ import {
 } from "@/stores/transcript-insights-store"
 import type { MessageScrollContextValue } from "./message-scroll-context"
 
-const { stableT, scrollToIndex } = vi.hoisted(() => ({
+const { stableT, scrollToIndex, viewport } = vi.hoisted(() => ({
   stableT: (key: string) => key,
   scrollToIndex: vi.fn(),
+  // What the list was last told to report its top row to.
+  viewport: {
+    listener: undefined as
+      | undefined
+      | ((top: { index: number; atEnd: boolean }) => void),
+  },
 }))
 
 vi.mock("next-intl", () => ({ useTranslations: () => stableT }))
@@ -43,12 +49,15 @@ vi.mock("@/lib/api", () => ({
 vi.mock("@/components/message/virtualized-message-thread", () => ({
   VirtualizedMessageThread: ({
     scrollApiRef,
+    onViewportTopChange,
   }: {
     scrollApiRef: RefObject<MessageScrollContextValue | null>
+    onViewportTopChange?: (top: { index: number; atEnd: boolean }) => void
   }) => {
     scrollApiRef.current = {
       scrollToIndex,
     } as unknown as MessageScrollContextValue
+    viewport.listener = onViewportTopChange
     return null
   },
 }))
@@ -227,6 +236,7 @@ function published(): TranscriptInsights | undefined {
 beforeEach(() => {
   resetConversationRuntimeStore()
   scrollToIndex.mockClear()
+  viewport.listener = undefined
 })
 
 afterEach(() => {
@@ -246,7 +256,7 @@ describe("MessageListView insights", () => {
     expect(published()).toBeUndefined()
   })
 
-  it("hands the plan, sub-agents and message count to the side panel instead", () => {
+  it("hands the plan and the message count to the side panel instead", () => {
     seed()
     renderTranscript(true)
     expect(screen.queryByTestId("plan-overlay")).not.toBeInTheDocument()
@@ -261,13 +271,6 @@ describe("MessageListView insights", () => {
       "Write the fix",
     ])
     expect(insights?.plan.streaming).toBe(false)
-    expect(
-      insights?.subAgents.reply.map((source) => source.parentToolUseId)
-    ).toEqual(["tu-2"])
-    expect(
-      insights?.subAgents.conversation.map((source) => source.parentToolUseId)
-    ).toEqual(["tu-1", "tu-2"])
-    expect(insights?.subAgents.partial).toBe(false)
   })
 
   it("builds the navigator rows on demand, and jumps through its own list", () => {
@@ -281,6 +284,12 @@ describe("MessageListView insights", () => {
       "first message",
       "second message",
     ])
+    // Each message lists the sub-agents its round started.
+    expect(
+      entries.map((entry) =>
+        entry.subAgents.map((source) => source.parentToolUseId)
+      )
+    ).toEqual([["tu-1"], ["tu-2"]])
     const second = entries[1]
     expect(second.threadIndex).not.toBeNull()
     act(() => published()?.actions.selectNavEntry(second))
@@ -290,7 +299,7 @@ describe("MessageListView insights", () => {
     })
   })
 
-  it("counts the messages above a loaded window and says the sub-agent list is partial", () => {
+  it("counts the messages above a loaded window", () => {
     seed({
       turns_offset: 6,
       turns_total: 10,
@@ -299,7 +308,30 @@ describe("MessageListView insights", () => {
     })
     renderTranscript(true)
     expect(published()?.nav.count).toBe(5)
-    expect(published()?.subAgents.partial).toBe(true)
+  })
+
+  it("follows the message the transcript shows while the rows are wanted", () => {
+    seed()
+    renderTranscript(true)
+    // Nobody shows the rows: the list isn't asked where it is.
+    expect(viewport.listener).toBeUndefined()
+    expect(published()?.nav.currentTurnId).toBeNull()
+
+    let release = () => {}
+    act(() => {
+      release = demandTranscriptNav(CID)
+    })
+    // Thread: u1, its reply, u2, its reply.
+    act(() => viewport.listener?.({ index: 1, atEnd: false }))
+    expect(published()?.nav.currentTurnId).toBe("u1")
+    act(() => viewport.listener?.({ index: 2, atEnd: false }))
+    expect(published()?.nav.currentTurnId).toBe("u2")
+    act(() => viewport.listener?.({ index: 0, atEnd: true }))
+    expect(published()?.nav.currentTurnId).toBe("u2")
+
+    act(() => release())
+    expect(viewport.listener).toBeUndefined()
+    expect(published()?.nav.currentTurnId).toBeNull()
   })
 
   it("takes its insights back when it unmounts", () => {

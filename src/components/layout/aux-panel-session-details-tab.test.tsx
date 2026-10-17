@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react"
+import { fireEvent, render, waitFor, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest"
 
@@ -20,6 +20,13 @@ vi.mock("@/components/agent-icon", () => ({ AgentIcon: () => null }))
 // Stats are always supplied here, so the cold-fetch path must never fire; stub
 // the API so an accidental call is inert rather than a real transport hit.
 vi.mock("@/lib/api", () => ({ getFolderConversation: vi.fn() }))
+const { copyTextToClipboard } = vi.hoisted(() => ({
+  copyTextToClipboard: vi.fn(async () => true),
+}))
+vi.mock("@/lib/utils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/utils")>()),
+  copyTextToClipboard,
+}))
 
 // The insights sections have their own tests; here, only what they're handed.
 const insightsProps = vi.hoisted(
@@ -93,6 +100,7 @@ function setupScene(opts: {
   hasActiveConversation: boolean
   runtimeConversationId?: number
   activeTab?: string
+  conversation?: Partial<DbConversationSummary>
 }) {
   mockAux.mockReturnValue({
     isOpen: true,
@@ -116,7 +124,11 @@ function setupScene(opts: {
     sel({ byConversationId: new Map() })
   )
   mockWorkspace.mockImplementation((sel: (s: WorkspaceSlice) => unknown) =>
-    sel({ conversations: opts.hasActiveConversation ? [summary()] : [] })
+    sel({
+      conversations: opts.hasActiveConversation
+        ? [summary(opts.conversation)]
+        : [],
+    })
   )
 }
 
@@ -148,6 +160,50 @@ describe("SessionDetailsTab", () => {
     expect(getByText("Claude Code")).toBeTruthy()
     expect(queryByTestId("branch-dropdown")).toBeNull()
     expect(queryByTestId("command-dropdown")).toBeNull()
+  })
+
+  it("lists the session's properties on its card", () => {
+    setupScene({
+      hasActiveConversation: true,
+      conversation: { external_id: "5a1e3c9d-7b2f-4d8e-9a10-3c4b5d6e7f80" },
+    })
+    const { getByText, getAllByRole } = renderTab()
+    const properties = getAllByRole("term").map((term) => [
+      term.textContent,
+      term.nextElementSibling?.textContent,
+    ])
+    expect(properties).toEqual([
+      ["Model", "claude-opus-4-8"],
+      ["Git Branch", "main"],
+      ["Session ID", "7"],
+      ["Extension ID", "5a1e3c9d-7b2f-4d8e-9a10-3c4b5d6e7f80"],
+    ])
+    // The status sits by the agent.
+    expect(getByText("In Progress")).toBeInTheDocument()
+  })
+
+  it("copies an id from its row", async () => {
+    setupScene({
+      hasActiveConversation: true,
+      conversation: { external_id: "5a1e3c9d-7b2f-4d8e-9a10-3c4b5d6e7f80" },
+    })
+    const { getByRole } = renderTab()
+    fireEvent.click(getByRole("button", { name: "Copy Extension ID" }))
+    expect(copyTextToClipboard).toHaveBeenCalledWith(
+      "5a1e3c9d-7b2f-4d8e-9a10-3c4b5d6e7f80"
+    )
+    await waitFor(() =>
+      expect(
+        getByRole("button", { name: "Copied Extension ID" })
+      ).toBeInTheDocument()
+    )
+  })
+
+  it("adds the parent conversation when there is one", () => {
+    setupScene({ hasActiveConversation: true, conversation: { parent_id: 3 } })
+    const { getByText } = renderTab()
+    const parent = getByText("Parent Session")
+    expect(within(parent.parentElement!).getByText("3")).toBeInTheDocument()
   })
 
   it("shows the empty state when there is no active session", () => {

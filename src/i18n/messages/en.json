@@ -2266,13 +2266,7 @@
       "none": "—",
       "copyField": "Copy {field}",
       "copiedField": "Copied {field}",
-      "assistant": "Assistant",
-      "subAgentScopeLabel": "Which sub-agents to show",
-      "subAgentScopeReply": "Current message",
-      "subAgentScopeConversation": "Current session",
-      "subAgentsReplyEmpty": "The current message started no sub-agents.",
-      "subAgentsPartial": "Earlier messages aren't loaded yet, so their sub-agents aren't listed.",
-      "subAgentsLoadAll": "Load all"
+      "assistant": "Assistant"
     },
     "conversationCard": {
       "untitledConversation": "Untitled conversation",
@@ -3963,8 +3957,13 @@
         "loadingEarlier": "Loading earlier messages…",
         "loadEarlier": "Load earlier messages",
         "fileCount": "{count, plural, one {# file} other {# files}}",
-        "remove": "Remove",
-        "noDiffDataAvailable": "No diff data available for {filePath}"
+        "subAgentCount": "{count, plural, one {# sub-agent} other {# sub-agents}}",
+        "showDiff": "Show the changes to {filePath}",
+        "hideDiff": "Hide the changes to {filePath}",
+        "openFile": "Open {filePath}",
+        "collapse": "Collapse",
+        "currentMessage": "Current message",
+        "scrollToCurrent": "Scroll to the current message (#{ordinal})"
       },
       "replyArtifacts": {
         "title": "Files changed",

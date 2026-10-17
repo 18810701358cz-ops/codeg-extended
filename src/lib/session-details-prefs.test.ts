@@ -2,13 +2,12 @@ import { act, renderHook } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
+  loadSessionDetailsDiffView,
   loadSessionDetailsSectionOpen,
-  loadSubAgentScope,
+  useSessionDetailsDiffView,
   useSessionDetailsSectionOpen,
-  useSubAgentScope,
 } from "./session-details-prefs"
 
-const SCOPE_KEY = "workspace:session-details:sub-agent-scope"
 const sectionKey = (section: string) =>
   `workspace:session-details:open:${section}`
 
@@ -29,17 +28,15 @@ afterEach(() => {
 })
 
 describe("session details prefs", () => {
-  it("opens every section and lists the current message's sub-agents by default", () => {
+  it("opens every section by default", () => {
     expect(loadSessionDetailsSectionOpen("plan")).toBe(true)
-    expect(loadSessionDetailsSectionOpen("subAgents")).toBe(true)
     expect(loadSessionDetailsSectionOpen("messageNav")).toBe(true)
-    expect(loadSubAgentScope()).toBe("reply")
   })
 
   it("stores a change, and every mounted reader follows it", () => {
     const first = renderHook(() => useSessionDetailsSectionOpen("plan"))
     const second = renderHook(() => useSessionDetailsSectionOpen("plan"))
-    const other = renderHook(() => useSessionDetailsSectionOpen("subAgents"))
+    const other = renderHook(() => useSessionDetailsSectionOpen("messageNav"))
     act(() => first.result.current[1](false))
     expect(first.result.current[0]).toBe(false)
     expect(second.result.current[0]).toBe(false)
@@ -50,9 +47,9 @@ describe("session details prefs", () => {
   // A queued `storage` event can carry a value older than what is stored by
   // the time it arrives: the store, not the event, is the truth.
   it("follows another window's change as stored, not as the event says", () => {
-    const { result } = renderHook(() => useSubAgentScope())
-    act(() => storedElsewhere(SCOPE_KEY, "conversation", "reply"))
-    expect(result.current[0]).toBe("conversation")
+    const { result } = renderHook(() => useSessionDetailsSectionOpen("plan"))
+    act(() => storedElsewhere(sectionKey("plan"), "closed", "open"))
+    expect(result.current[0]).toBe(false)
   })
 
   it("keeps a change the storage refused for this window, until another window writes", () => {
@@ -78,14 +75,14 @@ describe("session details prefs", () => {
   it("picks up a change stored between its first read and its subscription", () => {
     let written = false
     const { result } = renderHook(() => {
-      const [scope] = useSubAgentScope()
+      const [open] = useSessionDetailsSectionOpen("messageNav")
       if (!written) {
         written = true
-        localStorage.setItem(SCOPE_KEY, "conversation")
+        localStorage.setItem(sectionKey("messageNav"), "closed")
       }
-      return scope
+      return open
     })
-    expect(result.current).toBe("conversation")
+    expect(result.current).toBe(false)
   })
 
   it("hears another window while no panel is mounted", () => {
@@ -108,8 +105,40 @@ describe("session details prefs", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new DOMException("denied", "SecurityError")
     })
-    const { result } = renderHook(() => useSubAgentScope())
-    expect(result.current[0]).toBe("reply")
+    const { result } = renderHook(() =>
+      useSessionDetailsSectionOpen("messageNav")
+    )
+    expect(result.current[0]).toBe(true)
     expect(loadSessionDetailsSectionOpen("plan")).toBe(true)
+  })
+
+  describe("diff view", () => {
+    const DIFF_VIEW_KEY = "workspace:session-details:diff-view"
+
+    it("lays a diff out inline by default", () => {
+      expect(loadSessionDetailsDiffView()).toBe("unified")
+    })
+
+    it("stores a switch, and every mounted reader follows it", () => {
+      const first = renderHook(() => useSessionDetailsDiffView())
+      const second = renderHook(() => useSessionDetailsDiffView())
+      act(() => first.result.current[1]("split"))
+      expect(first.result.current[0]).toBe("split")
+      expect(second.result.current[0]).toBe("split")
+      expect(localStorage.getItem(DIFF_VIEW_KEY)).toBe("split")
+      // Its own choice: the diff previews elsewhere keep theirs.
+      expect(localStorage.getItem("workspace:diff-view-mode")).toBeNull()
+    })
+
+    it("follows another window's switch", () => {
+      const { result } = renderHook(() => useSessionDetailsDiffView())
+      act(() => storedElsewhere(DIFF_VIEW_KEY, "split"))
+      expect(result.current[0]).toBe("split")
+    })
+
+    it("reads an unknown stored value as inline", () => {
+      localStorage.setItem(DIFF_VIEW_KEY, "sideways")
+      expect(loadSessionDetailsDiffView()).toBe("unified")
+    })
   })
 })

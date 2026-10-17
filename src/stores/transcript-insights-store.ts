@@ -7,11 +7,11 @@ import type { PlanEntryInfo } from "@/lib/types"
 
 /**
  * What a conversation's transcript knows about itself that the Session Details
- * side panel shows: the message navigator, the agent's plan and the sub-agents
- * it delegated to.
+ * side panel shows: the agent's plan, and the message navigator — each message
+ * with the files it changed and the sub-agents it delegated to.
  *
- * All three are derived inside `MessageListView`, which owns the adapted
- * thread they come from and the virtual list a navigator jump has to scroll.
+ * Both are derived inside `MessageListView`, which owns the adapted thread
+ * they come from and the virtual list a navigator jump has to scroll.
  * The side panel sits in another branch of the tree, so the transcript of the
  * conversation page publishes them here, keyed by the runtime conversation id
  * (the tab's `runtimeConversationId ?? conversationId`), and the panel reads
@@ -20,7 +20,8 @@ import type { PlanEntryInfo } from "@/lib/types"
  * `publishTranscriptInsights` keeps every unchanged part of the previous value
  * (see `mergeTranscriptInsights`), so a streaming batch that changes none of
  * this re-renders no reader: the transcript re-derives on every batch, but the
- * store only moves when a plan entry, a sub-agent or a navigator row does.
+ * store only moves when a plan entry or a navigator row — one of its files or
+ * sub-agents — does.
  */
 
 export interface TranscriptNavInsights {
@@ -34,6 +35,10 @@ export interface TranscriptNavInsights {
   earlier: "loading" | "error" | null
   /** The message being paged in for a jump, if any. */
   revealingTurnId: string | null
+  /** The message the transcript is showing — the one at the top of its
+   *  viewport, or the latest once it is scrolled to the end. Only tracked
+   *  while the rows are wanted; null otherwise. */
+  currentTurnId: string | null
 }
 
 export interface TranscriptPlanInsights {
@@ -43,32 +48,17 @@ export interface TranscriptPlanInsights {
   streaming: boolean
 }
 
-export interface TranscriptSubAgentInsights {
-  /** The delegations in the latest agent reply. */
-  reply: readonly DelegationCardSource[]
-  /** The delegations across the whole loaded thread, one row per sub-agent. */
-  conversation: readonly DelegationCardSource[]
-  /** History above the loaded window isn't loaded, so `conversation` can be
-   *  missing the sub-agents it started. */
-  partial: boolean
-  /** That history is being paged in. */
-  loadingOlder: boolean
-}
-
 export interface TranscriptInsightsActions {
   /** Scroll the transcript to a message, paging it in first when it sits
    *  above the loaded window. */
   selectNavEntry: (entry: MessageNavEntry) => void
   /** Fetch the outline of the messages above the window again. */
   retryEarlierNav: () => void
-  /** Page in the whole history above the loaded window. */
-  loadEarlierHistory: () => void
 }
 
 export interface TranscriptInsights {
   nav: TranscriptNavInsights
   plan: TranscriptPlanInsights
-  subAgents: TranscriptSubAgentInsights
   /** Must keep its identity for as long as its publisher lives: a new object
    *  counts as a change. */
   actions: TranscriptInsightsActions
@@ -106,19 +96,13 @@ function sameFile(a: FileChangeStat, b: FileChangeStat): boolean {
   )
 }
 
-function sameNavEntry(a: MessageNavEntry, b: MessageNavEntry): boolean {
+function sameList<T>(
+  a: readonly T[],
+  b: readonly T[],
+  same: (x: T, y: T) => boolean
+): boolean {
   return (
-    a.turnId === b.turnId &&
-    a.threadIndex === b.threadIndex &&
-    a.turnIndex === b.turnIndex &&
-    a.ordinal === b.ordinal &&
-    a.label === b.label &&
-    a.additions === b.additions &&
-    a.deletions === b.deletions &&
-    a.hasChanges === b.hasChanges &&
-    (a.files === b.files ||
-      (a.files.length === b.files.length &&
-        a.files.every((file, i) => sameFile(file, b.files[i]))))
+    a === b || (a.length === b.length && a.every((item, i) => same(item, b[i])))
   )
 }
 
@@ -161,25 +145,66 @@ function sameDelegationSource(
   )
 }
 
+function sameNavEntry(a: MessageNavEntry, b: MessageNavEntry): boolean {
+  return (
+    a === b ||
+    (a.turnId === b.turnId &&
+      a.threadIndex === b.threadIndex &&
+      a.turnIndex === b.turnIndex &&
+      a.ordinal === b.ordinal &&
+      a.label === b.label &&
+      a.additions === b.additions &&
+      a.deletions === b.deletions &&
+      a.hasChanges === b.hasChanges &&
+      sameList(a.files, b.files, sameFile) &&
+      sameList(a.subAgents, b.subAgents, sameDelegationSource))
+  )
+}
+
 /**
  * `next`, except that every item equal to the one `prev` holds under the same
  * key is `prev`'s object — and `prev` itself when nothing changed. Keyed rather
  * than positional so paging older history in (a prepend) keeps the rows that
  * were already there.
+ *
+ * An item is first looked for where it was, and the key map is only built for
+ * one that moved: a streaming batch republishes the whole list with every item
+ * in its place, mostly as the very objects `prev` holds.
  */
 function mergeKeyedList<T>(
   prev: readonly T[],
   next: readonly T[],
   keyOf: (item: T) => string,
-  same: (a: T, b: T) => boolean
+  same: (a: T, b: T) => boolean,
+  /** Combines an item that changed with its previous self, keeping whatever
+   *  of it did not. Omitted: the new item is taken whole. */
+  update?: (old: T, item: T) => T
 ): readonly T[] {
   if (prev === next) return prev
-  const previous = new Map<string, T>()
-  for (const item of prev) previous.set(keyOf(item), item)
+  let previous: Map<string, T> | null = null
+  const previousOf = (item: T): T | undefined => {
+    if (!previous) {
+      previous = new Map()
+      for (const p of prev) previous.set(keyOf(p), p)
+    }
+    return previous.get(keyOf(item))
+  }
   let changed = prev.length !== next.length
   const merged = next.map((item, i) => {
-    const old = previous.get(keyOf(item))
-    const kept = old !== undefined && same(old, item) ? old : item
+    const inPlace = prev[i]
+    if (inPlace === item) return item
+    const old =
+      inPlace !== undefined && keyOf(inPlace) === keyOf(item)
+        ? inPlace
+        : previousOf(item)
+    const kept =
+      old === undefined
+        ? item
+        : same(old, item)
+          ? old
+          : update
+            ? update(old, item)
+            : item
     if (kept !== prev[i]) changed = true
     return kept
   })
@@ -196,6 +221,31 @@ function mergePositionalList<T>(
   return next.every((item, i) => same(prev[i], item)) ? prev : next
 }
 
+/**
+ * A navigator entry that changed, keeping the files and sub-agents of it that
+ * did not: a reply streaming into the latest message changes that entry, and
+ * the rows under it that it left alone keep their objects — and with them
+ * their memoized render.
+ */
+function updateNavEntry(
+  old: MessageNavEntry,
+  entry: MessageNavEntry
+): MessageNavEntry {
+  const files = mergeKeyedList(
+    old.files,
+    entry.files,
+    (file) => file.id,
+    sameFile
+  )
+  const subAgents = mergeKeyedList(
+    old.subAgents,
+    entry.subAgents,
+    (source) => source.parentToolUseId,
+    sameDelegationSource
+  )
+  return { ...entry, files, subAgents }
+}
+
 function mergeNav(
   prev: TranscriptNavInsights,
   next: TranscriptNavInsights
@@ -204,13 +254,15 @@ function mergeNav(
     prev.entries,
     next.entries,
     (entry) => entry.turnId,
-    sameNavEntry
+    sameNavEntry,
+    updateNavEntry
   )
   if (
     entries === prev.entries &&
     next.count === prev.count &&
     next.earlier === prev.earlier &&
-    next.revealingTurnId === prev.revealingTurnId
+    next.revealingTurnId === prev.revealingTurnId &&
+    next.currentTurnId === prev.currentTurnId
   ) {
     return prev
   }
@@ -228,34 +280,6 @@ function mergePlan(
   return { ...next, entries }
 }
 
-function mergeSubAgents(
-  prev: TranscriptSubAgentInsights,
-  next: TranscriptSubAgentInsights
-): TranscriptSubAgentInsights {
-  const keyOf = (source: DelegationCardSource) => source.parentToolUseId
-  const reply = mergeKeyedList(
-    prev.reply,
-    next.reply,
-    keyOf,
-    sameDelegationSource
-  )
-  const conversation = mergeKeyedList(
-    prev.conversation,
-    next.conversation,
-    keyOf,
-    sameDelegationSource
-  )
-  if (
-    reply === prev.reply &&
-    conversation === prev.conversation &&
-    next.partial === prev.partial &&
-    next.loadingOlder === prev.loadingOlder
-  ) {
-    return prev
-  }
-  return { ...next, reply, conversation }
-}
-
 /**
  * `next` with every part that equals `prev`'s part replaced by `prev`'s, and
  * `prev` itself when nothing changed — so a reader that selects one part
@@ -268,16 +292,10 @@ export function mergeTranscriptInsights(
   if (prev == null || prev === next) return next
   const nav = mergeNav(prev.nav, next.nav)
   const plan = mergePlan(prev.plan, next.plan)
-  const subAgents = mergeSubAgents(prev.subAgents, next.subAgents)
-  if (
-    nav === prev.nav &&
-    plan === prev.plan &&
-    subAgents === prev.subAgents &&
-    next.actions === prev.actions
-  ) {
+  if (nav === prev.nav && plan === prev.plan && next.actions === prev.actions) {
     return prev
   }
-  return { nav, plan, subAgents, actions: next.actions }
+  return { nav, plan, actions: next.actions }
 }
 
 /** Publish (or update) a conversation's insights. The latest publisher owns

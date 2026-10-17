@@ -1,6 +1,6 @@
 // View preferences of the Session Details side panel: which of its sections
-// (plan, sub-agents, message navigator) are open, and whether the sub-agent
-// section lists the current message's sub-agents or the whole conversation's.
+// (plan, message navigator) are open, and how the message navigator lays out
+// a file's diff.
 //
 // Global, persisted in localStorage — one key per preference, so two windows
 // flipping different ones never overwrite each other — and read through
@@ -14,15 +14,13 @@
 
 import { useCallback, useSyncExternalStore } from "react"
 
-export type SessionDetailsSection = "plan" | "subAgents" | "messageNav"
+import type { DiffViewMode } from "@/lib/diff-view-mode-prefs"
 
-/** "reply": the sub-agents of the latest agent reply. "conversation": every
- *  sub-agent of the conversation. */
-export type SubAgentScope = "reply" | "conversation"
+export type SessionDetailsSection = "plan" | "messageNav"
 
 const KEY_PREFIX = "workspace:session-details:"
 const SECTION_OPEN_KEY_PREFIX = `${KEY_PREFIX}open:`
-const SUB_AGENT_SCOPE_KEY = `${KEY_PREFIX}sub-agent-scope`
+const DIFF_VIEW_KEY = `${KEY_PREFIX}diff-view`
 
 // Values this window could not store (quota, storage disabled). They still
 // apply here — they just don't persist or reach other windows — until a later
@@ -88,10 +86,6 @@ function parseOpen(raw: string | null): boolean {
   return raw !== "closed"
 }
 
-function parseScope(raw: string | null): SubAgentScope {
-  return raw === "conversation" ? "conversation" : "reply"
-}
-
 export function loadSessionDetailsSectionOpen(
   section: SessionDetailsSection
 ): boolean {
@@ -103,14 +97,6 @@ export function saveSessionDetailsSectionOpen(
   open: boolean
 ): void {
   writePref(sectionOpenKey(section), open ? "open" : "closed")
-}
-
-export function loadSubAgentScope(): SubAgentScope {
-  return parseScope(readPref(SUB_AGENT_SCOPE_KEY))
-}
-
-export function saveSubAgentScope(scope: SubAgentScope): void {
-  writePref(SUB_AGENT_SCOPE_KEY, scope)
 }
 
 /** The raw stored value of a preference, kept in sync with every writer. */
@@ -135,10 +121,32 @@ export function useSessionDetailsSectionOpen(
   return [open, setOpen]
 }
 
-/** Which sub-agents the sub-agent section lists, plus the persisting setter. */
-export function useSubAgentScope(): [
-  SubAgentScope,
-  (scope: SubAgentScope) => void,
+function parseDiffView(raw: string | null): DiffViewMode {
+  // Inline unless explicitly switched: the panel is narrow.
+  return raw === "split" ? "split" : "unified"
+}
+
+export function loadSessionDetailsDiffView(): DiffViewMode {
+  return parseDiffView(readPref(DIFF_VIEW_KEY))
+}
+
+export function saveSessionDetailsDiffView(mode: DiffViewMode): void {
+  writePref(DIFF_VIEW_KEY, mode)
+}
+
+/**
+ * How the message navigator lays out a file's diff, plus the setter that
+ * persists it. The panel keeps a choice of its own rather than following the
+ * diff previews elsewhere (`useDiffViewMode`): it is a narrow column, where
+ * the inline layout is the one that fits, beside a transcript wide enough for
+ * either.
+ */
+export function useSessionDetailsDiffView(): [
+  DiffViewMode,
+  (mode: DiffViewMode) => void,
 ] {
-  return [parseScope(useStoredPref(SUB_AGENT_SCOPE_KEY)), saveSubAgentScope]
+  return [
+    parseDiffView(useStoredPref(DIFF_VIEW_KEY)),
+    saveSessionDetailsDiffView,
+  ]
 }

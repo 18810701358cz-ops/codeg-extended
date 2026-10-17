@@ -203,10 +203,9 @@ export const AgentPlanOverlay = memo(function AgentPlanOverlay({
 
 /**
  * The plan's entries, one card each: status icon, text, status and priority.
- * The body of the inline overlay's card, and of the Session Details side
- * panel's plan section.
+ * The body of the inline overlay's card.
  */
-export function AgentPlanEntryList({
+function AgentPlanEntryList({
   entries,
   isStreaming,
   className,

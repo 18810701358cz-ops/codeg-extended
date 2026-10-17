@@ -2266,13 +2266,7 @@
       "none": "—",
       "copyField": "نسخ {field}",
       "copiedField": "تم نسخ {field}",
-      "assistant": "المساعد",
-      "subAgentScopeLabel": "الوكلاء الفرعيون المعروضون",
-      "subAgentScopeReply": "الرسالة الحالية",
-      "subAgentScopeConversation": "الجلسة الحالية",
-      "subAgentsReplyEmpty": "لم تبدأ الرسالة الحالية أي وكيل فرعي.",
-      "subAgentsPartial": "الرسائل السابقة غير محمّلة بعد، لذا لا يظهر الوكلاء الفرعيون الذين بدأتهم.",
-      "subAgentsLoadAll": "تحميل الكل"
+      "assistant": "المساعد"
     },
     "conversationCard": {
       "untitledConversation": "محادثة بدون عنوان",
@@ -3963,8 +3957,13 @@
         "loadingEarlier": "جارٍ تحميل الرسائل السابقة…",
         "loadEarlier": "تحميل الرسائل السابقة",
         "fileCount": "{count, plural, one {# ملف} other {# ملفات}}",
-        "remove": "إزالة",
-        "noDiffDataAvailable": "لا توجد بيانات diff متاحة لـ {filePath}"
+        "subAgentCount": "{count, plural, one {# وكيل فرعي} other {# وكلاء فرعيين}}",
+        "showDiff": "إظهار تغييرات {filePath}",
+        "hideDiff": "إخفاء تغييرات {filePath}",
+        "openFile": "فتح {filePath}",
+        "collapse": "طي",
+        "currentMessage": "الرسالة الحالية",
+        "scrollToCurrent": "التمرير إلى الرسالة الحالية (#{ordinal})"
       },
       "replyArtifacts": {
         "title": "الملفات المتغيرة",

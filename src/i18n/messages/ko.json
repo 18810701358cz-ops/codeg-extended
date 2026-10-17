@@ -2266,13 +2266,7 @@
       "none": "—",
       "copyField": "{field} 복사",
       "copiedField": "{field} 복사됨",
-      "assistant": "어시스턴트",
-      "subAgentScopeLabel": "표시할 서브 에이전트",
-      "subAgentScopeReply": "현재 메시지",
-      "subAgentScopeConversation": "현재 세션",
-      "subAgentsReplyEmpty": "현재 메시지에서 실행한 서브 에이전트가 없습니다.",
-      "subAgentsPartial": "이전 메시지를 아직 불러오지 않아 해당 서브 에이전트는 표시되지 않습니다.",
-      "subAgentsLoadAll": "모두 불러오기"
+      "assistant": "어시스턴트"
     },
     "conversationCard": {
       "untitledConversation": "제목 없는 대화",
@@ -3963,8 +3957,13 @@
         "loadingEarlier": "이전 메시지를 불러오는 중…",
         "loadEarlier": "이전 메시지 불러오기",
         "fileCount": "{count, plural, one {#개 파일} other {#개 파일}}",
-        "remove": "제거",
-        "noDiffDataAvailable": "{filePath}에 대한 diff 데이터가 없습니다"
+        "subAgentCount": "{count, plural, one {서브 에이전트 #개} other {서브 에이전트 #개}}",
+        "showDiff": "{filePath}의 변경 사항 보기",
+        "hideDiff": "{filePath}의 변경 사항 숨기기",
+        "openFile": "{filePath} 열기",
+        "collapse": "접기",
+        "currentMessage": "현재 메시지",
+        "scrollToCurrent": "현재 메시지(#{ordinal})로 스크롤"
       },
       "replyArtifacts": {
         "title": "변경된 파일",

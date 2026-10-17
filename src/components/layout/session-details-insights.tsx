@@ -2,25 +2,13 @@
 
 import { useEffect, type ReactNode } from "react"
 import { useTranslations } from "next-intl"
-import {
-  BotIcon,
-  ChevronRight,
-  ListTodoIcon,
-  Loader2,
-  MapPinned,
-} from "lucide-react"
+import { Check, ChevronDown, Loader2 } from "lucide-react"
 
-import { AgentPlanEntryList } from "@/components/chat/agent-plan-overlay"
-import { SubAgentRow } from "@/components/chat/sub-agent-overlay"
 import { MessageNavList } from "@/components/message/conversation-message-nav"
+import { getPriorityKey, getStatusKey } from "@/components/message/plan-card"
 import { SessionViewerHost } from "@/components/message/session-viewer-host"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  useSessionDetailsSectionOpen,
-  useSubAgentScope,
-  type SubAgentScope,
-} from "@/lib/session-details-prefs"
+import { useSessionDetailsSectionOpen } from "@/lib/session-details-prefs"
+import type { PlanEntryInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import {
   demandTranscriptNav,
@@ -38,79 +26,198 @@ interface SessionDetailsInsightsProps {
 
 /**
  * The part of the Session Details side panel that follows the conversation's
- * transcript: the agent's plan, its sub-agents and the message navigator —
- * what the conversation page used to stack as chips over the messages' top
- * inline-start corner. The transcript derives them and publishes them to the
- * insights store (see `MessageListView`'s `insightsInSidebar`); each section
- * reads its own part and renders nothing while that part is empty.
+ * transcript: the agent's plan and the message navigator, whose messages carry
+ * the sub-agents they started and the files they changed — what the
+ * conversation page used to stack as chips over the messages' top inline-start
+ * corner. The transcript derives them and publishes them to the insights store
+ * (see `MessageListView`'s `insightsInSidebar`); each section reads its own
+ * part and renders nothing while that part is empty.
  *
- * The sub-agent rows open their "查看会话" drawer through a host of their own:
- * the transcript's host is in another branch of the tree, and keeping the
- * drawer here rather than in a row means a row leaving the list (a new reply
- * clearing the "current message" scope) doesn't close it.
+ * Both lay their rows on one grid: a left column of fixed width — the plan's
+ * step icons, the navigator's message numbers — and the text beside it.
+ *
+ * The navigator's sub-agent cards open their "查看会话" drawer through a host
+ * of their own: the transcript's host is in another branch of the tree, and
+ * keeping the drawer here rather than in a card means a card leaving the list
+ * doesn't close it. File rows use it too, to open a file beside the transcript
+ * on routes that cover the workspace's file column.
  */
 export function SessionDetailsInsights({
   conversationId,
   active,
 }: SessionDetailsInsightsProps) {
   return (
+    // The sections are the tab's own children, spaced like the rest of it.
     <SessionViewerHost>
       <PlanSection conversationId={conversationId} />
-      <SubAgentsSection conversationId={conversationId} />
       <MessageNavSection conversationId={conversationId} active={active} />
     </SessionViewerHost>
   )
 }
 
 /**
- * A collapsible section of the panel: a disclosure header in the panel's
- * section-heading style (with the item count), and its body while open.
+ * A section of the panel: a header row — its title, a summary of what it
+ * holds, and the chevron that folds it at the far end — then its body. The
+ * body renders in either state: what a section still shows while folded is
+ * its own business. A `sticky` header stays at the top of the panel while
+ * the section scrolls under it.
  */
 function InsightsSection({
-  icon,
   title,
-  count,
+  summary,
   open,
   onOpenChange,
+  sticky = false,
   children,
 }: {
-  icon: ReactNode
   title: string
-  count: ReactNode
+  summary: ReactNode
   open: boolean
   onOpenChange: (open: boolean) => void
+  sticky?: boolean
   children: ReactNode
 }) {
   return (
-    <section className="min-w-0 space-y-3 border-t pt-4">
-      <h3 className="min-w-0">
+    <section className="min-w-0">
+      <h3
+        className={cn(
+          "min-w-0",
+          // Edge to edge over the panel's padding, so rows scrolling under it
+          // never show at its sides.
+          sticky && "ws-surface sticky top-0 z-10 -mx-3 px-3"
+        )}
+      >
         <button
           type="button"
           aria-expanded={open}
           onClick={() => onOpenChange(!open)}
-          className="flex w-full min-w-0 items-center gap-1.5 rounded-sm text-start text-xs font-medium uppercase tracking-wide text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className="group/section flex h-7 w-full min-w-0 items-center gap-2 rounded-md text-start outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
-          <ChevronRight
+          <span className="min-w-0 truncate text-xs font-semibold text-foreground">
+            {title}
+          </span>
+          <span className="shrink-0 text-2xs text-muted-foreground tabular-nums">
+            {summary}
+          </span>
+          <ChevronDown
             aria-hidden="true"
             className={cn(
-              "size-3.5 shrink-0 transition-transform",
-              open ? "rotate-90" : "rtl:rotate-180"
+              "ms-auto size-3.5 shrink-0 text-muted-foreground transition-transform group-hover/section:text-foreground",
+              !open && "-rotate-90 rtl:rotate-90"
             )}
           />
-          <span aria-hidden="true" className="inline-flex shrink-0">
-            {icon}
-          </span>
-          <span className="min-w-0 truncate">{title}</span>
-          <Badge
-            variant="secondary"
-            className="h-4 shrink-0 px-1.5 text-3xs normal-case tracking-normal tabular-nums"
-          >
-            {count}
-          </Badge>
         </button>
       </h3>
-      {open ? children : null}
+      {children}
     </section>
+  )
+}
+
+/** The plan's progress, one segment per step: done, under way, to do. */
+function PlanProgress({ entries }: { entries: readonly PlanEntryInfo[] }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        "mt-0.5 mb-1.5 flex",
+        entries.length > 12 ? "gap-0.5" : "gap-1"
+      )}
+    >
+      {entries.map((entry, index) => (
+        <span
+          key={index}
+          data-plan-segment={entry.status}
+          className={cn(
+            "h-1 min-w-0 flex-1 rounded-full",
+            entry.status === "completed"
+              ? "bg-emerald-500"
+              : entry.status === "in_progress"
+                ? "bg-blue-500"
+                : "bg-muted-foreground/15"
+          )}
+        />
+      ))}
+    </div>
+  )
+}
+
+function PlanStepIcon({
+  status,
+  streaming,
+}: {
+  status: string
+  streaming: boolean
+}) {
+  if (status === "completed") {
+    return (
+      <span className="flex size-3.5 items-center justify-center rounded-full bg-emerald-500 text-white">
+        <Check className="size-2.5" strokeWidth={3} />
+      </span>
+    )
+  }
+  if (status === "in_progress") {
+    // Spinning only while the agent is at work; a reply that stopped leaves
+    // the step it was on marked, not moving.
+    return streaming ? (
+      <Loader2 className="size-3.5 animate-spin text-blue-500" />
+    ) : (
+      <span className="flex size-3.5 items-center justify-center rounded-full border-[1.5px] border-blue-500">
+        <span className="size-1.5 rounded-full bg-blue-500" />
+      </span>
+    )
+  }
+  return (
+    <span className="size-3.5 rounded-full border-[1.5px] border-muted-foreground/35" />
+  )
+}
+
+/** Plan steps, one line each, the whole step — with its status and priority
+ *  — in its tooltip. The step under way is tinted. */
+function PlanSteps({
+  entries,
+  streaming,
+}: {
+  entries: readonly PlanEntryInfo[]
+  streaming: boolean
+}) {
+  const t = useTranslations("Folder.chat.agentPlanOverlay")
+  return (
+    <ul className="space-y-px">
+      {entries.map((entry, index) => {
+        const status = t(getStatusKey(entry.status))
+        const priority = t(getPriorityKey(entry.priority))
+        return (
+          <li
+            key={`${entry.content}-${index}`}
+            title={`${entry.content}\n${status} · ${priority}`}
+            className={cn(
+              "-mx-1.5 flex h-7 min-w-0 items-center gap-2 rounded-md px-1.5",
+              entry.status === "in_progress" && "bg-blue-500/[0.08]"
+            )}
+          >
+            <span
+              aria-hidden="true"
+              className="flex w-7 shrink-0 justify-center"
+            >
+              <PlanStepIcon status={entry.status} streaming={streaming} />
+            </span>
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-[0.8125rem]",
+                entry.status === "completed"
+                  ? "text-muted-foreground line-through decoration-muted-foreground/40"
+                  : entry.status === "in_progress"
+                    ? "font-medium text-foreground"
+                    : "text-foreground/85"
+              )}
+            >
+              {entry.content}
+            </span>
+            <span className="sr-only">{status}</span>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -122,123 +229,23 @@ function PlanSection({ conversationId }: { conversationId: number | null }) {
   const completed = plan.entries.filter(
     (entry) => entry.status === "completed"
   ).length
+  // Folded, the plan still shows how far it has come and the step under way:
+  // what the agent is doing now.
+  const steps = open
+    ? plan.entries
+    : plan.entries.filter((entry) => entry.status === "in_progress")
   return (
     <InsightsSection
-      icon={<ListTodoIcon className="size-3.5" />}
       title={t("title")}
-      count={`${completed}/${plan.entries.length}`}
+      summary={`${completed}/${plan.entries.length}`}
       open={open}
       onOpenChange={setOpen}
     >
-      <AgentPlanEntryList entries={plan.entries} isStreaming={plan.streaming} />
+      <PlanProgress entries={plan.entries} />
+      {steps.length > 0 && (
+        <PlanSteps entries={steps} streaming={plan.streaming} />
+      )}
     </InsightsSection>
-  )
-}
-
-function SubAgentsSection({
-  conversationId,
-}: {
-  conversationId: number | null
-}) {
-  const t = useTranslations("Folder.sessionDetails")
-  const tOverlay = useTranslations("Folder.chat.subAgentOverlay")
-  const subAgents = useTranscriptInsightsPart(
-    conversationId,
-    (i) => i.subAgents
-  )
-  const actions = useTranscriptInsightsPart(conversationId, (i) => i.actions)
-  const [open, setOpen] = useSessionDetailsSectionOpen("subAgents")
-  const [scope, setScope] = useSubAgentScope()
-  // Hidden while the loaded thread started no sub-agent at all — the
-  // "current message" scope can only ever be a part of that.
-  if (subAgents == null || subAgents.conversation.length === 0) return null
-  const sources = scope === "reply" ? subAgents.reply : subAgents.conversation
-  return (
-    <InsightsSection
-      icon={<BotIcon className="size-3.5" />}
-      title={tOverlay("title")}
-      count={sources.length}
-      open={open}
-      onOpenChange={setOpen}
-    >
-      {/* In the body, not beside the title: the panel is narrow, and two
-          spelled-out scopes next to the heading would squeeze it away. */}
-      <SubAgentScopeToggle scope={scope} onChange={setScope} />
-      <div className="space-y-1.5">
-        {sources.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {t("subAgentsReplyEmpty")}
-          </p>
-        ) : (
-          sources.map((source) => (
-            <SubAgentRow key={source.parentToolUseId} source={source} />
-          ))
-        )}
-        {scope === "conversation" && subAgents.partial && (
-          <div className="flex min-w-0 items-center gap-2 pt-1">
-            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-              {t("subAgentsPartial")}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              className="shrink-0"
-              disabled={subAgents.loadingOlder || actions == null}
-              aria-busy={subAgents.loadingOlder || undefined}
-              onClick={actions?.loadEarlierHistory}
-            >
-              {subAgents.loadingOlder ? (
-                <Loader2 aria-hidden="true" className="animate-spin" />
-              ) : null}
-              {t("subAgentsLoadAll")}
-            </Button>
-          </div>
-        )}
-      </div>
-    </InsightsSection>
-  )
-}
-
-const SUB_AGENT_SCOPES: SubAgentScope[] = ["reply", "conversation"]
-
-function SubAgentScopeToggle({
-  scope,
-  onChange,
-}: {
-  scope: SubAgentScope
-  onChange: (scope: SubAgentScope) => void
-}) {
-  const t = useTranslations("Folder.sessionDetails")
-  const label = (value: SubAgentScope) =>
-    value === "reply" ? t("subAgentScopeReply") : t("subAgentScopeConversation")
-  return (
-    <div
-      role="group"
-      aria-label={t("subAgentScopeLabel")}
-      className="grid grid-cols-2 rounded-full bg-muted p-0.5"
-    >
-      {SUB_AGENT_SCOPES.map((value) => {
-        const selected = value === scope
-        return (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={selected}
-            title={label(value)}
-            onClick={() => onChange(value)}
-            className={cn(
-              "min-w-0 truncate rounded-full px-2 py-0.5 text-2xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
-              selected
-                ? "bg-background text-foreground shadow-sm dark:bg-input/30"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {label(value)}
-          </button>
-        )
-      })}
-    </div>
   )
 }
 
@@ -264,19 +271,25 @@ function MessageNavSection({
   if (nav == null || actions == null || count === 0) return null
   return (
     <InsightsSection
-      icon={<MapPinned className="size-3.5" />}
       title={t("title")}
-      count={count}
+      summary={count}
       open={open}
       onOpenChange={setOpen}
+      sticky
     >
-      <MessageNavList
-        entries={nav.entries}
-        onSelect={actions.selectNavEntry}
-        revealingTurnId={nav.revealingTurnId}
-        earlier={nav.earlier}
-        onRetryEarlier={actions.retryEarlierNav}
-      />
+      {open && (
+        <MessageNavList
+          // What is open is one conversation's: turn ids repeat across
+          // conversations.
+          key={conversationId}
+          entries={nav.entries}
+          onSelect={actions.selectNavEntry}
+          revealingTurnId={nav.revealingTurnId}
+          currentTurnId={nav.currentTurnId}
+          earlier={nav.earlier}
+          onRetryEarlier={actions.retryEarlierNav}
+        />
+      )}
     </InsightsSection>
   )
 }
