@@ -13,6 +13,16 @@ on:
       - 'v*.*.*'
     branches:
       - main
+    # Docs alone ship nothing new. (Path filters are not applied to tags.)
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+
+# A run of pushes builds only the last one. Manual runs get a group of their
+# own, so one started to check something does not cancel a push's release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   RUST_BACKTRACE: short
@@ -63,6 +73,7 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
       - name: Install Rust stable
+        id: toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -76,9 +87,40 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
 
+      # The sidecars are built from src-tauri/ and the scripts it embeds from
+      # src/browser-injected/ alone, so a frontend-only change reuses the last
+      # ones. A git tree id changes exactly when a tracked file under it does.
+      - name: Compute sidecar cache key
+        id: sidecar-key
+        shell: bash
+        run: |
+          hash=$(git rev-parse HEAD:src-tauri HEAD:src/browser-injected HEAD:.cargo | sha256sum | cut -c1-16)
+          echo "key=sidecars-x86_64-pc-windows-msvc-${{ steps.toolchain.outputs.cachekey }}-${hash}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore sidecars
+        id: sidecar-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            src-tauri/binaries/codeg-mcp-x86_64-pc-windows-msvc.exe
+            src-tauri/binaries/codeg-computer-helper-x86_64-pc-windows-msvc.exe
+          key: ${{ steps.sidecar-key.outputs.key }}
+
       - name: Stage sidecars for Tauri bundle
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
         shell: bash
         run: pnpm tauri:prepare-sidecars --target x86_64-pc-windows-msvc
+
+      # Saved now, not at the end of the job, so a later failure does not
+      # throw the compile away.
+      - name: Save sidecars
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            src-tauri/binaries/codeg-mcp-x86_64-pc-windows-msvc.exe
+            src-tauri/binaries/codeg-computer-helper-x86_64-pc-windows-msvc.exe
+          key: ${{ steps.sidecar-key.outputs.key }}
 
       - name: Verify sidecars landed
         shell: bash
