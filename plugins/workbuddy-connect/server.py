@@ -497,14 +497,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-    def _send_cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
-
     def do_OPTIONS(self):
         self.send_response(200)
-        self._send_cors_headers()
         self.end_headers()
 
     def do_GET(self):
@@ -586,7 +580,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
             body = html.encode("utf-8")
             self.send_response(200)
-            self._send_cors_headers()
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -594,7 +587,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except Exception as e:
             err = f"<h1>加载仪表盘失败</h1><p>{e}</p>".encode("utf-8")
             self.send_response(500)
-            self._send_cors_headers()
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(err)
@@ -623,7 +615,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             }
             body = json.dumps(resp_payload, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
-            self._send_cors_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -641,7 +632,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         result = model_service.probe_model_effort(model_id)
         body = json.dumps(result, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
-        self._send_cors_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -665,7 +655,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         result = model_service.probe_model_effort(model_id)
         body = json.dumps(result, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
-        self._send_cors_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -700,7 +689,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             
             if is_client_stream:
                 self.send_response(200)
-                self._send_cors_headers()
                 self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "keep-alive")
@@ -761,7 +749,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 }
                 body_out = json.dumps(aggregated_response, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
-                self._send_cors_headers()
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body_out)))
                 self.end_headers()
@@ -771,7 +758,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             err_msg = e.read().decode("utf-8", errors="ignore")
             logger.error(f"WorkBuddy upstream returned HTTP {e.code}: {err_msg}")
             self.send_response(e.code)
-            self._send_cors_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(json.dumps({
@@ -784,7 +770,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"Exception handling chat completion: {e}")
             self.send_response(500)
-            self._send_cors_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(json.dumps({

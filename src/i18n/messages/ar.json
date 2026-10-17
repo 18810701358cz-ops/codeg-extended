@@ -56,7 +56,8 @@
       "browser": "استخدام المتصفح",
       "computer_use": "استخدام الحاسوب",
       "quick_messages": "رسائل سريعة",
-      "logs": "سجلات التشغيل"
+      "logs": "سجلات التشغيل",
+      "plugins": "الإضافات"
     }
   },
   "AppearanceSettings": {

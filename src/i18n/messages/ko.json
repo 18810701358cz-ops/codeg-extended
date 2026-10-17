@@ -56,7 +56,8 @@
       "browser": "브라우저 사용",
       "computer_use": "컴퓨터 사용",
       "quick_messages": "빠른 메시지",
-      "logs": "실행 로그"
+      "logs": "실행 로그",
+      "plugins": "플러그인"
     }
   },
   "AppearanceSettings": {

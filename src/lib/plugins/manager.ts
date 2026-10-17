@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { PluginMetadata, PluginUIHook, CodegPluginAPI } from "./types"
 
@@ -11,7 +11,8 @@ export const BUILTIN_DSH_PLUGINS: PluginMetadata[] = [
     id: "dsh-cyber-glow",
     name: "DSH Cyber Glow (霓虹微光主题)",
     version: "1.1.0",
-    description: "类似 DeepSeek Harness 的深色半透明毛玻璃与赛博霓虹微光边缘特效，优化气泡与侧边栏质感",
+    description:
+      "类似 DeepSeek Harness 的深色半透明毛玻璃与赛博霓虹微光边缘特效，优化气泡与侧边栏质感",
     author: "codeg-community",
     category: "appearance",
     icon: "sparkles",
@@ -31,7 +32,7 @@ export const BUILTIN_DSH_PLUGINS: PluginMetadata[] = [
       button[data-state="active"], .bg-primary {
         box-shadow: 0 0 12px rgba(14, 165, 233, 0.45) !important;
       }
-    `
+    `,
   },
   {
     id: "dsh-compact-layout",
@@ -52,17 +53,18 @@ export const BUILTIN_DSH_PLUGINS: PluginMetadata[] = [
         margin-top: 0.5rem !important;
         margin-bottom: 0.5rem !important;
       }
-    `
+    `,
   },
   {
     id: "dsh-quick-actions",
     name: "DSH Quick Tools (浮动快捷挂件)",
     version: "1.0.0",
-    description: "在右下角挂载快捷指令浮动小图标，支持随时切换模型、清理会话和一键注入",
+    description:
+      "在右下角挂载快捷指令浮动小图标，支持随时切换模型、清理会话和一键注入",
     author: "codeg-community",
     category: "utility",
     icon: "terminal",
-    defaultEnabled: true,
+    defaultEnabled: false,
     script: `
       // 动态注册右下角快捷胶囊
       if (!document.getElementById("dsh-floating-pill")) {
@@ -79,23 +81,18 @@ export const BUILTIN_DSH_PLUGINS: PluginMetadata[] = [
         };
         document.body.appendChild(pill);
       }
-    `
-  }
+    `,
+  },
 ]
 
 class PluginRuntimeManager {
   private hooks: Map<string, PluginUIHook> = new Map()
   private cleanupMap: Map<string, () => void> = new Map()
+  private booted = false
 
   constructor() {
     if (typeof window !== "undefined") {
       this.initGlobalAPI()
-      // 等待 DOM 准备就绪自动应用
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", () => this.boot())
-      } else {
-        setTimeout(() => this.boot(), 100)
-      }
     }
   }
 
@@ -117,7 +114,18 @@ class PluginRuntimeManager {
     ;(window as unknown as { codegPlugins: CodegPluginAPI }).codegPlugins = api
   }
 
-  public boot() {
+  public boot(force = false) {
+    if (this.booted && !force) return
+    if (typeof window === "undefined") return
+    const pathname = window.location.pathname
+    if (
+      !pathname.startsWith("/workspace") &&
+      !pathname.startsWith("/settings")
+    ) {
+      return
+    }
+    this.booted = true
+
     const plugins = this.getPlugins()
     plugins.forEach((p) => {
       if (this.isPluginEnabled(p.id)) {
@@ -130,7 +138,9 @@ class PluginRuntimeManager {
     if (typeof window === "undefined") return BUILTIN_DSH_PLUGINS
     try {
       const customStr = localStorage.getItem(STORAGE_KEY_CUSTOM_CSS)
-      const customList: PluginMetadata[] = customStr ? JSON.parse(customStr) : []
+      const customList: PluginMetadata[] = customStr
+        ? JSON.parse(customStr)
+        : []
       return [...BUILTIN_DSH_PLUGINS, ...customList]
     } catch {
       return BUILTIN_DSH_PLUGINS
