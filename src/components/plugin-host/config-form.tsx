@@ -395,7 +395,7 @@ export function ConfigForm({
                   id={`config-${key}`}
                   type="number"
                   step={prop.type === "integer" ? "1" : "any"}
-                  value={values[key] !== undefined ? values[key] : ""}
+                  value={typeof values[key] === "number" || typeof values[key] === "string" ? values[key] : ""}
                   onChange={(e) => handleNumberChange(key, e.target.value)}
                   className={cn("h-8 text-xs", error && "border-destructive")}
                 />
