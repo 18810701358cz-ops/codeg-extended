@@ -395,8 +395,8 @@ function FieldRow({
             // 24px (not the size="sm" default) is deliberate: inline chips
             // share the task editor's composer bottom bar with the "+" add-menu
             // button, which is a `size="icon-xs"` (h-6) Button, and the chat
-            // composer's own selectors are h-6 too (`size="xs"`,
-            // session-config-selector). It takes `data-[size=sm]:h-6` to get
+            // composer's own settings chip is h-6 too (`size="xs"`,
+            // session-settings-picker). It takes `data-[size=sm]:h-6` to get
             // there: a bare `h-6` loses to the trigger's own
             // `data-[size=sm]:h-8`, whose attribute selector is the more
             // specific rule, and tailwind-merge only drops the base class when
