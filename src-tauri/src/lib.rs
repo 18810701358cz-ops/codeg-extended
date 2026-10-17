@@ -2276,6 +2276,9 @@ mod tauri_app {
                 crate::commands::plugin_host::plugin_host_discard_staging,
                 crate::commands::plugin_host::plugin_host_check_update,
                 crate::commands::plugin_host::plugin_host_uninstall,
+                crate::commands::plugin_host::plugin_host_backend_restart,
+                crate::commands::plugin_host::plugin_host_backend_fetch,
+                crate::commands::plugin_host::plugin_host_read_log,
             ])
             .build(context)
             .expect("error while building tauri application")

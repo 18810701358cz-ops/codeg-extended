@@ -1156,3 +1156,443 @@ async fn test_wp4_git_clone_and_check_update_with_local_bare_repo() {
     assert!(!update3.updatable);
     assert!(update3.staging_id.is_none());
 }
+
+
+
+// ─────────────────────────────────────────────────────────────
+// WP7 Tests: Runtime Resolve, Backend Supervisor, Contributions
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_wp7_variable_expansion_all_variants() {
+    let tmp = tempdir().unwrap();
+    let plugin_dir = tmp.path().join("my-plugin");
+    let data_dir = tmp.path().join("data");
+    fs::create_dir_all(&plugin_dir).unwrap();
+    fs::create_dir_all(&data_dir).unwrap();
+
+    let plugin_id = "wp7-var-plugin";
+    let secret_key = format!("plugin:{plugin_id}:secretKey");
+    let _ = crate::keyring_store::set_secret(&secret_key, "topsecret_123");
+
+    let mut config = BTreeMap::new();
+    config.insert("host".to_string(), serde_json::json!("127.0.0.1"));
+    config.insert("enabled".to_string(), serde_json::json!(true));
+    config.insert("maxRetries".to_string(), serde_json::json!(5));
+
+    let ctx = super::runtime_resolve::VariableContext {
+        plugin_dir: &plugin_dir,
+        data_dir: &data_dir,
+        port: Some(19090),
+        token: Some("test_token_abc"),
+        config: &config,
+        plugin_id: Some(plugin_id),
+    };
+
+    // 1. Template string expansion
+    let template = "http://${config.host}:${port}/api?token=${token}&sec=${config.secretKey}&dir=${pluginDir}&data=${dataDir}&url=${backend.url}&py=${python}&nd=${node}";
+    let expanded = super::runtime_resolve::expand_string(template, &ctx);
+
+    assert!(expanded.contains("http://127.0.0.1:19090/api"));
+    assert!(expanded.contains("token=test_token_abc"));
+    assert!(expanded.contains("sec=topsecret_123"));
+    assert!(expanded.contains("url=http://127.0.0.1:19090"));
+    assert!(expanded.contains(&plugin_dir.to_string_lossy().replace('\\', "/")));
+    assert!(expanded.contains(&data_dir.to_string_lossy().replace('\\', "/")));
+
+    // 2. Expand vec
+    let args = vec![
+        "--port".to_string(),
+        "${port}".to_string(),
+        "--token".to_string(),
+        "${token}".to_string(),
+    ];
+    let expanded_args = super::runtime_resolve::expand_vec(&args, &ctx);
+    assert_eq!(
+        expanded_args,
+        vec!["--port", "19090", "--token", "test_token_abc"]
+    );
+
+    // 3. Expand env
+    let mut env = BTreeMap::new();
+    env.insert("PLUGIN_PORT".to_string(), "${port}".to_string());
+    env.insert("PLUGIN_TOKEN".to_string(), "${token}".to_string());
+    let expanded_env = super::runtime_resolve::expand_env(&env, &ctx);
+    assert_eq!(
+        expanded_env.get("PLUGIN_PORT").map(String::as_str),
+        Some("19090")
+    );
+    assert_eq!(
+        expanded_env.get("PLUGIN_TOKEN").map(String::as_str),
+        Some("test_token_abc")
+    );
+
+    // 4. Expand JSON value
+    let json_val = serde_json::json!({
+        "url": "${backend.url}",
+        "credentials": {
+            "token": "${token}",
+            "secret": "${config.secretKey}"
+        },
+        "nested": [
+            "${port}",
+            "fixed"
+        ]
+    });
+    let expanded_json = super::runtime_resolve::expand_json_value(&json_val, &ctx);
+    assert_eq!(expanded_json["url"], "http://127.0.0.1:19090");
+    assert_eq!(expanded_json["credentials"]["token"], "test_token_abc");
+    assert_eq!(expanded_json["credentials"]["secret"], "topsecret_123");
+    assert_eq!(expanded_json["nested"][0], "19090");
+    assert_eq!(expanded_json["nested"][1], "fixed");
+
+    // Clean up keyring
+    let _ = crate::keyring_store::delete_secret(&secret_key);
+}
+
+#[tokio::test]
+async fn test_wp7_port_resolution_and_fallback() {
+    let tmp = tempdir().unwrap();
+    let plugins_root = tmp.path();
+
+    // 1. Occupy a port with a temporary TCP listener
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let occupied_port = listener.local_addr().unwrap().port();
+
+    let backend_cfg = super::manifest::PluginBackendConfig {
+        command: "mock".to_string(),
+        args: vec![],
+        setup: None,
+        env: BTreeMap::new(),
+        port: Some(serde_json::json!(occupied_port)),
+        healthcheck: None,
+        restart: None,
+    };
+
+    // When requested port is occupied, fallback to a free port and produce notice
+    let (allocated_port, notice) =
+        super::backend::resolve_backend_port(plugins_root, "wp7-port-fallback", &backend_cfg)
+            .await
+            .unwrap();
+    assert_ne!(allocated_port, occupied_port);
+    assert!(notice.is_some());
+    assert!(notice.unwrap().contains(&format!("Port {occupied_port} occupied")));
+
+    // 2. Drop listener so port is free
+    drop(listener);
+    let (free_port, free_notice) =
+        super::backend::resolve_backend_port(plugins_root, "wp7-port-free", &backend_cfg)
+            .await
+            .unwrap();
+    assert_eq!(free_port, occupied_port);
+    assert!(free_notice.is_none());
+
+    // 3. Auto port resolution
+    let auto_cfg = super::manifest::PluginBackendConfig {
+        command: "mock".to_string(),
+        args: vec![],
+        setup: None,
+        env: BTreeMap::new(),
+        port: Some(serde_json::json!("auto")),
+        healthcheck: None,
+        restart: None,
+    };
+    let (auto_port, _) =
+        super::backend::resolve_backend_port(plugins_root, "wp7-port-auto", &auto_cfg)
+            .await
+            .unwrap();
+    assert!(auto_port > 0);
+}
+
+#[test]
+fn test_wp7_backend_token_keyring() {
+    let plugin_id = "wp7-token-test";
+    let secret_key = format!("plugin:{plugin_id}:token");
+    let _ = crate::keyring_store::delete_secret(&secret_key);
+
+    let token1 = super::backend::get_or_create_backend_token(plugin_id).unwrap();
+    assert!(token1.starts_with("cgt_"));
+
+    // Calling again returns the exact same token
+    let token2 = super::backend::get_or_create_backend_token(plugin_id).unwrap();
+    assert_eq!(token1, token2);
+
+    let _ = crate::keyring_store::delete_secret(&secret_key);
+}
+
+#[tokio::test]
+async fn test_wp7_log_rotation_and_reading() {
+    let plugin_id = "wp7-log-test";
+    let log_path = super::backend::plugin_log_path(plugin_id);
+    let rotated_path = log_path.with_extension("log.1");
+
+    // Clean up before test
+    let _ = fs::remove_file(&log_path);
+    let _ = fs::remove_file(&rotated_path);
+
+    // 1. Append lines and read
+    super::backend::append_to_plugin_log(plugin_id, "line 1: hello world");
+    super::backend::append_to_plugin_log(plugin_id, "line 2: test log entry");
+
+    let full_log = super::backend::read_plugin_log(plugin_id, None).unwrap();
+    assert!(full_log.contains("line 1: hello world"));
+    assert!(full_log.contains("line 2: test log entry"));
+
+    // Tail read
+    let tail_log = super::backend::read_plugin_log(plugin_id, Some(30)).unwrap();
+    assert!(tail_log.contains("line 2: test log entry"));
+
+    // 2. Trigger rotation by writing > 2 MiB
+    let chunk = vec![b'X'; 1024 * 512]; // 512 KiB
+    let chunk_str = String::from_utf8(chunk).unwrap();
+    for _ in 0..5 {
+        super::backend::append_to_plugin_log(plugin_id, &chunk_str);
+    }
+
+    // Rotated file should now exist
+    assert!(
+        rotated_path.exists(),
+        "Rotated log file .log.1 was not created"
+    );
+
+    // Clean up
+    let _ = fs::remove_file(&log_path);
+    let _ = fs::remove_file(&rotated_path);
+}
+
+#[tokio::test]
+async fn test_wp7_declarative_contributions_permissions_and_idempotency() {
+    let tmp = tempdir().unwrap();
+    let plugins_root = tmp.path();
+    let plugin_id = "wp7-contrib-test";
+
+    // Setup in-memory DB
+    let test_db = crate::db::test_helpers::fresh_in_memory_db().await;
+    super::contributions::set_custom_database(test_db).await;
+
+    let contributes = super::manifest::PluginContributes {
+        model_providers: Some(vec![serde_json::json!({
+            "key": "custom-openai",
+            "name": "Custom OpenAI Provider",
+            "apiUrl": "https://api.custom-ai.com/v1",
+            "apiKey": "sk-123456",
+            "model": "deepseek-chat",
+            "agentTypes": ["deepseek"]
+        })]),
+        mcp_servers: None,
+        quick_messages: Some(vec![serde_json::json!({
+            "id": "qm-greet",
+            "title": "Welcome Greeting",
+            "content": "Hello from WP7 plugin!"
+        })]),
+    };
+
+    // 1. Manifest WITHOUT permissions
+    let mut manifest_no_perms = sample_manifest(plugin_id);
+    manifest_no_perms.permissions = vec![PluginPermission::Ui]; // missing ModelProviders & QuickMessages
+    manifest_no_perms.contributes = Some(contributes.clone());
+    create_plugin_dir(plugins_root, plugin_id, &manifest_no_perms);
+
+    let applied1 = super::contributions::apply_contributions(plugins_root, plugin_id, &manifest_no_perms)
+        .await
+        .unwrap();
+    // Contributions rejected due to missing permissions
+    assert!(applied1.model_providers.is_empty());
+    assert!(applied1.quick_messages.is_empty());
+
+    // 2. Manifest WITH permissions
+    let mut manifest_with_perms = manifest_no_perms.clone();
+    manifest_with_perms.permissions = vec![
+        PluginPermission::Ui,
+        PluginPermission::ModelProviders,
+        PluginPermission::QuickMessages,
+    ];
+    let applied2 = super::contributions::apply_contributions(plugins_root, plugin_id, &manifest_with_perms)
+        .await
+        .unwrap();
+    assert_eq!(applied2.model_providers.get("custom-openai").unwrap().len(), 1);
+    assert_eq!(applied2.quick_messages.get("qm-greet").unwrap().len(), 1);
+
+    // 3. Idempotency: Re-applying contributions does NOT create duplicate records
+    let applied3 = super::contributions::apply_contributions(plugins_root, plugin_id, &manifest_with_perms)
+        .await
+        .unwrap();
+    assert_eq!(applied3.model_providers.get("custom-openai").unwrap().len(), 1);
+    assert_eq!(applied3.quick_messages.get("qm-greet").unwrap().len(), 1);
+
+    // 4. Uninstall cleanup
+    super::contributions::remove_contributions(plugins_root, plugin_id)
+        .await
+        .unwrap();
+
+    let db = super::contributions::get_database().await.unwrap();
+    let prov_id = applied2.model_providers.get("custom-openai").unwrap()[0] as i32;
+    let prov = crate::db::service::model_provider_service::get_by_id(&db.conn, prov_id).await.unwrap();
+    assert!(prov.is_none(), "Model provider was not deleted on remove_contributions");
+}
+
+#[tokio::test]
+async fn test_wp7_backend_lifecycle_start_stop() {
+    let tmp = tempdir().unwrap();
+    let plugins_root = tmp.path();
+    let plugin_id = "wp7-backend-lifecycle";
+
+    let py_runtime = super::runtime_resolve::resolve_python();
+    if py_runtime.is_err() {
+        return; // Skip if Python is not available on test machine
+    }
+
+    // Create a mock Python HTTP server
+    let plugin_dir = plugins_root.join(plugin_id);
+    fs::create_dir_all(&plugin_dir).unwrap();
+    let server_script = r#"
+import http.server, socketserver, sys
+
+port = int(sys.argv[1])
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'pong')
+    def log_message(self, format, *args):
+        pass
+
+with socketserver.TCPServer(('127.0.0.1', port), Handler) as httpd:
+    httpd.serve_forever()
+"#;
+    fs::write(plugin_dir.join("server.py"), server_script.trim()).unwrap();
+
+    let manifest = PluginManifest {
+        id: plugin_id.to_string(),
+        name: "WP7 Backend Lifecycle Test".to_string(),
+        version: "1.0.0".to_string(),
+        api_version: 1,
+        engines: super::manifest::PluginEngines {
+            plugin_host: ">=1.0.0 <2.0.0".to_string(),
+        },
+        description: None,
+        author: None,
+        category: None,
+        icon: None,
+        permissions: vec![PluginPermission::Process, PluginPermission::Network],
+        main: None,
+        styles: vec![],
+        config_schema: None,
+        backend: Some(super::manifest::PluginBackendConfig {
+            command: "${python}".to_string(),
+            args: vec!["server.py".to_string(), "${port}".to_string()],
+            setup: None,
+            env: BTreeMap::new(),
+            port: Some(serde_json::json!("auto")),
+            healthcheck: Some(super::manifest::PluginBackendHealthcheck {
+                path: "/".to_string(),
+                timeout_ms: Some(5000),
+            }),
+            restart: Some("on-failure".to_string()),
+        }),
+        contributes: None,
+    };
+    fs::write(
+        plugin_dir.join(MANIFEST_FILE_NAME),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    // Start backend
+    let status = super::backend::start_backend(plugins_root, plugin_id, None)
+        .await
+        .unwrap();
+    assert_eq!(status.state, super::manifest::BackendState::Running);
+    assert!(status.pid.is_some());
+    assert!(status.port.is_some());
+
+    // Fetch through backend proxy
+    let fetch_res = super::backend::backend_fetch(plugin_id, "/", Some("GET"), None, None)
+        .await
+        .unwrap();
+    assert_eq!(fetch_res.status, 200);
+    assert_eq!(fetch_res.body, "pong");
+
+    // Read log
+    let _ = super::backend::read_plugin_log(plugin_id, None).unwrap();
+
+    // Stop backend
+    super::backend::stop_backend(plugin_id).await;
+    let stopped_status = super::backend::get_backend_status(plugin_id);
+    assert_eq!(stopped_status.state, super::manifest::BackendState::Stopped);
+    assert!(stopped_status.pid.is_none());
+
+    // Test stop_all does not panic
+    super::backend::stop_all();
+}
+
+#[tokio::test]
+async fn test_wp7_backend_crashed_on_repeated_failure() {
+    let tmp = tempdir().unwrap();
+    let plugins_root = tmp.path();
+    let plugin_id = "wp7-crash-test";
+
+    let py_runtime = super::runtime_resolve::resolve_python();
+    if py_runtime.is_err() {
+        return;
+    }
+
+    let plugin_dir = plugins_root.join(plugin_id);
+    fs::create_dir_all(&plugin_dir).unwrap();
+
+    // Command exits immediately with exit code 1
+    let manifest = PluginManifest {
+        id: plugin_id.to_string(),
+        name: "WP7 Crash Test".to_string(),
+        version: "1.0.0".to_string(),
+        api_version: 1,
+        engines: super::manifest::PluginEngines {
+            plugin_host: ">=1.0.0 <2.0.0".to_string(),
+        },
+        description: None,
+        author: None,
+        category: None,
+        icon: None,
+        permissions: vec![PluginPermission::Process],
+        main: None,
+        styles: vec![],
+        config_schema: None,
+        backend: Some(super::manifest::PluginBackendConfig {
+            command: "${python}".to_string(),
+            args: vec!["-c".to_string(), "import sys; sys.exit(1)".to_string()],
+            setup: None,
+            env: BTreeMap::new(),
+            port: Some(serde_json::json!(19999)),
+            healthcheck: Some(super::manifest::PluginBackendHealthcheck {
+                path: "/".to_string(),
+                timeout_ms: Some(500),
+            }),
+            restart: Some("on-failure".to_string()),
+        }),
+        contributes: None,
+    };
+    fs::write(
+        plugin_dir.join(MANIFEST_FILE_NAME),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let _ = super::backend::start_backend(plugins_root, plugin_id, None).await;
+
+    // Wait for the supervisor loop to process exits and transitions
+    // 3 rapid failures will transition to Crashed
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut reached_crashed = false;
+    while tokio::time::Instant::now() < deadline {
+        let st = super::backend::get_backend_status(plugin_id);
+        if st.state == super::manifest::BackendState::Crashed {
+            reached_crashed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+
+    assert!(reached_crashed, "Backend should transition to Crashed after repeated failures");
+    super::backend::stop_backend(plugin_id).await;
+}

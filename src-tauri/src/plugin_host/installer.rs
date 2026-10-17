@@ -703,7 +703,7 @@ pub async fn commit_install(
 
     if is_upgrade {
         // Upgrade flow: stop backend, move old to .trash, move new in place, rollback if error
-        super::on_disabled(&meta.id).await?;
+        super::on_disabled_at(plugins_root, &meta.id).await?;
 
         let trash_root = plugins_root.join(".trash");
         std::fs::create_dir_all(&trash_root).map_err(|e| {
@@ -763,7 +763,7 @@ pub async fn commit_install(
             },
         );
 
-        super::on_enabled(&meta.id).await?;
+        super::on_enabled_at(plugins_root, &meta.id).await?;
     }
 
     let state = load_state(plugins_root).await;
@@ -895,7 +895,7 @@ pub async fn check_update_internal(
 pub async fn uninstall(
     plugins_root: &Path,
     id: &str,
-    _remove_contributions: bool,
+    remove_contributions: bool,
     emitter: &EventEmitter,
 ) -> Result<(), AppCommandError> {
     if !is_valid_plugin_id(id) {
@@ -905,7 +905,7 @@ pub async fn uninstall(
     let lock = acquire_install_lock(id).await;
     let _guard = lock.lock().await;
 
-    super::on_uninstall(id).await?;
+    super::on_uninstall_at(plugins_root, id, remove_contributions).await?;
 
     let plugin_dir = plugins_root.join(id);
     let manifest_path = plugin_dir.join(MANIFEST_FILE_NAME);

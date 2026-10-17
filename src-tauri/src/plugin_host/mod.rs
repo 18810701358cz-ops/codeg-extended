@@ -6,11 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::app_error::AppCommandError;
 use crate::paths::codeg_plugins_root;
 
+pub mod backend;
 pub mod builtin;
+pub mod contributions;
 pub mod git_source;
 pub mod installer;
 pub mod manifest;
 pub mod registry;
+pub mod runtime_resolve;
 pub mod state;
 
 pub const PLUGIN_HOST_VERSION: &str = "1.0.0";
@@ -65,6 +68,23 @@ pub async fn init_at(plugins_root: &Path) -> Result<(), AppCommandError> {
 
     builtin::ensure_builtin_plugins_installed(plugins_root).await?;
 
+    // Auto-start backends for all enabled plugins unless safe mode is active
+    if !is_safe_mode() {
+        let state = state::load_state(plugins_root).await;
+        let plugins = registry::scan_plugins(plugins_root, &state, false);
+        for p in plugins {
+            if p.enabled && p.has_backend {
+                let root = plugins_root.to_path_buf();
+                let pid = p.id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = backend::start_backend(&root, &pid, None).await {
+                        tracing::warn!("[plugin_host] failed to autostart backend for '{pid}': {e}");
+                    }
+                });
+            }
+        }
+    }
+
     tracing::info!(
         "[plugin_host] initialized plugins root at {}",
         plugins_root.display()
@@ -104,23 +124,65 @@ pub fn clean_staging(plugins_root: &Path) {
 }
 
 /// Graceful shutdown hook for all plugin backend processes.
-/// Empty placeholder for WP1; WP7 will terminate running backend processes.
 pub fn stop_all() {
     tracing::info!("[plugin_host] stop_all invoked");
+    backend::stop_all();
 }
 
-/// Lifecycle hook: called when a plugin is enabled. Handed over to WP7.
-pub async fn on_enabled(_id: &str) -> Result<(), AppCommandError> {
+/// Lifecycle hook: called when a plugin is enabled.
+pub async fn on_enabled(id: &str) -> Result<(), AppCommandError> {
+    let plugins_root = codeg_plugins_root();
+    on_enabled_at(&plugins_root, id).await
+}
+
+pub async fn on_enabled_at(plugins_root: &Path, id: &str) -> Result<(), AppCommandError> {
+    let plugin_dir = plugins_root.join(id);
+    let manifest_path = plugin_dir.join(registry::MANIFEST_FILE_NAME);
+    if !manifest_path.exists() {
+        return Ok(());
+    }
+
+    let raw = std::fs::read_to_string(&manifest_path).map_err(|e| {
+        AppCommandError::io_error(format!("Failed to read manifest for '{id}': {e}"))
+    })?;
+    let manifest: manifest::PluginManifest = serde_json::from_str(&raw).map_err(|e| {
+        AppCommandError::invalid_input(format!("Failed to parse manifest for '{id}': {e}"))
+    })?;
+
+    if manifest.backend.is_some() && !is_safe_mode() {
+        let _ = backend::start_backend(plugins_root, id, None).await?;
+    }
+
+    let _ = contributions::apply_contributions(plugins_root, id, &manifest).await?;
     Ok(())
 }
 
-/// Lifecycle hook: called when a plugin is disabled. Handed over to WP7.
-pub async fn on_disabled(_id: &str) -> Result<(), AppCommandError> {
+/// Lifecycle hook: called when a plugin is disabled.
+pub async fn on_disabled(id: &str) -> Result<(), AppCommandError> {
+    let plugins_root = codeg_plugins_root();
+    on_disabled_at(&plugins_root, id).await
+}
+
+pub async fn on_disabled_at(_plugins_root: &Path, id: &str) -> Result<(), AppCommandError> {
+    backend::stop_backend(id).await;
     Ok(())
 }
 
-/// Lifecycle hook: called when a plugin is uninstalled. Handed over to WP7.
-pub async fn on_uninstall(_id: &str) -> Result<(), AppCommandError> {
+/// Lifecycle hook: called when a plugin is uninstalled.
+pub async fn on_uninstall(id: &str, remove_contributions: bool) -> Result<(), AppCommandError> {
+    let plugins_root = codeg_plugins_root();
+    on_uninstall_at(&plugins_root, id, remove_contributions).await
+}
+
+pub async fn on_uninstall_at(
+    plugins_root: &Path,
+    id: &str,
+    remove_contributions: bool,
+) -> Result<(), AppCommandError> {
+    backend::stop_backend(id).await;
+    if remove_contributions {
+        contributions::remove_contributions(plugins_root, id).await?;
+    }
     Ok(())
 }
 

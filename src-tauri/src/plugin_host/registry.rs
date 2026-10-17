@@ -120,7 +120,7 @@ pub fn scan_plugins(
                 styles: Vec::new(),
                 config_schema: None,
                 has_backend: false,
-                backend: Some(BackendStatus::default()),
+                backend: None,
                 applied,
             });
             continue;
@@ -147,7 +147,7 @@ pub fn scan_plugins(
                     styles: Vec::new(),
                     config_schema: None,
                     has_backend: false,
-                    backend: Some(BackendStatus::default()),
+                    backend: None,
                     applied,
                 });
                 continue;
@@ -175,7 +175,7 @@ pub fn scan_plugins(
                     styles: Vec::new(),
                     config_schema: None,
                     has_backend: false,
-                    backend: Some(BackendStatus::default()),
+                    backend: None,
                     applied,
                 });
                 continue;
@@ -214,6 +214,11 @@ pub fn scan_plugins(
 
         let has_main = manifest.main.is_some();
         let has_backend = manifest.backend.is_some();
+        let backend = if has_backend {
+            Some(super::backend::get_backend_status(&manifest.id))
+        } else {
+            None
+        };
 
         plugins.push(PluginInfo {
             id: manifest.id,
@@ -233,7 +238,7 @@ pub fn scan_plugins(
             styles: manifest.styles,
             config_schema: manifest.config_schema,
             has_backend,
-            backend: Some(BackendStatus::default()),
+            backend,
             applied,
         });
     }

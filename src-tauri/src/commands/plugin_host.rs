@@ -8,12 +8,13 @@ use sha2::{Digest, Sha256};
 use crate::app_error::AppCommandError;
 #[cfg(feature = "tauri-runtime")]
 use crate::paths::codeg_plugins_root;
+use crate::plugin_host::backend::{self, BackendFetchResult};
 use crate::plugin_host::git_source::{parse_repo_url, RepoUrlParts};
 use crate::plugin_host::installer::{
     self, commit_install, discard_staging, stage_source, uninstall, InstallSource, StageResult,
     UpdateCheckResult,
 };
-use crate::plugin_host::manifest::{is_valid_plugin_id, PluginManifest};
+use crate::plugin_host::manifest::{is_valid_plugin_id, BackendStatus, PluginManifest};
 use crate::plugin_host::registry::{
     build_plugin_list_result, scan_plugins, PluginInfo, PluginListResult, MANIFEST_FILE_NAME,
 };
@@ -22,7 +23,7 @@ use crate::plugin_host::state::{
     set_plugin_config, set_plugin_enabled,
 };
 use crate::plugin_host::{
-    is_safe_mode, on_disabled, on_enabled, ChangedEvent, CHANGED_EVENT,
+    is_safe_mode, on_disabled_at, on_enabled_at, ChangedEvent, CHANGED_EVENT,
 };
 use crate::web::event_bridge::{emit_event, EventEmitter};
 
@@ -255,9 +256,9 @@ pub async fn plugin_host_set_enabled_core(
     set_plugin_enabled(plugins_root, id, enabled).await?;
 
     if enabled {
-        on_enabled(id).await?;
+        on_enabled_at(plugins_root, id).await?;
     } else {
-        on_disabled(id).await?;
+        on_disabled_at(plugins_root, id).await?;
     }
 
     emit_event(
@@ -389,6 +390,22 @@ pub async fn plugin_host_set_config_core(
 
     set_plugin_config(plugins_root, id, values).await?;
 
+    // Restart backend if running and env references ${config.*}
+    if let Ok(raw) = std::fs::read_to_string(&manifest_path) {
+        if let Ok(manifest) = serde_json::from_str::<PluginManifest>(&raw) {
+            if let Some(backend_cfg) = &manifest.backend {
+                let env_has_config = backend_cfg.env.values().any(|v| v.contains("${config."));
+                let status = backend::get_backend_status(id);
+                if env_has_config
+                    && (status.state == crate::plugin_host::manifest::BackendState::Running
+                        || status.state == crate::plugin_host::manifest::BackendState::Unhealthy)
+                {
+                    let _ = backend::start_backend(plugins_root, id, Some(emitter)).await;
+                }
+            }
+        }
+    }
+
     emit_event(
         emitter,
         CHANGED_EVENT,
@@ -505,6 +522,50 @@ pub async fn plugin_host_uninstall_core(
     remove_contributions: bool,
 ) -> Result<(), AppCommandError> {
     uninstall(plugins_root, id, remove_contributions, emitter).await
+}
+
+pub async fn plugin_host_backend_restart_core(
+    emitter: &EventEmitter,
+    plugins_root: &Path,
+    id: &str,
+) -> Result<BackendStatus, AppCommandError> {
+    if !is_valid_plugin_id(id) {
+        return Err(AppCommandError::invalid_input(format!(
+            "Invalid plugin id '{id}'"
+        )));
+    }
+    let plugin_dir = plugins_root.join(id);
+    if !plugin_dir.is_dir() {
+        return Err(AppCommandError::not_found(format!("Plugin '{id}' not found")));
+    }
+    backend::start_backend(plugins_root, id, Some(emitter)).await
+}
+
+pub async fn plugin_host_backend_fetch_core(
+    id: &str,
+    path: &str,
+    method: Option<&str>,
+    headers: Option<&BTreeMap<String, String>>,
+    body: Option<&str>,
+) -> Result<BackendFetchResult, AppCommandError> {
+    if !is_valid_plugin_id(id) {
+        return Err(AppCommandError::invalid_input(format!(
+            "Invalid plugin id '{id}'"
+        )));
+    }
+    backend::backend_fetch(id, path, method, headers, body).await
+}
+
+pub async fn plugin_host_read_log_core(
+    id: &str,
+    tail_bytes: Option<u64>,
+) -> Result<String, AppCommandError> {
+    if !is_valid_plugin_id(id) {
+        return Err(AppCommandError::invalid_input(format!(
+            "Invalid plugin id '{id}'"
+        )));
+    }
+    backend::read_plugin_log(id, tail_bytes)
 }
 
 // ─────────────────── Tauri Desktop Commands ───────────────────
@@ -657,4 +718,43 @@ pub async fn plugin_host_uninstall(
     let emitter = EventEmitter::Tauri(app);
     let plugins_root = codeg_plugins_root();
     plugin_host_uninstall_core(&emitter, &plugins_root, &id, remove_contributions).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_backend_restart(
+    app: AppHandle,
+    id: String,
+) -> Result<BackendStatus, AppCommandError> {
+    let emitter = EventEmitter::Tauri(app);
+    let plugins_root = codeg_plugins_root();
+    plugin_host_backend_restart_core(&emitter, &plugins_root, &id).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_backend_fetch(
+    id: String,
+    path: String,
+    method: Option<String>,
+    headers: Option<BTreeMap<String, String>>,
+    body: Option<String>,
+) -> Result<BackendFetchResult, AppCommandError> {
+    plugin_host_backend_fetch_core(
+        &id,
+        &path,
+        method.as_deref(),
+        headers.as_ref(),
+        body.as_deref(),
+    )
+    .await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_read_log(
+    id: String,
+    tail_bytes: Option<u64>,
+) -> Result<String, AppCommandError> {
+    plugin_host_read_log_core(&id, tail_bytes).await
 }

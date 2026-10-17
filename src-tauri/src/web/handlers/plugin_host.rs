@@ -88,6 +88,27 @@ pub struct PluginUninstallParams {
     pub remove_contributions: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginBackendFetchParams {
+    pub id: String,
+    pub path: String,
+    #[serde(default)]
+    pub method: Option<String>,
+    #[serde(default)]
+    pub headers: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginReadLogParams {
+    pub id: String,
+    #[serde(default)]
+    pub tail_bytes: Option<u64>,
+}
+
 pub async fn plugin_host_list() -> Result<Json<PluginListResult>, AppCommandError> {
     plugin_commands::plugin_host_list_core(&codeg_plugins_root())
         .await
@@ -273,6 +294,41 @@ pub async fn plugin_host_uninstall(
     .map(Json)
 }
 
+pub async fn plugin_host_backend_restart(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<PluginIdParams>,
+) -> Result<Json<crate::plugin_host::manifest::BackendStatus>, AppCommandError> {
+    plugin_commands::plugin_host_backend_restart_core(
+        &state.emitter,
+        &codeg_plugins_root(),
+        &params.id,
+    )
+    .await
+    .map(Json)
+}
+
+pub async fn plugin_host_backend_fetch(
+    Json(params): Json<PluginBackendFetchParams>,
+) -> Result<Json<crate::plugin_host::backend::BackendFetchResult>, AppCommandError> {
+    plugin_commands::plugin_host_backend_fetch_core(
+        &params.id,
+        &params.path,
+        params.method.as_deref(),
+        params.headers.as_ref(),
+        params.body.as_deref(),
+    )
+    .await
+    .map(Json)
+}
+
+pub async fn plugin_host_read_log(
+    Json(params): Json<PluginReadLogParams>,
+) -> Result<Json<String>, AppCommandError> {
+    plugin_commands::plugin_host_read_log_core(&params.id, params.tail_bytes)
+        .await
+        .map(Json)
+}
+
 pub fn routes() -> Router {
     Router::new()
         .route("/plugin_host_list", post(plugin_host_list))
@@ -309,4 +365,13 @@ pub fn routes() -> Router {
             post(plugin_host_check_update),
         )
         .route("/plugin_host_uninstall", post(plugin_host_uninstall))
+        .route(
+            "/plugin_host_backend_restart",
+            post(plugin_host_backend_restart),
+        )
+        .route(
+            "/plugin_host_backend_fetch",
+            post(plugin_host_backend_fetch),
+        )
+        .route("/plugin_host_read_log", post(plugin_host_read_log))
 }
