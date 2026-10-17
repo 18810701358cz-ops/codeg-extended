@@ -2393,7 +2393,10 @@
         "commits": "コミット"
       },
       "noFolderTitle": "開いているフォルダがありません",
-      "noFolderHint": "フォルダを開くとここに表示されます"
+      "noFolderHint": "フォルダを開くとここに表示されます",
+      "openFullPage": "フルページで開く",
+      "back": "戻る",
+      "noAutomations": "このプロジェクトにはまだオートメーションがありません"
     },
     "windowControls": {
       "minimizeWindow": "ウィンドウを最小化",

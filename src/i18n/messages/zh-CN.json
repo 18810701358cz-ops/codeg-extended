@@ -2393,7 +2393,10 @@
         "commits": "提交"
       },
       "noFolderTitle": "暂无打开的文件夹",
-      "noFolderHint": "打开一个文件夹后在这里查看"
+      "noFolderHint": "打开一个文件夹后在这里查看",
+      "openFullPage": "在完整页面中打开",
+      "back": "返回",
+      "noAutomations": "此项目还没有自动化"
     },
     "windowControls": {
       "minimizeWindow": "最小化窗口",

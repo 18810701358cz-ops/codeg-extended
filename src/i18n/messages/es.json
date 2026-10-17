@@ -2393,7 +2393,10 @@
         "commits": "Confirmaciones"
       },
       "noFolderTitle": "No hay carpeta abierta",
-      "noFolderHint": "Abre una carpeta para ver su contenido aquí"
+      "noFolderHint": "Abre una carpeta para ver su contenido aquí",
+      "openFullPage": "Abrir en página completa",
+      "back": "Atrás",
+      "noAutomations": "Este proyecto aún no tiene automatizaciones"
     },
     "windowControls": {
       "minimizeWindow": "Minimizar ventana",

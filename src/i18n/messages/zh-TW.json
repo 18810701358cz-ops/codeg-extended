@@ -2393,7 +2393,10 @@
         "commits": "提交"
       },
       "noFolderTitle": "尚無開啟的資料夾",
-      "noFolderHint": "開啟一個資料夾後可在此查看"
+      "noFolderHint": "開啟一個資料夾後可在此查看",
+      "openFullPage": "在完整頁面中開啟",
+      "back": "返回",
+      "noAutomations": "此專案還沒有自動化"
     },
     "windowControls": {
       "minimizeWindow": "最小化視窗",

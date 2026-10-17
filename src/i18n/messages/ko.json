@@ -2393,7 +2393,10 @@
         "commits": "커밋"
       },
       "noFolderTitle": "열린 폴더 없음",
-      "noFolderHint": "폴더를 열면 여기에 표시됩니다"
+      "noFolderHint": "폴더를 열면 여기에 표시됩니다",
+      "openFullPage": "전체 페이지에서 열기",
+      "back": "뒤로",
+      "noAutomations": "이 프로젝트에는 아직 자동화가 없습니다"
     },
     "windowControls": {
       "minimizeWindow": "창 최소화",

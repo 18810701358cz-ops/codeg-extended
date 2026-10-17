@@ -2393,7 +2393,10 @@
         "commits": "Commits"
       },
       "noFolderTitle": "No folder open",
-      "noFolderHint": "Open a folder to see its contents here"
+      "noFolderHint": "Open a folder to see its contents here",
+      "openFullPage": "Open full page",
+      "back": "Back",
+      "noAutomations": "No automations for this project yet"
     },
     "windowControls": {
       "minimizeWindow": "Minimize window",

@@ -2393,7 +2393,10 @@
         "commits": "الالتزامات"
       },
       "noFolderTitle": "لا يوجد مجلد مفتوح",
-      "noFolderHint": "افتح مجلدا لعرض محتواه هنا"
+      "noFolderHint": "افتح مجلدا لعرض محتواه هنا",
+      "openFullPage": "فتح في صفحة كاملة",
+      "back": "رجوع",
+      "noAutomations": "لا توجد أتمتة لهذا المشروع بعد"
     },
     "windowControls": {
       "minimizeWindow": "تصغير النافذة",

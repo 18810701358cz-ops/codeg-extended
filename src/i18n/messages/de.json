@@ -2393,7 +2393,10 @@
         "commits": "Einträge"
       },
       "noFolderTitle": "Kein Ordner geöffnet",
-      "noFolderHint": "Öffnen Sie einen Ordner, um seinen Inhalt hier zu sehen"
+      "noFolderHint": "Öffnen Sie einen Ordner, um seinen Inhalt hier zu sehen",
+      "openFullPage": "Als ganze Seite öffnen",
+      "back": "Zurück",
+      "noAutomations": "Für dieses Projekt gibt es noch keine Automatisierungen"
     },
     "windowControls": {
       "minimizeWindow": "Fenster minimieren",

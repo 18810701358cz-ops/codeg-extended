@@ -2393,7 +2393,10 @@
         "commits": "Validations"
       },
       "noFolderTitle": "Aucun dossier ouvert",
-      "noFolderHint": "Ouvrez un dossier pour voir son contenu ici"
+      "noFolderHint": "Ouvrez un dossier pour voir son contenu ici",
+      "openFullPage": "Ouvrir en pleine page",
+      "back": "Retour",
+      "noAutomations": "Aucune automatisation pour ce projet pour l’instant"
     },
     "windowControls": {
       "minimizeWindow": "Minimiser la fenêtre",
