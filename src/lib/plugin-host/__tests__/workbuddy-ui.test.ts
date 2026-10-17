@@ -74,7 +74,7 @@ describe("WorkBuddy UI Integration", () => {
       ),
       notify: vi.fn(),
       config: {
-        get: vi.fn(async () => mockConfig),
+        get: vi.fn(async <T>() => mockConfig as unknown as T),
         onChange: vi.fn((cb) => {
           configChangeListeners.push(cb)
         }),
