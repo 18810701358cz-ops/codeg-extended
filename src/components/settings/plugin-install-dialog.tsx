@@ -26,7 +26,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { isDesktop, openFileDialog } from "@/lib/platform"
-import { getCodegToken, notifyWebUnauthorized } from "@/lib/api"
+import { getCodegToken } from "@/lib/transport/web-auth"
+import { notifyWebUnauthorized } from "@/lib/transport/web-connection-store"
 import {
   pluginHostCommitInstall,
   pluginHostDiscardStaging,

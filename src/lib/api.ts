@@ -6,6 +6,8 @@ import {
   isRemoteDesktopMode,
   notifyRemoteDesktopUnauthorized,
 } from "./transport"
+export { getCodegToken } from "./transport/web-auth"
+export { notifyWebUnauthorized } from "./transport/web-connection-store"
 import { getCodegToken } from "./transport/web-auth"
 import { notifyWebUnauthorized } from "./transport/web-connection-store"
 import { getCurrentEffectiveAppLocale } from "./i18n"
