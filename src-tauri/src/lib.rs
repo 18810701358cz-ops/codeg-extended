@@ -614,6 +614,13 @@ mod tauri_app {
             // startup args — an auto-started codeg is the same app the user
             // would have launched by hand.
             //
+            // With one difference on macOS: a codeg started at login is the
+            // LaunchAgent job's own process, so when it exits, launchd kills
+            // whatever is still in its process group. Anything that has to
+            // outlive it must leave the group first; see
+            // `commands::app_update::restart_app` for the relaunch after an
+            // update.
+            //
             // Nothing rewrites the registration at startup, deliberately. The
             // entry records an absolute path that no backend re-validates, so a
             // refresh would repair a moved app — but `is_enabled()` only knows
