@@ -197,3 +197,13 @@ if __name__ == "__main__":
 若遇到第三方插件导致应用崩溃或白屏：
 1. 宿主内置**连续失败熔断机制**：连续崩溃或报错达到 3 次的插件会被自动标记并停用。
 2. 启动时注入环境变量 `CODEG_PLUGINS_SAFE_MODE=1`：宿主将进入安全模式，所有插件被强制禁用，用户可在干净状态下卸载故障插件。
+
+---
+
+## 七、相关文档与资源 (Related Documentation)
+
+- [插件架构与清单规范 (Manifest Specification)](./manifest-spec.md)
+- [Plugin SDK 与 API 参考规范 (SDK Reference)](./sdk.md)
+- [JSON Schema 校验规范 (codeg-plugin.schema.json)](./codeg-plugin.schema.json)
+- [官方示例插件库 (Plugins Repository)](../../plugins/README.md)
+- [新手脚手架模板 (Starter Template)](../../plugins/_template/README.md)

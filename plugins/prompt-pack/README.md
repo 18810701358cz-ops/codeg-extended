@@ -8,3 +8,9 @@ This plugin contributes a collection of essential developer prompts and shortcut
 - **Write Tests**: Generate comprehensive unit tests covering edge cases and error conditions.
 - **Explain Code**: Explain architecture, design patterns, and logic of selected code.
 - **Refactor**: Suggest clean refactorings preserving backward compatibility.
+
+## Documentation & References
+
+- [Codeg Plugin SDK Reference](../../docs/plugin-host/sdk.md)
+- [Plugin Manifest Specification](../../docs/plugin-host/manifest-spec.md)
+- [Codeg Extended Plugins Repository](../README.md)

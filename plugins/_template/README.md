@@ -102,3 +102,13 @@ export function deactivate() {
   // Global teardown if necessary (slot widgets & injected CSS are automatically cleaned up)
 }
 ```
+
+---
+
+## Documentation & References
+
+- [Manifest Specification (清单规范)](../../docs/plugin-host/manifest-spec.md)
+- [Plugin Development Guide (开发实战指南)](../../docs/plugin-host/plugin-development-guide.md)
+- [Plugin SDK & API Reference (SDK 参考规范)](../../docs/plugin-host/sdk.md)
+- [JSON Schema Specification (清单模式校验)](../../docs/plugin-host/codeg-plugin.schema.json)
+- [Plugins Repository (插件库列表)](../README.md)

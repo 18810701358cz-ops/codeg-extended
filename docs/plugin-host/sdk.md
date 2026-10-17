@@ -346,3 +346,13 @@ npx esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js --watch
    小规模样式可通过 `ctx.injectCSS(...)` 随 JS 动态注入，或存入 `styles/style.css` 并在清单中通过 `"styles": ["styles/style.css"]` 声明加载。
 4. **日志排查路径**：
    伴生后台服务日志统一保存在 `~/.codeg/logs/plugins/<plugin-id>.log`（单文件上限 2MB，自动滚动轮转）。
+
+---
+
+## 8. 相关文档与资源 (Related Documentation)
+
+- [插件清单规范 (Manifest Specification)](./manifest-spec.md)
+- [插件开发实战指南 (Plugin Development Guide)](./plugin-development-guide.md)
+- [JSON Schema 校验规范 (codeg-plugin.schema.json)](./codeg-plugin.schema.json)
+- [官方示例插件库 (Plugins Repository)](../../plugins/README.md)
+- [新手脚手架模板 (Starter Template)](../../plugins/_template/README.md)

@@ -47,3 +47,9 @@ When managed by Codeg Extended Plugin Host, the following environment variables 
 - `GET /v1/models`: OpenAI-compatible model listing with credits and promotional badges (requires Bearer token).
 - `POST /v1/chat/completions`: OpenAI-compatible streaming and non-streaming chat completions (requires Bearer token).
 - `GET /v1/probe` & `POST /v1/probe`: Reasoning effort probe endpoint (requires Bearer token and `WORKBUDDY_PROBE_CONSENT=true`).
+
+## Documentation & References
+
+- [Codeg Plugin SDK Reference](../../docs/plugin-host/sdk.md)
+- [Plugin Manifest Specification](../../docs/plugin-host/manifest-spec.md)
+- [Codeg Extended Plugins Repository](../README.md)

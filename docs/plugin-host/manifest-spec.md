@@ -195,3 +195,13 @@
 | `${config.<key>}` | 读取当前插件配置项中的值 | `${config.authFile}` |
 | `${python}` | 宿主当前使用的 Python 解释器绝对路径 | `/usr/bin/python3` |
 | `${node}` | 宿主当前使用的 Node.js 解释器绝对路径 | `/usr/bin/node` |
+
+---
+
+## 五、相关文档与资源 (Related Documentation)
+
+- [插件开发实战指南 (Plugin Development Guide)](./plugin-development-guide.md)
+- [Plugin SDK 与 API 参考规范 (SDK Reference)](./sdk.md)
+- [JSON Schema 校验规范 (codeg-plugin.schema.json)](./codeg-plugin.schema.json)
+- [官方示例插件库 (Plugins Repository)](../../plugins/README.md)
+- [新手脚手架模板 (Starter Template)](../../plugins/_template/README.md)
