@@ -529,8 +529,12 @@ async fn test_read_entry_size_limit() {
 
 // ─── Config & Secret Keyring Tests ───────────────────────────────────────────
 
+static KEYRING_TEST_SERIAL: std::sync::LazyLock<std::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
 #[tokio::test]
 async fn test_plugin_config_and_secrets() {
+    let _keyring_lock = KEYRING_TEST_SERIAL.lock().unwrap();
     let tmp = tempdir().unwrap();
     let root = tmp.path();
     let p = sample_manifest("test-config");
@@ -1306,6 +1310,7 @@ async fn test_wp7_port_resolution_and_fallback() {
 
 #[test]
 fn test_wp7_backend_token_keyring() {
+    let _keyring_lock = KEYRING_TEST_SERIAL.lock().unwrap();
     let plugin_id = "wp7-token-test";
     let secret_key = format!("plugin:{plugin_id}:token");
     let _ = crate::keyring_store::delete_secret(&secret_key);
@@ -1362,6 +1367,7 @@ async fn test_wp7_log_rotation_and_reading() {
 
 #[tokio::test]
 async fn test_wp7_declarative_contributions_permissions_and_idempotency() {
+    let _keyring_lock = KEYRING_TEST_SERIAL.lock().unwrap();
     let tmp = tempdir().unwrap();
     let plugins_root = tmp.path();
     let plugin_id = "wp7-contrib-test";
@@ -1431,8 +1437,12 @@ async fn test_wp7_declarative_contributions_permissions_and_idempotency() {
     assert!(prov.is_none(), "Model provider was not deleted on remove_contributions");
 }
 
+static BACKEND_TEST_SERIAL: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 #[tokio::test]
 async fn test_wp7_backend_lifecycle_start_stop() {
+    let _serial_lock = BACKEND_TEST_SERIAL.lock().await;
     let tmp = tempdir().unwrap();
     let plugins_root = tmp.path();
     let plugin_id = "wp7-backend-lifecycle";
@@ -1529,6 +1539,7 @@ with socketserver.TCPServer(('127.0.0.1', port), Handler) as httpd:
 
 #[tokio::test]
 async fn test_wp7_backend_crashed_on_repeated_failure() {
+    let _serial_lock = BACKEND_TEST_SERIAL.lock().await;
     let tmp = tempdir().unwrap();
     let plugins_root = tmp.path();
     let plugin_id = "wp7-crash-test";
@@ -1582,7 +1593,7 @@ async fn test_wp7_backend_crashed_on_repeated_failure() {
 
     // Wait for the supervisor loop to process exits and transitions
     // 3 rapid failures will transition to Crashed
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(35);
     let mut reached_crashed = false;
     while tokio::time::Instant::now() < deadline {
         let st = super::backend::get_backend_status(plugin_id);

@@ -818,6 +818,8 @@ mod tauri_app {
                 tauri::async_runtime::spawn(crate::scratch_sweep_task());
 
                 // [codeg-extended] plugin host
+                let plugin_emitter = crate::web::event_bridge::EventEmitter::Tauri(app.handle().clone());
+                crate::plugin_host::set_emitter(plugin_emitter);
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = crate::plugin_host::init().await {
                         tracing::error!("[plugin_host] init error: {e}");
@@ -2279,6 +2281,7 @@ mod tauri_app {
                 crate::commands::plugin_host::plugin_host_backend_restart,
                 crate::commands::plugin_host::plugin_host_backend_fetch,
                 crate::commands::plugin_host::plugin_host_read_log,
+                crate::commands::plugin_host::plugin_host_set_dev_mode,
             ])
             .build(context)
             .expect("error while building tauri application")

@@ -470,6 +470,7 @@ async fn async_main() -> ExitCode {
     }
 
     // [codeg-extended] plugin host
+    codeg_lib::plugin_host::set_emitter(state.emitter.clone());
     tokio::spawn(async move {
         if let Err(e) = codeg_lib::plugin_host::init().await {
             tracing::error!("[plugin_host] init error: {e}");

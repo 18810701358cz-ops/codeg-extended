@@ -109,6 +109,12 @@ pub struct PluginReadLogParams {
     pub tail_bytes: Option<u64>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSetDevModeParams {
+    pub enabled: bool,
+}
+
 pub async fn plugin_host_list() -> Result<Json<PluginListResult>, AppCommandError> {
     plugin_commands::plugin_host_list_core(&codeg_plugins_root())
         .await
@@ -329,6 +335,19 @@ pub async fn plugin_host_read_log(
         .map(Json)
 }
 
+pub async fn plugin_host_set_dev_mode(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<PluginSetDevModeParams>,
+) -> Result<Json<()>, AppCommandError> {
+    plugin_commands::plugin_host_set_dev_mode_core(
+        Some(&state.emitter),
+        &codeg_plugins_root(),
+        params.enabled,
+    )
+    .await
+    .map(Json)
+}
+
 pub fn routes() -> Router {
     Router::new()
         .route("/plugin_host_list", post(plugin_host_list))
@@ -374,4 +393,5 @@ pub fn routes() -> Router {
             post(plugin_host_backend_fetch),
         )
         .route("/plugin_host_read_log", post(plugin_host_read_log))
+        .route("/plugin_host_set_dev_mode", post(plugin_host_set_dev_mode))
 }

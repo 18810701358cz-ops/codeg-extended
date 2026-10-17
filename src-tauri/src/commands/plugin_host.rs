@@ -568,6 +568,17 @@ pub async fn plugin_host_read_log_core(
     backend::read_plugin_log(id, tail_bytes)
 }
 
+pub async fn plugin_host_set_dev_mode_core(
+    emitter: Option<&EventEmitter>,
+    plugins_root: &Path,
+    enabled: bool,
+) -> Result<(), AppCommandError> {
+    if let Some(e) = emitter {
+        crate::plugin_host::set_emitter(e.clone());
+    }
+    crate::plugin_host::watcher::set_dev_mode_at(plugins_root, enabled).await
+}
+
 // ─────────────────── Tauri Desktop Commands ───────────────────
 
 #[cfg(feature = "tauri-runtime")]
@@ -757,4 +768,15 @@ pub async fn plugin_host_read_log(
     tail_bytes: Option<u64>,
 ) -> Result<String, AppCommandError> {
     plugin_host_read_log_core(&id, tail_bytes).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn plugin_host_set_dev_mode(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), AppCommandError> {
+    let emitter = EventEmitter::Tauri(app);
+    let plugins_root = codeg_plugins_root();
+    plugin_host_set_dev_mode_core(Some(&emitter), &plugins_root, enabled).await
 }

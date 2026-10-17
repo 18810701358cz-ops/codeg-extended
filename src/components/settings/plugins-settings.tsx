@@ -42,6 +42,7 @@ import {
   pluginHostCommitInstall,
   pluginHostDisableAll,
   pluginHostList,
+  pluginHostSetDevMode,
   pluginHostSetEnabled,
   subscribePluginHostBackendStatus,
   subscribePluginHostChanged,
@@ -71,6 +72,19 @@ export function PluginsSettings() {
   const [restartingBackendId, setRestartingBackendId] = useState<string | null>(
     null
   )
+  const [togglingDevMode, setTogglingDevMode] = useState(false)
+
+  const handleToggleDevMode = async (checked: boolean) => {
+    setTogglingDevMode(true)
+    try {
+      await pluginHostSetDevMode(checked)
+      await fetchPlugins()
+    } catch (err) {
+      console.error("Failed to toggle developer mode:", err)
+    } finally {
+      setTogglingDevMode(false)
+    }
+  }
 
   const desktop = isDesktop()
 
@@ -293,15 +307,19 @@ export function PluginsSettings() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Dev mode switch: disabled until WP9 */}
           <div
-            className="flex items-center gap-2 px-2 py-1 rounded border bg-muted/20 opacity-60 cursor-not-allowed"
-            title="Developer Mode hot reload will be enabled in WP9"
+            className="flex items-center gap-2 px-2 py-1 rounded border bg-muted/20"
+            title={t("devMode")}
           >
             <span className="text-xs font-medium text-muted-foreground">
               {t("devMode")}
             </span>
-            <Switch checked={false} disabled={true} />
+            <Switch
+              checked={listData?.devMode ?? false}
+              onCheckedChange={handleToggleDevMode}
+              disabled={loading || togglingDevMode}
+              aria-label="Toggle Developer Mode"
+            />
           </div>
 
           <Button

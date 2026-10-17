@@ -15,6 +15,9 @@ pub mod manifest;
 pub mod registry;
 pub mod runtime_resolve;
 pub mod state;
+pub mod watcher;
+
+pub use watcher::set_dev_mode;
 
 pub const PLUGIN_HOST_VERSION: &str = "1.0.0";
 pub const PLUGIN_HOST_API_VERSION: u32 = 1;
@@ -49,6 +52,11 @@ pub fn is_safe_mode() -> bool {
     }
 }
 
+pub fn set_emitter(emitter: crate::web::event_bridge::EventEmitter) {
+    backend::set_backend_emitter(emitter.clone());
+    watcher::set_watcher_emitter(emitter);
+}
+
 pub async fn init() -> Result<(), AppCommandError> {
     let plugins_root = codeg_plugins_root();
     init_at(&plugins_root).await
@@ -68,9 +76,17 @@ pub async fn init_at(plugins_root: &Path) -> Result<(), AppCommandError> {
 
     builtin::ensure_builtin_plugins_installed(plugins_root).await?;
 
+    let state = state::load_state(plugins_root).await;
+
+    // Auto-start watcher if dev_mode is active
+    if state.dev_mode {
+        if let Err(e) = watcher::start_watcher_at(plugins_root).await {
+            tracing::warn!("[plugin_host] failed to start dev mode watcher on init: {e}");
+        }
+    }
+
     // Auto-start backends for all enabled plugins unless safe mode is active
     if !is_safe_mode() {
-        let state = state::load_state(plugins_root).await;
         let plugins = registry::scan_plugins(plugins_root, &state, false);
         for p in plugins {
             if p.enabled && p.has_backend {
@@ -126,6 +142,7 @@ pub fn clean_staging(plugins_root: &Path) {
 /// Graceful shutdown hook for all plugin backend processes.
 pub fn stop_all() {
     tracing::info!("[plugin_host] stop_all invoked");
+    watcher::stop_watcher();
     backend::stop_all();
 }
 

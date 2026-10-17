@@ -25,6 +25,7 @@ vi.mock("@/lib/plugin-host/api", () => ({
     .mockResolvedValue({ values: {}, secretsSet: [] }),
   pluginHostReadLog: vi.fn().mockResolvedValue(""),
   pluginHostUninstall: vi.fn().mockResolvedValue(null),
+  pluginHostSetDevMode: vi.fn().mockResolvedValue(null),
 }))
 
 vi.mock("@/lib/platform", () => ({
@@ -316,6 +317,26 @@ describe("PluginsSettings", () => {
       expect(
         screen.getByText("Plugins are disabled because safe mode is active.")
       ).toBeDefined()
+    })
+  })
+
+  it("toggles developer mode switch and calls pluginHostSetDevMode", async () => {
+    vi.mocked(api.pluginHostSetDevMode).mockResolvedValue(null)
+
+    render(<PluginsSettings />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Developer mode")).toBeDefined()
+    })
+
+    const devModeSwitch = screen.getByRole("switch", { name: "Toggle Developer Mode" })
+    expect(devModeSwitch).toBeDefined()
+    expect(devModeSwitch.getAttribute("data-state")).toBe("unchecked")
+
+    fireEvent.click(devModeSwitch)
+
+    await waitFor(() => {
+      expect(api.pluginHostSetDevMode).toHaveBeenCalledWith(true)
     })
   })
 })
