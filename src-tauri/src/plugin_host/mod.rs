@@ -126,3 +126,5 @@ pub async fn on_uninstall(_id: &str) -> Result<(), AppCommandError> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod builtin_manifests_test;

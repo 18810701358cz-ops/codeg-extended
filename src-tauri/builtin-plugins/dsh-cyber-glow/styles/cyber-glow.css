@@ -1,0 +1,23 @@
+/* DSH Cyber Glow - Appearance Theme for Codeg Extended */
+.dark .ws-surface,
+.dark .ws-surface-sidebar,
+.dark .ws-surface-card {
+  background-color: rgba(13, 17, 23, 0.85) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+.dark [data-slot="card"],
+.dark .ws-chrome-border {
+  border-color: rgba(56, 189, 248, 0.22) !important;
+  box-shadow: 0 0 15px -3px rgba(56, 189, 248, 0.08) !important;
+}
+
+.dark .is-user .ws-msg-secondary {
+  border: 1px solid rgba(56, 189, 248, 0.28) !important;
+  box-shadow: 0 0 12px rgba(14, 165, 233, 0.15) !important;
+}
+
+.dark button[data-state="active"],
+.dark .bg-primary {
+  box-shadow: 0 0 12px rgba(14, 165, 233, 0.35) !important;
+}
