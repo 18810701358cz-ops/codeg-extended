@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-WorkBuddy to OpenAI API Bridge for Codeg & other AI tools.
-- 自动提取并解密本地 WorkBuddy 凭据
-- 提供 OpenAI 标准接口 (/v1/models, /v1/chat/completions)
-- 支持模型倍率与优惠标签解析 (credits & badges)
-- 支持完整的推理档位探测服务 (Reasoning Effort Probe)
-- 提供可视化 Web 仪表盘 (http://127.0.0.1:18080)
+WorkBuddy to OpenAI API Bridge for Codeg.
+- Extracts and decrypts local WorkBuddy credentials
+- Exposes OpenAI standard endpoints (/v1/models, /v1/chat/completions)
+- Exposes unauthenticated health check endpoints (/healthz, /health)
+- Strictly enforces Bearer token authentication on all business endpoints
+- Supports model reasoning effort probe with explicit user consent
+- Zero CORS headers returned
 """
 
 import os
@@ -13,10 +14,13 @@ import sys
 import json
 import base64
 import hashlib
+import hmac
 import struct
 import uuid
 import time
 import logging
+import errno
+import ipaddress
 import threading
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.request
@@ -36,16 +40,61 @@ HOST = os.environ.get("HOST", "127.0.0.1")
 
 DEFAULT_AUTH_PATH = os.path.expandvars(r"%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info")
 DEFAULT_EXE_PATH = os.path.expandvars(r"%LOCALAPPDATA%\Programs\WorkBuddy\WorkBuddy.exe")
-PROBE_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".workbuddy-probe-cache.json")
+PROBE_CACHE_PATH = os.environ.get(
+    "WORKBUDDY_PROBE_CACHE_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".workbuddy-probe-cache.json")
+)
+
+def is_loopback(host: str) -> bool:
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_loopback
+    except ValueError:
+        return False
+
+def get_expected_token() -> str:
+    return os.environ.get("CODEG_PLUGIN_TOKEN", "").strip()
+
+def is_no_token_allowed() -> bool:
+    return os.environ.get("WORKBUDDY_ALLOW_NO_TOKEN", "").strip() == "1"
+
+def is_probe_consent_given() -> bool:
+    return os.environ.get("WORKBUDDY_PROBE_CONSENT", "").strip().lower() in ("true", "1", "yes")
+
+def validate_startup_config(host: str, port: int) -> None:
+    token = get_expected_token()
+    if not token:
+        if not is_no_token_allowed():
+            logger.error(
+                "FATAL: CODEG_PLUGIN_TOKEN is not set. Refusing to start without authentication token. "
+                "Set WORKBUDDY_ALLOW_NO_TOKEN=1 only for debugging."
+            )
+            sys.exit(1)
+        else:
+            logger.warning(
+                "WARNING: Running without token because WORKBUDDY_ALLOW_NO_TOKEN=1 is set. Do not use in production!"
+            )
+
+    if not is_loopback(host) and os.environ.get("WORKBUDDY_ALLOW_REMOTE", "").strip() != "1":
+        logger.error(
+            f"FATAL: Binding to non-loopback address '{host}' is forbidden unless WORKBUDDY_ALLOW_REMOTE=1 is set."
+        )
+        sys.exit(1)
 
 class WorkBuddyAuth:
-    def __init__(self, auth_path=DEFAULT_AUTH_PATH, exe_path=DEFAULT_EXE_PATH):
+    def __init__(self, auth_path=None, exe_path=DEFAULT_EXE_PATH):
         self.auth_path = auth_path
         self.exe_path = exe_path
         self.cached_token = None
         self.cached_account = {}
         self.last_read_mtime = 0
         self.protector_key = None
+
+    @property
+    def effective_auth_path(self) -> str:
+        return os.environ.get("WORKBUDDY_AUTH_FILE") or self.auth_path or DEFAULT_AUTH_PATH
 
     def _resolve_protector_key(self):
         if self.protector_key:
@@ -103,14 +152,15 @@ class WorkBuddyAuth:
         return ""
 
     def get_credentials(self):
-        if not os.path.exists(self.auth_path):
-            raise FileNotFoundError(f"Auth file not found: {self.auth_path}. Please sign in to WorkBuddy first.")
+        auth_file = self.effective_auth_path
+        if not os.path.exists(auth_file):
+            raise FileNotFoundError(f"Auth file not found: {auth_file}. Please sign in to WorkBuddy first.")
         
-        mtime = os.path.getmtime(self.auth_path)
+        mtime = os.path.getmtime(auth_file)
         if self.cached_token and mtime == self.last_read_mtime:
             return self.cached_token, self.cached_account
 
-        with open(self.auth_path, "r", encoding="utf-8") as f:
+        with open(auth_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         auth_obj = data.get("auth", {})
@@ -190,14 +240,14 @@ class ModelService:
         token, account = auth_manager.get_credentials()
         headers = build_upstream_headers(token, account)
 
-        # 1. 获取模型基本配置
+        # 1. Fetch raw models configuration
         req_cfg = urllib.request.Request("https://copilot.tencent.com/v3/config", headers=headers)
         with urllib.request.urlopen(req_cfg, timeout=10) as resp:
             cfg_data = json.loads(resp.read().decode("utf-8")).get("data", {})
 
         raw_models = cfg_data.get("models", [])
 
-        # 2. 获取控制台模型倍率与 Tags (badge:限时免费, badge:夜间折扣 等)
+        # 2. Fetch console model credits and tags
         billing_map = {}
         try:
             req_console = urllib.request.Request("https://copilot.tencent.com/console/enterprises/personal/models", headers=headers)
@@ -222,13 +272,11 @@ class ModelService:
 
             b_info = billing_map.get(mid, {})
             raw_credits = b_info.get("credits") or m.get("credits")
-            # 格式化倍率，如 "x0.00", "x0.79"
             credits_str = ""
             if raw_credits:
                 clean_cr = raw_credits.replace("credits", "").strip()
                 credits_str = clean_cr
 
-            # 提取 badges
             badges = []
             for tag in (b_info.get("tags") or []):
                 if isinstance(tag, str) and tag.startswith("badge:"):
@@ -238,7 +286,6 @@ class ModelService:
 
             is_free = (credits_str == "x0.00" or "限时免费" in badges)
 
-            # 组合展示名称
             tag_display = []
             if credits_str:
                 tag_display.append(credits_str)
@@ -268,7 +315,6 @@ class ModelService:
         return self.cached_models
 
     def probe_model_effort(self, model_id: str):
-        """探测模型的推理档位 (Reasoning Effort Probe)"""
         token, account = auth_manager.get_credentials()
         CANDIDATES = ["low", "medium", "high", "xhigh", "max"]
 
@@ -299,7 +345,6 @@ class ModelService:
             except Exception as e:
                 return {"status": 0, "streamed": False, "error": str(e)}
 
-        # 1. Baseline
         base_res = send_attempt()
         if not base_res.get("streamed"):
             res = {
@@ -313,11 +358,9 @@ class ModelService:
             self._save_probe_cache()
             return res
 
-        # 2. Sentinel: 哨兵测试（非法值测试上游是否严格校验参数）
         sentinel_effort = f"probe_sentinel_{uuid.uuid4().hex[:10]}"
         sentinel_res = send_attempt(sentinel_effort)
         
-        # 如果哨兵值也返回流式，说明上游完全不校验该参数 (non-validating)
         if sentinel_res.get("streamed"):
             res = {
                 "model": model_id,
@@ -330,7 +373,6 @@ class ModelService:
             self._save_probe_cache()
             return res
 
-        # 3. Level Sweep: 依次探测各个真实档位
         passed_efforts = []
         for eff in CANDIDATES:
             eff_res = send_attempt(eff)
@@ -398,17 +440,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .badge-status { background: #238636; color: #fff; font-size: 12px; padding: 3px 8px; border-radius: 12px; font-weight: 500; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-  .card h3 { margin: 0 0 12px 0; font-size: 15px; color: #fff; display: flex; align-items: center; justify-content: space-between; }
-  .info-item { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid #21262d; }
-  .info-item:last-child { border-bottom: none; }
+  .info-item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 13px; }
   .info-label { color: var(--text-muted); }
-  .info-value { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #e6edf3; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
-  th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
-  th { background: #21262d; color: #8b949e; font-weight: 600; }
-  tr:hover { background: #1c2128; }
-  .badge-free { background: rgba(56, 139, 253, 0.15); color: #58a6ff; border: 1px solid rgba(56, 139, 253, 0.4); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500; }
-  .badge-promo { background: rgba(248, 81, 73, 0.15); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.4); padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 4px; }
+  .info-value { font-family: monospace; color: #fff; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--text-muted); font-weight: 500; }
+  .badge-promo { background: rgba(248, 81, 73, 0.15); color: #ff7b72; border: 1px solid rgba(248, 81, 73, 0.4); padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 4px; }
+  .badge-free { background: rgba(56, 139, 253, 0.15); color: #58a6ff; border: 1px solid rgba(56, 139, 253, 0.4); padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 4px; }
   .badge-effort { background: rgba(63, 185, 80, 0.15); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.4); padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 4px; }
   .btn { background: #238636; color: #fff; border: 1px solid rgba(240, 246, 252, 0.1); border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; transition: 0.2s; }
   .btn:hover { background: #2ea043; }
@@ -480,7 +519,7 @@ async function runProbe(modelId, btn) {
   try {
     const res = await fetch('/v1/probe?model=' + encodeURIComponent(modelId), { method: 'POST' });
     const data = await res.json();
-    alert('【' + modelId + ' 探测结果】\\n' + (data.description || data.validating));
+    alert('【' + modelId + ' 探测结果】\n' + (data.description || data.validating));
     location.reload();
   } catch (e) {
     alert('探测失败: ' + e);
@@ -494,19 +533,95 @@ async function runProbe(modelId, btn) {
 """
 
 class BridgeHandler(BaseHTTPRequestHandler):
+    server_version = "WorkBuddyBridge/2.0.0"
+    sys_version = ""
+
     def log_message(self, format, *args):
-        pass
+        logger.debug("%s - - [%s] %s" % (self.address_string(), self.log_date_time_string(), format % args))
+
+    def _drain_body(self):
+        try:
+            content_len = int(self.headers.get("Content-Length", 0))
+            if content_len > 0:
+                self.rfile.read(content_len)
+        except Exception:
+            pass
+
+    def _send_json(self, status: int, data: dict):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_unauthorized(self, message: str = "Unauthorized"):
+        self._drain_body()
+        self._send_json(401, {
+            "error": {
+                "message": message,
+                "type": "auth_error",
+                "code": 401
+            }
+        })
+
+    def check_auth(self) -> bool:
+        expected_token = get_expected_token()
+        if not expected_token:
+            if is_no_token_allowed():
+                return True
+            self._send_unauthorized("CODEG_PLUGIN_TOKEN is not configured")
+            return False
+
+        auth_header = self.headers.get("Authorization", "")
+        parts = auth_header.split(" ", 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            provided_token = parts[1].strip()
+        else:
+            provided_token = ""
+
+        if not hmac.compare_digest(provided_token.encode("utf-8"), expected_token.encode("utf-8")):
+            self._send_unauthorized("Invalid or missing Bearer token")
+            return False
+        return True
+
+    def _handle_health(self):
+        self._send_json(200, {"ok": True})
+
+    def _check_probe_consent(self) -> bool:
+        if not is_probe_consent_given():
+            self._send_json(403, {
+                "error": {
+                    "message": "Probe consent required: Reasoning effort probe consumes model credits. Set WORKBUDDY_PROBE_CONSENT=true in plugin configuration to enable.",
+                    "type": "permission_denied",
+                    "code": 403
+                }
+            })
+            return False
+        return True
 
     def do_OPTIONS(self):
+        parsed = urlparse(self.path)
+        if parsed.path not in ("/healthz", "/health"):
+            if not self.check_auth():
+                return
         self.send_response(200)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path == "/" or path == "/health":
+        if path in ("/healthz", "/health"):
+            self._handle_health()
+            return
+
+        if not self.check_auth():
+            return
+
+        if path == "/":
             self._handle_dashboard()
-        elif path in ["/v1/models", "/models"]:
+        elif path in ("/v1/models", "/models"):
             self._handle_models()
         elif path == "/v1/probe":
             self._handle_probe_get(parsed)
@@ -516,12 +631,39 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path in ["/v1/chat/completions", "/chat/completions"]:
+        if path in ("/healthz", "/health"):
+            self._drain_body()
+            self._handle_health()
+            return
+
+        if not self.check_auth():
+            return
+
+        if path in ("/v1/chat/completions", "/chat/completions"):
             self._handle_chat()
         elif path == "/v1/probe":
             self._handle_probe_post(parsed)
         else:
+            self._drain_body()
             self.send_error(404, "Not Found")
+
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path in ("/healthz", "/health"):
+            body = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return
+
+        if not self.check_auth():
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _handle_dashboard(self):
         try:
@@ -588,6 +730,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             err = f"<h1>加载仪表盘失败</h1><p>{e}</p>".encode("utf-8")
             self.send_response(500)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(err)))
             self.end_headers()
             self.wfile.write(err)
 
@@ -621,44 +764,59 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except Exception as e:
             logger.error(f"Failed to fetch models: {e}")
-            self.send_error(500, str(e))
+            self._send_json(500, {
+                "error": {
+                    "message": str(e),
+                    "type": "bridge_error"
+                }
+            })
 
     def _handle_probe_get(self, parsed):
+        if not self._check_probe_consent():
+            return
         qs = parse_qs(parsed.query)
         model_id = qs.get("model", [""])[0]
         if not model_id:
-            self.send_error(400, "Missing model query parameter")
+            self._send_json(400, {
+                "error": {
+                    "message": "Missing model query parameter",
+                    "type": "invalid_request_error"
+                }
+            })
             return
         result = model_service.probe_model_effort(model_id)
-        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_json(200, result)
 
     def _handle_probe_post(self, parsed):
         qs = parse_qs(parsed.query)
         model_id = qs.get("model", [""])[0]
+        content_len = int(self.headers.get("Content-Length", 0))
+        if not model_id and content_len > 0:
+            try:
+                data = json.loads(self.rfile.read(content_len).decode("utf-8"))
+                model_id = data.get("model", "")
+            except Exception:
+                pass
+        elif content_len > 0:
+            try:
+                self.rfile.read(content_len)
+            except Exception:
+                pass
+
+        if not self._check_probe_consent():
+            return
+
         if not model_id:
-            content_len = int(self.headers.get("Content-Length", 0))
-            if content_len > 0:
-                try:
-                    data = json.loads(self.rfile.read(content_len).decode("utf-8"))
-                    model_id = data.get("model", "")
-                except Exception:
-                    pass
-        if not model_id:
-            self.send_error(400, "Missing model parameter")
+            self._send_json(400, {
+                "error": {
+                    "message": "Missing model parameter",
+                    "type": "invalid_request_error"
+                }
+            })
             return
 
         result = model_service.probe_model_effort(model_id)
-        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_json(200, result)
 
     def _handle_chat(self):
         content_len = int(self.headers.get("Content-Length", 0))
@@ -666,7 +824,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         try:
             req_data = json.loads(raw_body)
         except Exception:
-            self.send_error(400, "Invalid JSON")
+            self._send_json(400, {
+                "error": {
+                    "message": "Invalid JSON",
+                    "type": "invalid_request_error"
+                }
+            })
             return
 
         is_client_stream = req_data.get("stream", False)
@@ -757,41 +920,63 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except urllib.error.HTTPError as e:
             err_msg = e.read().decode("utf-8", errors="ignore")
             logger.error(f"WorkBuddy upstream returned HTTP {e.code}: {err_msg}")
-            self.send_response(e.code)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self._send_json(e.code, {
                 "error": {
                     "message": f"WorkBuddy Upstream Error {e.code}: {err_msg}",
                     "type": "upstream_error",
                     "code": e.code
                 }
-            }).encode("utf-8"))
+            })
         except Exception as e:
             logger.error(f"Exception handling chat completion: {e}")
-            self.send_response(500)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            self._send_json(500, {
                 "error": {
                     "message": str(e),
                     "type": "bridge_error"
                 }
-            }).encode("utf-8"))
+            })
+
+def create_server(host: str = None, port: int = None) -> ThreadingHTTPServer:
+    target_host = host if host is not None else os.environ.get("HOST", "127.0.0.1")
+    target_port = port if port is not None else int(os.environ.get("PORT", "18080"))
+
+    validate_startup_config(target_host, target_port)
+
+    try:
+        server = ThreadingHTTPServer((target_host, target_port), BridgeHandler)
+        return server
+    except OSError as e:
+        if (
+            getattr(e, "errno", None) in (errno.EADDRINUSE, 10048, 10013)
+            or getattr(e, "winerror", None) in (10048, 10013)
+            or "10048" in str(e)
+            or "10013" in str(e)
+            or "address already in use" in str(e).lower()
+        ):
+            logger.error(f"FATAL: Port {target_port} is already in use by another process. Exiting with code 3.")
+            sys.exit(3)
+        logger.error(f"FATAL: Failed to bind server to {target_host}:{target_port}: {e}")
+        sys.exit(1)
 
 def main():
-    server = ThreadingHTTPServer((HOST, PORT), BridgeHandler)
+    target_host = os.environ.get("HOST", "127.0.0.1")
+    target_port = int(os.environ.get("PORT", "18080"))
+    server = create_server(target_host, target_port)
     logger.info("=" * 60)
-    logger.info(f"WorkBuddy Codeg Bridge is running!")
-    logger.info(f"Dashboard: http://{HOST}:{PORT}/")
-    logger.info(f"Models:    http://{HOST}:{PORT}/v1/models")
-    logger.info(f"Chat:      http://{HOST}:{PORT}/v1/chat/completions")
-    logger.info(f"Probe:     http://{HOST}:{PORT}/v1/probe?model=<id>")
+    logger.info("WorkBuddy Codeg Bridge is running!")
+    logger.info(f"Dashboard: http://{target_host}:{target_port}/")
+    logger.info(f"Healthz:   http://{target_host}:{target_port}/healthz")
+    logger.info(f"Health:    http://{target_host}:{target_port}/health")
+    logger.info(f"Models:    http://{target_host}:{target_port}/v1/models")
+    logger.info(f"Chat:      http://{target_host}:{target_port}/v1/chat/completions")
+    logger.info(f"Probe:     http://{target_host}:{target_port}/v1/probe?model=<id>")
     logger.info("=" * 60)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Server stopped.")
+    finally:
+        server.server_close()
 
 if __name__ == "__main__":
     main()
