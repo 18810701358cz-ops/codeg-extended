@@ -18,7 +18,6 @@ import {
   Pin,
   PinOff,
   CheckCircle2,
-  FolderX,
   Info,
   ChevronRight,
 } from "lucide-react"
@@ -476,24 +475,9 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                       size="xs"
                       className="relative -ml-[0.25rem] max-w-[calc(100%-3.875rem)] shrink overflow-hidden"
                     />
-                    {/* Re-parented out of a removed worktree: history loads fine,
-                    but "continue" may need a fresh session (the agent's files
-                    were keyed to the old path). Kept at the far end, with the
-                    row's other status marks. */}
-                    {conversation.origin_cwd ? (
-                      <span
-                        className="ml-auto inline-flex shrink-0 items-center"
-                        title={tSidebar("worktreeRemovedBadge")}
-                      >
-                        <FolderX
-                          className="h-3 w-3 text-muted-foreground/60"
-                          aria-hidden
-                        />
-                        <span className="sr-only">
-                          {tSidebar("worktreeRemovedBadge")}
-                        </span>
-                      </span>
-                    ) : null}
+                    {/* No mark for a conversation re-parented out of a removed
+                    worktree (`origin_cwd`): the row stays quiet about it, and
+                    the hover bubble names the original path instead. */}
                   </button>
 
                   {/* Expand/collapse affordance for delegation children. It overlays

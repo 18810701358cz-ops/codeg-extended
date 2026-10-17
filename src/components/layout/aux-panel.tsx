@@ -22,6 +22,7 @@ import { useActiveProjectFolderId } from "@/hooks/use-active-project-folder"
 import { useIsActiveChatMode } from "@/hooks/use-is-active-chat-mode"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlatform } from "@/hooks/use-platform"
+import { useTabReselect } from "@/hooks/use-tab-reselect"
 import { useZoomLevel } from "@/hooks/use-appearance"
 import { useAuxTabOrder, type AuxTabOrder } from "@/lib/aux-panel-tab-order"
 import { useFolderForgeProvider } from "@/lib/forge-provider-cache"
@@ -109,7 +110,7 @@ export function AuxPanel() {
   const tAutomations = useTranslations("Automations")
   const tTasks = useTranslations("Tasks")
   const tForge = useTranslations("Forge")
-  const { isOpen, activeTab, setActiveTab } = useAuxPanelContext()
+  const { isOpen, activeTab, setActiveTab, setOpen } = useAuxPanelContext()
   const { activeFolderId } = useActiveFolder()
   const isChatMode = useIsActiveChatMode()
   const isMobile = useIsMobile()
@@ -157,6 +158,10 @@ export function AuxPanel() {
     },
     [setActiveTab]
   )
+
+  // Clicking the tab that is already showing hides the panel, on the desktop
+  // rail and in the mobile drawer alike.
+  const closePanel = useCallback(() => setOpen(false), [setOpen])
 
   // The window-chrome overlay (terminal / aux / settings, plus the native
   // caption buttons on desktop Windows/Linux) floats over the top strip's
@@ -283,20 +288,15 @@ export function AuxPanel() {
               variant="line"
               className="h-10 w-full shrink-0 justify-start border-b border-border ws-chrome-border px-3 group-data-horizontal/tabs:h-10"
             >
-              {shownTabs.map((tab) => {
-                const Icon = TAB_ICONS[tab]
-                const label = tabLabel(tab)
-                return (
-                  <TabsTrigger
-                    key={tab}
-                    value={tab}
-                    title={label}
-                    aria-label={label}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                  </TabsTrigger>
-                )
-              })}
+              {shownTabs.map((tab) => (
+                <MobileAuxTabTrigger
+                  key={tab}
+                  tab={tab}
+                  label={tabLabel(tab)}
+                  selected={tab === effectiveTab}
+                  onReselect={closePanel}
+                />
+              ))}
               {/* Trailing drag region lets the empty part of the tab row move
                   the window. */}
               <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
@@ -336,11 +336,35 @@ export function AuxPanel() {
                 visible={showFolderTabs}
                 icons={TAB_ICONS}
                 labelOf={tabLabel}
+                activeTab={effectiveTab}
+                onReselect={closePanel}
               />
             </div>
           </>
         )}
       </Tabs>
     </aside>
+  )
+}
+
+/** One tab of the mobile drawer's row. A tap on the tab already showing
+ *  closes the drawer, as a click does on the desktop rail. */
+function MobileAuxTabTrigger({
+  tab,
+  label,
+  selected,
+  onReselect,
+}: {
+  tab: AuxPanelTab
+  label: string
+  selected: boolean
+  onReselect: () => void
+}) {
+  const { triggerProps } = useTabReselect(selected, onReselect)
+  const Icon = TAB_ICONS[tab]
+  return (
+    <TabsTrigger value={tab} title={label} aria-label={label} {...triggerProps}>
+      <Icon className="h-3.5 w-3.5" />
+    </TabsTrigger>
   )
 }

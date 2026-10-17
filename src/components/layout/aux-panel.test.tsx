@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import type { ReactNode } from "react"
 import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -99,14 +100,17 @@ const scene = vi.hoisted(() => ({
   /** Every folder the panel asked the forge lookup about, in order. */
   providerAsked: [] as (number | null)[],
 }))
-// A live selection, so a press on the rail really switches the panel.
+// A live selection and open state, so a press on the rail really switches the
+// panel, and a click that closes it really does.
 vi.mock("@/contexts/aux-panel-context", async () => {
   const { useCallback, useState } = await import("react")
   return {
     useAuxPanelContext: () => {
       const [activeTab, setTab] = useState<AuxPanelTab>(scene.initialTab)
+      const [isOpen, setIsOpen] = useState(scene.isOpen)
       const setActiveTab = useCallback((tab: AuxPanelTab) => setTab(tab), [])
-      return { isOpen: scene.isOpen, activeTab, setActiveTab }
+      const setOpen = useCallback((open: boolean) => setIsOpen(open), [])
+      return { isOpen, activeTab, setActiveTab, setOpen }
     },
   }
 })
@@ -301,6 +305,54 @@ describe("AuxPanel", () => {
       "aria-selected",
       "true"
     )
+  })
+
+  it("hides the panel when the tab already showing is clicked again", async () => {
+    const user = userEvent.setup()
+    const { container } = renderPanel()
+
+    // A first click only switches. Radix selects on the mousedown, so by the
+    // time this click lands the tab is selected — it must not count as the
+    // second one.
+    await user.click(screen.getByRole("tab", { name: "Files" }))
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Files")
+
+    await user.click(screen.getByRole("tab", { name: "Files" }))
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it("keeps the panel when a press on the tab showing turns into a drag", async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    const details = screen.getByRole("tab", { name: "Session Details" })
+
+    await user.pointer({ keys: "[MouseLeft>]", target: details })
+    act(() => motion.dragStart.get("session_details")?.())
+    await user.pointer({ keys: "[/MouseLeft]", target: details })
+    act(() => motion.dragEnd.get("session_details")?.())
+
+    expect(rail()).toBeVisible()
+    expect(details).toHaveAttribute("aria-selected", "true")
+  })
+
+  it("leaves Enter and Space on the tab showing to the tabs", async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    const details = screen.getByRole("tab", { name: "Session Details" })
+
+    // A press that ends off the tab sends its click elsewhere, so nothing
+    // consumes the press it started. The keyboard's clicks after it must not.
+    await user.pointer([
+      { keys: "[MouseLeft>]", target: details },
+      { target: screen.getByRole("heading", { level: 2 }) },
+      { keys: "[/MouseLeft]" },
+    ])
+    act(() => details.focus())
+    await user.keyboard("{Enter}")
+    await user.keyboard(" ")
+
+    expect(rail()).toBeVisible()
+    expect(details).toHaveAttribute("aria-selected", "true")
   })
 
   it("follows the stored order, and a reorder made in another window", () => {
@@ -507,6 +559,22 @@ describe("AuxPanel", () => {
         .getAllByRole("tab")
         .map((tab) => tab.getAttribute("aria-label"))
     ).toEqual(REVERSED_NAMES)
+  })
+
+  it("closes the drawer when the tab already showing is tapped again", async () => {
+    scene.mobile = true
+    const user = userEvent.setup()
+    const { container } = renderPanel()
+
+    await user.click(screen.getByRole("tab", { name: "Changes" }))
+    expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    )
+    expect(container).not.toBeEmptyDOMElement()
+
+    await user.click(screen.getByRole("tab", { name: "Changes" }))
+    expect(container).toBeEmptyDOMElement()
   })
 
   it("opens a work tab from the rail, mounting its body on first view", () => {
