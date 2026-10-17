@@ -67,9 +67,11 @@ describe("WorkBuddy UI Integration", () => {
       hostVersion: "1.0.0",
       onDispose: vi.fn(),
       injectCSS: vi.fn(),
-      registerSlot: vi.fn((slotName: SlotName, contribution: SlotContribution) => {
-        registeredSlots.set(slotName, contribution)
-      }),
+      registerSlot: vi.fn(
+        (slotName: SlotName, contribution: SlotContribution) => {
+          registeredSlots.set(slotName, contribution)
+        }
+      ),
       notify: vi.fn(),
       config: {
         get: vi.fn(async () => mockConfig),
@@ -92,6 +94,7 @@ describe("WorkBuddy UI Integration", () => {
         theme: "light",
         mode: "desktop",
       },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       react: {} as any,
       logger: {
         info: vi.fn(),
@@ -113,7 +116,9 @@ describe("WorkBuddy UI Integration", () => {
 
       expect(mockContext.registerSlot).toHaveBeenCalledTimes(2)
       expect(registeredSlots.has("statusbar.right")).toBe(true)
-      expect(registeredSlots.get("statusbar.right")?.id).toBe("workbuddy-status")
+      expect(registeredSlots.get("statusbar.right")?.id).toBe(
+        "workbuddy-status"
+      )
 
       expect(registeredSlots.has("settings.plugin-detail")).toBe(true)
       expect(registeredSlots.get("settings.plugin-detail")?.id).toBe(

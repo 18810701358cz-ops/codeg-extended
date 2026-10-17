@@ -329,7 +329,9 @@ describe("PluginsSettings", () => {
       expect(screen.getByText("Developer mode")).toBeDefined()
     })
 
-    const devModeSwitch = screen.getByRole("switch", { name: "Toggle Developer Mode" })
+    const devModeSwitch = screen.getByRole("switch", {
+      name: "Toggle Developer Mode",
+    })
     expect(devModeSwitch).toBeDefined()
     expect(devModeSwitch.getAttribute("data-state")).toBe("unchecked")
 
