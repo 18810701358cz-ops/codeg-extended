@@ -23,8 +23,11 @@ vi.mock("@/lib/platform", () => ({
   openFileDialog: vi.fn(),
 }))
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/transport/web-auth", () => ({
   getCodegToken: vi.fn().mockReturnValue("mock-token"),
+}))
+
+vi.mock("@/lib/transport/web-connection-store", () => ({
   notifyWebUnauthorized: vi.fn(),
 }))
 
