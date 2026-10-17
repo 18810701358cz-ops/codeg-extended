@@ -1,0 +1,10 @@
+{
+  "id": "mcp-assistant",
+  "name": "MCP 服务管家 (MCP Assistant)",
+  "version": "1.0.0",
+  "author": "Community",
+  "description": "监控与快速调试本地 stdio / SSE MCP 服务器，实时检查健康状态与可用工具",
+  "category": "mcp-tool",
+  "enabled": true,
+  "tags": ["MCP", "Tools", "服务监控"]
+}

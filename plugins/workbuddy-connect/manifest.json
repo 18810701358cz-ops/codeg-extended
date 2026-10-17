@@ -1,0 +1,11 @@
+{
+  "id": "workbuddy-connect",
+  "name": "WorkBuddy Connect (旗舰模型网关)",
+  "version": "1.0.0",
+  "author": "Community",
+  "description": "自动解密本地 CodeBuddy/WorkBuddy 凭证并暴露标准 OpenAI 兼容接口，提供 37+ 旗舰大模型及点数折扣探测",
+  "category": "model-provider",
+  "enabled": true,
+  "endpoint": "http://127.0.0.1:18080/v1",
+  "tags": ["OpenAI兼容", "多模型代理", "自动解密", "免密接入"]
+}

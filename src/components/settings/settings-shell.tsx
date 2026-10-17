@@ -23,6 +23,7 @@ import {
   SendHorizontal,
   Palette,
   PlugZap,
+  Puzzle,
   Server,
   Settings,
   SlidersHorizontal,
@@ -49,6 +50,7 @@ interface SettingsNavItem {
     | "appearance"
     | "agents"
     | "model_providers"
+    | "plugins"
     | "mcp"
     | "skills"
     | "skill_packs"
@@ -80,6 +82,11 @@ const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
     href: "/settings/collaboration",
     labelKey: "collaboration",
     icon: Bubbles,
+  },
+  {
+    href: "/settings/plugins",
+    labelKey: "plugins",
+    icon: Puzzle,
   },
   {
     href: "/settings/mcp",

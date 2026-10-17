@@ -1,0 +1,10 @@
+{
+  "id": "my-custom-plugin",
+  "name": "自定义插件模版",
+  "version": "1.0.0",
+  "author": "Your Name",
+  "description": "基于 Codeg Extended 插件规范编写的自定义扩展",
+  "category": "utility",
+  "enabled": false,
+  "tags": ["自定义", "扩展"]
+}
