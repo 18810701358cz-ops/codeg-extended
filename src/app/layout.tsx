@@ -21,7 +21,6 @@ import { ServiceWorkerInit } from "@/components/service-worker-init"
 import { WebConnectionGuard } from "@/components/connection/web-connection-guard"
 import { WindowResizeGrips } from "@/components/layout/window-resize-grips"
 import { CloseRequestDialog } from "@/components/workspace/close-request-dialog"
-import { PluginRuntimeProvider } from "@/components/plugins/plugin-runtime-provider"
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -112,7 +111,6 @@ export default async function RootLayout({
                     (/workspace, /login, the redirecting /) must be able to
                     answer a close press. */}
                 <CloseRequestDialog />
-                <PluginRuntimeProvider />
                 {children}
               </AppearanceProvider>
             </ThemeProvider>

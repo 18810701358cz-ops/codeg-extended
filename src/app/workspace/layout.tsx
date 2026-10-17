@@ -18,6 +18,9 @@ import {
 import type { ImperativePanelGroupHandle } from "react-resizable-panels"
 import { FolderTitleBar } from "@/components/layout/folder-title-bar"
 import { Sidebar } from "@/components/layout/sidebar"
+// [codeg-extended] plugin host
+import { PluginHost } from "@/components/plugin-host/plugin-host"
+import { PluginSlot } from "@/components/plugin-host/plugin-slot"
 import { StatusBar } from "@/components/layout/status-bar"
 import {
   AppWorkspaceProvider,
@@ -1459,6 +1462,14 @@ function FolderLayoutShell({ children }: { children: React.ReactNode }) {
           </div>
         </>
       )}
+      {/* [codeg-extended] plugin host runtime and workspace overlay container */}
+      <PluginHost />
+      <div
+        id="plugin-workspace-overlay"
+        className="pointer-events-none fixed inset-0 z-40 overflow-hidden"
+      >
+        <PluginSlot name="workspace.overlay" />
+      </div>
       <AppToaster
         position="bottom-right"
         duration={TOAST_DURATION_MS}
