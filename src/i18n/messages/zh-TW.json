@@ -56,8 +56,7 @@
       "browser": "瀏覽器操作",
       "computer_use": "電腦操作",
       "quick_messages": "快捷訊息",
-      "logs": "執行日誌",
-      "plugins": "外掛"
+      "logs": "執行日誌"
     }
   },
   "AppearanceSettings": {

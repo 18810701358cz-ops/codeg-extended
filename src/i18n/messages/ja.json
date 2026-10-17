@@ -56,8 +56,7 @@
       "browser": "ブラウザ操作",
       "computer_use": "コンピューター操作",
       "quick_messages": "クイックメッセージ",
-      "logs": "実行ログ",
-      "plugins": "プラグイン"
+      "logs": "実行ログ"
     }
   },
   "AppearanceSettings": {

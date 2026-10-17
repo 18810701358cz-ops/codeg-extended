@@ -56,8 +56,7 @@
       "browser": "Browsernutzung",
       "computer_use": "Computernutzung",
       "quick_messages": "Schnellnachrichten",
-      "logs": "Laufzeitprotokolle",
-      "plugins": "Plugins"
+      "logs": "Laufzeitprotokolle"
     }
   },
   "AppearanceSettings": {

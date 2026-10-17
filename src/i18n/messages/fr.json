@@ -56,8 +56,7 @@
       "browser": "Utilisation du navigateur",
       "computer_use": "Utilisation de l'ordinateur",
       "quick_messages": "Messages rapides",
-      "logs": "Journaux d'exécution",
-      "plugins": "Plugins"
+      "logs": "Journaux d'exécution"
     }
   },
   "AppearanceSettings": {

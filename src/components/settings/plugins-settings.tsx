@@ -1,200 +1,365 @@
 "use client"
 
-import { useCallback, useState, useSyncExternalStore } from "react"
-import { Palette, Puzzle, RefreshCw, Search, Settings } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import Link from "next/link"
+import { useSearchParams } from "next/navigation"
+import { useTranslations } from "next-intl"
 import { toast } from "sonner"
-
-import { SettingCard, SettingRow } from "@/components/shared/setting-card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  AlertTriangle,
+  FolderOpen,
+  Loader2,
+  Palette,
+  Plus,
+  RefreshCw,
+  RotateCw,
+  Search,
+  Settings,
+  ShieldAlert,
+} from "lucide-react"
+import { SettingCard, SettingRow } from "@/components/shared/setting-card"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
+import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { PluginInstallDialog } from "@/components/settings/plugin-install-dialog"
+import { PluginDetailSheet } from "@/components/settings/plugin-detail-sheet"
+import { isDesktop, openPath } from "@/lib/platform"
+import {
+  pluginHostBackendRestart,
+  pluginHostCheckUpdate,
+  pluginHostCommitInstall,
+  pluginHostDisableAll,
+  pluginHostList,
+  pluginHostSetEnabled,
+  subscribePluginHostBackendStatus,
+  subscribePluginHostChanged,
+} from "@/lib/plugin-host/api"
+import type { PluginInfo, PluginListResult } from "@/lib/plugin-host/types"
 import { cn } from "@/lib/utils"
-import { pluginManager } from "@/lib/plugins/manager"
-
-export interface PluginManifest {
-  id: string
-  name: string
-  version: string
-  author: string
-  description: string
-  category: "appearance" | "utility"
-  enabled: boolean
-  status: "running" | "idle" | "error" | "stopped"
-  endpoint?: string
-  homepage?: string
-  tags?: string[]
-}
-
-const DEFAULT_PLUGINS: PluginManifest[] = [
-  {
-    id: "dsh-cyber-glow",
-    name: "DSH Cyber Glow (霓虹微光主题)",
-    version: "1.1.0",
-    author: "codeg-community",
-    description:
-      "类似 DeepSeek Harness 的深色半透明毛玻璃与赛博微光边缘，优化聊天气泡与侧栏视觉。",
-    category: "appearance",
-    enabled: false,
-    status: "idle",
-    tags: ["UI美化", "毛玻璃", "赛博微光", "动态注入"],
-  },
-  {
-    id: "dsh-compact-layout",
-    name: "DSH Compact Mode (紧凑极客模式)",
-    version: "1.0.0",
-    author: "codeg-community",
-    description:
-      "缩减侧栏与会话边距，最大化聊天视野，还原 DSH 高信息密度极客布局。",
-    category: "appearance",
-    enabled: false,
-    status: "idle",
-    tags: ["布局修饰", "高信息密度", "全屏沉浸"],
-  },
-  {
-    id: "dsh-quick-actions",
-    name: "DSH Quick Tools (浮动快捷挂件)",
-    version: "1.0.0",
-    author: "codeg-community",
-    description:
-      "在右下角挂载示例快捷悬浮胶囊，点击展示通知提示（前端挂件与交互示例）。",
-    category: "utility",
-    enabled: false,
-    status: "idle",
-    tags: ["UI组件", "浮动胶囊", "DOM挂载"],
-  },
-]
-
-let cachedManifests: PluginManifest[] | null = null
-let lastEnabledMapKey = ""
-
-function getClientManifests(): PluginManifest[] {
-  if (typeof window === "undefined") return DEFAULT_PLUGINS
-  const raw = localStorage.getItem("codeg_plugins_enabled_v1") || ""
-  if (cachedManifests && lastEnabledMapKey === raw) {
-    return cachedManifests
-  }
-  lastEnabledMapKey = raw
-  cachedManifests = DEFAULT_PLUGINS.map((p) => {
-    const isEn = pluginManager.isPluginEnabled(p.id)
-    return {
-      ...p,
-      enabled: isEn,
-      status: isEn ? "running" : "idle",
-    }
-  })
-  return cachedManifests
-}
-
-function getServerManifests(): PluginManifest[] {
-  return DEFAULT_PLUGINS
-}
 
 export function PluginsSettings() {
-  const plugins = useSyncExternalStore(
-    (cb) => pluginManager.subscribe(cb),
-    getClientManifests,
-    getServerManifests
-  )
+  const t = useTranslations("PluginsSettings")
+  const searchParams = useSearchParams()
+
+  const [loading, setLoading] = useState(true)
+  const [listData, setListData] = useState<PluginListResult | null>(null)
+  const [plugins, setPlugins] = useState<PluginInfo[]>([])
+
   const [searchQuery, setSearchQuery] = useState("")
   const [activeCategory, setActiveCategory] = useState<string>("all")
-  const [selectedPlugin, setSelectedPlugin] = useState<PluginManifest | null>(
+
+  const [installDialogOpen, setInstallDialogOpen] = useState(false)
+  const [selectedPlugin, setSelectedPlugin] = useState<PluginInfo | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
+
+  const [disableAllConfirmOpen, setDisableAllConfirmOpen] = useState(false)
+  const [disablingAll, setDisablingAll] = useState(false)
+
+  const [checkingUpdateId, setCheckingUpdateId] = useState<string | null>(null)
+  const [restartingBackendId, setRestartingBackendId] = useState<string | null>(
     null
   )
-  const [isThemeEditorOpen, setIsThemeEditorOpen] = useState(false)
-  const [themeCSS, setThemeCSS] = useState("")
 
-  const handleToggle = useCallback(
-    (id: string) => {
-      const plugin = plugins.find((p) => p.id === id)
-      if (!plugin) return
-      const nextState = !plugin.enabled
-      pluginManager.setPluginEnabled(id, nextState)
-      toast.success(
-        nextState
-          ? `插件「${plugin.name}」已启用并即时生效`
-          : `插件「${plugin.name}」已停用`
-      )
-    },
-    [plugins]
-  )
+  const desktop = isDesktop()
 
-  const handleApplyCustomCSS = useCallback(() => {
-    if (!themeCSS.trim()) {
-      pluginManager.removeCSS("custom-user-theme")
-      toast.info("已清空自定义样式")
-      setIsThemeEditorOpen(false)
-      return
-    }
+  const fetchPlugins = useCallback(async () => {
     try {
-      pluginManager.injectCSS("custom-user-theme", themeCSS)
-      toast.success("自定义 CSS 样式已临时生效（重启后失效）")
-      setIsThemeEditorOpen(false)
-    } catch {
-      toast.error("注入 CSS 失败")
+      const data = await pluginHostList()
+      setListData(data)
+      setPlugins(data.plugins || [])
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
     }
-  }, [themeCSS])
+  }, [])
 
-  const filteredPlugins = plugins.filter((plugin) => {
-    const matchesSearch =
-      plugin.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      plugin.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      plugin.tags?.some((t) =>
-        t.toLowerCase().includes(searchQuery.toLowerCase())
+  useEffect(() => {
+    fetchPlugins()
+  }, [fetchPlugins])
+
+  // Sync ?id= parameter with DetailSheet
+  useEffect(() => {
+    const idParam = searchParams.get("id")
+    if (idParam && plugins.length > 0) {
+      const target = plugins.find((p) => p.id === idParam)
+      if (target) {
+        setSelectedPlugin(target)
+        setDetailOpen(true)
+      }
+    }
+  }, [searchParams, plugins])
+
+  // Subscribe to changed & backend status events
+  useEffect(() => {
+    const unsubs: Array<() => void> = []
+    let active = true
+
+    subscribePluginHostChanged(() => {
+      if (active) fetchPlugins()
+    })
+      .then((unsub) => {
+        if (active) unsubs.push(unsub)
+        else unsub()
+      })
+      .catch(() => {})
+
+    subscribePluginHostBackendStatus((event) => {
+      if (active) {
+        setPlugins((prev) =>
+          prev.map((p) =>
+            p.id === event.id ? { ...p, backend: event.status } : p
+          )
+        )
+      }
+    })
+      .then((unsub) => {
+        if (active) unsubs.push(unsub)
+        else unsub()
+      })
+      .catch(() => {})
+
+    return () => {
+      active = false
+      unsubs.forEach((u) => u())
+    }
+  }, [fetchPlugins])
+
+  const handleOpenDetail = (plugin: PluginInfo) => {
+    setSelectedPlugin(plugin)
+    setDetailOpen(true)
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href)
+      url.searchParams.set("id", plugin.id)
+      window.history.pushState(null, "", url.toString())
+    }
+  }
+
+  const handleCloseDetail = () => {
+    setDetailOpen(false)
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href)
+      url.searchParams.delete("id")
+      window.history.pushState(null, "", url.toString())
+    }
+  }
+
+  const handleToggle = async (plugin: PluginInfo) => {
+    const nextEnabled = !plugin.enabled
+    try {
+      const updated = await pluginHostSetEnabled(plugin.id, nextEnabled)
+      setPlugins((prev) => prev.map((p) => (p.id === plugin.id ? updated : p)))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const handleDisableAll = async () => {
+    setDisablingAll(true)
+    try {
+      const res = await pluginHostDisableAll()
+      setListData(res)
+      setPlugins(res.plugins || [])
+      toast.success(t("disableAllSuccess"))
+      setDisableAllConfirmOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDisablingAll(false)
+    }
+  }
+
+  const handleRestartBackend = async (plugin: PluginInfo) => {
+    setRestartingBackendId(plugin.id)
+    try {
+      const status = await pluginHostBackendRestart(plugin.id)
+      setPlugins((prev) =>
+        prev.map((p) => (p.id === plugin.id ? { ...p, backend: status } : p))
       )
+      toast.success(t("card.restartSuccess"))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRestartingBackendId(null)
+    }
+  }
 
-    const matchesCategory =
-      activeCategory === "all" || plugin.category === activeCategory
+  const handleCheckUpdate = async (plugin: PluginInfo) => {
+    setCheckingUpdateId(plugin.id)
+    try {
+      const res = await pluginHostCheckUpdate(plugin.id)
+      if (res.updatable && res.stagingId) {
+        toast.info(t("card.updateAvailable", { version: res.latest || "new" }))
+        await pluginHostCommitInstall(res.stagingId)
+        toast.success(t("installDialog.installSuccess"))
+        await fetchPlugins()
+      } else {
+        toast.success(t("card.upToDate"))
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCheckingUpdateId(null)
+    }
+  }
 
-    return matchesSearch && matchesCategory
-  })
+  const handleOpenPluginsDirectory = async () => {
+    if (listData?.pluginsDir) {
+      try {
+        await openPath(listData.pluginsDir)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+      }
+    }
+  }
+
+  const filteredPlugins = useMemo(() => {
+    return plugins.filter((plugin) => {
+      const matchesSearch =
+        searchQuery === "" ||
+        plugin.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        plugin.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (plugin.description &&
+          plugin.description
+            .toLowerCase()
+            .includes(searchQuery.toLowerCase())) ||
+        (plugin.author &&
+          plugin.author.toLowerCase().includes(searchQuery.toLowerCase()))
+
+      const matchesCategory =
+        activeCategory === "all" || plugin.category === activeCategory
+
+      return matchesSearch && matchesCategory
+    })
+  }, [plugins, searchQuery, activeCategory])
+
+  const cssNoticeParts = useMemo(() => {
+    return t("cssNotice", { link: "__LINK__" }).split("__LINK__")
+  }, [t])
 
   return (
-    <div className="space-y-6">
-      {/* Header Info */}
-      <div className="flex items-center justify-between gap-2.5 rounded-xl border border-border/70 bg-muted/40 p-3">
+    <div className="space-y-6 p-4 max-w-5xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b pb-4">
         <div>
-          <span className="font-medium text-foreground">
-            插件系统开发中：目前仅内置 3
-            个界面修饰示例，目录安装和仓库安装将在后续版本提供
-          </span>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            插件系统 v2 正在重构推进中，当前内置轻量 UI
-            修饰示例，外部插件热插拔与完整宿主能力将在后续版本陆续推出。
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-bold tracking-tight">{t("title")}</h1>
+            {listData && (
+              <Badge variant="outline" className="text-xs font-mono">
+                {t("hostVersion", { version: listData.hostVersion })}
+              </Badge>
+            )}
+            {listData?.safeMode && (
+              <Badge variant="destructive" className="text-xs gap-1">
+                <ShieldAlert className="h-3 w-3" />
+                {t("safeModeBadge")}
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            {t("description")}
           </p>
+          {listData?.pluginsDir && (
+            <div className="flex items-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
+              <span>{t("pluginsDir")}:</span>
+              <code className="font-mono bg-muted/60 px-1 py-0.5 rounded text-[10px]">
+                {listData.pluginsDir}
+              </code>
+              {desktop && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 text-[10px] gap-1 hover:text-foreground"
+                  onClick={handleOpenPluginsDirectory}
+                >
+                  <FolderOpen className="h-3 w-3" />
+                  {t("openDir")}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
-        <div className="flex gap-2">
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Dev mode switch: disabled until WP9 */}
+          <div
+            className="flex items-center gap-2 px-2 py-1 rounded border bg-muted/20 opacity-60 cursor-not-allowed"
+            title="Developer Mode hot reload will be enabled in WP9"
+          >
+            <span className="text-xs font-medium text-muted-foreground">
+              {t("devMode")}
+            </span>
+            <Switch checked={false} disabled={true} />
+          </div>
+
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setIsThemeEditorOpen(true)}
+            onClick={fetchPlugins}
+            disabled={loading}
             className="h-8 gap-1.5 text-xs"
           >
-            <Palette className="h-3.5 w-3.5" />
-            快速写 CSS 修饰 UI
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+            />
+            {t("refresh")}
           </Button>
+
           <Button
             size="sm"
             variant="outline"
-            onClick={() => {
-              pluginManager.boot(true)
-              toast.success("已重新应用当前启用的插件与样式")
-            }}
+            onClick={() => setDisableAllConfirmOpen(true)}
+            disabled={plugins.length === 0}
+            className="h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+          >
+            {t("disableAll")}
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={() => setInstallDialogOpen(true)}
             className="h-8 gap-1.5 text-xs"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            热重载
+            <Plus className="h-3.5 w-3.5" />
+            {t("installPlugin")}
           </Button>
+        </div>
+      </div>
+
+      {/* Safe Mode Alert */}
+      {listData?.safeMode && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-2">
+          <ShieldAlert className="h-4 w-4 shrink-0" />
+          <span>{t("safeModeNotice")}</span>
+        </div>
+      )}
+
+      {/* Notice about plugin styles */}
+      <div className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3.5 py-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <Palette className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span>
+            {cssNoticeParts[0]}
+            <Link
+              href="/settings/appearance"
+              className="font-medium text-foreground underline underline-offset-4 hover:text-primary transition-colors"
+            >
+              {t("cssNoticeLink")}
+            </Link>
+            {cssNoticeParts[1]}
+          </span>
         </div>
       </div>
 
@@ -206,22 +371,55 @@ export function PluginsSettings() {
           className="w-full sm:w-auto"
         >
           <TabsList className="h-8">
-            <TabsTrigger value="all" className="text-xs">
-              全部
+            <TabsTrigger
+              value="all"
+              className="text-xs"
+              onClick={() => setActiveCategory("all")}
+            >
+              {t("categoryAll")}
             </TabsTrigger>
-            <TabsTrigger value="appearance" className="text-xs">
-              界面修饰 (UI)
+            <TabsTrigger
+              value="appearance"
+              className="text-xs"
+              onClick={() => setActiveCategory("appearance")}
+            >
+              {t("categoryAppearance")}
             </TabsTrigger>
-            <TabsTrigger value="utility" className="text-xs">
-              挂件与工具
+            <TabsTrigger
+              value="model-provider"
+              className="text-xs"
+              onClick={() => setActiveCategory("model-provider")}
+            >
+              {t("categoryModelProvider")}
+            </TabsTrigger>
+            <TabsTrigger
+              value="tools"
+              className="text-xs"
+              onClick={() => setActiveCategory("tools")}
+            >
+              {t("categoryTools")}
+            </TabsTrigger>
+            <TabsTrigger
+              value="workflow"
+              className="text-xs"
+              onClick={() => setActiveCategory("workflow")}
+            >
+              {t("categoryWorkflow")}
+            </TabsTrigger>
+            <TabsTrigger
+              value="utility"
+              className="text-xs"
+              onClick={() => setActiveCategory("utility")}
+            >
+              {t("categoryUtility")}
             </TabsTrigger>
           </TabsList>
         </Tabs>
 
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:w-72">
           <Search className="absolute top-2.5 left-2.5 h-3.5 w-3.5 text-muted-foreground" />
           <Input
-            placeholder="搜索插件、标签或作者..."
+            placeholder={t("searchPlaceholder")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="h-8 pl-8 text-xs"
@@ -230,171 +428,224 @@ export function PluginsSettings() {
       </div>
 
       {/* Plugin Cards Grid */}
-      <div className="grid gap-4 md:grid-cols-2">
-        {filteredPlugins.map((plugin) => (
-          <SettingCard key={plugin.id}>
-            <SettingRow
-              title={plugin.name}
-              description={plugin.description}
-              control={
-                <div className="flex items-center gap-2">
-                  <Badge
-                    variant="outline"
-                    className="h-4 px-1.5 font-mono text-[10px]"
-                  >
-                    v{plugin.version}
-                  </Badge>
-                  <Switch
-                    checked={plugin.enabled}
-                    onCheckedChange={() => handleToggle(plugin.id)}
-                  />
-                </div>
-              }
-            >
-              <div className="mt-2 flex items-center justify-between border-t border-border/40 pt-2 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={cn(
-                      "inline-block h-2 w-2 rounded-full",
-                      plugin.status === "running"
-                        ? "bg-emerald-500 animate-pulse"
-                        : "bg-muted-foreground/40"
-                    )}
-                  />
-                  <span className="capitalize">
-                    {plugin.status === "running" ? "运行中 / 已注入" : "未启动"}
-                  </span>
-                  <span className="mx-1">•</span>
-                  <span>{plugin.author}</span>
-                </div>
+      {filteredPlugins.length === 0 ? (
+        <div className="py-16 text-center text-xs text-muted-foreground border rounded-lg bg-muted/10">
+          {plugins.length === 0 ? t("emptyPlugins") : t("noFilteredPlugins")}
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {filteredPlugins.map((plugin) => {
+            const hasProblems = plugin.problems && plugin.problems.length > 0
+            const isGit = plugin.source.kind === "git"
+            const isChecking = checkingUpdateId === plugin.id
+            const isRestarting = restartingBackendId === plugin.id
 
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => setSelectedPlugin(plugin)}
+            return (
+              <SettingCard key={plugin.id}>
+                <SettingRow
+                  title={
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">{plugin.name}</span>
+                      <Badge
+                        variant="outline"
+                        className="h-4 px-1.5 font-mono text-[10px]"
+                      >
+                        v{plugin.version}
+                      </Badge>
+                      <Badge
+                        variant="secondary"
+                        className="h-4 px-1 text-[9px]"
+                      >
+                        {plugin.source.kind === "builtin"
+                          ? t("card.builtin")
+                          : plugin.source.kind === "git"
+                            ? t("card.git")
+                            : plugin.source.kind === "upload"
+                              ? t("card.upload")
+                              : t("card.manual")}
+                      </Badge>
+                    </div>
+                  }
+                  description={plugin.description}
+                  control={
+                    <Switch
+                      checked={plugin.enabled}
+                      onCheckedChange={() => handleToggle(plugin)}
+                      aria-label={`Toggle ${plugin.name}`}
+                    />
+                  }
                 >
-                  <Settings className="mr-1 h-3.5 w-3.5" />
-                  配置与代码
-                </Button>
-              </div>
+                  {/* Status & Author row */}
+                  <div className="mt-2 flex items-center justify-between border-t border-border/40 pt-2 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "inline-block h-2 w-2 rounded-full",
+                          plugin.status === "ok" && plugin.enabled
+                            ? "bg-emerald-500 animate-pulse"
+                            : plugin.status === "error"
+                              ? "bg-destructive"
+                              : "bg-muted-foreground/40"
+                        )}
+                      />
+                      <span className="capitalize">
+                        {plugin.status === "ok"
+                          ? plugin.enabled
+                            ? t("card.statusOk")
+                            : "Disabled"
+                          : plugin.status === "invalid"
+                            ? t("card.statusInvalid")
+                            : plugin.status === "incompatible"
+                              ? t("card.statusIncompatible")
+                              : t("card.statusError")}
+                      </span>
 
-              {plugin.tags && plugin.tags.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {plugin.tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </SettingRow>
-          </SettingCard>
-        ))}
-      </div>
+                      {plugin.backend && (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "h-4 px-1 text-[9px]",
+                            plugin.backend.state === "running"
+                              ? "text-emerald-500 border-emerald-500/30"
+                              : plugin.backend.state === "crashed" ||
+                                  plugin.backend.state === "unhealthy"
+                                ? "text-destructive border-destructive/30"
+                                : "text-muted-foreground"
+                          )}
+                        >
+                          {plugin.backend.state}
+                        </Badge>
+                      )}
 
-      {/* Custom Theme Editor Modal */}
-      <Dialog open={isThemeEditorOpen} onOpenChange={setIsThemeEditorOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <Palette className="h-4 w-4 text-sky-400" />
-              快速界面修饰器 (实时 CSS 注入)
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              输入任意 CSS
-              样式，点击应用即可实时修饰界面。注意：此处修改仅临时生效，重启后失效；要长期保存请用「外观
-              → 自定义 CSS」。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Textarea
-              placeholder={`/* 例如：修改侧边栏背景为磨砂黑 */\n.bg-background { background: #000 !important; }\n.text-foreground { color: #38bdf8 !important; }`}
-              value={themeCSS}
-              onChange={(e) => setThemeCSS(e.target.value)}
-              className="h-48 font-mono text-xs"
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsThemeEditorOpen(false)}
-              className="text-xs"
-            >
-              取消
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleApplyCustomCSS}
-              className="text-xs"
-            >
-              应用并即时生效
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                      {plugin.author && (
+                        <>
+                          <span className="mx-0.5">·</span>
+                          <span className="truncate max-w-[120px]">
+                            {plugin.author}
+                          </span>
+                        </>
+                      )}
+                    </div>
 
-      {/* Detail / Config Modal */}
-      {selectedPlugin && (
-        <Dialog
-          open={Boolean(selectedPlugin)}
-          onOpenChange={() => setSelectedPlugin(null)}
-        >
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-base">
-                <Puzzle className="h-4 w-4 text-sky-400" />
-                {selectedPlugin.name}
-              </DialogTitle>
-              <DialogDescription className="text-xs">
-                ID: <code>{selectedPlugin.id}</code> | 状态:{" "}
-                {selectedPlugin.status}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3 py-2 text-xs">
-              <div className="rounded-md bg-muted p-2.5">
-                <p className="mb-1 font-medium text-foreground">插件描述：</p>
-                <p className="text-muted-foreground">
-                  {selectedPlugin.description}
-                </p>
-              </div>
+                    <div className="flex items-center gap-1">
+                      {plugin.hasBackend && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                          title={t("card.restartBackend")}
+                          onClick={() => handleRestartBackend(plugin)}
+                          disabled={isRestarting}
+                        >
+                          <RotateCw
+                            className={`h-3 w-3 ${
+                              isRestarting ? "animate-spin" : ""
+                            }`}
+                          />
+                        </Button>
+                      )}
 
-              {selectedPlugin.endpoint && (
-                <div className="flex items-center justify-between rounded border p-2">
-                  <span className="text-muted-foreground">服务接口:</span>
-                  <code className="text-sky-400">
-                    {selectedPlugin.endpoint}
-                  </code>
-                </div>
-              )}
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  handleToggle(selectedPlugin.id)
-                  setSelectedPlugin(null)
-                }}
-                className="text-xs"
-              >
-                {selectedPlugin.enabled ? "停用此插件" : "启用此插件"}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => setSelectedPlugin(null)}
-                className="text-xs"
-              >
-                确定
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                      {isGit && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                          title={t("card.checkUpdate")}
+                          onClick={() => handleCheckUpdate(plugin)}
+                          disabled={isChecking}
+                        >
+                          <RefreshCw
+                            className={`h-3 w-3 ${
+                              isChecking ? "animate-spin" : ""
+                            }`}
+                          />
+                        </Button>
+                      )}
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => handleOpenDetail(plugin)}
+                      >
+                        <Settings className="mr-1 h-3.5 w-3.5" />
+                        {t("card.settings")}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Problems display */}
+                  {hasProblems && (
+                    <div className="mt-2 rounded-md border border-destructive/20 bg-destructive/10 p-2 text-[11px] text-destructive space-y-0.5">
+                      <div className="font-medium flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        <span>{t("card.issuesTitle")}</span>
+                      </div>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {plugin.problems.map((prob, i) => (
+                          <li key={i}>{prob}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </SettingRow>
+              </SettingCard>
+            )
+          })}
+        </div>
       )}
+
+      {/* Detail Sheet */}
+      <PluginDetailSheet
+        plugin={selectedPlugin}
+        open={detailOpen}
+        onOpenChange={(open) => {
+          if (!open) handleCloseDetail()
+          else setDetailOpen(true)
+        }}
+        onPluginUpdated={fetchPlugins}
+        onUninstalled={fetchPlugins}
+      />
+
+      {/* Install Dialog */}
+      <PluginInstallDialog
+        open={installDialogOpen}
+        onOpenChange={setInstallDialogOpen}
+        onInstalled={fetchPlugins}
+      />
+
+      {/* Disable All Confirmation */}
+      <AlertDialog
+        open={disableAllConfirmOpen}
+        onOpenChange={setDisableAllConfirmOpen}
+      >
+        <AlertDialogContent className="sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-base text-destructive">
+              {t("disableAll")}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs text-muted-foreground">
+              {t("disableAllConfirm")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={disablingAll} className="h-8 text-xs">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleDisableAll()
+              }}
+              disabled={disablingAll}
+              className="h-8 text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
+            >
+              {disablingAll && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t("disableAll")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

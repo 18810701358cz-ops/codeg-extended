@@ -1,118 +1,321 @@
-import { act } from "react"
-import { renderToString } from "react-dom/server"
-import { hydrateRoot } from "react-dom/client"
-import { fireEvent, render, screen } from "@testing-library/react"
-import { toast } from "sonner"
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { pluginManager } from "@/lib/plugins/manager"
 import { PluginsSettings } from "./plugins-settings"
+import * as api from "@/lib/plugin-host/api"
+import * as platform from "@/lib/platform"
+import type { PluginInfo, PluginListResult } from "@/lib/plugin-host/types"
 
-describe("PluginsSettings Hydration and State Sync", () => {
+vi.mock("@/lib/plugin-host/api", () => ({
+  pluginHostList: vi.fn(),
+  pluginHostSetEnabled: vi.fn(),
+  pluginHostDisableAll: vi.fn(),
+  pluginHostBackendRestart: vi.fn(),
+  pluginHostCheckUpdate: vi.fn(),
+  pluginHostCommitInstall: vi.fn(),
+  subscribePluginHostChanged: vi.fn().mockResolvedValue(() => {}),
+  subscribePluginHostBackendStatus: vi.fn().mockResolvedValue(() => {}),
+  pluginHostGetConfig: vi
+    .fn()
+    .mockResolvedValue({ values: {}, secretsSet: [] }),
+  pluginHostReadLog: vi.fn().mockResolvedValue(""),
+  pluginHostUninstall: vi.fn().mockResolvedValue(null),
+}))
+
+vi.mock("@/lib/platform", () => ({
+  isDesktop: vi.fn().mockReturnValue(true),
+  openPath: vi.fn(),
+  openFileDialog: vi.fn(),
+}))
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
+}))
+
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string, params?: Record<string, unknown>) => {
+    const translations: Record<string, string> = {
+      title: "Plugins",
+      description: "Manage extensions and plugin runtime",
+      pluginsDir: "Plugins directory",
+      openDir: "Open directory",
+      hostVersion: `Host v${params?.version || ""}`,
+      safeModeBadge: "Safe Mode",
+      safeModeNotice: "Plugins are disabled because safe mode is active.",
+      devMode: "Developer mode",
+      refresh: "Refresh",
+      disableAll: "Disable All",
+      disableAllConfirm: "Are you sure you want to disable all plugins?",
+      disableAllSuccess: "All plugins disabled",
+      installPlugin: "Install Plugin",
+      cssNotice:
+        "Plugin styles do not apply to this page. To customize global styles, visit {link}.",
+      cssNoticeLink: "Appearance → Custom CSS",
+      searchPlaceholder: "Search plugins by name, ID or author...",
+      categoryAll: "All",
+      categoryAppearance: "Appearance",
+      categoryModelProvider: "Model Provider",
+      categoryTools: "Tools",
+      categoryWorkflow: "Workflow",
+      categoryUtility: "Utility",
+      emptyPlugins: "No plugins installed",
+      noFilteredPlugins: "No plugins match the filter",
+      "card.builtin": "Built-in",
+      "card.git": "Git",
+      "card.upload": "Upload",
+      "card.manual": "Manual",
+      "card.statusOk": "Running",
+      "card.statusInvalid": "Invalid",
+      "card.statusIncompatible": "Incompatible",
+      "card.statusError": "Error",
+      "card.restartBackend": "Restart Backend",
+      "card.restartSuccess": "Backend restarted",
+      "card.checkUpdate": "Check for Updates",
+      "card.upToDate": "Plugin is up to date",
+      "card.settings": "Settings",
+      "card.issuesTitle": "Issues:",
+    }
+    return translations[key] || key
+  },
+}))
+
+describe("PluginsSettings", () => {
+  const mockPlugins: PluginInfo[] = [
+    {
+      id: "builtin-glow",
+      name: "Cyber Glow",
+      version: "1.0.0",
+      description: "A dark glowing appearance plugin",
+      author: "Codeg Team",
+      category: "appearance",
+      permissions: ["ui"],
+      enabled: true,
+      status: "ok",
+      problems: [],
+      source: { kind: "builtin" },
+      builtin: true,
+      hasMain: true,
+      styles: [],
+      hasBackend: false,
+      applied: { modelProviders: {}, mcpServers: {}, quickMessages: {} },
+    },
+    {
+      id: "git-workbuddy",
+      name: "WorkBuddy Connect",
+      version: "0.9.0",
+      description: "Connect to workbuddy backend",
+      author: "Community",
+      category: "model-provider",
+      permissions: ["process", "modelProviders"],
+      enabled: false,
+      status: "ok",
+      problems: [],
+      source: {
+        kind: "git",
+        url: "https://github.com/test/workbuddy",
+      },
+      builtin: false,
+      hasMain: false,
+      styles: [],
+      hasBackend: true,
+      backend: { state: "stopped", restarts: 0 },
+      applied: { modelProviders: {}, mcpServers: {}, quickMessages: {} },
+    },
+  ]
+
+  const mockListResult: PluginListResult = {
+    hostVersion: "1.0.0",
+    apiVersion: 1,
+    pluginsDir: "C:\\Codeg\\plugins",
+    safeMode: false,
+    devMode: false,
+    plugins: mockPlugins,
+  }
+
   beforeEach(() => {
-    localStorage.clear()
+    vi.clearAllMocks()
+    vi.mocked(api.pluginHostList).mockResolvedValue(mockListResult)
   })
 
   afterEach(() => {
-    localStorage.clear()
-    const customStyle = document.getElementById("custom-user-theme")
-    if (customStyle) customStyle.remove()
-    vi.restoreAllMocks()
+    cleanup()
+    document.body.innerHTML = ""
   })
 
-  it("hydrates without hydration errors when a plugin was previously enabled", async () => {
-    // 1. Simulate SSR render: server-side environment where isPluginEnabled returns false
-    vi.spyOn(pluginManager, "isPluginEnabled").mockReturnValue(false)
-    const ssrHtml = renderToString(<PluginsSettings />)
-    vi.restoreAllMocks()
+  it("fetches and renders plugin list and header information", async () => {
+    render(<PluginsSettings />)
 
-    // 2. Client environment: plugin is enabled in localStorage
-    localStorage.setItem(
-      "codeg_plugins_enabled_v1",
-      JSON.stringify({ "dsh-cyber-glow": true })
-    )
-
-    const container = document.createElement("div")
-    document.body.appendChild(container)
-    container.innerHTML = ssrHtml
-
-    const recoverableErrors: Error[] = []
-    let root: ReturnType<typeof hydrateRoot> | null = null
-
-    await act(async () => {
-      root = hydrateRoot(container, <PluginsSettings />, {
-        onRecoverableError(error) {
-          recoverableErrors.push(error as Error)
-        },
-      })
-      // Flush microtasks and mount effects
-      await Promise.resolve()
+    await waitFor(() => {
+      expect(api.pluginHostList).toHaveBeenCalled()
+      expect(screen.getByText("Cyber Glow")).toBeDefined()
+      expect(screen.getByText("WorkBuddy Connect")).toBeDefined()
+      expect(screen.getByText("Host v1.0.0")).toBeDefined()
+      expect(screen.getByText("C:\\Codeg\\plugins")).toBeDefined()
     })
-
-    // Expect NO hydration mismatch errors
-    const hydrationErrors = recoverableErrors.filter((e) =>
-      /hydration/i.test(e.message)
-    )
-    expect(hydrationErrors).toHaveLength(0)
-
-    // And after mount, the enabled plugin status is correctly reflected
-    const glowCard = container.textContent || ""
-    expect(glowCard).toContain("DSH Cyber Glow")
-    const switchEl = container.querySelector(
-      'button[role="switch"]'
-    ) as HTMLButtonElement | null
-    expect(switchEl).not.toBeNull()
-    expect(switchEl?.getAttribute("data-state")).toBe("checked")
-
-    act(() => {
-      root?.unmount()
-    })
-    container.remove()
   })
 
-  it("renders with accurate enabled/running state after mount", async () => {
-    localStorage.setItem(
-      "codeg_plugins_enabled_v1",
-      JSON.stringify({ "dsh-cyber-glow": true })
+  it("opens plugin directory when Open Directory button is clicked", async () => {
+    render(<PluginsSettings />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Open directory")).toBeDefined()
+    })
+
+    const openDirBtn = screen.getByRole("button", { name: /Open directory/i })
+    fireEvent.click(openDirBtn)
+
+    expect(platform.openPath).toHaveBeenCalledWith("C:\\Codeg\\plugins")
+  })
+
+  it("filters plugins by search text", async () => {
+    render(<PluginsSettings />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Cyber Glow")).toBeDefined()
+    })
+
+    const searchInput = screen.getByPlaceholderText(
+      "Search plugins by name, ID or author..."
     )
+    fireEvent.change(searchInput, { target: { value: "workbuddy" } })
+
+    expect(screen.queryByText("Cyber Glow")).toBeNull()
+    expect(screen.getByText("WorkBuddy Connect")).toBeDefined()
+  })
+
+  it("filters plugins by category tab", async () => {
+    render(<PluginsSettings />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Cyber Glow")).toBeDefined()
+    })
+
+    const modelProviderTab = screen.getByRole("tab", {
+      name: "Model Provider",
+    })
+    fireEvent.click(modelProviderTab)
+
+    expect(screen.queryByText("Cyber Glow")).toBeNull()
+    expect(screen.getByText("WorkBuddy Connect")).toBeDefined()
+  })
+
+  it("toggles plugin enabled status via switch", async () => {
+    const updated = { ...mockPlugins[0], enabled: false }
+    vi.mocked(api.pluginHostSetEnabled).mockResolvedValueOnce(updated)
 
     render(<PluginsSettings />)
 
-    const switches = screen.getAllByRole("switch")
-    // First switch is dsh-cyber-glow
-    expect(switches[0].getAttribute("data-state")).toBe("checked")
+    await waitFor(() => {
+      expect(screen.getByText("Cyber Glow")).toBeDefined()
+    })
+
+    const switchBtn = screen.getByRole("switch", {
+      name: "Toggle Cyber Glow",
+    })
+    fireEvent.click(switchBtn)
+
+    await waitFor(() => {
+      expect(api.pluginHostSetEnabled).toHaveBeenCalledWith(
+        "builtin-glow",
+        false
+      )
+    })
   })
 
-  it("removes custom-user-theme style and closes dialog when applying empty CSS", () => {
-    const existingStyle = document.createElement("style")
-    existingStyle.id = "custom-user-theme"
-    existingStyle.textContent = "body { background: red; }"
-    document.head.appendChild(existingStyle)
-    expect(document.getElementById("custom-user-theme")).not.toBeNull()
-
-    const toastInfoSpy = vi.spyOn(toast, "info")
+  it("restarts backend for plugins with hasBackend", async () => {
+    vi.mocked(api.pluginHostBackendRestart).mockResolvedValueOnce({
+      state: "running",
+      restarts: 1,
+    })
 
     render(<PluginsSettings />)
 
-    // Open quick CSS dialog
-    const openBtn = screen.getByRole("button", { name: /快速写 CSS 修饰 UI/i })
-    fireEvent.click(openBtn)
+    await waitFor(() => {
+      expect(screen.getByText("WorkBuddy Connect")).toBeDefined()
+    })
 
-    expect(screen.getByText(/快速界面修饰器/i)).toBeDefined()
+    const restartBtn = screen.getByTitle("Restart Backend")
+    fireEvent.click(restartBtn)
 
-    // Clear textarea input
-    const textarea =
-      screen.getByPlaceholderText(/例如：修改侧边栏背景为磨砂黑/i)
-    fireEvent.change(textarea, { target: { value: "" } })
+    await waitFor(() => {
+      expect(api.pluginHostBackendRestart).toHaveBeenCalledWith("git-workbuddy")
+    })
+  })
 
-    // Click apply
-    const applyBtn = screen.getByRole("button", { name: "应用并即时生效" })
-    fireEvent.click(applyBtn)
+  it("checks updates for git plugins", async () => {
+    vi.mocked(api.pluginHostCheckUpdate).mockResolvedValueOnce({
+      current: "0.9.0",
+      latest: "0.9.0",
+      updatable: false,
+    })
 
-    // Assert style is deleted
-    expect(document.getElementById("custom-user-theme")).toBeNull()
+    render(<PluginsSettings />)
 
-    // Assert dialog closed normally
-    expect(screen.queryByText(/快速界面修饰器/i)).toBeNull()
-    expect(toastInfoSpy).toHaveBeenCalledWith("已清空自定义样式")
+    await waitFor(() => {
+      expect(screen.getByText("WorkBuddy Connect")).toBeDefined()
+    })
+
+    const checkUpdateBtn = screen.getByTitle("Check for Updates")
+    fireEvent.click(checkUpdateBtn)
+
+    await waitFor(() => {
+      expect(api.pluginHostCheckUpdate).toHaveBeenCalledWith("git-workbuddy")
+    })
+  })
+
+  it("disables all plugins via Disable All button", async () => {
+    vi.mocked(api.pluginHostDisableAll).mockResolvedValueOnce({
+      ...mockListResult,
+      plugins: mockPlugins.map((p) => ({ ...p, enabled: false })),
+    })
+
+    render(<PluginsSettings />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Disable All")).toBeDefined()
+    })
+
+    const disableAllBtn = screen.getByRole("button", {
+      name: "Disable All",
+    })
+    fireEvent.click(disableAllBtn)
+
+    // Confirm dialog appears
+    await waitFor(() => {
+      expect(
+        screen.getByText("Are you sure you want to disable all plugins?")
+      ).toBeDefined()
+    })
+
+    const confirmBtn = document.querySelector(
+      '[data-slot="alert-dialog-action"]'
+    ) as HTMLElement
+    expect(confirmBtn).not.toBeNull()
+    fireEvent.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(api.pluginHostDisableAll).toHaveBeenCalled()
+    })
+  })
+
+  it("displays safe mode badge and alert when safeMode is true", async () => {
+    vi.mocked(api.pluginHostList).mockResolvedValueOnce({
+      ...mockListResult,
+      safeMode: true,
+    })
+
+    render(<PluginsSettings />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Safe Mode")).toBeDefined()
+      expect(
+        screen.getByText("Plugins are disabled because safe mode is active.")
+      ).toBeDefined()
+    })
   })
 })
