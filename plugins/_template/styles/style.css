@@ -1,0 +1,10 @@
+/* Sample Plugin Styles */
+.sample-plugin-badge {
+  font-family: inherit;
+  border: 1px solid var(--border);
+  background-color: var(--secondary);
+}
+
+.sample-plugin-badge:hover {
+  background-color: var(--accent);
+}

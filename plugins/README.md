@@ -1,52 +1,44 @@
-# Codeg Extended 插件生态 (Plugins Ecosystem)
+# Codeg Extended Plugins
 
-欢迎来到 Codeg Extended 插件中心！Codeg Extended 正在推进**插件系统 v2 架构**。
+Welcome to the Codeg Extended plugin repository. This directory contains official and community example plugins for the **Codeg Plugin Host v2** architecture.
 
-## 架构与开发规划
+## Repository Plugins
 
-插件系统 v2 正在按工作包分阶段开发中：
+| Directory | Plugin ID | Category | Description |
+|---|---|---|---|
+| [`workbuddy-connect/`](./workbuddy-connect) | `workbuddy-connect` | `model-provider` | Integrates authenticated WorkBuddy local/remote AI models into Codeg as a model provider. |
+| [`prompt-pack/`](./prompt-pack) | `prompt-pack` | `workflow` | Contributes a curated set of developer prompts to Codeg's Quick Messages. |
+| [`_template/`](./_template) | `sample-plugin` | `utility` | Starter template containing manifest, ESM entrypoint, CSS styling, and documentation. |
 
-- **Phase 0（当前版本 WP0）**：内置 3 个轻量界面修饰示例（霓虹微光主题、紧凑极客模式、浮动快捷挂件）。
-- **Phase 1-3（后续版本）**：Rust 核心宿主、清单校验、安全沙箱、进程生命周期管理、本地目录与仓库安装器、声明式贡献系统等能力将陆续交付。
+## Built-in Plugins
 
----
+In addition to repository plugins, Codeg Extended bundles three built-in UI and widget plugins into the application binary (located in `src-tauri/builtin-plugins/`):
 
-## 插件规划分类
+1. **`dsh-cyber-glow`**: DeepSeek Harness-inspired translucent dark neon glow theme.
+2. **`dsh-compact-layout`**: High information density layout tuning conversation transcript and card dimensions.
+3. **`dsh-quick-actions`**: Status bar right-slot action widget.
 
-1. **模型通道插件 (Model Providers)**:
-   - 自动探测并代理外部大模型服务（如本地 Ollama、WorkBuddy、LM Studio 等）。
-   - 提供 OpenAI 兼容的 `/v1/models` 和 `/v1/chat/completions` 格式。
-2. **MCP 服务插件 (MCP Tools)**:
-   - 快捷注册与监控 Model Context Protocol 服务器。
-3. **指令与模板插件 (Prompt Snippets)**:
-   - 注入常用的 Prompt 模板与快速斜杠指令。
-4. **自定义自动化插件 (Custom Automations)**:
-   - 定时任务、代码检查、自动文档生成器。
+All built-in plugins are disabled by default and can be enabled individually in Settings -> Plugins.
 
----
+## Plugin Structure (v2)
 
-## 插件目录结构规范（v2 设计）
-
-在插件系统 v2 规范中，每个独立插件为一个文件夹，包含：
+Each plugin resides in a dedicated directory named after its plugin `id`:
 
 ```text
-my-plugin/
-├── manifest.json       # 插件元数据（ID、名称、版本、类别、入口等）
-├── server.py (可选)    # 后台代理或守护进程
-└── README.md           # 插件说明文档
+<plugin-id>/
+├── codeg-plugin.json   # Plugin manifest (required)
+├── dist/               # Bundled frontend ESM artifacts
+│   └── index.js        # Entrypoint (required if main is specified)
+├── styles/             # Stylesheets (optional)
+│   └── style.css
+├── backend/            # Backend service scripts/binaries (optional)
+│   └── server.py
+└── README.md           # Plugin documentation
 ```
 
-### manifest.json 规划示例
+## Installing Plugins
 
-```json
-{
-  "id": "my-plugin",
-  "name": "My Plugin",
-  "version": "1.0.0",
-  "author": "Community",
-  "description": "A customized plugin for Codeg Extended",
-  "category": "utility",
-  "enabled": true,
-  "endpoint": "http://127.0.0.1:18080/v1"
-}
-```
+Plugins can be installed in Codeg Extended via:
+1. **Git Repository**: Enter a GitHub repository URL or deep-link (e.g. `https://github.com/<owner>/<repo>/tree/main/plugins/<id>`).
+2. **Zip Upload**: Upload a zipped plugin directory.
+3. **Local Directory**: Place the plugin directory in the host's plugins data directory.

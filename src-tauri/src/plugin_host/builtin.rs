@@ -71,7 +71,7 @@ pub async fn ensure_builtin_plugins_installed_from(
             if !target_dir.exists() {
                 let entry = state.plugins.entry(plugin_id.clone()).or_insert_with(|| {
                     PluginStateEntry {
-                        enabled: true,
+                        enabled: false,
                         source: PluginSource::Builtin,
                         installed_version: Some(builtin_manifest.version.clone()),
                         ..Default::default()
