@@ -131,7 +131,9 @@ export function PluginsSettings() {
 
   const handleApplyCustomCSS = useCallback(() => {
     if (!themeCSS.trim()) {
-      toast.error("CSS 内容不能为空")
+      pluginManager.removeCSS("custom-user-theme")
+      toast.info("已清空自定义样式")
+      setIsThemeEditorOpen(false)
       return
     }
     try {

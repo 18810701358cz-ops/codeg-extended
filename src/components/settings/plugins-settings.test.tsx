@@ -1,7 +1,8 @@
 import { act } from "react"
 import { renderToString } from "react-dom/server"
 import { hydrateRoot } from "react-dom/client"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
+import { toast } from "sonner"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { pluginManager } from "@/lib/plugins/manager"
 import { PluginsSettings } from "./plugins-settings"
@@ -13,6 +14,8 @@ describe("PluginsSettings Hydration and State Sync", () => {
 
   afterEach(() => {
     localStorage.clear()
+    const customStyle = document.getElementById("custom-user-theme")
+    if (customStyle) customStyle.remove()
     vi.restoreAllMocks()
   })
 
@@ -77,5 +80,39 @@ describe("PluginsSettings Hydration and State Sync", () => {
     const switches = screen.getAllByRole("switch")
     // First switch is dsh-cyber-glow
     expect(switches[0].getAttribute("data-state")).toBe("checked")
+  })
+
+  it("removes custom-user-theme style and closes dialog when applying empty CSS", () => {
+    const existingStyle = document.createElement("style")
+    existingStyle.id = "custom-user-theme"
+    existingStyle.textContent = "body { background: red; }"
+    document.head.appendChild(existingStyle)
+    expect(document.getElementById("custom-user-theme")).not.toBeNull()
+
+    const toastInfoSpy = vi.spyOn(toast, "info")
+
+    render(<PluginsSettings />)
+
+    // Open quick CSS dialog
+    const openBtn = screen.getByRole("button", { name: /快速写 CSS 修饰 UI/i })
+    fireEvent.click(openBtn)
+
+    expect(screen.getByText(/快速界面修饰器/i)).toBeDefined()
+
+    // Clear textarea input
+    const textarea =
+      screen.getByPlaceholderText(/例如：修改侧边栏背景为磨砂黑/i)
+    fireEvent.change(textarea, { target: { value: "" } })
+
+    // Click apply
+    const applyBtn = screen.getByRole("button", { name: "应用并即时生效" })
+    fireEvent.click(applyBtn)
+
+    // Assert style is deleted
+    expect(document.getElementById("custom-user-theme")).toBeNull()
+
+    // Assert dialog closed normally
+    expect(screen.queryByText(/快速界面修饰器/i)).toBeNull()
+    expect(toastInfoSpy).toHaveBeenCalledWith("已清空自定义样式")
   })
 })
