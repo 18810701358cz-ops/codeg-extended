@@ -39,7 +39,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: "pnpm"
+          cache: 'pnpm'
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -49,8 +49,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
-          shared-key: "x86_64-pc-windows-msvc"
+          workspaces: './src-tauri -> target'
+          shared-key: 'x86_64-pc-windows-msvc'
 
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
@@ -71,17 +71,32 @@ jobs:
             ls -la "$file"
           done
 
+      - name: Resolve Release Tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag_name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            APP_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+            echo "tag_name=v${APP_VER}-ext" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0.6.1
         env:
-          CODEG_SKIP_SIDECAR: "1"
+          CODEG_SKIP_SIDECAR: '1'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
+          tagName: ${{ steps.tag.outputs.tag_name }}
+          releaseName: 'Codeg Extended ${{ steps.tag.outputs.tag_name }}'
           releaseDraft: false
           prerelease: false
           tauriScript: pnpm tauri
-          args: --target x86_64-pc-windows-msvc --bundles nsis
+          args: --target x86_64-pc-windows-msvc --bundles nsis,updater
+          includeUpdaterJson: true
 
       - name: Upload Windows Installer Artifact
         uses: actions/upload-artifact@v4
@@ -90,4 +105,5 @@ jobs:
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/updater/*
           if-no-files-found: warn

@@ -29,7 +29,10 @@
     "resources": {
       "../out": "web/"
     },
-    "externalBin": ["binaries/codeg-mcp", "binaries/codeg-computer-helper"],
+    "externalBin": [
+      "binaries/codeg-mcp",
+      "binaries/codeg-computer-helper"
+    ],
     "windows": {
       "nsis": {
         "installerHooks": "./windows/installer-hooks.nsh"
@@ -47,13 +50,15 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["codeg"]
+        "schemes": [
+          "codeg"
+        ]
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ4OEM3NkMyMTVENjdBODgKUldTSWV0WVZ3bmFNU0NnSzhpdFg2bXFmMHFidWd1eWpuZ2Y2WmU5QmVXdWVrU0ZpOCt2dnd6WW4K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc1NThENUE0MUFFNzg3MTgKUldRWWgrY2FwTlZZZGRqRy90NWF0ZFh1OFptYllzL1gvSHNMVVNjakM2dUhsMVRWN1VXcmpXSm8K",
       "endpoints": [
-        "https://github.com/spacering-net/codeg/releases/latest/download/latest.json"
+        "https://github.com/18810701358cz-ops/codeg-extended/releases/latest/download/latest.json"
       ],
       "requireSignedVersion": true,
       "windows": {
