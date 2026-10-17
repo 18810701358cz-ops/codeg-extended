@@ -1125,6 +1125,17 @@
       "hostHint": "فقط إذا كانت مؤسستك تشغّل TRAE على نطاقها الخاص. يُمرَّر باسم TRAECLI_HOST؛ اتركه فارغاً لاستخدام خدمة TRAE نفسها.",
       "saveConfig": "حفظ إعدادات TRAE CLI"
     },
+    "commandCode": {
+      "configManagement": "إدارة الإعدادات",
+      "configDescription": "يشغّل Codeg واجهة Command Code CLI من حزمة npm المسماة command-code، وهي تحفظ تسجيل الدخول والمهارات وخوادم MCP في ~/.commandcode. النموذج والوضع ومستوى الاستدلال ليست هنا: يُبلغ عنها Command Code عبر ACP، لذا تديرها محددات المحرّر لكل جلسة.",
+      "signInTitle": "تسجيل الدخول",
+      "signInHint": "شغّل هذا الأمر مرة واحدة في الطرفية لتسجيل الدخول بحساب Command Code الخاص بك. تعيد جلسات Codeg استخدام تسجيل الدخول هذا.",
+      "copyCommand": "نسخ الأمر",
+      "commandCopied": "تم نسخ الأمر",
+      "apiKeyLabel": "مفتاح API (اختياري)",
+      "apiKeyHint": "للأجهزة التي يتعذر فيها تسجيل الدخول بالمتصفح، مثل الخوادم أو تثبيتات Docker. يُمرَّر إلى Command Code باسم COMMAND_CODE_API_KEY ويتقدّم على تسجيل الدخول من command-code login. اتركه فارغاً لاستخدام تسجيل الدخول ذاك.",
+      "saveConfig": "حفظ إعدادات Command Code"
+    },
     "deepseek": {
       "configManagement": "إعدادات DeepSeek Harness",
       "configDescription": "نقطة النهاية والمفتاح متغيّرا بيئة يقرأهما deepseek-acp عند الإقلاع. أما النموذج ومستوى الاستدلال فمحدِّدان على مستوى الجلسة، ويُختاران من حقل الإدخال.",
@@ -1622,6 +1633,8 @@
       "saveKiroFailed": "تعذّر حفظ إعدادات Kiro",
       "traeSaved": "تم حفظ إعدادات TRAE CLI",
       "saveTraeFailed": "تعذّر حفظ إعدادات TRAE CLI",
+      "commandCodeSaved": "تم حفظ إعدادات Command Code",
+      "saveCommandCodeFailed": "تعذّر حفظ إعدادات Command Code",
       "systemAgentAlreadyLatest": "{name} محدَّث بالفعل ({version})"
     },
     "distribution": {

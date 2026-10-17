@@ -2530,6 +2530,27 @@ describe("TRAE CLI env keys", () => {
   })
 })
 
+describe("Command Code env keys", () => {
+  // Command Code's sign-in for a browser-less machine is the API key it reads
+  // ahead of its stored login; it talks only to its own service and the model
+  // is chosen over ACP, so there is no endpoint or model variable.
+  it("offers only the API key, under the name Command Code reads", () => {
+    expect(importantEnvKeysByAgent("command_code" as AgentType)).toEqual({
+      apiBaseUrl: [],
+      apiKey: ["COMMAND_CODE_API_KEY"],
+      model: [],
+    })
+    expect(importantFieldsFor("command_code" as AgentType)).toEqual({
+      apiBaseUrl: false,
+      apiKey: true,
+      model: false,
+    })
+    expect(
+      patchEnvByImportantKey("command_code" as AgentType, "", "apiKey", "k_1")
+    ).toBe("COMMAND_CODE_API_KEY=k_1")
+  })
+})
+
 describe("codex ACP preset disclosures", () => {
   // Every claim the panel makes about the seeded approval preset is only true
   // when a preset is actually seeded. `default_permissions` shadowing means

@@ -166,6 +166,10 @@ import {
   TRAE_PAT_ENV,
   TraeConfigPanel,
 } from "./trae-config-panel"
+import {
+  COMMAND_CODE_API_KEY_ENV,
+  CommandCodeConfigPanel,
+} from "./command-code-config-panel"
 import { CodeBuddyConfigPanel } from "./codebuddy-config-panel"
 import { CursorConfigPanel } from "./cursor-config-panel"
 import {
@@ -871,6 +875,19 @@ export function importantEnvKeysByAgent(
     return {
       apiBaseUrl: [TRAE_HOST_ENV],
       apiKey: [TRAE_PAT_ENV],
+      model: [],
+    }
+  }
+  if (agentType === "command_code") {
+    // Command Code's non-interactive sign-in is `COMMAND_CODE_API_KEY`, which
+    // it reads ahead of the login `command-code login` stores. It talks only
+    // to its own service and the model is picked per session over ACP, so
+    // there is no endpoint or model env. Generic OPENAI_*/API_KEY aliases are
+    // absent: Command Code reads neither. Mirrors the backend
+    // `agent_env_keys(CommandCode)`.
+    return {
+      apiBaseUrl: [],
+      apiKey: [COMMAND_CODE_API_KEY_ENV],
       model: [],
     }
   }
@@ -11273,6 +11290,26 @@ supports_websockets = true`}
                         {
                           [TRAE_PAT_ENV]: env[TRAE_PAT_ENV],
                           [TRAE_HOST_ENV]: env[TRAE_HOST_ENV],
+                        }
+                      )
+                    }
+                  />
+                ) : selectedAgent.agent_type === "command_code" ? (
+                  <CommandCodeConfigPanel
+                    agent={selectedAgent}
+                    saving={Boolean(savingEnv[selectedAgent.agent_type])}
+                    onSave={(env, enabled) =>
+                      persistEnv(
+                        selectedAgent.agent_type,
+                        enabled,
+                        envMapToText(env),
+                        selectedAgent.model_provider_id,
+                        // The key this panel owns, folded into the raw
+                        // editor's draft like the TRAE CLI panel's above, so
+                        // the enable switch cannot bring back a cleared key.
+                        {
+                          [COMMAND_CODE_API_KEY_ENV]:
+                            env[COMMAND_CODE_API_KEY_ENV],
                         }
                       )
                     }

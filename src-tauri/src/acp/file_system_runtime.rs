@@ -709,7 +709,9 @@ fn agent_root_slots(agent_type: AgentType) -> &'static [RootSlot] {
         // TRAE CLI's history is codeg's transcript too, and it reads and
         // writes files itself rather than through `fs/*` (verified against
         // 0.209.1), so its `~/.trae` never needs to be a write root either.
-        AgentType::Custom(_) | AgentType::ZCode | AgentType::Trae => &[],
+        // Command Code is the same case: codeg's transcript is its history,
+        // and its tools never go through `fs/*` (verified against 1.84.0).
+        AgentType::Custom(_) | AgentType::ZCode | AgentType::Trae | AgentType::CommandCode => &[],
     }
 }
 

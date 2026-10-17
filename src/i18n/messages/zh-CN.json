@@ -1125,6 +1125,17 @@
       "hostHint": "仅当你的组织在自有域名上部署 TRAE 时填写。以 TRAECLI_HOST 传入；留空则使用 TRAE 官方服务。",
       "saveConfig": "保存 TRAE CLI 配置"
     },
+    "commandCode": {
+      "configManagement": "配置管理",
+      "configDescription": "Codeg 运行 command-code npm 包提供的 Command Code CLI，它把登录状态、技能和 MCP 服务器保存在 ~/.commandcode 中。模型、模式和推理强度不在这里设置：Command Code 会通过 ACP 上报它们，由输入框自带的选择器按会话管理。",
+      "signInTitle": "登录",
+      "signInHint": "在终端中运行一次下面的命令，登录你的 Command Code 账号。Codeg 里的会话会复用这次登录。",
+      "copyCommand": "复制命令",
+      "commandCopied": "命令已复制",
+      "apiKeyLabel": "API 密钥（可选）",
+      "apiKeyHint": "适用于无法用浏览器登录的机器，例如服务器或 Docker 部署。以 COMMAND_CODE_API_KEY 传给 Command Code，优先于 command-code login 的登录。留空则使用那次登录。",
+      "saveConfig": "保存 Command Code 配置"
+    },
     "deepseek": {
       "configManagement": "DeepSeek Harness 配置",
       "configDescription": "端点与密钥是 deepseek-acp 启动时读取的环境变量。模型和推理档位是会话级选择器，在输入框里切换。",
@@ -1622,6 +1633,8 @@
       "saveKiroFailed": "保存 Kiro 配置失败",
       "traeSaved": "TRAE CLI 配置已保存",
       "saveTraeFailed": "保存 TRAE CLI 配置失败",
+      "commandCodeSaved": "Command Code 配置已保存",
+      "saveCommandCodeFailed": "保存 Command Code 配置失败",
       "systemAgentAlreadyLatest": "{name} 已是最新版本（{version}）"
     },
     "distribution": {

@@ -1125,6 +1125,17 @@
       "hostHint": "Only if your organization runs TRAE on its own domain. Passed as TRAECLI_HOST; leave empty for TRAE's own service.",
       "saveConfig": "Save TRAE CLI Config"
     },
+    "commandCode": {
+      "configManagement": "Configuration",
+      "configDescription": "Codeg runs the Command Code CLI from the command-code npm package, which keeps its sign-in, skills and MCP servers in ~/.commandcode. Model, mode and reasoning effort are not here: Command Code reports them over ACP, so the composer's own selectors own them per session.",
+      "signInTitle": "Sign in",
+      "signInHint": "Run this once in a terminal to sign in with your Command Code account. Sessions in Codeg reuse that login.",
+      "copyCommand": "Copy command",
+      "commandCopied": "Command copied",
+      "apiKeyLabel": "API key (optional)",
+      "apiKeyHint": "For a machine where browser sign-in is not possible, such as a server or Docker install. Passed to Command Code as COMMAND_CODE_API_KEY, which takes precedence over the login from command-code login. Leave empty to use that login.",
+      "saveConfig": "Save Command Code Config"
+    },
     "deepseek": {
       "configManagement": "DeepSeek Harness Configuration",
       "configDescription": "The endpoint and key are environment variables deepseek-acp reads at launch. Model and reasoning effort are per-session selectors — pick them in the composer.",
@@ -1622,6 +1633,8 @@
       "saveKiroFailed": "Failed to save Kiro config",
       "traeSaved": "TRAE CLI config saved",
       "saveTraeFailed": "Failed to save TRAE CLI config",
+      "commandCodeSaved": "Command Code config saved",
+      "saveCommandCodeFailed": "Failed to save Command Code config",
       "systemAgentAlreadyLatest": "{name} is already up to date ({version})"
     },
     "distribution": {

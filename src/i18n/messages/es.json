@@ -1125,6 +1125,17 @@
       "hostHint": "Solo si tu organización ejecuta TRAE en su propio dominio. Se pasa como TRAECLI_HOST; déjala vacía para usar el servicio de TRAE.",
       "saveConfig": "Guardar configuración de TRAE CLI"
     },
+    "commandCode": {
+      "configManagement": "Configuración",
+      "configDescription": "Codeg ejecuta la CLI de Command Code del paquete npm command-code, que guarda su inicio de sesión, sus habilidades y sus servidores MCP en ~/.commandcode. El modelo, el modo y el esfuerzo de razonamiento no están aquí: Command Code los informa por ACP, así que los selectores del compositor los gestionan en cada sesión.",
+      "signInTitle": "Iniciar sesión",
+      "signInHint": "Ejecuta esto una vez en una terminal para iniciar sesión con tu cuenta de Command Code. Las sesiones de Codeg reutilizan ese inicio de sesión.",
+      "copyCommand": "Copiar comando",
+      "commandCopied": "Comando copiado",
+      "apiKeyLabel": "Clave de API (opcional)",
+      "apiKeyHint": "Para una máquina donde no se puede iniciar sesión con el navegador, como un servidor o una instalación de Docker. Se pasa a Command Code como COMMAND_CODE_API_KEY, que tiene prioridad sobre el inicio de sesión de command-code login. Déjala vacía para usar ese inicio de sesión.",
+      "saveConfig": "Guardar configuración de Command Code"
+    },
     "deepseek": {
       "configManagement": "Configuración de DeepSeek Harness",
       "configDescription": "El endpoint y la clave son variables de entorno que deepseek-acp lee al arrancar. El modelo y el esfuerzo de razonamiento son selectores por sesión: se eligen en el campo de mensaje.",
@@ -1622,6 +1633,8 @@
       "saveKiroFailed": "No se pudo guardar la configuración de Kiro",
       "traeSaved": "Configuración de TRAE CLI guardada",
       "saveTraeFailed": "No se pudo guardar la configuración de TRAE CLI",
+      "commandCodeSaved": "Configuración de Command Code guardada",
+      "saveCommandCodeFailed": "No se pudo guardar la configuración de Command Code",
       "systemAgentAlreadyLatest": "{name} ya está al día ({version})"
     },
     "distribution": {

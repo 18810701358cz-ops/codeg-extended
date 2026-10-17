@@ -256,7 +256,7 @@ pub fn current_platform() -> &'static str {
     }
 }
 
-/// The eighteen built-in agents. Excludes user-registered custom agents — use
+/// The nineteen built-in agents. Excludes user-registered custom agents — use
 /// [`all_acp_agents`] for the live set.
 pub fn builtin_acp_agents() -> Vec<AgentType> {
     vec![
@@ -278,10 +278,11 @@ pub fn builtin_acp_agents() -> Vec<AgentType> {
         AgentType::Kiro,
         AgentType::ZCode,
         AgentType::Trae,
+        AgentType::CommandCode,
     ]
 }
 
-/// Every agent codeg can currently drive: the eighteen built-ins followed by
+/// Every agent codeg can currently drive: the nineteen built-ins followed by
 /// the user's registered custom ACP agents (sorted by id).
 pub fn all_acp_agents() -> Vec<AgentType> {
     let mut agents = builtin_acp_agents();
@@ -316,6 +317,10 @@ pub fn registry_id_for(agent_type: AgentType) -> &'static str {
         // stops launching (`custom_registry::validate`), and the id also names
         // the ACP transcript directory both would write to.
         AgentType::Trae => "codeg-trae-cli",
+        // Not in the ACP registry either, so the same reasoning as TRAE CLI:
+        // a hand-registered custom Command Code most likely sits under the
+        // package or bin name (`command-code`, `commandcode`, `cmd`, …).
+        AgentType::CommandCode => "codeg-command-code",
         // A custom agent's registry id IS its identity.
         AgentType::Custom(id) => id,
     }
@@ -341,6 +346,7 @@ pub fn from_registry_id(id: &str) -> Option<AgentType> {
         "kiro-cli" => Some(AgentType::Kiro),
         "codeg-zcode-acp" => Some(AgentType::ZCode),
         "codeg-trae-cli" => Some(AgentType::Trae),
+        "codeg-command-code" => Some(AgentType::CommandCode),
         // Only ids the user has actually registered resolve. An unregistered
         // id must stay `None` so the ACP-registry picker still offers it as
         // "addable" rather than treating it as already supported.
@@ -5100,6 +5106,70 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
                 update_args: Some(&["update"]),
             },
         },
+        AgentType::CommandCode => AcpAgentMeta {
+            agent_type,
+            supports_mcp: true,
+            name: "Command Code",
+            description: "Command Code's coding agent in the terminal (native ACP via command-code acp)",
+            // `command-code acp` is the CLI's OWN ACP server, the one its docs
+            // (https://commandcode.ai/docs/acp) have editors launch. Verified
+            // handshake against 1.84.0: `agentInfo = {name: "Command Code",
+            // version}`, `loadSession: true`, `sessionCapabilities` with list /
+            // resume / close (no fork), image + embeddedContext prompts, MCP
+            // http but NOT sse, and one auth method, `command-code-cli`, which
+            // only checks that a login exists. (A second, terminal-auth method
+            // that runs `cmd login` is offered only to clients advertising
+            // `auth.terminal`, which codeg does not.) `session/new` answers with
+            // standard `modes` (default "Standard" / auto-accept / plan /
+            // dont-ask / bypass "Bypass Permissions") and two `configOptions`,
+            // `model` and `effort` (category `thought_level`), so the
+            // composer's generic selectors cover it. Tool calls, permission
+            // requests (allow or reject, once or always — "always" per tool for
+            // the thread), diffs, plans (from `todo_write`, when the user has
+            // Command Code's todos mod on), `usage_update` with the thread's
+            // cost and `session_info_update` titles all use the plain ACP
+            // shapes; its questions arrive as `session/request_permission` with
+            // one option per answer. With codeg's default capabilities it reads,
+            // writes and runs commands itself, never through `fs/*` or
+            // `terminal/*`.
+            //
+            // NPX. The vendor ships the CLI as the npm package `command-code`
+            // (`npm i -g command-code`, which is exactly codeg's install), with
+            // four bins for one entry point: `cmd`, `cmdc`, `commandcode` and
+            // `command-code`. codeg launches `command-code`, the only name that
+            // works on every platform: on Windows `cmd` is the system shell
+            // (the docs switch to `cmdc` there), and a PATH probe for `cmd`
+            // would find `cmd.exe` and report the agent installed. In the
+            // terminal the CLI updates itself in the background (a staged
+            // `npm i -g command-code@<latest>`), but `acp` is on its own list of
+            // commands that never run the updater, so a launch from codeg
+            // changes nothing; a copy newer than the pin just reads as current.
+            //
+            // Sign-in is the CLI's own `command-code login` (browser sign-in or
+            // a pasted API key, kept in `~/.commandcode/auth.json`), which the
+            // ACP server reuses; `COMMAND_CODE_API_KEY` in its environment
+            // outranks that file (see `acp::command_code`). With neither,
+            // `session/new` answers `authRequired`, which reaches the user as
+            // "sign in from the agent's settings".
+            //
+            // Sessions are Command Code's own (`~/.commandcode/projects/<slug>/
+            // <id>.jsonl`, the ones `cmd --resume` lists) and `session/load`
+            // replays them, but codeg's history is its own ACP transcript
+            // (`AgentType::uses_acp_transcript`), as for TRAE CLI. MCP servers
+            // come from `~/.commandcode/mcp.json`, which the CLI loads itself and
+            // codeg's MCP settings manage, so codeg does not forward the same
+            // servers over `session/new` (see `load_mcp_servers_for_agent`).
+            distribution: AgentDistribution::Npx {
+                version: "1.84.0",
+                package: "command-code@1.84.0",
+                cmd: "command-code",
+                args: &["acp"],
+                env: &[],
+                // package.json declares `engines.node: ">=22"`, and the bin
+                // refuses to start on anything older.
+                node_required: Some("22.0.0"),
+            },
+        },
         // Handled by the early return above; kept so the match stays
         // exhaustive without a catch-all that could swallow a new built-in.
         AgentType::Custom(_) => unreachable!("custom agents resolve via custom_registry"),
@@ -5409,6 +5479,38 @@ mod tests {
         }
     }
 
+    // Command Code is an npm CLI whose own `acp` subcommand is the server. It
+    // must launch as `command-code`, never `cmd` (Windows' shell), and its
+    // registry id must stay clear of every id a hand-registered custom entry
+    // could carry.
+    #[test]
+    fn command_code_launches_the_portable_bin_with_the_acp_subcommand() {
+        let meta = get_agent_meta(AgentType::CommandCode);
+        assert!(meta.supports_mcp);
+        assert_eq!(meta.name, "Command Code");
+        assert_eq!(
+            registry_id_for(AgentType::CommandCode),
+            "codeg-command-code"
+        );
+        assert_eq!(
+            from_registry_id("codeg-command-code"),
+            Some(AgentType::CommandCode)
+        );
+        for hand_registered in ["command-code", "commandcode", "command_code", "cmd", "cmdc"] {
+            assert_ne!(registry_id_for(AgentType::CommandCode), hand_registered);
+        }
+        assert!(!uses_cursor_acp_backend(AgentType::CommandCode));
+        assert!(acp_adapter_relation(AgentType::CommandCode).is_none());
+        match meta.distribution {
+            AgentDistribution::Npx { cmd, args, env, .. } => {
+                assert_eq!(cmd, "command-code");
+                assert_eq!(args, &["acp"]);
+                assert!(env.is_empty());
+            }
+            other => panic!("expected npx distribution for Command Code, got {other:?}"),
+        }
+    }
+
     #[test]
     fn steering_prompt_required_min_version_gates_claude_only() {
         // The native-steering policy bit: only an adapter that honors the
@@ -5538,6 +5640,12 @@ mod tests {
             "1.1.73",
             "@qoder-ai/qodercli@1.1.73",
             Some("20.0.0"),
+        );
+        assert_npx_version(
+            AgentType::CommandCode,
+            "1.84.0",
+            "command-code@1.84.0",
+            Some("22.0.0"),
         );
         assert_binary_version(AgentType::OpenCode, "1.19.3", "/releases/download/v1.19.3/");
         // Hermes rides the community npm bridge (upstream retired its PyPI

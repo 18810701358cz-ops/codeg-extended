@@ -1125,6 +1125,17 @@
       "hostHint": "Nur wenn deine Organisation TRAE unter einer eigenen Domain betreibt. Wird als TRAECLI_HOST übergeben; leer lassen für den Dienst von TRAE.",
       "saveConfig": "TRAE CLI-Konfiguration speichern"
     },
+    "commandCode": {
+      "configManagement": "Konfiguration",
+      "configDescription": "Codeg startet die Command Code CLI aus dem npm-Paket command-code, die Anmeldung, Skills und MCP-Server in ~/.commandcode speichert. Modell, Modus und Denkaufwand stehen nicht hier: Command Code meldet sie über ACP, daher verwalten die Auswahlfelder im Eingabebereich sie pro Sitzung.",
+      "signInTitle": "Anmelden",
+      "signInHint": "Führe dies einmal in einem Terminal aus, um dich mit deinem Command Code-Konto anzumelden. Sitzungen in Codeg verwenden diese Anmeldung wieder.",
+      "copyCommand": "Befehl kopieren",
+      "commandCopied": "Befehl kopiert",
+      "apiKeyLabel": "API-Schlüssel (optional)",
+      "apiKeyHint": "Für Rechner, auf denen keine Browser-Anmeldung möglich ist, etwa Server oder Docker-Installationen. Wird Command Code als COMMAND_CODE_API_KEY übergeben und hat Vorrang vor der Anmeldung aus command-code login. Leer lassen, um diese Anmeldung zu nutzen.",
+      "saveConfig": "Command Code-Konfiguration speichern"
+    },
     "deepseek": {
       "configManagement": "DeepSeek-Harness-Konfiguration",
       "configDescription": "Endpunkt und Schlüssel sind Umgebungsvariablen, die deepseek-acp beim Start liest. Modell und Denkstufe sind Auswahlfelder pro Sitzung — sie werden im Eingabefeld gewählt.",
@@ -1622,6 +1633,8 @@
       "saveKiroFailed": "Kiro-Konfiguration konnte nicht gespeichert werden",
       "traeSaved": "TRAE CLI-Konfiguration gespeichert",
       "saveTraeFailed": "TRAE CLI-Konfiguration konnte nicht gespeichert werden",
+      "commandCodeSaved": "Command Code-Konfiguration gespeichert",
+      "saveCommandCodeFailed": "Command Code-Konfiguration konnte nicht gespeichert werden",
       "systemAgentAlreadyLatest": "{name} ist bereits aktuell ({version})"
     },
     "distribution": {

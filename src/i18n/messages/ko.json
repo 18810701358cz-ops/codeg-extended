@@ -1125,6 +1125,17 @@
       "hostHint": "조직이 자체 도메인에서 TRAE를 운영하는 경우에만 입력하세요. TRAECLI_HOST로 전달되며, 비워 두면 TRAE 공식 서비스를 사용합니다.",
       "saveConfig": "TRAE CLI 구성 저장"
     },
+    "commandCode": {
+      "configManagement": "구성 관리",
+      "configDescription": "Codeg는 command-code npm 패키지의 Command Code CLI를 실행하며, 로그인 정보·스킬·MCP 서버는 ~/.commandcode에 저장됩니다. 모델, 모드, 추론 강도는 여기에 없습니다. Command Code가 ACP로 보고하므로 입력창의 선택기가 세션별로 관리합니다.",
+      "signInTitle": "로그인",
+      "signInHint": "터미널에서 이 명령을 한 번 실행해 Command Code 계정으로 로그인하세요. Codeg의 세션은 그 로그인을 재사용합니다.",
+      "copyCommand": "명령 복사",
+      "commandCopied": "명령을 복사했습니다",
+      "apiKeyLabel": "API 키(선택)",
+      "apiKeyHint": "서버나 Docker처럼 브라우저 로그인이 불가능한 머신용입니다. COMMAND_CODE_API_KEY로 Command Code에 전달되며 command-code login의 로그인보다 우선합니다. 비워 두면 그 로그인을 사용합니다.",
+      "saveConfig": "Command Code 구성 저장"
+    },
     "deepseek": {
       "configManagement": "DeepSeek Harness 구성",
       "configDescription": "엔드포인트와 API 키는 deepseek-acp가 시작할 때 읽는 환경 변수입니다. 모델과 추론 강도는 세션별 선택기이므로 입력창에서 바꿉니다.",
@@ -1622,6 +1633,8 @@
       "saveKiroFailed": "Kiro 구성을 저장하지 못했습니다",
       "traeSaved": "TRAE CLI 구성을 저장했습니다",
       "saveTraeFailed": "TRAE CLI 구성을 저장하지 못했습니다",
+      "commandCodeSaved": "Command Code 구성을 저장했습니다",
+      "saveCommandCodeFailed": "Command Code 구성을 저장하지 못했습니다",
       "systemAgentAlreadyLatest": "{name}은(는) 이미 최신 버전입니다({version})"
     },
     "distribution": {

@@ -1125,6 +1125,17 @@
       "hostHint": "Uniquement si votre organisation exploite TRAE sur son propre domaine. Transmise en tant que TRAECLI_HOST ; laissez vide pour le service de TRAE.",
       "saveConfig": "Enregistrer la configuration TRAE CLI"
     },
+    "commandCode": {
+      "configManagement": "Configuration",
+      "configDescription": "Codeg lance la CLI Command Code du paquet npm command-code, qui conserve sa connexion, ses compétences et ses serveurs MCP dans ~/.commandcode. Le modèle, le mode et l'effort de raisonnement ne sont pas ici : Command Code les communique via ACP, donc les sélecteurs du compositeur les gèrent pour chaque session.",
+      "signInTitle": "Connexion",
+      "signInHint": "Exécutez cette commande une fois dans un terminal pour vous connecter avec votre compte Command Code. Les sessions de Codeg réutilisent cette connexion.",
+      "copyCommand": "Copier la commande",
+      "commandCopied": "Commande copiée",
+      "apiKeyLabel": "Clé d'API (facultative)",
+      "apiKeyHint": "Pour une machine où la connexion par navigateur est impossible, comme un serveur ou une installation Docker. Transmise à Command Code en tant que COMMAND_CODE_API_KEY, prioritaire sur la connexion de command-code login. Laissez vide pour utiliser cette connexion.",
+      "saveConfig": "Enregistrer la configuration Command Code"
+    },
     "deepseek": {
       "configManagement": "Configuration de DeepSeek Harness",
       "configDescription": "Le point de terminaison et la clé sont des variables d'environnement que deepseek-acp lit au démarrage. Le modèle et le niveau de raisonnement sont des sélecteurs par session : ils se choisissent dans le champ de saisie.",
@@ -1622,6 +1633,8 @@
       "saveKiroFailed": "Impossible d'enregistrer la configuration Kiro",
       "traeSaved": "Configuration TRAE CLI enregistrée",
       "saveTraeFailed": "Impossible d'enregistrer la configuration TRAE CLI",
+      "commandCodeSaved": "Configuration Command Code enregistrée",
+      "saveCommandCodeFailed": "Impossible d'enregistrer la configuration Command Code",
       "systemAgentAlreadyLatest": "{name} est déjà à jour ({version})"
     },
     "distribution": {

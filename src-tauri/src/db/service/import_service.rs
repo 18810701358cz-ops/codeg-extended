@@ -10,7 +10,7 @@ use crate::models::{AgentType, ConversationSummary, ImportResult};
 use crate::parsers::{build_agent_parser, path_eq_for_matching, AgentEnv, AgentEnvs, AgentParser};
 
 /// Every locally-parsable agent, in the canonical parser order.
-const ALL_PARSER_AGENTS: [AgentType; 18] = [
+const ALL_PARSER_AGENTS: [AgentType; 19] = [
     AgentType::ClaudeCode,
     AgentType::Codex,
     AgentType::OpenCode,
@@ -31,6 +31,9 @@ const ALL_PARSER_AGENTS: [AgentType; 18] = [
     AgentType::ZCode,
     // Codeg-owned ACP history only; TRAE CLI's own rollouts are not read.
     AgentType::Trae,
+    // Codeg-owned ACP history only; Command Code's own session trees are not
+    // read.
+    AgentType::CommandCode,
 ];
 
 fn build_parser(agent_type: AgentType, env: &AgentEnv) -> Box<dyn AgentParser> {

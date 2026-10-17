@@ -9220,6 +9220,23 @@ pub(crate) fn skill_storage_spec(agent_type: AgentType) -> Option<SkillStorageSp
             ],
             project_rel_dirs: vec![".trae/skills", ".agents/skills"],
         }),
+        // Command Code loads `<id>/SKILL.md` bundles — found recursively, never
+        // a flat `<id>.md` — from `~/.commandcode/skills` and the shared
+        // `~/.agents/skills` store, plus `.commandcode/skills` and
+        // `.agents/skills` in the project. Verified against 1.84.0 by planting
+        // one skill in each candidate directory: exactly those four reached
+        // the session's commands, while `.claude/skills` (project and user)
+        // and the flat file were ignored. The Command Code directory leads so
+        // linking targets it without touching the shared store (the TRAE CLI
+        // ordering); on a name clash Command Code prefers it too.
+        AgentType::CommandCode => Some(SkillStorageSpec {
+            kind: SkillStorageKind::SkillDirectoryOnly,
+            global_dirs: vec![
+                crate::acp::command_code::command_code_home_dir().join("skills"),
+                home_dir_or_default().join(".agents").join("skills"),
+            ],
+            project_rel_dirs: vec![".commandcode/skills", ".agents/skills"],
+        }),
         // codeg cannot detect where an arbitrary ACP agent loads skills from,
         // so custom agents are gated on the user's own declaration: that the
         // agent reads the shared `.agents/skills` store (the cross-agent
@@ -10436,6 +10453,18 @@ fn agent_env_keys(agent_type: AgentType) -> (&'static str, &'static str, &'stati
             crate::acp::trae::TRAE_PAT_ENV,
             "TRAE_MODEL",
         ),
+        // Command Code's non-interactive sign-in is the API key it reads from
+        // `COMMAND_CODE_API_KEY` ahead of its stored login (see
+        // `acp::command_code`). It talks only to its own service — models from
+        // other providers are declared in its `providers.json`, not in env —
+        // and the model is chosen per session over ACP, so the endpoint and
+        // model slots are inert placeholders that keep the generic cascade off
+        // the OPENAI_* keys, like `KIRO_BASE_URL` / `KIRO_MODEL` above.
+        AgentType::CommandCode => (
+            "COMMAND_CODE_BASE_URL",
+            crate::acp::command_code::COMMAND_CODE_API_KEY_ENV,
+            "COMMAND_CODE_MODEL",
+        ),
         _ => ("OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL"),
     }
 }
@@ -10989,6 +11018,13 @@ fn cascade_update_agent_config(
             // model-provider credential cascade. `TRAECLI_HOST` points at an
             // enterprise deployment of the same service, not at a model
             // provider.
+        }
+        AgentType::CommandCode => {
+            // Command Code signs in to its own service (`command-code login`,
+            // or `COMMAND_CODE_API_KEY` in the agent's env) and its models come
+            // from that account; other providers are declared in its own
+            // `~/.commandcode/providers.json`. Nothing here maps onto a model
+            // provider's URL and key, so it stays off the cascade.
         }
         AgentType::Custom(_) => {
             // Custom agents are deliberately configuration-free: codeg writes

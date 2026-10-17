@@ -1,4 +1,4 @@
-/** The eighteen agents codeg ships hand-written support for. */
+/** The nineteen agents codeg ships hand-written support for. */
 export type BuiltinAgentType =
   | "claude_code"
   | "codex"
@@ -18,6 +18,7 @@ export type BuiltinAgentType =
   | "kiro"
   | "zcode"
   | "trae"
+  | "command_code"
 
 /**
  * Which agent backs a conversation.
@@ -1110,6 +1111,7 @@ export const AGENT_DISPLAY_ORDER: BuiltinAgentType[] = [
   "kiro",
   "zcode",
   "trae",
+  "command_code",
 ]
 
 const AGENT_DISPLAY_ORDER_INDEX = new Map<AgentType, number>(
@@ -1147,6 +1149,7 @@ export const ALL_AGENT_TYPES: BuiltinAgentType[] = [
   "kiro",
   "zcode",
   "trae",
+  "command_code",
 ]
 
 export const MODEL_PROVIDER_AGENT_TYPES: BuiltinAgentType[] = [
@@ -1461,6 +1464,7 @@ export const AGENT_LABELS: Record<BuiltinAgentType, string> = {
   kiro: "Kiro CLI",
   zcode: "ZCode",
   trae: "TRAE CLI",
+  command_code: "Command Code",
 }
 
 export const AGENT_COLORS: Record<BuiltinAgentType, string> = {
@@ -1482,6 +1486,7 @@ export const AGENT_COLORS: Record<BuiltinAgentType, string> = {
   kiro: "bg-[#9046FF]",
   zcode: "bg-[#111827]",
   trae: "bg-[#32F08C]",
+  command_code: "bg-black",
 }
 
 // ACP connection status (matches Rust ConnectionStatus)
@@ -4487,6 +4492,7 @@ export type McpAppType =
   | "kiro"
   | "zcode"
   | "trae"
+  | "command_code"
   | "pi"
 
 export interface LocalMcpServer {

@@ -1125,6 +1125,17 @@
       "hostHint": "Somente se a sua organização executa o TRAE em um domínio próprio. É passada como TRAECLI_HOST; deixe vazia para usar o serviço do TRAE.",
       "saveConfig": "Salvar configuração do TRAE CLI"
     },
+    "commandCode": {
+      "configManagement": "Configuração",
+      "configDescription": "O Codeg executa a CLI do Command Code do pacote npm command-code, que guarda o login, as skills e os servidores MCP em ~/.commandcode. Modelo, modo e esforço de raciocínio não ficam aqui: o Command Code os informa via ACP, então os seletores do compositor os gerenciam em cada sessão.",
+      "signInTitle": "Entrar",
+      "signInHint": "Execute isto uma vez em um terminal para entrar com sua conta do Command Code. As sessões do Codeg reutilizam esse login.",
+      "copyCommand": "Copiar comando",
+      "commandCopied": "Comando copiado",
+      "apiKeyLabel": "Chave de API (opcional)",
+      "apiKeyHint": "Para uma máquina em que não é possível entrar pelo navegador, como um servidor ou uma instalação Docker. Passada ao Command Code como COMMAND_CODE_API_KEY, que tem prioridade sobre o login do command-code login. Deixe vazia para usar esse login.",
+      "saveConfig": "Salvar configuração do Command Code"
+    },
     "deepseek": {
       "configManagement": "Configuração do DeepSeek Harness",
       "configDescription": "O endpoint e a chave são variáveis de ambiente que o deepseek-acp lê ao iniciar. O modelo e o nível de raciocínio são seletores por sessão — escolha-os no campo de mensagem.",
@@ -1622,6 +1633,8 @@
       "saveKiroFailed": "Falha ao salvar a configuração do Kiro",
       "traeSaved": "Configuração do TRAE CLI salva",
       "saveTraeFailed": "Falha ao salvar a configuração do TRAE CLI",
+      "commandCodeSaved": "Configuração do Command Code salva",
+      "saveCommandCodeFailed": "Falha ao salvar a configuração do Command Code",
       "systemAgentAlreadyLatest": "{name} já está atualizado ({version})"
     },
     "distribution": {

@@ -6251,6 +6251,7 @@ fn agent_reads_own_mcp_config(agent_type: AgentType) -> bool {
             | AgentType::Kiro
             | AgentType::Cline
             | AgentType::Trae
+            | AgentType::CommandCode
     )
 }
 
@@ -6373,6 +6374,12 @@ fn load_mcp_servers_for_agent(agent_type: AgentType) -> Vec<McpServer> {
     // verified against 0.209.1, where a server from each source reached the
     // model side by side — so forwarding the file's servers would mount every
     // one of them twice. codeg's MCP settings UI manages that file.
+    //
+    // Command Code joins it for the same reason: `command-code acp` loads
+    // `~/.commandcode/mcp.json` and starts what `session/new` carries as well
+    // (verified against 1.84.0, a server from each source in one session's
+    // tool list), and its docs say a name on both sides keeps the file's copy.
+    // codeg's MCP settings UI manages that file.
     if agent_reads_own_mcp_config(agent_type) {
         return Vec::new();
     }
@@ -39959,6 +39966,18 @@ mod zcode_mode_tests {
             transcript_dir_for(AgentType::ZCode)
         );
     }
+
+    #[test]
+    fn command_code_records_history_in_its_own_transcript_dir() {
+        assert_eq!(
+            transcript_dir_for(AgentType::CommandCode),
+            Some("codeg-command-code")
+        );
+        assert_ne!(
+            transcript_dir_for(AgentType::CommandCode),
+            transcript_dir_for(AgentType::Trae)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -40005,6 +40024,16 @@ mod wire_mcp_gate_tests {
         assert!(agent_delivers_wire_mcp(AgentType::Trae));
         assert!(agent_reads_own_mcp_config(AgentType::Trae));
         assert!(load_mcp_servers_for_agent(AgentType::Trae).is_empty());
+    }
+
+    // Command Code also starts both its `~/.commandcode/mcp.json` servers and
+    // the ones on `session/new`: the file's stay off the wire, the companion
+    // rides it.
+    #[test]
+    fn command_code_takes_user_servers_from_its_config_and_the_companion_from_the_wire() {
+        assert!(agent_delivers_wire_mcp(AgentType::CommandCode));
+        assert!(agent_reads_own_mcp_config(AgentType::CommandCode));
+        assert!(load_mcp_servers_for_agent(AgentType::CommandCode).is_empty());
     }
 }
 
