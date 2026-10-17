@@ -114,9 +114,9 @@ pub const MANAGED_SECTIONS: &[ManagedSection] = &[
         live_path: |_| crate::commands::experts::central_experts_dir(),
     },
     ManagedSection {
-        // Installed plugins and state.json. Ephemeral / generated artifacts
-        // (.deps, .trash, .staging) are excluded during packaging by
-        // `is_excluded_section_entry`.
+        // [codeg-extended] Installed plugins and state.json. Ephemeral /
+        // generated artifacts (.deps, .trash, .staging) are excluded during
+        // packaging by `is_excluded_section_entry`.
         id: "plugins",
         kind: SectionKind::Dir,
         policy: SectionPolicy::AlwaysReplace,
@@ -179,6 +179,7 @@ pub fn is_excluded_section_entry(rel: &Path) -> bool {
     rel.components().any(|c| match c {
         std::path::Component::Normal(s) => {
             let s = s.to_string_lossy();
+            // [codeg-extended] `.deps`, `.trash` and `.staging` are plugin host scaffolding.
             s == ".tmp"
                 || s == ".deps"
                 || s == ".trash"

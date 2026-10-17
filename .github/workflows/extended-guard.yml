@@ -1,0 +1,28 @@
+# [codeg-extended] Checks that only matter to this fork. Kept out of the upstream
+# workflows so an upstream merge never touches it.
+name: Extended guard
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  eol:
+    name: Line endings are LF
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No CRLF in tracked text files
+        # `git ls-files --eol` prints `i/<index eol>  w/<worktree eol>  attr/...`
+        # and the path after a tab. The attribute column contains a space once
+        # `.gitattributes` sets `text=auto eol=lf`, so the path is taken with cut.
+        run: |
+          bad=$(git ls-files --eol | grep -E '^i/(crlf|mixed) ' | cut -f2)
+          if [ -n "$bad" ]; then
+            echo "::error::CRLF or mixed line endings in tracked files:"
+            echo "$bad"
+            exit 1
+          fi
