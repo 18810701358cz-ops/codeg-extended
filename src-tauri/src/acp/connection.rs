@@ -61,7 +61,7 @@ use crate::acp::terminal_runtime::{
 use crate::acp::types::{
     AcpEvent, AsyncTaskDelta, AsyncTaskUsage, AvailableCommandInfo, ConnectionInfo,
     ConnectionStatus, GrokModelCatalog, GrokModelSpec, KiroReasoning, PermissionOptionInfo,
-    PlanEntryInfo, PluginLoadFailure, PromptCapabilitiesInfo, PromptInputBlock,
+    PlanEntryInfo, PluginLoadFailure, PromptCapabilitiesInfo, PromptInputBlock, RemoteControlInfo,
     SessionConfigBooleanInfo, SessionConfigKindInfo, SessionConfigOptionInfo,
     SessionConfigSelectGroupInfo, SessionConfigSelectInfo, SessionConfigSelectOptionInfo,
     SessionFailureRecord, SessionModeInfo, SessionModeStateInfo, SessionNotice, ToolCallImageInfo,
@@ -12719,6 +12719,9 @@ async fn run_conversation_loop(
                 // this conversation as transcript-less (see `record_prompt`).
                 record_prompt(agent_type, &sid.0, &prompt_blocks).await;
                 prompted = true;
+                // claude-agent-acp answers a `/remote-control` prompt itself;
+                // its reply says whether Remote Control is on.
+                cb_state.claude_remote_control = remote_control_command(agent_type, &prompt_blocks);
                 let turn_started_at_ms = crate::acp_transcript::now_epoch_ms();
                 let prompt_request = PromptRequest::new(sid.clone(), prompt_blocks);
                 // Snapshot the stderr write position BEFORE the request is
@@ -12815,6 +12818,15 @@ async fn run_conversation_loop(
                 // to avoid deadlocking when the agent awaits a permission response.
                 loop {
                     tokio::select! {
+                        // Updates before the response: an agent that writes
+                        // its last update right before the response (as
+                        // claude-agent-acp does for the replies it writes
+                        // itself, `/remote-control`'s among them) delivers
+                        // both at once, and the update is queued by the time
+                        // the response is ready. Taken the other way round,
+                        // the turn would end `empty` and the update land on
+                        // the idle loop, where a Claude chunk is dropped.
+                        biased;
                         update = session.read_update() => {
                             // An `Err` is the session's router going away, not one bad
                             // message (see `AgentSession::read_update`): the connection
@@ -16150,6 +16162,98 @@ fn prompt_suggestion_update(
     )
 }
 
+/// What a `/remote-control` prompt asks claude-agent-acp for (0.93.0, #1197).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteControlCommand {
+    /// `/remote-control` or `/remote-control <session name>`: turn Remote
+    /// Control on, or answer with its URL again when it is on already.
+    Connect,
+    /// `/remote-control off`.
+    Disconnect,
+}
+
+/// The `/remote-control` command a Claude prompt is, read the way
+/// claude-agent-acp 0.93.0 reads it (`parseRemoteControlCommand`), since the
+/// adapter answers only what it parses: exactly one text block whose
+/// JavaScript-trimmed text is `/remote-control`, alone or followed by
+/// whitespace and an argument. An argument that trims to `off`, in any case,
+/// turns it off; any other (a session name), or none, turns it on.
+fn remote_control_command(
+    agent_type: AgentType,
+    blocks: &[ContentBlock],
+) -> Option<RemoteControlCommand> {
+    use crate::acp::js_text::is_js_whitespace;
+    if agent_type != AgentType::ClaudeCode {
+        return None;
+    }
+    let [ContentBlock::Text(text)] = blocks else {
+        return None;
+    };
+    let rest = text
+        .text
+        .trim_matches(is_js_whitespace)
+        .strip_prefix("/remote-control")?;
+    if rest.is_empty() {
+        return Some(RemoteControlCommand::Connect);
+    }
+    // `(?:\s+([\s\S]*))?$`: whatever follows the name starts with whitespace.
+    if !rest.starts_with(is_js_whitespace) {
+        return None;
+    }
+    if rest.trim_matches(is_js_whitespace).to_lowercase() == "off" {
+        Some(RemoteControlCommand::Disconnect)
+    } else {
+        Some(RemoteControlCommand::Connect)
+    }
+}
+
+/// What claude-agent-acp's reply to a `/remote-control` prompt says Remote
+/// Control is now: `Some(Some(_))` on, `Some(None)` off, and `None` when the
+/// text is no such reply, or one that leaves Remote Control as it was.
+///
+/// The adapter answers the command itself, with no model turn, in one
+/// `agent_message_chunk` of fixed wording (0.93.0's `runRemoteControlCommand`):
+///  - "Remote Control is active. Continue this session from claude.ai/code or
+///    the Claude mobile app:\n\n<session URL>\n\nRun /remote-control off to
+///    disconnect.", or "Remote Control is active, but Claude Code did not
+///    return a session URL.": on.
+///  - "Could not start Remote Control: <error>": off. Claude Code answers with
+///    the bridge it has while that one is up, and tears a failed one down
+///    before it tries again, so a start that fails leaves none.
+///  - "Remote Control is off. Run /remote-control to reconnect.": off.
+///  - "Could not stop Remote Control: <error>": unchanged.
+///
+/// None of it reaches the transcript, and the CLI's own `bridge_state` frames
+/// reach the client only with the next model turn, so this text is the one
+/// timely report. Wording that stops matching (a later adapter, or Claude Code
+/// answering a command the adapter left to it) changes nothing, which leaves
+/// codeg where it was before it read the reply at all.
+fn remote_control_reply(
+    command: RemoteControlCommand,
+    text: &str,
+) -> Option<Option<RemoteControlInfo>> {
+    match command {
+        RemoteControlCommand::Connect if text.starts_with("Remote Control is active") => {
+            Some(Some(RemoteControlInfo {
+                session_url: remote_control_session_url(text),
+            }))
+        }
+        RemoteControlCommand::Connect if text.starts_with("Could not start Remote Control") => {
+            Some(None)
+        }
+        RemoteControlCommand::Disconnect if text.starts_with("Remote Control is off") => Some(None),
+        _ => None,
+    }
+}
+
+/// The session URL an "active" reply names: its first word that parses as an
+/// `https` URL, kept as written.
+fn remote_control_session_url(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .find(|word| url::Url::parse(word).is_ok_and(|url| url.scheme() == "https"))
+        .map(str::to_string)
+}
+
 /// The raw `sessionFailure` value out of a `_meta.jetbrains.air` envelope —
 /// present only when the envelope itself is well-formed (integer
 /// `version >= 1`, mirroring the advertisement check the adapters run on
@@ -16947,6 +17051,10 @@ struct CodeBuddyLiveState {
     /// raw arguments, which must be rewritten the same way. Dropped at a final
     /// status and cleared at turn start, like `hosted_terminal_calls`.
     kiro_calls: HashMap<String, KiroLiveCall>,
+    /// The `/remote-control` command the latest Claude prompt was
+    /// ([`remote_control_command`]), until the adapter's reply to it arrives
+    /// ([`remote_control_reply`]) or the next prompt replaces it.
+    claude_remote_control: Option<RemoteControlCommand>,
 }
 
 /// What [`kiro_live_tool`] remembers about one live Kiro tool call.
@@ -20059,6 +20167,13 @@ async fn emit_conversation_update(
                         // into the live Agent capsule.
                         let parent_tool_use_id =
                             claude_chunk_parent_tool_use_id(agent_type, meta.as_ref());
+                        // The adapter's own answer to a `/remote-control`
+                        // prompt is one top-level chunk.
+                        let remote_control =
+                            match (cb_state.claude_remote_control, &parent_tool_use_id) {
+                                (Some(command), None) => remote_control_reply(command, &text.text),
+                                _ => None,
+                            };
                         emit_with_state(
                             state,
                             emitter,
@@ -20068,6 +20183,15 @@ async fn emit_conversation_update(
                             },
                         )
                         .await;
+                        if let Some(remote_control) = remote_control {
+                            cb_state.claude_remote_control = None;
+                            emit_with_state(
+                                state,
+                                emitter,
+                                AcpEvent::RemoteControl { remote_control },
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -22557,6 +22681,277 @@ mod tests {
             suggestions(&*state.read().await),
             vec![Some("Run the tests".to_string()), None]
         );
+    }
+
+    // --- Claude Code's Remote Control (claude-agent-acp 0.93.0) ------------
+
+    /// The success reply of claude-agent-acp 0.93.0's `runRemoteControlCommand`,
+    /// verbatim.
+    fn remote_control_active_reply(url: &str) -> String {
+        format!(
+            "Remote Control is active. Continue this session from claude.ai/code or the \
+             Claude mobile app:\n\n{url}\n\nRun /remote-control off to disconnect."
+        )
+    }
+
+    fn text_blocks(texts: &[&str]) -> Vec<ContentBlock> {
+        texts
+            .iter()
+            .map(|text| ContentBlock::Text(TextContent::new(*text)))
+            .collect()
+    }
+
+    /// The prompts the adapter answers itself, read with its own
+    /// `parseRemoteControlCommand` rules: one text block, JavaScript `trim`
+    /// and `\s`, the name exact, `off` in any case.
+    #[test]
+    fn remote_control_command_reads_what_the_adapter_parses() {
+        use RemoteControlCommand::{Connect, Disconnect};
+        for (text, want) in [
+            ("/remote-control", Some(Connect)),
+            ("  /remote-control\n", Some(Connect)),
+            ("/remote-control My laptop session", Some(Connect)),
+            ("/remote-control\toff", Some(Disconnect)),
+            ("/remote-control OFF", Some(Disconnect)),
+            ("  /remote-control   Off  ", Some(Disconnect)),
+            // JavaScript's whitespace, not Rust's: U+FEFF trims, U+0085 doesn't.
+            ("\u{FEFF}/remote-control off\u{FEFF}", Some(Disconnect)),
+            ("/remote-control\u{3000}off", Some(Disconnect)),
+            ("/remote-control\u{85}off", None),
+            ("/remote-control off now", Some(Connect)),
+            ("/remote-controller", None),
+            ("/Remote-Control", None),
+            ("please /remote-control", None),
+            ("/rc", None),
+        ] {
+            assert_eq!(
+                remote_control_command(AgentType::ClaudeCode, &text_blocks(&[text])),
+                want,
+                "{text:?}"
+            );
+        }
+        // Anything beside the one text block goes to Claude Code instead.
+        assert_eq!(
+            remote_control_command(
+                AgentType::ClaudeCode,
+                &text_blocks(&["/remote-control", "extra"])
+            ),
+            None
+        );
+        assert_eq!(remote_control_command(AgentType::ClaudeCode, &[]), None);
+        // Only claude-agent-acp has the command.
+        assert_eq!(
+            remote_control_command(AgentType::Codex, &text_blocks(&["/remote-control"])),
+            None
+        );
+    }
+
+    /// The adapter's five replies, verbatim, and what each says Remote Control
+    /// is now; any other text says nothing.
+    #[test]
+    fn remote_control_reply_reads_the_adapters_five_replies() {
+        use RemoteControlCommand::{Connect, Disconnect};
+        let url = "https://claude.ai/code/session_01ABCdef";
+        assert_eq!(
+            remote_control_reply(Connect, &remote_control_active_reply(url)),
+            Some(Some(RemoteControlInfo {
+                session_url: Some(url.to_string())
+            }))
+        );
+        assert_eq!(
+            remote_control_reply(
+                Connect,
+                "Remote Control is active, but Claude Code did not return a session URL."
+            ),
+            Some(Some(RemoteControlInfo { session_url: None }))
+        );
+        // Measured through a gateway (0.93.0, CLI 2.1.300).
+        assert_eq!(
+            remote_control_reply(
+                Connect,
+                "Could not start Remote Control: Remote Control is only available when using \
+                 Claude via api.anthropic.com. ANTHROPIC_BASE_URL is set and does not point at \
+                 api.anthropic.com, so this session is using a custom endpoint — unset it (or \
+                 run in a shell without it) to use Remote Control."
+            ),
+            Some(None)
+        );
+        assert_eq!(
+            remote_control_reply(
+                Disconnect,
+                "Remote Control is off. Run /remote-control to reconnect."
+            ),
+            Some(None)
+        );
+        assert_eq!(
+            remote_control_reply(Disconnect, "Could not stop Remote Control: offline"),
+            None,
+            "a stop that failed leaves it as it was"
+        );
+        // Claude Code's own answer to a command the adapter left to it, and
+        // replies to the other command, say nothing.
+        assert_eq!(
+            remote_control_reply(
+                Connect,
+                "/remote-control isn't available in this environment."
+            ),
+            None
+        );
+        assert_eq!(
+            remote_control_reply(Disconnect, &remote_control_active_reply(url)),
+            None
+        );
+        assert_eq!(
+            remote_control_reply(
+                Connect,
+                "Remote Control is off. Run /remote-control to reconnect."
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn remote_control_session_url_takes_the_first_https_url_as_written() {
+        assert_eq!(
+            remote_control_session_url(&remote_control_active_reply(
+                "https://claude.ai/code/session_01?x=1"
+            ))
+            .as_deref(),
+            Some("https://claude.ai/code/session_01?x=1")
+        );
+        assert_eq!(remote_control_session_url("no url here"), None);
+        assert_eq!(
+            remote_control_session_url("see http://claude.ai/code/x or https://"),
+            None,
+            "plain http and a bare scheme are no session URL"
+        );
+    }
+
+    /// Drive one top-level `agent_message_chunk` through
+    /// `emit_conversation_update` with `cb`'s pending command.
+    async fn drive_agent_text(
+        state: &Arc<RwLock<SessionState>>,
+        cb: &mut CodeBuddyLiveState,
+        text: &str,
+        parent_tool_use_id: Option<&str>,
+    ) {
+        let mut update = serde_json::json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": text},
+        });
+        if let Some(parent) = parent_tool_use_id {
+            update["_meta"] = serde_json::json!({"claudeCode": {"parentToolUseId": parent}});
+        }
+        let update: SessionUpdate =
+            serde_json::from_value(update).expect("valid agent_message_chunk wire shape");
+        let mut cache = ToolCallOutputCache::default();
+        emit_conversation_update(
+            state,
+            &EventEmitter::Noop,
+            AgentType::ClaudeCode,
+            update,
+            None,
+            &mut cache,
+            cb,
+        )
+        .await;
+    }
+
+    fn remote_control_events(state: &SessionState) -> Vec<Option<RemoteControlInfo>> {
+        state
+            .recent_events_after(0)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| match &e.payload {
+                AcpEvent::RemoteControl { remote_control } => Some(remote_control.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The reply to a pending command becomes a `RemoteControl` event after
+    /// the text itself, which still renders; the command is then spent. Text
+    /// before the reply, a subagent's text, and text with no command pending
+    /// say nothing.
+    #[tokio::test]
+    async fn the_adapters_reply_to_a_pending_command_sets_remote_control() {
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-rc".to_string(),
+            AgentType::ClaudeCode,
+            None,
+            "win".to_string(),
+            None,
+        )));
+        let url = "https://claude.ai/code/session_01";
+        let mut cb = CodeBuddyLiveState::default();
+
+        drive_agent_text(&state, &mut cb, &remote_control_active_reply(url), None).await;
+        assert!(
+            remote_control_events(&*state.read().await).is_empty(),
+            "no command pending: an agent that merely says so changes nothing"
+        );
+
+        cb.claude_remote_control = Some(RemoteControlCommand::Connect);
+        drive_agent_text(&state, &mut cb, "some straggler", None).await;
+        drive_agent_text(
+            &state,
+            &mut cb,
+            &remote_control_active_reply(url),
+            Some("toolu_1"),
+        )
+        .await;
+        assert!(remote_control_events(&*state.read().await).is_empty());
+        assert_eq!(
+            cb.claude_remote_control,
+            Some(RemoteControlCommand::Connect)
+        );
+
+        drive_agent_text(&state, &mut cb, &remote_control_active_reply(url), None).await;
+        let on = Some(RemoteControlInfo {
+            session_url: Some(url.to_string()),
+        });
+        assert_eq!(state.read().await.remote_control, on);
+        assert_eq!(
+            cb.claude_remote_control, None,
+            "the reply spends the command"
+        );
+        let events = state
+            .read()
+            .await
+            .recent_events_after(0)
+            .unwrap_or_default();
+        let reply_at = events
+            .iter()
+            .position(|e| {
+                matches!(&e.payload, AcpEvent::ContentDelta { text, .. } if text.starts_with("Remote Control is active"))
+            })
+            .expect("the reply renders");
+        let state_at = events
+            .iter()
+            .position(|e| matches!(e.payload, AcpEvent::RemoteControl { .. }))
+            .expect("Remote Control is reported");
+        assert!(reply_at < state_at);
+
+        // Spent: the same words again change nothing.
+        drive_agent_text(
+            &state,
+            &mut cb,
+            "Remote Control is off. Run /remote-control to reconnect.",
+            None,
+        )
+        .await;
+        assert_eq!(state.read().await.remote_control, on);
+
+        cb.claude_remote_control = Some(RemoteControlCommand::Disconnect);
+        drive_agent_text(
+            &state,
+            &mut cb,
+            "Remote Control is off. Run /remote-control to reconnect.",
+            None,
+        )
+        .await;
+        assert_eq!(state.read().await.remote_control, None);
+        assert_eq!(remote_control_events(&*state.read().await), vec![on, None]);
     }
 
     // --- live ACP session title (`session_info_update.title`) --------------
@@ -37264,6 +37659,239 @@ mod tests {
             claude.sweeps_at_steer.lock().unwrap().is_empty(),
             "no steer was sent"
         );
+        claude.shutdown().await;
+    }
+
+    /// `run_conversation_loop` for a Claude session whose agent answers every
+    /// prompt with one `agent_message_chunk` and the `end_turn` response,
+    /// written back to back, the way claude-agent-acp 0.93.0 answers a
+    /// `/remote-control` prompt it handles itself.
+    struct ClaudeReplyLoop {
+        state: Arc<RwLock<SessionState>>,
+        cmd_tx: mpsc::Sender<ConnectionCommand>,
+        events: tokio::sync::broadcast::Receiver<Arc<crate::acp::types::EventEnvelope>>,
+        /// The text the agent answers the next prompt with.
+        reply: Arc<std::sync::Mutex<String>>,
+        client: tokio::task::JoinHandle<()>,
+        agent: tokio::task::JoinHandle<()>,
+    }
+
+    impl ClaudeReplyLoop {
+        async fn start() -> Self {
+            use agent_client_protocol::schema::v1::PromptResponse;
+
+            let reply = Arc::new(std::sync::Mutex::new(String::from("ok")));
+            let agent_reply = Arc::clone(&reply);
+            let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+            let agent = tokio::spawn(async move {
+                let _ = Agent
+                    .builder()
+                    .on_receive_request(
+                        async |_req: NewSessionRequest,
+                               responder: Responder<NewSessionResponse>,
+                               _cx: ConnectionTo<Client>| {
+                            responder.respond(NewSessionResponse::new(SessionId::new("s1")))
+                        },
+                        on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |req: PromptRequest,
+                                    responder: Responder<PromptResponse>,
+                                    cx: ConnectionTo<Client>| {
+                            let text = agent_reply.lock().unwrap().clone();
+                            cx.send_notification(UntypedMessage::new(
+                                "session/update",
+                                serde_json::json!({
+                                    "sessionId": req.session_id.0.to_string(),
+                                    "update": {
+                                        "sessionUpdate": "agent_message_chunk",
+                                        "content": {"type": "text", "text": text},
+                                    },
+                                }),
+                            )?)?;
+                            responder.respond(PromptResponse::new(StopReason::EndTurn))
+                        },
+                        on_receive_request!(),
+                    )
+                    .connect_with(agent_end, async |_cx: ConnectionTo<Client>| {
+                        std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                    })
+                    .await;
+            });
+
+            let state = Arc::new(RwLock::new(SessionState::new(
+                "conn-claude-reply".to_string(),
+                AgentType::ClaudeCode,
+                None,
+                "win".to_string(),
+                None,
+            )));
+            let events = state.read().await.event_stream().subscribe();
+            let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+            let loop_state = Arc::clone(&state);
+            let client = tokio::spawn(async move {
+                let _ = Client
+                    .builder()
+                    .connect_with(client_end, async move |cx: ConnectionTo<Agent>| {
+                        let raw = cx
+                            .send_request_to(
+                                Agent,
+                                UntypedMessage::new("session/new", NewSessionRequest::new("/tmp"))?,
+                            )
+                            .block_task()
+                            .await?;
+                        let response: NewSessionResponse = serde_json::from_value(raw)
+                            .map_err(agent_client_protocol::Error::into_internal_error)?;
+                        let mut session = AgentSession::attach(&cx, response)?;
+                        let perms = PendingPermissions::default();
+                        let ledger = background_watch::PromptLedger::shared();
+                        let stderr_tail = Arc::new(StderrTail::new());
+                        run_conversation_loop(
+                            &mut session,
+                            "conn-claude-reply",
+                            &EventEmitter::Noop,
+                            &loop_state,
+                            AgentType::ClaudeCode,
+                            &perms,
+                            &mut cmd_rx,
+                            Arc::new(TerminalRuntime::with_base_env(BTreeMap::new())),
+                            "/tmp",
+                            false,
+                            &[],
+                            &ledger,
+                            None,
+                            &stderr_tail,
+                        )
+                        .await?;
+                        Ok(())
+                    })
+                    .await;
+            });
+
+            Self {
+                state,
+                cmd_tx,
+                events,
+                reply,
+                client,
+                agent,
+            }
+        }
+
+        /// Prompt with `text`, the agent answering `reply`, and return every
+        /// event of the turn through its `TurnComplete`.
+        async fn turn(&mut self, text: &str, reply: &str) -> Vec<AcpEvent> {
+            *self.reply.lock().unwrap() = reply.to_string();
+            self.state.write().await.turn_in_flight = true;
+            self.cmd_tx
+                .send(ConnectionCommand::Prompt {
+                    blocks: vec![PromptInputBlock::Text { text: text.into() }],
+                    user_message: None,
+                    internal_suffix: Vec::new(),
+                })
+                .await
+                .expect("the loop is running");
+            let mut seen = Vec::new();
+            loop {
+                let envelope =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), self.events.recv())
+                        .await
+                        .expect("the turn ends")
+                        .expect("event stream");
+                let done = matches!(envelope.payload, AcpEvent::TurnComplete { .. });
+                seen.push(envelope.payload.clone());
+                if done {
+                    return seen;
+                }
+            }
+        }
+
+        async fn shutdown(self) {
+            drop(self.cmd_tx);
+            self.client.abort();
+            self.agent.abort();
+        }
+    }
+
+    /// An answer written right before its response belongs to its turn. The
+    /// two arrive together, so the turn loop must take the update first:
+    /// taken the other way round, the turn ends `empty` (an error toast for a
+    /// turn that answered) and the text lands on the idle loop, where the
+    /// frontend drops a Claude chunk outside a turn. That is the ordinary case
+    /// for the replies claude-agent-acp writes itself, `/remote-control`'s
+    /// among them, which no transcript records either.
+    #[tokio::test]
+    async fn an_answer_written_with_its_response_stays_in_its_turn() {
+        let mut claude = ClaudeReplyLoop::start().await;
+        for n in 0..40 {
+            let reply = format!("answer {n}");
+            let events = claude.turn("hello", &reply).await;
+            let answered = events.iter().any(|e| {
+                matches!(e, AcpEvent::ContentDelta { text, parent_tool_use_id: None } if *text == reply)
+            });
+            assert!(
+                answered,
+                "turn {n}: the answer rendered in its turn: {events:?}"
+            );
+            match events.last() {
+                Some(AcpEvent::TurnComplete { stop_reason, .. }) => {
+                    assert_eq!(stop_reason, "end_turn", "turn {n}")
+                }
+                other => panic!("turn {n} ended with {other:?}"),
+            }
+        }
+        claude.shutdown().await;
+    }
+
+    /// `/remote-control` end to end through the turn loop: the adapter's reply
+    /// renders, Remote Control follows it, and `off` takes it back. The same
+    /// words in reply to another prompt change nothing.
+    #[tokio::test]
+    async fn remote_control_follows_the_adapters_replies_through_the_turn_loop() {
+        let mut claude = ClaudeReplyLoop::start().await;
+        let url = "https://claude.ai/code/session_01";
+        let remote_control = |events: &[AcpEvent]| -> Vec<Option<RemoteControlInfo>> {
+            events
+                .iter()
+                .filter_map(|e| match e {
+                    AcpEvent::RemoteControl { remote_control } => Some(remote_control.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let events = claude
+            .turn("what do you say?", &remote_control_active_reply(url))
+            .await;
+        assert!(remote_control(&events).is_empty());
+        assert_eq!(claude.state.read().await.remote_control, None);
+
+        let events = claude
+            .turn("/remote-control", &remote_control_active_reply(url))
+            .await;
+        let on = Some(RemoteControlInfo {
+            session_url: Some(url.to_string()),
+        });
+        assert_eq!(remote_control(&events), vec![on.clone()]);
+        assert!(matches!(
+            events.last(),
+            Some(AcpEvent::TurnComplete { stop_reason, .. }) if stop_reason == "end_turn"
+        ));
+        assert_eq!(claude.state.read().await.remote_control, on);
+        assert_eq!(
+            claude.state.read().await.to_snapshot().remote_control,
+            on,
+            "a client attaching later sees it too"
+        );
+
+        let events = claude
+            .turn(
+                "/remote-control off",
+                "Remote Control is off. Run /remote-control to reconnect.",
+            )
+            .await;
+        assert_eq!(remote_control(&events), vec![None]);
+        assert_eq!(claude.state.read().await.remote_control, None);
         claude.shutdown().await;
     }
 

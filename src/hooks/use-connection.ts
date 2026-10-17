@@ -21,6 +21,7 @@ import type {
   PendingQuestionState,
   PromptCapabilitiesInfo,
   QuestionAnswer,
+  RemoteControlInfo,
   SessionConfigOptionInfo,
   AsyncTaskRecord,
   SessionFailureRecord,
@@ -79,6 +80,9 @@ export interface UseConnectionReturn {
    *  empty composer (Tab fills it in), or `null`. See
    *  `ConnectionState.promptSuggestion`. */
   promptSuggestion: string | null
+  /** Claude Code's Remote Control while it is on, or `null`. See
+   *  `ConnectionState.remoteControl`. */
+  remoteControl: RemoteControlInfo | null
   pendingPermission: PendingPermission | null
   pendingUserMessage: PendingUserMessage | null
   /** Feedback-note ids this turn's live message adopted as mid-turn user turns
@@ -279,6 +283,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
     connection?.configOptions ?? cached?.configOptions ?? null
   const availableCommands = connection?.availableCommands ?? null
   const promptSuggestion = connection?.promptSuggestion ?? null
+  const remoteControl = connection?.remoteControl ?? null
   const pendingPermission = connection?.pendingPermission ?? null
   const pendingUserMessage = connection?.pendingUserMessage ?? null
   const steeredMessageIds =
@@ -389,6 +394,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
       configOptions,
       availableCommands,
       promptSuggestion,
+      remoteControl,
       pendingPermission,
       pendingUserMessage,
       steeredMessageIds,
@@ -433,6 +439,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
       configOptions,
       availableCommands,
       promptSuggestion,
+      remoteControl,
       pendingPermission,
       pendingUserMessage,
       steeredMessageIds,

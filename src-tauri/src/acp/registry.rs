@@ -446,7 +446,7 @@ pub const PI_MIN_RUNTIME_VERSION: &str = "0.81.0";
 
 /// The npm package the built-in Claude Code entry runs — and the name the
 /// adapter reports as `agentInfo.name` at `initialize`, which is its
-/// `packageJson.name` (read from the 0.58.1 to 0.92.0 sources). A custom agent
+/// `packageJson.name` (read from the 0.58.1 to 0.93.0 sources). A custom agent
 /// whose running adapter reports exactly this name follows the Claude Code
 /// steering policy (`connection.rs::steering_policy_agent`).
 pub const CLAUDE_AGENT_ACP_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
@@ -2360,9 +2360,74 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             //     native-subagent form) serve capabilities codeg does not
             //     declare (see `build_client_capabilities`). The rest of #1366
             //     changes the experimental ACP v2 surface.
+            //
+            // 0.93.0 keeps the Claude SDK at 0.3.300 and the ACP SDK at 1.9.0,
+            // so the CLI is the same 2.1.300 binary, and `engines.node` stays
+            // ">=22". The published package differs from 0.92.0's in exactly
+            // the files the tag diff touches. The scenario harness, the same in
+            // both tags, is byte-identical in all 40 scenarios with codeg's
+            // exact `clientCapabilities`; its mocked SDK query cannot enable
+            // Remote Control, so no scenario reaches the new command. A live
+            // `initialize` differs from 0.92.0's in the version only, so the
+            // 0.92.0 parse test in connection.rs covers it. (aaaa) was measured
+            // live against the local fake Anthropic API (no model call), 0.92.0
+            // and 0.93.0 side by side.
+            //
+            // (aaaa) **`/remote-control`** (#1197). The adapter offers a
+            // `remote-control` command (hint `[session name | off]`) whenever
+            // the SDK query can enable Remote Control, which 0.3.300's can. It
+            // answers a prompt that is exactly `/remote-control`,
+            // `/remote-control <name>` or `/remote-control off`, in one text
+            // block, by itself and without a model turn: one
+            // `agent_message_chunk`, then `end_turn` with no usage. On success
+            // the chunk carries the session's claude.ai/code link. Measured:
+            // 0.92.0 passed the text on to Claude Code, which answered
+            // "/remote-control isn't available in this environment." and wrote
+            // two `local_command` records, while 0.93.0 writes nothing to the
+            // transcript, so the exchange is gone from a reloaded conversation.
+            // Through a custom `ANTHROPIC_BASE_URL` (codeg's gateway providers)
+            // Claude Code refuses ("Remote Control is only available when using
+            // Claude via api.anthropic.com …") and the reply says so. While a
+            // turn, or a cycle Claude Code started on its own, is running, the
+            // prompt is rejected with -32600 "Remote Control can't be changed
+            // while Claude is working. Try again when the turn ends.", which
+            // codeg reports and survives like any rejected prompt
+            // (`prompt_rejection_is_terminal`). The CLI also emits
+            // `system/bridge_state` frames, but they reach the client only with
+            // the next model turn (held back 10 s and more while idle), so they
+            // cannot carry live state. What codeg does with it:
+            //   * The reply and the response leave the adapter back to back,
+            //     and the turn loop's select could take the response first: the
+            //     turn ended `empty` (an error toast) and the reply landed on the
+            //     idle loop, where a Claude chunk is dropped (a test of 40 such
+            //     turns failed on its second). The select now takes queued
+            //     updates first (`biased`), for every agent.
+            //   * Remote Control lives in the CLI process, and the idle sweeps
+            //     disconnect a connection that no open tab shows (the frontend
+            //     after a minute idle, the backend after three without a
+            //     touch), which ended it soon after the user closed the tab or
+            //     the page. `remote_control_command` and `remote_control_reply`
+            //     read the command and the adapter's reply into
+            //     `AcpEvent::RemoteControl`; while it is on, both sweeps leave
+            //     the connection alone (`manager::sweep_idle`), and a strip
+            //     above the transcript keeps the link, a QR code for the phone
+            //     and a way to turn it off.
+            // Read from the CLI binary, not measurable without a claude.ai
+            // account: a message sent from claude.ai/code or the app is queued
+            // into Claude Code as a turn of its own, which codeg renders from
+            // the transcript like the other cycles Claude Code starts
+            // (`background_watch`), and a permission request goes to both
+            // sides, an answer from the phone withdrawing codeg's card with
+            // `$/cancel_request`.
+            //
+            // (bbbb) Nothing to change in codeg: #1368 holds a fork back from
+            // `session/list` and `_session/list/subscribe` until its
+            // `session/fork` response is out, and codeg sends neither. Its own
+            // import is a scan the user starts, so no list of codeg's can show
+            // a fork before the fork's response binds it.
             distribution: AgentDistribution::Npx {
-                version: "0.92.0",
-                package: "@agentclientprotocol/claude-agent-acp@0.92.0",
+                version: "0.93.0",
+                package: "@agentclientprotocol/claude-agent-acp@0.93.0",
                 cmd: "claude-agent-acp",
                 args: &[],
                 env: &[],
@@ -5409,8 +5474,8 @@ mod tests {
     fn registry_pins_current_acp_agent_versions() {
         assert_npx_version(
             AgentType::ClaudeCode,
-            "0.92.0",
-            "@agentclientprotocol/claude-agent-acp@0.92.0",
+            "0.93.0",
+            "@agentclientprotocol/claude-agent-acp@0.93.0",
             Some("22.0.0"),
         );
         assert_npx_version(

@@ -17,6 +17,20 @@ vi.mock("@/components/chat/composer-status-strips", () => ({
 vi.mock("@/components/chat/async-task-strip", () => ({
   AsyncTaskStrip: () => null,
 }))
+vi.mock("@/components/chat/remote-control-strip", () => ({
+  RemoteControlStrip: (props: {
+    remoteControl: { session_url: string | null }
+    onTurnOff?: () => void
+    canTurnOff: boolean
+  }) => (
+    <div
+      data-testid="remote-control-strip"
+      data-url={String(props.remoteControl.session_url)}
+      data-can-turn-off={String(props.canTurnOff)}
+      data-has-turn-off={String(props.onTurnOff !== undefined)}
+    />
+  ),
+}))
 vi.mock("@/components/chat/permission-dialog", () => ({
   PermissionDialog: () => null,
 }))
@@ -96,5 +110,38 @@ describe("who turns the handles on", () => {
     expect(
       read("src/components/canvas/canvas-conversation-surface.tsx")
     ).not.toContain("resizableWidth")
+  })
+})
+
+describe("ConversationShell Remote Control strip", () => {
+  it("shows Claude Code's Remote Control while it is on", () => {
+    renderShell()
+    expect(screen.queryByTestId("remote-control-strip")).toBeNull()
+
+    renderShell({
+      status: "connected",
+      remoteControl: { session_url: "https://claude.ai/code/session_01" },
+      onRemoteControlOff: () => {},
+    })
+    const strip = screen.getByTestId("remote-control-strip")
+    expect(strip).toHaveAttribute(
+      "data-url",
+      "https://claude.ai/code/session_01"
+    )
+    expect(strip).toHaveAttribute("data-has-turn-off", "true")
+    expect(strip).toHaveAttribute("data-can-turn-off", "true")
+  })
+
+  it("lets it be turned off only between turns", () => {
+    // The adapter refuses `/remote-control off` while Claude is working.
+    renderShell({
+      status: "prompting",
+      remoteControl: { session_url: null },
+      onRemoteControlOff: () => {},
+    })
+    expect(screen.getByTestId("remote-control-strip")).toHaveAttribute(
+      "data-can-turn-off",
+      "false"
+    )
   })
 })

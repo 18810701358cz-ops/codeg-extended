@@ -710,6 +710,17 @@ pub enum AcpEvent {
         #[serde(default)]
         text: Option<String>,
     },
+    /// Claude Code's Remote Control turned on (`Some`) or off (`None`) for the
+    /// session, read from claude-agent-acp's reply to a `/remote-control`
+    /// prompt (0.93.0; see `connection::remote_control_reply`).
+    ///
+    /// Current state, not an event: `SessionState::apply_event` keeps it for
+    /// the snapshot, and while it is on the idle sweeps leave the connection
+    /// alone, since disconnecting would end the remote session with the CLI.
+    RemoteControl {
+        #[serde(default)]
+        remote_control: Option<RemoteControlInfo>,
+    },
     /// Out-of-turn activity surfaced from the agent's own session transcript
     /// by the background watcher (`acp::background_watch`; Claude-only today).
     /// Covers everything that happens OUTSIDE a codeg-driven prompt turn:
@@ -2119,6 +2130,17 @@ pub struct AvailableCommandInfo {
     pub name: String,
     pub description: String,
     pub input_hint: Option<String>,
+}
+
+/// Claude Code's Remote Control for a session that has it on: the session can
+/// be continued from claude.ai/code or the Claude app on a phone for as long as
+/// the CLI process runs (see `AcpEvent::RemoteControl`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteControlInfo {
+    /// The remote session's claude.ai/code URL, absent when Claude Code turned
+    /// Remote Control on without returning one.
+    #[serde(default)]
+    pub session_url: Option<String>,
 }
 
 /// Internal reply shape from the connection loop back to `manager.fork_session`

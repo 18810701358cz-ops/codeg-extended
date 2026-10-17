@@ -4122,6 +4122,18 @@
         "stopDeclined": "Não foi possível parar essa tarefa — ela pode já ter terminado.",
         "stopFailed": "Falha ao parar a tarefa: {error}"
       },
+      "remoteControl": {
+        "title": "Controle remoto ativado",
+        "open": "Abrir no navegador",
+        "copy": "Copiar link",
+        "copied": "Copiado",
+        "qr": "Código QR",
+        "qrLabel": "Código QR do link de controle remoto desta sessão",
+        "qrHint": "Escaneie com o celular para continuar esta sessão no app do Claude ou em claude.ai/code.",
+        "noUrl": "O Claude Code não retornou nenhum link para esta sessão",
+        "turnOff": "Desativar",
+        "turnOffBusy": "Disponível quando o Claude terminar"
+      },
       "proposedPlan": {
         "title": "Plano proposto",
         "planning": "A planear…"

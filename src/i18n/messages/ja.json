@@ -4122,6 +4122,18 @@
         "stopDeclined": "このタスクは停止できませんでした。すでに終了している可能性があります。",
         "stopFailed": "タスクの停止に失敗しました: {error}"
       },
+      "remoteControl": {
+        "title": "リモートコントロール有効",
+        "open": "ブラウザで開く",
+        "copy": "リンクをコピー",
+        "copied": "コピーしました",
+        "qr": "QR コード",
+        "qrLabel": "このセッションのリモートコントロール用リンクの QR コード",
+        "qrHint": "スマートフォンでスキャンすると、Claude アプリまたは claude.ai/code でこのセッションを続けられます。",
+        "noUrl": "Claude Code はこのセッションのリンクを返しませんでした",
+        "turnOff": "オフにする",
+        "turnOffBusy": "Claude の作業が終わると使えます"
+      },
       "proposedPlan": {
         "title": "提案された計画",
         "planning": "計画中…"

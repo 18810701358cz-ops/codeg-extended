@@ -2795,6 +2795,17 @@ export interface AvailableCommandInfo {
   input_hint?: string | null
 }
 
+/**
+ * Claude Code's Remote Control for a session that has it on (mirror of Rust
+ * `RemoteControlInfo`): the session can be continued from claude.ai/code or the
+ * Claude app on a phone for as long as the agent CLI runs.
+ */
+export interface RemoteControlInfo {
+  /** The remote session's claude.ai/code URL; `null` when Claude Code turned
+   *  Remote Control on without returning one. */
+  session_url: string | null
+}
+
 export interface SessionUsageUpdateInfo {
   used: number
   size: number
@@ -3124,6 +3135,16 @@ export type AcpEvent =
   | {
       type: "prompt_suggestion"
       text: string | null
+    }
+  /**
+   * Claude Code's Remote Control turned on (an object) or off (`null`), read
+   * from claude-agent-acp 0.93.0's reply to a `/remote-control` prompt.
+   * Current state, like `prompt_suggestion`: the snapshot carries it while it
+   * is on.
+   */
+  | {
+      type: "remote_control"
+      remote_control: RemoteControlInfo | null
     }
   /**
    * Out-of-turn activity surfaced from the agent's own session transcript by
@@ -3664,6 +3685,9 @@ export interface LiveSessionSnapshot {
   /** The follow-up prompt the agent last predicted (see the
    *  `prompt_suggestion` event). Absent when there is none. */
   prompt_suggestion?: string | null
+  /** Claude Code's Remote Control while it is on (see the `remote_control`
+   *  event). Absent when it is off. */
+  remote_control?: RemoteControlInfo | null
   fork_supported: boolean
   available_commands: AvailableCommandInfo[]
   selectors_ready: boolean

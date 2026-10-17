@@ -211,6 +211,7 @@ beforeEach(() => {
     availableCommands: null,
     usage: null,
     promptSuggestion: null as string | null,
+    remoteControl: null as { session_url: string | null } | null,
     liveMessage: null,
     pendingPermission: null,
     pendingAskQuestion: null,
@@ -292,6 +293,7 @@ function snapshotBase() {
     availableCommands: null,
     usage: null,
     promptSuggestion: null as string | null,
+    remoteControl: null as { session_url: string | null } | null,
     liveMessage: null,
     pendingPermission: null,
     pendingAskQuestion: null,
@@ -4933,6 +4935,157 @@ describe("predicted follow-up prompt (claude-agent-acp 0.92.0)", () => {
       event_seq: 5,
     } as unknown as LiveSessionSnapshot)
     expect(suggestion()).toBeNull()
+  })
+})
+
+describe("Claude Code's Remote Control (claude-agent-acp 0.93.0)", () => {
+  async function connectOwner(): Promise<AttachHandlers> {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    return latestAttachHandlers()
+  }
+
+  const remoteControl = () => h.store!.getConnection(TAB)!.remoteControl
+  const SESSION_URL = "https://claude.ai/code/session_01"
+
+  it("follows the adapter's on and off across turns, and goes with the connection", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "remote_control",
+      remote_control: { session_url: SESSION_URL },
+    })
+    expect(remoteControl()).toEqual({ session_url: SESSION_URL })
+
+    // Turns come and go without touching it.
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    })
+    expect(remoteControl()).toEqual({ session_url: SESSION_URL })
+
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "remote_control",
+      remote_control: null,
+    })
+    expect(remoteControl()).toBeNull()
+
+    // A dead connection takes it along: the CLI it ran in is gone.
+    emitAcpEvent(handlers, {
+      seq: 5,
+      connection_id: "spawned-conn",
+      type: "remote_control",
+      remote_control: { session_url: null },
+    })
+    expect(remoteControl()).toEqual({ session_url: null })
+    emitAcpEvent(handlers, {
+      seq: 6,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "disconnected",
+    })
+    expect(remoteControl()).toBeNull()
+  })
+
+  it("drops it when the connection moves to another session (a fork), as the backend does", async () => {
+    const handlers = await connectOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_started",
+      session_id: "sess-1",
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "remote_control",
+      remote_control: { session_url: SESSION_URL },
+    })
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_started",
+      session_id: "sess-1",
+    })
+    expect(remoteControl()).toEqual({ session_url: SESSION_URL })
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "session_started",
+      session_id: "sess-fork",
+    })
+    expect(remoteControl()).toBeNull()
+  })
+
+  it("recovers it from a fresh snapshot", async () => {
+    const handlers = await connectOwner()
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      eventSeq: 5,
+      remoteControl: { session_url: SESSION_URL },
+    })
+    hydrateSnapshot(handlers, {
+      event_seq: 5,
+    } as unknown as LiveSessionSnapshot)
+    expect(remoteControl()).toEqual({ session_url: SESSION_URL })
+  })
+
+  it("keeps the idle sweep off the connection while it is on", async () => {
+    vi.useFakeTimers()
+    try {
+      const handlers = await connectOwner()
+      emitAcpEvent(handlers, {
+        seq: 1,
+        connection_id: "spawned-conn",
+        type: "turn_complete",
+        stop_reason: "end_turn",
+      } as EventEnvelope)
+      emitAcpEvent(handlers, {
+        seq: 2,
+        connection_id: "spawned-conn",
+        type: "remote_control",
+        remote_control: { session_url: SESSION_URL },
+      })
+      // Nothing shows it any more: the user moved on, the phone took over.
+      h.actions!.setActiveKey("some-other-surface")
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          CONNECTION_IDLE_TIMEOUT_MS + IDLE_SWEEP_INTERVAL_MS + 1000
+        )
+      })
+      expect(h.acpDisconnect).not.toHaveBeenCalled()
+
+      // Turned off, it is an idle connection like any other.
+      emitAcpEvent(handlers, {
+        seq: 3,
+        connection_id: "spawned-conn",
+        type: "remote_control",
+        remote_control: null,
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          CONNECTION_IDLE_TIMEOUT_MS + IDLE_SWEEP_INTERVAL_MS + 1000
+        )
+      })
+      expect(h.acpDisconnect).toHaveBeenCalledWith("spawned-conn")
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

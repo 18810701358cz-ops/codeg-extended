@@ -74,6 +74,7 @@ import type {
   SessionUsageUpdateInfo,
   PromptCapabilitiesInfo,
   PromptInputBlock,
+  RemoteControlInfo,
   ToolCallImageWire,
   UserMessageBlock,
 } from "@/lib/types"
@@ -328,6 +329,15 @@ export interface ConnectionState {
    * backend keeps the same value for the snapshot.
    */
   promptSuggestion: string | null
+  /**
+   * Claude Code's Remote Control while it is on (claude-agent-acp 0.93.0's
+   * `/remote-control`): the session can be continued from claude.ai/code or a
+   * phone for as long as the agent CLI runs. Set by `remote_control`, cleared
+   * by its `null`, by a fork (codeg closes the session it leaves) and when the
+   * connection goes. While it is set the idle sweep leaves the connection
+   * alone. The backend keeps the same value for the snapshot.
+   */
+  remoteControl: RemoteControlInfo | null
   liveMessage: LiveMessage | null
   pendingPermission: PendingPermission | null
   /** In-flight user prompt for the current turn — set from a `user_message`
@@ -804,6 +814,11 @@ type Action =
       type: "PROMPT_SUGGESTION"
       contextKey: string
       text: string | null
+    }
+  | {
+      type: "REMOTE_CONTROL"
+      contextKey: string
+      remoteControl: RemoteControlInfo | null
     }
   | {
       type: "EVENT_APPLIED"
@@ -1862,6 +1877,7 @@ function connectionsReducer(
         availableCommands: null,
         usage: null,
         promptSuggestion: null,
+        remoteControl: null,
         liveMessage: null,
         pendingPermission: null,
         pendingUserMessage: null,
@@ -1925,6 +1941,7 @@ function connectionsReducer(
         availableCommands: null,
         usage: null,
         promptSuggestion: null,
+        remoteControl: null,
         liveMessage: null,
         pendingPermission: null,
         pendingUserMessage: null,
@@ -2087,6 +2104,7 @@ function connectionsReducer(
         // Current state like `usage`; a stale snapshot never reaches here, so
         // it cannot bring back a prediction a later prompt already spent.
         promptSuggestion: action.patch.promptSuggestion,
+        remoteControl: action.patch.remoteControl,
         liveMessage: hydratedLiveMessage,
         // A snapshot with a turn in flight carries a prompt newer than any the
         // user stopped, which ends that turn's window as the status event of
@@ -2176,6 +2194,10 @@ function connectionsReducer(
       if (!conn) return state
       const next = new Map(state)
       const updated = { ...conn, status: action.status }
+      if (action.status === "disconnected" || action.status === "error") {
+        // Remote Control ran in the agent CLI, which is gone.
+        updated.remoteControl = null
+      }
       if (action.status === "prompting") {
         updated.liveMessage = {
           id: randomUUID(),
@@ -2748,6 +2770,9 @@ function connectionsReducer(
         // Likewise the predicted prompt: it follows the last turn of the
         // session left behind, and a fork starts from an earlier point of it.
         promptSuggestion: forked ? null : conn.promptSuggestion,
+        // And Remote Control: codeg closes the session a fork leaves, and its
+        // CLI with it.
+        remoteControl: forked ? null : conn.remoteControl,
       })
       return next
     }
@@ -3149,6 +3174,24 @@ function connectionsReducer(
       if (!conn || conn.promptSuggestion === action.text) return state
       const next = new Map(state)
       next.set(action.contextKey, { ...conn, promptSuggestion: action.text })
+      return next
+    }
+
+    case "REMOTE_CONTROL": {
+      const conn = state.get(action.contextKey)
+      if (!conn) return state
+      const before = conn.remoteControl
+      const after = action.remoteControl
+      if (
+        (before === null && after === null) ||
+        (before !== null &&
+          after !== null &&
+          before.session_url === after.session_url)
+      ) {
+        return state
+      }
+      const next = new Map(state)
+      next.set(action.contextKey, { ...conn, remoteControl: after })
       return next
     }
 
@@ -5970,6 +6013,17 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             text: e.text?.trim() || null,
           })
           break
+        case "remote_control":
+          // After the reply it follows, which can still be in the stream queue.
+          flushStreamingQueue(contextKey)
+          dispatch({
+            type: "REMOTE_CONTROL",
+            contextKey,
+            remoteControl: e.remote_control
+              ? { session_url: e.remote_control.session_url ?? null }
+              : null,
+          })
+          break
       }
     },
     [
@@ -6532,6 +6586,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         // strip is actively showing as running. Mirrors the backend's
         // `has_active_background_work`, which ORs the two the same way.
         if (liveAsyncTasks(conn.asyncTasks).length > 0) continue
+        // Claude Code's Remote Control runs in the agent CLI: disconnecting
+        // would end the session the user handed to claude.ai/code or a phone.
+        // The backend sweep spares it too (`sweep_idle`).
+        if (conn.remoteControl) continue
         const lastActive = lastActivityRef.current.get(contextKey) ?? 0
         if (now - lastActive > CONNECTION_IDLE_TIMEOUT_MS) {
           toDisconnect.push({

@@ -18,7 +18,7 @@ use crate::acp::plan_approval::PendingPlanApprovalState;
 use crate::acp::question::PendingQuestionState;
 use crate::acp::types::{
     AcpEvent, AsyncTaskRecord, AvailableCommandInfo, ConfigStaleKind, ConnectionStatus,
-    EventEnvelope, GrokModelCatalog, GrokModelSpec, PromptCapabilitiesInfo,
+    EventEnvelope, GrokModelCatalog, GrokModelSpec, PromptCapabilitiesInfo, RemoteControlInfo,
     SessionConfigOptionInfo, SessionFailureRecord, SessionModeStateInfo, ToolCallImageInfo,
 };
 use crate::models::agent::AgentType;
@@ -463,6 +463,13 @@ pub struct SessionState {
     /// at creation by [`owner_composes_prompts`]. Backend-internal — not
     /// serialized, not carried on `to_snapshot()`.
     pub wants_prompt_suggestions: bool,
+    /// Claude Code's Remote Control while it is on (`AcpEvent::RemoteControl`):
+    /// the session can be continued from claude.ai/code or a phone. It lives
+    /// in the agent CLI, so the idle sweeps leave the connection alone while
+    /// this is set (`manager::sweep_idle`). Cleared when the connection moves
+    /// to another session, since codeg closes the session a fork leaves and
+    /// its CLI with it. Carried on `to_snapshot()`.
+    pub remote_control: Option<RemoteControlInfo>,
     /// True once the agent's initial selectors handshake (modes +
     /// config_options) has finished and `SelectorsReady` has fired. Persisted
     /// on the snapshot so a frontend that reconnects after refresh can see
@@ -790,6 +797,7 @@ impl SessionState {
             usage: None,
             prompt_suggestion: None,
             wants_prompt_suggestions,
+            remote_control: None,
             selectors_ready: false,
             last_error: None,
             session_started_tx: None,
@@ -885,6 +893,9 @@ impl SessionState {
                     // A prediction follows the last turn of the session it was
                     // made in; a fork starts from an earlier point of it.
                     self.prompt_suggestion = None;
+                    // Remote Control belongs to the session left behind, whose
+                    // CLI goes when codeg closes it after the fork.
+                    self.remote_control = None;
                 }
                 self.external_id = Some(session_id.clone());
                 self.status = ConnectionStatus::Connected;
@@ -933,6 +944,13 @@ impl SessionState {
                     // same way).
                     self.prompt_suggestion = None;
                 }
+                if matches!(
+                    status,
+                    ConnectionStatus::Disconnected | ConnectionStatus::Error
+                ) {
+                    // Remote Control ran in the agent CLI, which is gone.
+                    self.remote_control = None;
+                }
                 self.status = status.clone();
             }
             AcpEvent::SessionModes { modes } => {
@@ -978,6 +996,9 @@ impl SessionState {
             }
             AcpEvent::PromptSuggestion { text } => {
                 self.prompt_suggestion = text.clone();
+            }
+            AcpEvent::RemoteControl { remote_control } => {
+                self.remote_control = remote_control.clone();
             }
             AcpEvent::ContentDelta {
                 text,
@@ -2224,6 +2245,7 @@ impl SessionState {
             prompt_capabilities: self.prompt_capabilities.clone(),
             usage: self.usage.clone(),
             prompt_suggestion: self.prompt_suggestion.clone(),
+            remote_control: self.remote_control.clone(),
             fork_supported: self.fork_supported,
             available_commands: self.available_commands.clone(),
             selectors_ready: self.selectors_ready,
@@ -2350,6 +2372,10 @@ pub struct LiveSessionSnapshot {
     /// common snapshot keeps its pre-feature wire shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_suggestion: Option<String>,
+    /// Claude Code's Remote Control while it is on (see
+    /// `SessionState.remote_control`). Omitted when it is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_control: Option<RemoteControlInfo>,
     pub fork_supported: bool,
     pub available_commands: Vec<AvailableCommandInfo>,
     pub selectors_ready: bool,
@@ -3388,6 +3414,74 @@ mod tests {
             session_id: "s2".into(),
         });
         assert_eq!(s.prompt_suggestion, None);
+    }
+
+    /// Remote Control is current state: the snapshot carries it while it is on,
+    /// and it goes when the adapter turns it off, when the connection moves to
+    /// another session (codeg closes the one a fork leaves, and its CLI with
+    /// it), and when the connection dies.
+    #[test]
+    fn snapshot_carries_remote_control_while_its_cli_runs() {
+        let on = || AcpEvent::RemoteControl {
+            remote_control: Some(RemoteControlInfo {
+                session_url: Some("https://claude.ai/code/session_01".into()),
+            }),
+        };
+        let mut s = fresh_state();
+        assert!(
+            !serde_json::to_string(&s.to_snapshot())
+                .expect("serialize")
+                .contains("remote_control"),
+            "off: the snapshot keeps its pre-feature wire shape"
+        );
+
+        s.apply_event(&AcpEvent::SessionStarted {
+            session_id: "s1".into(),
+        });
+        s.apply_event(&on());
+        let snap = s.to_snapshot();
+        let back: LiveSessionSnapshot =
+            serde_json::from_str(&serde_json::to_string(&snap).expect("serialize"))
+                .expect("deserialize");
+        assert_eq!(
+            back.remote_control
+                .as_ref()
+                .and_then(|rc| rc.session_url.as_deref()),
+            Some("https://claude.ai/code/session_01")
+        );
+
+        // Turns come and go without touching it.
+        s.apply_event(&AcpEvent::StatusChanged {
+            status: ConnectionStatus::Prompting,
+        });
+        s.apply_event(&AcpEvent::StatusChanged {
+            status: ConnectionStatus::Connected,
+        });
+        assert!(s.remote_control.is_some());
+
+        // Turned off.
+        s.apply_event(&AcpEvent::RemoteControl {
+            remote_control: None,
+        });
+        assert_eq!(s.to_snapshot().remote_control, None);
+
+        // The same session announced again keeps it; a fork drops it.
+        s.apply_event(&on());
+        s.apply_event(&AcpEvent::SessionStarted {
+            session_id: "s1".into(),
+        });
+        assert!(s.remote_control.is_some());
+        s.apply_event(&AcpEvent::SessionStarted {
+            session_id: "s2".into(),
+        });
+        assert_eq!(s.remote_control, None);
+
+        // A connection that dies takes it along.
+        for status in [ConnectionStatus::Disconnected, ConnectionStatus::Error] {
+            s.apply_event(&on());
+            s.apply_event(&AcpEvent::StatusChanged { status });
+            assert_eq!(s.remote_control, None);
+        }
     }
 
     /// The owners codeg drives without a composer ask for no predicted prompt;

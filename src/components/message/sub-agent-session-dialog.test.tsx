@@ -212,6 +212,7 @@ function makeConnState(overrides: Partial<ConnectionState>): ConnectionState {
     availableCommands: null,
     usage: null,
     promptSuggestion: null,
+    remoteControl: null,
     liveMessage: null,
     pendingPermission: null,
     pendingQuestion: null,

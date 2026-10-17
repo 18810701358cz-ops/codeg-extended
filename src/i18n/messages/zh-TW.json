@@ -4122,6 +4122,18 @@
         "stopDeclined": "無法停止該任務，它可能已經結束。",
         "stopFailed": "停止任務失敗：{error}"
       },
+      "remoteControl": {
+        "title": "遠端控制已開啟",
+        "open": "在瀏覽器中開啟",
+        "copy": "複製連結",
+        "copied": "已複製",
+        "qr": "QR 碼",
+        "qrLabel": "本會話遠端控制連結的 QR 碼",
+        "qrHint": "用手機掃描，在 Claude App 或 claude.ai/code 上繼續本會話。",
+        "noUrl": "Claude Code 沒有傳回本會話的連結",
+        "turnOff": "關閉",
+        "turnOffBusy": "Claude 完成目前工作後可用"
+      },
       "proposedPlan": {
         "title": "計劃提案",
         "planning": "規劃中…"
