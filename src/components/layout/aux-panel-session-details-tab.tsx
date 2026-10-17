@@ -11,6 +11,7 @@ import { resolveActiveSessionDetails } from "@/components/conversations/active-s
 import { SessionDetailsContent } from "@/components/conversations/session-details-content"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useAuxPanelContext } from "@/contexts/aux-panel-context"
+import { SessionDetailsInsights } from "./session-details-insights"
 
 // Stable empty-turns reference so the `useShallow` slice below stays
 // reference-equal when there's no active session — otherwise a fresh `[]` each
@@ -19,10 +20,12 @@ import { useAuxPanelContext } from "@/contexts/aux-panel-context"
 const EMPTY_TURNS: MessageTurn[] = []
 
 /**
- * The aux-panel "Session Details" tab. Shows the active conversation's metadata
- * and token usage (via the shared `SessionDetailsContent`). The branch selector
- * + command launcher that used to sit atop this tab now live in the bottom
- * status bar on both platforms, so the tab shows the details alone.
+ * The aux-panel "Session Details" tab. Shows the active conversation's identity
+ * and identifiers (via the shared `SessionDetailsContent`, without the token
+ * usage and timestamps the dialog also lists), then what its transcript knows:
+ * the agent's plan, its sub-agents and the message navigator
+ * (`SessionDetailsInsights`). The branch selector + command launcher that used
+ * to sit atop this tab now live in the bottom status bar on both platforms.
  *
  * Details are resolved from live runtime state exactly the way the conversation
  * detail panel does it (`resolveActiveSessionDetails`), so no network fetch is
@@ -31,6 +34,7 @@ const EMPTY_TURNS: MessageTurn[] = []
 export function SessionDetailsTab() {
   const t = useTranslations("Folder.sessionDetails")
   const { isOpen, activeTab } = useAuxPanelContext()
+  const active = isOpen && activeTab === "session_details"
 
   const tabs = useTabStore((s) => s.tabs)
   const activeTabId = useTabStore((s) => s.activeTabId)
@@ -44,7 +48,8 @@ export function SessionDetailsTab() {
 
   // A brand-new conversation streams under its virtual `runtimeConversationId`
   // until it reconciles; key the live-session lookup on it first (mirrors the
-  // detail panel, exercised by active-session-details.test.ts).
+  // detail panel, exercised by active-session-details.test.ts). It is also the
+  // key the conversation's transcript publishes its insights under.
   const activeRuntimeId =
     activeConversationTab?.runtimeConversationId ??
     activeConversationTab?.conversationId ??
@@ -55,6 +60,7 @@ export function SessionDetailsTab() {
   // tab — and its non-memoized details subtree — on each token. These fields
   // change only at turn boundaries, so `useShallow` keeps the slice
   // reference-stable across batches (mirrors use-conversation-detail.ts).
+  // Token usage isn't shown here, so its stats aren't read.
   const runtimeSlice = useConversationRuntimeStore(
     useShallow((s) => {
       const session =
@@ -63,13 +69,13 @@ export function SessionDetailsTab() {
           : undefined
       return {
         detail: session?.detail ?? null,
-        sessionStats: session?.sessionStats ?? null,
+        sessionStats: null,
         localTurns: session?.localTurns ?? EMPTY_TURNS,
       }
     })
   )
   const conversations = useAppWorkspaceStore((s) => s.conversations)
-  const { summary, stats, model } = resolveActiveSessionDetails(
+  const { summary, model } = resolveActiveSessionDetails(
     activeConversationTab,
     (id) => (id === activeRuntimeId ? runtimeSlice : null),
     conversations
@@ -79,12 +85,19 @@ export function SessionDetailsTab() {
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {summary ? (
         <ScrollArea className="min-h-0 flex-1">
-          <div className="p-3">
+          <div className="min-w-0 space-y-5 p-3 text-sm">
             <SessionDetailsContent
               summary={summary}
-              stats={stats}
+              // `null`, not omitted: trusted as "nothing to fetch".
+              stats={null}
               model={model}
-              active={isOpen && activeTab === "session_details"}
+              active={active}
+              showUsage={false}
+              showTimestamps={false}
+            />
+            <SessionDetailsInsights
+              conversationId={activeRuntimeId}
+              active={active}
             />
           </div>
         </ScrollArea>

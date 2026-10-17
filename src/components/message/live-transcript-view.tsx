@@ -361,7 +361,6 @@ export function LiveTranscriptView({
           detailError={error}
           acpLoadError={acpLoadError}
           hideEmptyState={false}
-          showMessageNav={false}
           userTurnHeader={userTurnHeader}
         />
       </div>

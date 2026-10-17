@@ -2169,6 +2169,9 @@ const ConversationTabView = memo(function ConversationTabView({
         detailError={detailError}
         acpLoadError={acpLoadError}
         hideEmptyState={!hasPersistedConversation || hasSentMessage}
+        // The conversation page's navigator, plan and sub-agents show in the
+        // Session Details side panel rather than over the messages.
+        insightsInSidebar
         onReload={canShowDetailErrorActions ? handleReloadDetail : undefined}
         onNewSession={
           canShowDetailErrorActions ? handleOpenNewSession : undefined

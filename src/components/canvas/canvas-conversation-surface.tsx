@@ -883,7 +883,6 @@ export function CanvasConversationSurface({
             detailError={detailError}
             acpLoadError={acpLoadError}
             hideEmptyState={isDraft}
-            showMessageNav={false}
             onSaveNoteSelection={onSaveSelectionAsNote}
           />
         </ConversationShell>

@@ -21,6 +21,20 @@ vi.mock("@/components/agent-icon", () => ({ AgentIcon: () => null }))
 // the API so an accidental call is inert rather than a real transport hit.
 vi.mock("@/lib/api", () => ({ getFolderConversation: vi.fn() }))
 
+// The insights sections have their own tests; here, only what they're handed.
+const insightsProps = vi.hoisted(
+  () => [] as Array<{ conversationId: number | null; active: boolean }>
+)
+vi.mock("./session-details-insights", () => ({
+  SessionDetailsInsights: (props: {
+    conversationId: number | null
+    active: boolean
+  }) => {
+    insightsProps.push(props)
+    return <div data-testid="session-insights" />
+  },
+}))
+
 vi.mock("@/contexts/aux-panel-context", () => ({ useAuxPanelContext: vi.fn() }))
 vi.mock("@/contexts/tab-context", () => ({ useTabStore: vi.fn() }))
 vi.mock("@/stores/conversation-runtime-store", () => ({
@@ -75,11 +89,26 @@ function summary(
   }
 }
 
-function setupScene(opts: { hasActiveConversation: boolean }) {
-  mockAux.mockReturnValue({ isOpen: true, activeTab: "session_details" })
+function setupScene(opts: {
+  hasActiveConversation: boolean
+  runtimeConversationId?: number
+  activeTab?: string
+}) {
+  mockAux.mockReturnValue({
+    isOpen: true,
+    activeTab: opts.activeTab ?? "session_details",
+  })
 
   const tabState: TabSlice = {
-    tabs: opts.hasActiveConversation ? [{ id: 1, conversationId: 7 }] : [],
+    tabs: opts.hasActiveConversation
+      ? [
+          {
+            id: 1,
+            conversationId: 7,
+            runtimeConversationId: opts.runtimeConversationId,
+          },
+        ]
+      : [],
     activeTabId: opts.hasActiveConversation ? 1 : null,
   }
   mockTabs.mockImplementation((sel: (s: TabSlice) => unknown) => sel(tabState))
@@ -89,6 +118,11 @@ function setupScene(opts: { hasActiveConversation: boolean }) {
   mockWorkspace.mockImplementation((sel: (s: WorkspaceSlice) => unknown) =>
     sel({ conversations: opts.hasActiveConversation ? [summary()] : [] })
   )
+}
+
+/** What the insights were rendered with last. */
+function lastInsightsProps() {
+  return insightsProps[insightsProps.length - 1]
 }
 
 function renderTab() {
@@ -102,6 +136,7 @@ function renderTab() {
 describe("SessionDetailsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    insightsProps.length = 0
   })
 
   it("renders the active session's details with no folder-actions bar", () => {
@@ -121,5 +156,38 @@ describe("SessionDetailsTab", () => {
     expect(getByText("No active session")).toBeTruthy()
     expect(queryByTestId("branch-dropdown")).toBeNull()
     expect(queryByTestId("command-dropdown")).toBeNull()
+    expect(queryByTestId("session-insights")).toBeNull()
+  })
+
+  // The panel follows the conversation's plan, sub-agents and messages
+  // instead; the dialog still lists both.
+  it("leaves out token usage and timestamps", () => {
+    setupScene({ hasActiveConversation: true })
+    const { queryByText } = renderTab()
+    expect(queryByText("Token Usage")).toBeNull()
+    expect(queryByText("Timestamps")).toBeNull()
+    expect(queryByText("Created")).toBeNull()
+    expect(queryByText("Updated")).toBeNull()
+  })
+
+  it("shows the active conversation's insights", () => {
+    setupScene({ hasActiveConversation: true })
+    const { getByTestId } = renderTab()
+    expect(getByTestId("session-insights")).toBeTruthy()
+    expect(lastInsightsProps()).toEqual({ conversationId: 7, active: true })
+  })
+
+  // A conversation started in this tab streams — and publishes — under its
+  // virtual runtime id.
+  it("reads the insights under the tab's runtime conversation id", () => {
+    setupScene({ hasActiveConversation: true, runtimeConversationId: -42 })
+    renderTab()
+    expect(lastInsightsProps()?.conversationId).toBe(-42)
+  })
+
+  it("tells the insights when another tab is showing", () => {
+    setupScene({ hasActiveConversation: true, activeTab: "file_tree" })
+    renderTab()
+    expect(lastInsightsProps()?.active).toBe(false)
   })
 })

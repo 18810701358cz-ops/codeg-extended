@@ -2266,7 +2266,13 @@
       "none": "—",
       "copyField": "复制{field}",
       "copiedField": "已复制{field}",
-      "assistant": "助手"
+      "assistant": "助手",
+      "subAgentScopeLabel": "显示哪些子智能体",
+      "subAgentScopeReply": "当前消息",
+      "subAgentScopeConversation": "当前会话",
+      "subAgentsReplyEmpty": "当前消息没有调用子智能体。",
+      "subAgentsPartial": "更早的消息尚未加载，其中的子智能体未列出。",
+      "subAgentsLoadAll": "全部加载"
     },
     "conversationCard": {
       "untitledConversation": "未命名会话",
@@ -3954,10 +3960,8 @@
       },
       "messageNav": {
         "title": "消息导航",
-        "collapse": "收起消息导航",
         "loadingEarlier": "正在加载更早的消息…",
         "loadEarlier": "加载更早的消息",
-        "collapsedSummary": "消息 {count}",
         "fileCount": "{count} 个文件",
         "remove": "移除",
         "noDiffDataAvailable": "未找到 {filePath} 的差异数据"

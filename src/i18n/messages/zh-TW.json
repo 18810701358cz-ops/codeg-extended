@@ -2266,7 +2266,13 @@
       "none": "—",
       "copyField": "複製{field}",
       "copiedField": "已複製{field}",
-      "assistant": "助手"
+      "assistant": "助手",
+      "subAgentScopeLabel": "顯示哪些子智能體",
+      "subAgentScopeReply": "目前訊息",
+      "subAgentScopeConversation": "目前對話",
+      "subAgentsReplyEmpty": "目前訊息沒有呼叫子智能體。",
+      "subAgentsPartial": "較早的訊息尚未載入，其中的子智能體未列出。",
+      "subAgentsLoadAll": "全部載入"
     },
     "conversationCard": {
       "untitledConversation": "未命名會話",
@@ -3954,10 +3960,8 @@
       },
       "messageNav": {
         "title": "訊息導覽",
-        "collapse": "收合訊息導覽",
         "loadingEarlier": "正在載入更早的訊息…",
         "loadEarlier": "載入更早的訊息",
-        "collapsedSummary": "訊息 {count}",
         "fileCount": "{count} 個檔案",
         "remove": "移除",
         "noDiffDataAvailable": "找不到 {filePath} 的差異資料"

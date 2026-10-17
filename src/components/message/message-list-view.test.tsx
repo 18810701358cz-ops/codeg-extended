@@ -4,7 +4,9 @@ import {
   advanceReplyFold,
   compactionOnlyPart,
   dedupeCompactionItems,
+  extractConversationDelegationSources,
   extractDelegationSources,
+  groupDelegationSources,
   isForkPointUnnamed,
   markThreadTail,
   mergeConsecutiveAssistantTurns,
@@ -611,6 +613,142 @@ describe("extractDelegationSources", () => {
       }),
     }
     expect(extractDelegationSources([refused])).toEqual([])
+  })
+})
+
+describe("extractConversationDelegationSources", () => {
+  function delegate(
+    toolCallId: string,
+    fields: Partial<Extract<AdaptedContentPart, { type: "tool-call" }>> = {}
+  ): AdaptedContentPart {
+    return {
+      type: "tool-call",
+      toolCallId,
+      toolName: "mcp__codeg-mcp__delegate_to_agent",
+      input: '{"agent_type":"codex","task":"do it"}',
+      state: "output-available",
+      output: null,
+      ...fields,
+    }
+  }
+  function resume(toolCallId: string, taskId: string): AdaptedContentPart {
+    return {
+      type: "tool-call",
+      toolCallId,
+      toolName: "resume_delegation",
+      input: JSON.stringify({ task_id: taskId }),
+      state: "output-available",
+      output: null,
+    }
+  }
+  function reply(id: string, parts: AdaptedContentPart[]): ThreadItem {
+    return assistantItem(id, { parts })
+  }
+  function message(id: string): ThreadItem {
+    return assistantItem(id, {
+      role: "user",
+      parts: [{ type: "text", text: `message ${id}` }],
+    })
+  }
+  const ids = (sources: { parentToolUseId: string }[]) =>
+    sources.map((source) => source.parentToolUseId)
+
+  it("lists every reply's sub-agents in thread order", () => {
+    const sources = extractConversationDelegationSources([
+      message("u1"),
+      reply("a1", [delegate("tu-1"), { type: "text", text: "started" }]),
+      message("u2"),
+      reply("a2", [delegate("tu-2"), delegate("tu-3")]),
+    ])
+    expect(ids(sources)).toEqual(["tu-1", "tu-2", "tu-3"])
+  })
+
+  // The resume re-binds the child to the ORIGINAL call, whose row then tracks
+  // the resumed run — a second row would list one sub-agent twice.
+  it("drops a resume of a task an earlier delegation already lists", () => {
+    const sources = extractConversationDelegationSources([
+      reply("a1", [
+        delegate("tu-1", {
+          output: JSON.stringify({ task_id: "task-1", status: "running" }),
+        }),
+      ]),
+      message("u2"),
+      reply("a2", [resume("tu-resume", "task-1")]),
+    ])
+    expect(ids(sources)).toEqual(["tu-1"])
+  })
+
+  it("keeps a resume whose original call is above the loaded window", () => {
+    const sources = extractConversationDelegationSources([
+      reply("a1", [resume("tu-resume", "task-9")]),
+    ])
+    expect(sources).toHaveLength(1)
+    expect(sources[0]).toMatchObject({
+      parentToolUseId: "tu-resume",
+      taskIdHint: "task-9",
+    })
+  })
+
+  it("lists a task resumed in two replies once", () => {
+    const sources = extractConversationDelegationSources([
+      reply("a1", [resume("tu-r1", "task-2")]),
+      message("u2"),
+      reply("a2", [resume("tu-r2", "task-2")]),
+    ])
+    expect(ids(sources)).toEqual(["tu-r1"])
+  })
+
+  it("lists a call seen twice once, in its first place, with its latest fields", () => {
+    const sources = extractConversationDelegationSources([
+      reply("a1", [delegate("tu-1", { state: "input-available" })]),
+      reply("a2", [delegate("tu-2")]),
+      reply("a3", [delegate("tu-1", { output: '{"task_id":"task-1"}' })]),
+    ])
+    expect(ids(sources)).toEqual(["tu-1", "tu-2"])
+    expect(sources[0]).toMatchObject({
+      state: "output-available",
+      output: '{"task_id":"task-1"}',
+    })
+  })
+
+  // Its original above the window, a resume is the sub-agent's only row; a
+  // second copy of that same call must update it, not read as a second
+  // resume of the task.
+  it("refreshes a resume seen twice with its latest fields", () => {
+    const acknowledged = JSON.stringify({
+      task_id: "task-9",
+      status: "running",
+    })
+    const sources = extractConversationDelegationSources([
+      reply("a1", [resume("tu-resume", "task-9")]),
+      reply("a2", [
+        {
+          ...resume("tu-resume", "task-9"),
+          output: acknowledged,
+        } as AdaptedContentPart,
+      ]),
+    ])
+    expect(ids(sources)).toEqual(["tu-resume"])
+    expect(sources[0].output).toBe(acknowledged)
+  })
+
+  it("returns one shared empty list while the thread started none", () => {
+    const first = extractConversationDelegationSources([message("u1")])
+    const second = extractConversationDelegationSources([
+      reply("a1", [{ type: "text", text: "no sub-agents" }]),
+    ])
+    expect(first).toEqual([])
+    expect(second).toBe(first)
+  })
+
+  // What keeps a streaming batch from re-scanning (and re-keying) every
+  // settled reply: a group that keeps its identity keeps its sources.
+  it("scans a group once and hands back the same sources after", () => {
+    const item = reply("a1", [delegate("tu-1")])
+    if (item.kind !== "turn") throw new Error("expected a turn item")
+    const first = groupDelegationSources(item.group)
+    expect(groupDelegationSources(item.group)).toBe(first)
+    expect(extractConversationDelegationSources([item])[0]).toBe(first[0])
   })
 })
 

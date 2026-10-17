@@ -2266,7 +2266,13 @@
       "none": "—",
       "copyField": "{field} 복사",
       "copiedField": "{field} 복사됨",
-      "assistant": "어시스턴트"
+      "assistant": "어시스턴트",
+      "subAgentScopeLabel": "표시할 서브 에이전트",
+      "subAgentScopeReply": "현재 메시지",
+      "subAgentScopeConversation": "현재 세션",
+      "subAgentsReplyEmpty": "현재 메시지에서 실행한 서브 에이전트가 없습니다.",
+      "subAgentsPartial": "이전 메시지를 아직 불러오지 않아 해당 서브 에이전트는 표시되지 않습니다.",
+      "subAgentsLoadAll": "모두 불러오기"
     },
     "conversationCard": {
       "untitledConversation": "제목 없는 대화",
@@ -3954,10 +3960,8 @@
       },
       "messageNav": {
         "title": "메시지 탐색",
-        "collapse": "메시지 탐색 접기",
         "loadingEarlier": "이전 메시지를 불러오는 중…",
         "loadEarlier": "이전 메시지 불러오기",
-        "collapsedSummary": "메시지 {count}",
         "fileCount": "{count, plural, one {#개 파일} other {#개 파일}}",
         "remove": "제거",
         "noDiffDataAvailable": "{filePath}에 대한 diff 데이터가 없습니다"

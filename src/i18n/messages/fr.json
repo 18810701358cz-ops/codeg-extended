@@ -2266,7 +2266,13 @@
       "none": "—",
       "copyField": "Copier {field}",
       "copiedField": "{field} copié",
-      "assistant": "Assistant"
+      "assistant": "Assistant",
+      "subAgentScopeLabel": "Sous-agents affichés",
+      "subAgentScopeReply": "Message actuel",
+      "subAgentScopeConversation": "Session actuelle",
+      "subAgentsReplyEmpty": "Le message actuel n'a lancé aucun sous-agent.",
+      "subAgentsPartial": "Les messages précédents ne sont pas encore chargés : leurs sous-agents ne sont pas listés.",
+      "subAgentsLoadAll": "Tout charger"
     },
     "conversationCard": {
       "untitledConversation": "Conversation sans titre",
@@ -3954,10 +3960,8 @@
       },
       "messageNav": {
         "title": "Navigation des messages",
-        "collapse": "Réduire la navigation des messages",
         "loadingEarlier": "Chargement des messages précédents…",
         "loadEarlier": "Charger les messages précédents",
-        "collapsedSummary": "Messages {count}",
         "fileCount": "{count, plural, one {# fichier} other {# fichiers}}",
         "remove": "Retirer",
         "noDiffDataAvailable": "Aucune donnée de diff disponible pour {filePath}"

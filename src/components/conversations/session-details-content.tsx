@@ -53,6 +53,16 @@ interface SessionDetailsContentProps {
    * the panel + tab are actually surfaced. Defaults to `true`.
    */
   active?: boolean
+  /**
+   * Show the token-usage section. Defaults to `true`; the aux-panel tab turns
+   * it off — that panel follows the conversation's plan, sub-agents and
+   * messages instead, and the context-window figure is already in the bottom
+   * status bar.
+   */
+  showUsage?: boolean
+  /** Show the created / updated timestamps. Defaults to `true`; off in the
+   *  aux-panel tab, like `showUsage`. */
+  showTimestamps?: boolean
 }
 
 function isKnownStatus(value: string): value is ConversationStatus {
@@ -278,7 +288,9 @@ function CopyableValue({
  * The presentational body of the Session Details view — the conversation's
  * identity, identifiers, token usage, and timestamps. Extracted from the
  * dialog so it can be rendered both inside the modal
- * (`SessionDetailsDialog`) and inline in the aux-panel Session Details tab.
+ * (`SessionDetailsDialog`) and inline in the aux-panel Session Details tab,
+ * which leaves out the token usage and timestamps (`showUsage` /
+ * `showTimestamps`).
  * Data inputs are dialog-agnostic: a `summary` plus the tri-state
  * `stats`/`model` contract (see the prop docs).
  */
@@ -287,6 +299,8 @@ export function SessionDetailsContent({
   stats: statsProp,
   model: modelProp,
   active = true,
+  showUsage = true,
+  showTimestamps = true,
 }: SessionDetailsContentProps) {
   const t = useTranslations("Folder.sessionDetails")
   const locale = useLocale()
@@ -472,73 +486,77 @@ export function SessionDetailsContent({
         </InfoItem>
       </dl>
 
-      <section className="min-w-0 space-y-3 border-t pt-4">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {t("tokensHeading")}
-        </h3>
-        {loadingStats ? (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {t("loadingStats")}
-          </div>
-        ) : statsError ? (
-          <div className="text-muted-foreground">{t("loadFailed")}</div>
-        ) : hasTokenInfo ? (
-          <dl className="grid grid-cols-1 gap-x-4 gap-y-3 @[20rem]:grid-cols-2">
-            {totalTokens != null && (
-              <InfoItem label={t("totalTokens")} valueClassName={numeric}>
-                {formatTokenCount(totalTokens)}
-              </InfoItem>
-            )}
-            {usage && (
-              <>
-                <InfoItem label={t("inputTokens")} valueClassName={numeric}>
-                  {formatTokenCount(usage.input_tokens)}
+      {showUsage && (
+        <section className="min-w-0 space-y-3 border-t pt-4">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t("tokensHeading")}
+          </h3>
+          {loadingStats ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t("loadingStats")}
+            </div>
+          ) : statsError ? (
+            <div className="text-muted-foreground">{t("loadFailed")}</div>
+          ) : hasTokenInfo ? (
+            <dl className="grid grid-cols-1 gap-x-4 gap-y-3 @[20rem]:grid-cols-2">
+              {totalTokens != null && (
+                <InfoItem label={t("totalTokens")} valueClassName={numeric}>
+                  {formatTokenCount(totalTokens)}
                 </InfoItem>
-                <InfoItem label={t("outputTokens")} valueClassName={numeric}>
-                  {formatTokenCount(usage.output_tokens)}
+              )}
+              {usage && (
+                <>
+                  <InfoItem label={t("inputTokens")} valueClassName={numeric}>
+                    {formatTokenCount(usage.input_tokens)}
+                  </InfoItem>
+                  <InfoItem label={t("outputTokens")} valueClassName={numeric}>
+                    {formatTokenCount(usage.output_tokens)}
+                  </InfoItem>
+                  {usage.cache_creation_input_tokens > 0 && (
+                    <InfoItem label={t("cacheWrite")} valueClassName={numeric}>
+                      {formatTokenCount(usage.cache_creation_input_tokens)}
+                    </InfoItem>
+                  )}
+                  {usage.cache_read_input_tokens > 0 && (
+                    <InfoItem label={t("cacheRead")} valueClassName={numeric}>
+                      {formatTokenCount(usage.cache_read_input_tokens)}
+                    </InfoItem>
+                  )}
+                </>
+              )}
+              {contextWindowValue != null && (
+                <InfoItem label={t("contextWindow")} valueClassName={numeric}>
+                  {contextWindowValue}
                 </InfoItem>
-                {usage.cache_creation_input_tokens > 0 && (
-                  <InfoItem label={t("cacheWrite")} valueClassName={numeric}>
-                    {formatTokenCount(usage.cache_creation_input_tokens)}
-                  </InfoItem>
-                )}
-                {usage.cache_read_input_tokens > 0 && (
-                  <InfoItem label={t("cacheRead")} valueClassName={numeric}>
-                    {formatTokenCount(usage.cache_read_input_tokens)}
-                  </InfoItem>
-                )}
-              </>
-            )}
-            {contextWindowValue != null && (
-              <InfoItem label={t("contextWindow")} valueClassName={numeric}>
-                {contextWindowValue}
-              </InfoItem>
-            )}
-            {durationMs > 0 && (
-              <InfoItem label={t("duration")} valueClassName={numeric}>
-                {formatDuration(durationMs)}
-              </InfoItem>
-            )}
-          </dl>
-        ) : (
-          <div className="text-muted-foreground">{t("noStats")}</div>
-        )}
-      </section>
+              )}
+              {durationMs > 0 && (
+                <InfoItem label={t("duration")} valueClassName={numeric}>
+                  {formatDuration(durationMs)}
+                </InfoItem>
+              )}
+            </dl>
+          ) : (
+            <div className="text-muted-foreground">{t("noStats")}</div>
+          )}
+        </section>
+      )}
 
-      <section className="min-w-0 space-y-3 border-t pt-4">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {t("timestampsHeading")}
-        </h3>
-        <dl className="grid grid-cols-1 gap-x-4 gap-y-3 @[20rem]:grid-cols-2">
-          <InfoItem label={t("createdAt")}>
-            {formatDate(summary.created_at)}
-          </InfoItem>
-          <InfoItem label={t("updatedAt")}>
-            {formatDate(summary.updated_at)}
-          </InfoItem>
-        </dl>
-      </section>
+      {showTimestamps && (
+        <section className="min-w-0 space-y-3 border-t pt-4">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t("timestampsHeading")}
+          </h3>
+          <dl className="grid grid-cols-1 gap-x-4 gap-y-3 @[20rem]:grid-cols-2">
+            <InfoItem label={t("createdAt")}>
+              {formatDate(summary.created_at)}
+            </InfoItem>
+            <InfoItem label={t("updatedAt")}>
+              {formatDate(summary.updated_at)}
+            </InfoItem>
+          </dl>
+        </section>
+      )}
     </div>
   )
 }

@@ -2266,7 +2266,13 @@
       "none": "—",
       "copyField": "{field}をコピー",
       "copiedField": "{field}をコピーしました",
-      "assistant": "アシスタント"
+      "assistant": "アシスタント",
+      "subAgentScopeLabel": "表示するサブエージェント",
+      "subAgentScopeReply": "現在のメッセージ",
+      "subAgentScopeConversation": "現在のセッション",
+      "subAgentsReplyEmpty": "現在のメッセージではサブエージェントを起動していません。",
+      "subAgentsPartial": "以前のメッセージはまだ読み込まれていないため、そのサブエージェントは表示されていません。",
+      "subAgentsLoadAll": "すべて読み込む"
     },
     "conversationCard": {
       "untitledConversation": "無題の会話",
@@ -3954,10 +3960,8 @@
       },
       "messageNav": {
         "title": "メッセージナビ",
-        "collapse": "メッセージナビを閉じる",
         "loadingEarlier": "以前のメッセージを読み込み中…",
         "loadEarlier": "以前のメッセージを読み込む",
-        "collapsedSummary": "メッセージ {count}",
         "fileCount": "{count, plural, one {# 個のファイル} other {# 個のファイル}}",
         "remove": "削除",
         "noDiffDataAvailable": "{filePath} の差分データがありません"

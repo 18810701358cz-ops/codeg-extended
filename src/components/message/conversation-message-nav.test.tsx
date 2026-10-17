@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import {
-  ConversationMessageNav,
+  MessageNavList,
   type MessageNavEntry,
 } from "./conversation-message-nav"
 
 // Stable `t` (per next-intl mock guidance) — returns the key verbatim, plus the
-// `count` it was given (`collapsedSummary:3`), so a label that shows a count is
+// `count` it was given (`fileCount:2`), so a label that shows a count is
 // checked for the right one.
 const { stableT, mockOpenDiff } = vi.hoisted(() => {
   const t = (key: string, values?: Record<string, unknown>) =>
@@ -91,63 +91,39 @@ const earlierEntry: MessageNavEntry = {
   hasChanges: false,
 }
 
-describe("ConversationMessageNav", () => {
+describe("MessageNavList", () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it("renders nothing when there are no user messages", () => {
-    const { container } = render(
-      <ConversationMessageNav
-        count={0}
-        expanded={false}
-        onToggle={vi.fn()}
-        entries={[]}
-        onSelect={vi.fn()}
-      />
-    )
-    expect(container).toBeEmptyDOMElement()
+  it("renders no rows when there are no entries", () => {
+    render(<MessageNavList entries={[]} onSelect={vi.fn()} />)
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
   })
 
-  it("collapsed: shows the count chip and expands on click", () => {
-    const onToggle = vi.fn()
-    render(
-      <ConversationMessageNav
-        count={3}
-        expanded={false}
-        onToggle={onToggle}
-        entries={[]}
-        onSelect={vi.fn()}
-      />
-    )
-    // No card while collapsed.
-    expect(screen.queryByText("title")).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "collapsedSummary:3" }))
-    expect(onToggle).toHaveBeenCalledWith(true)
-  })
-
-  it("expanded: clicking a message selects its entry", () => {
+  it("clicking a message selects its entry", () => {
     const onSelect = vi.fn()
-    render(
-      <ConversationMessageNav
-        count={entries.length}
-        expanded
-        onToggle={vi.fn()}
-        entries={entries}
-        onSelect={onSelect}
-      />
-    )
+    render(<MessageNavList entries={entries} onSelect={onSelect} />)
     fireEvent.click(screen.getByText("edit something"))
     expect(onSelect).toHaveBeenCalledWith(entries[1])
+  })
+
+  it("numbers each message by its place in the conversation", () => {
+    render(
+      <MessageNavList entries={[earlierEntry, ...entries]} onSelect={vi.fn()} />
+    )
+    expect(
+      screen.getByText("an early message").closest("button")
+    ).toHaveTextContent("#1")
+    expect(
+      screen.getByText("delete a file").closest("button")
+    ).toHaveTextContent("#3")
   })
 
   it("selects a message above the loaded window like any other", () => {
     const onSelect = vi.fn()
     render(
-      <ConversationMessageNav
-        count={4}
-        expanded
-        onToggle={vi.fn()}
+      <MessageNavList
         entries={[earlierEntry, ...entries]}
         onSelect={onSelect}
       />
@@ -158,10 +134,7 @@ describe("ConversationMessageNav", () => {
 
   it("marks the message being paged in as busy", () => {
     render(
-      <ConversationMessageNav
-        count={4}
-        expanded
-        onToggle={vi.fn()}
+      <MessageNavList
         entries={[earlierEntry, ...entries]}
         onSelect={vi.fn()}
         revealingTurnId="turn-12"
@@ -175,14 +148,7 @@ describe("ConversationMessageNav", () => {
 
   it("says so while the messages above the window are loading", () => {
     render(
-      <ConversationMessageNav
-        count={5}
-        expanded
-        onToggle={vi.fn()}
-        entries={entries}
-        onSelect={vi.fn()}
-        earlier="loading"
-      />
+      <MessageNavList entries={entries} onSelect={vi.fn()} earlier="loading" />
     )
     expect(screen.getByText("loadingEarlier")).toBeInTheDocument()
     expect(screen.queryByText("loadEarlier")).not.toBeInTheDocument()
@@ -191,10 +157,7 @@ describe("ConversationMessageNav", () => {
   it("offers a retry when the messages above the window failed to load", () => {
     const onRetryEarlier = vi.fn()
     render(
-      <ConversationMessageNav
-        count={5}
-        expanded
-        onToggle={vi.fn()}
+      <MessageNavList
         entries={entries}
         onSelect={vi.fn()}
         earlier="error"
@@ -206,31 +169,8 @@ describe("ConversationMessageNav", () => {
     expect(onRetryEarlier).toHaveBeenCalledTimes(1)
   })
 
-  it("expanded: the header collapse button collapses the panel", () => {
-    const onToggle = vi.fn()
-    render(
-      <ConversationMessageNav
-        count={entries.length}
-        expanded
-        onToggle={onToggle}
-        entries={entries}
-        onSelect={vi.fn()}
-      />
-    )
-    fireEvent.click(screen.getByRole("button", { name: "collapse" }))
-    expect(onToggle).toHaveBeenCalledWith(false)
-  })
-
   it("always shows both +N and -N, including a zero side", () => {
-    render(
-      <ConversationMessageNav
-        count={entries.length}
-        expanded
-        onToggle={vi.fn()}
-        entries={entries}
-        onSelect={vi.fn()}
-      />
-    )
+    render(<MessageNavList entries={entries} onSelect={vi.fn()} />)
     // u2 added 5, deleted 0 — both rendered.
     expect(screen.getByText("+5")).toBeInTheDocument()
     expect(screen.getByText("-0")).toBeInTheDocument()
@@ -241,16 +181,20 @@ describe("ConversationMessageNav", () => {
     expect(screen.getByText("first message")).toBeInTheDocument()
   })
 
+  it("toggles a message's file list", () => {
+    render(<MessageNavList entries={entries} onSelect={vi.fn()} />)
+    const toggle = screen.getAllByRole("button", { name: /^fileCount:/ })[0]
+    expect(toggle).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByTitle("src/a.ts")).not.toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByTitle("src/a.ts")).toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(screen.queryByTitle("src/a.ts")).not.toBeInTheDocument()
+  })
+
   it("opens a file diff when a changed file is clicked", () => {
-    render(
-      <ConversationMessageNav
-        count={entries.length}
-        expanded
-        onToggle={vi.fn()}
-        entries={entries}
-        onSelect={vi.fn()}
-      />
-    )
+    render(<MessageNavList entries={entries} onSelect={vi.fn()} />)
     // Expand u2's file list (first changed group).
     fireEvent.click(screen.getAllByRole("button", { name: /^fileCount:/ })[0])
     fireEvent.click(screen.getByTitle("src/a.ts"))
@@ -262,15 +206,7 @@ describe("ConversationMessageNav", () => {
   })
 
   it("opens the deletion diff when a deleted file is clicked", () => {
-    render(
-      <ConversationMessageNav
-        count={entries.length}
-        expanded
-        onToggle={vi.fn()}
-        entries={entries}
-        onSelect={vi.fn()}
-      />
-    )
+    render(<MessageNavList entries={entries} onSelect={vi.fn()} />)
     // Expand u3's file list (second changed group).
     fireEvent.click(screen.getAllByRole("button", { name: /^fileCount:/ })[1])
     fireEvent.click(screen.getByTitle("old.ts"))
