@@ -319,7 +319,7 @@ pub async fn plugin_host_get_config_core(
             if prop.format.as_deref() == Some("secret") {
                 values.remove(&prop_key);
                 let secret_name = format!("plugin:{id}:{prop_key}");
-                if let Ok(Some(_)) = crate::keyring_store::get_secret(&secret_name) {
+                if let Ok(Some(_)) = crate::plugin_host::secrets::get_secret(&secret_name) {
                     secrets_set.push(prop_key);
                 }
             }
@@ -368,11 +368,11 @@ pub async fn plugin_host_set_config_core(
             let secret_name = format!("plugin:{id}:{key}");
             match val_opt {
                 Some(secret_val) => {
-                    crate::keyring_store::set_secret(&secret_name, &secret_val)
+                    crate::plugin_host::secrets::set_secret(&secret_name, &secret_val)
                         .map_err(|e| AppCommandError::io_error(format!("Failed to save secret '{key}': {e}")))?;
                 }
                 None => {
-                    crate::keyring_store::delete_secret(&secret_name)
+                    crate::plugin_host::secrets::delete_secret(&secret_name)
                         .map_err(|e| AppCommandError::io_error(format!("Failed to delete secret '{key}': {e}")))?;
                 }
             }

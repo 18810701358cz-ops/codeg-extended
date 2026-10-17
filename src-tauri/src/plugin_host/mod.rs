@@ -14,6 +14,7 @@ pub mod installer;
 pub mod manifest;
 pub mod registry;
 pub mod runtime_resolve;
+pub(crate) mod secrets;
 pub mod state;
 pub mod watcher;
 

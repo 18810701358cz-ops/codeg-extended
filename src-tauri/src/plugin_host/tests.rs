@@ -529,12 +529,38 @@ async fn test_read_entry_size_limit() {
 
 // ─── Config & Secret Keyring Tests ───────────────────────────────────────────
 
-static KEYRING_TEST_SERIAL: std::sync::LazyLock<std::sync::Mutex<()>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+/// The plugin host must reach the keyring only through `secrets`. A direct
+/// `keyring_store` call puts the tests back on the OS keyring, which has no
+/// Secret Service on GitHub's Linux runners.
+#[test]
+fn test_plugin_host_reaches_the_keyring_only_through_secrets() {
+    let sources = [
+        ("backend.rs", include_str!("backend.rs")),
+        ("builtin.rs", include_str!("builtin.rs")),
+        ("contributions.rs", include_str!("contributions.rs")),
+        ("git_source.rs", include_str!("git_source.rs")),
+        ("installer.rs", include_str!("installer.rs")),
+        ("manifest.rs", include_str!("manifest.rs")),
+        ("mod.rs", include_str!("mod.rs")),
+        ("registry.rs", include_str!("registry.rs")),
+        ("runtime_resolve.rs", include_str!("runtime_resolve.rs")),
+        ("state.rs", include_str!("state.rs")),
+        ("watcher.rs", include_str!("watcher.rs")),
+        (
+            "commands/plugin_host.rs",
+            include_str!("../commands/plugin_host.rs"),
+        ),
+    ];
+    for (name, source) in sources {
+        assert!(
+            !source.contains("keyring_store::"),
+            "{name} calls keyring_store directly; go through plugin_host::secrets"
+        );
+    }
+}
 
 #[tokio::test]
 async fn test_plugin_config_and_secrets() {
-    let _keyring_lock = KEYRING_TEST_SERIAL.lock().unwrap();
     let tmp = tempdir().unwrap();
     let root = tmp.path();
     let p = sample_manifest("test-config");
@@ -1001,9 +1027,9 @@ async fn test_wp4_uninstall_flow() {
         .unwrap();
 
     // Set secret in keyring
-    crate::keyring_store::set_secret("plugin:wp4-uninstall-test:secretToken", "secret123").unwrap();
+    crate::plugin_host::secrets::set_secret("plugin:wp4-uninstall-test:secretToken", "secret123").unwrap();
     assert_eq!(
-        crate::keyring_store::get_secret("plugin:wp4-uninstall-test:secretToken")
+        crate::plugin_host::secrets::get_secret("plugin:wp4-uninstall-test:secretToken")
             .unwrap()
             .as_deref(),
         Some("secret123")
@@ -1019,7 +1045,7 @@ async fn test_wp4_uninstall_flow() {
 
     // Verify secret removed
     assert_eq!(
-        crate::keyring_store::get_secret("plugin:wp4-uninstall-test:secretToken").unwrap(),
+        crate::plugin_host::secrets::get_secret("plugin:wp4-uninstall-test:secretToken").unwrap(),
         None
     );
 
@@ -1177,7 +1203,7 @@ fn test_wp7_variable_expansion_all_variants() {
 
     let plugin_id = "wp7-var-plugin";
     let secret_key = format!("plugin:{plugin_id}:secretKey");
-    let _ = crate::keyring_store::set_secret(&secret_key, "topsecret_123");
+    crate::plugin_host::secrets::set_secret(&secret_key, "topsecret_123").unwrap();
 
     let mut config = BTreeMap::new();
     config.insert("host".to_string(), serde_json::json!("127.0.0.1"));
@@ -1251,7 +1277,7 @@ fn test_wp7_variable_expansion_all_variants() {
     assert_eq!(expanded_json["nested"][1], "fixed");
 
     // Clean up keyring
-    let _ = crate::keyring_store::delete_secret(&secret_key);
+    let _ = crate::plugin_host::secrets::delete_secret(&secret_key);
 }
 
 #[tokio::test]
@@ -1310,10 +1336,9 @@ async fn test_wp7_port_resolution_and_fallback() {
 
 #[test]
 fn test_wp7_backend_token_keyring() {
-    let _keyring_lock = KEYRING_TEST_SERIAL.lock().unwrap();
     let plugin_id = "wp7-token-test";
     let secret_key = format!("plugin:{plugin_id}:token");
-    let _ = crate::keyring_store::delete_secret(&secret_key);
+    let _ = crate::plugin_host::secrets::delete_secret(&secret_key);
 
     let token1 = super::backend::get_or_create_backend_token(plugin_id).unwrap();
     assert!(token1.starts_with("cgt_"));
@@ -1322,7 +1347,7 @@ fn test_wp7_backend_token_keyring() {
     let token2 = super::backend::get_or_create_backend_token(plugin_id).unwrap();
     assert_eq!(token1, token2);
 
-    let _ = crate::keyring_store::delete_secret(&secret_key);
+    let _ = crate::plugin_host::secrets::delete_secret(&secret_key);
 }
 
 #[tokio::test]
@@ -1367,7 +1392,6 @@ async fn test_wp7_log_rotation_and_reading() {
 
 #[tokio::test]
 async fn test_wp7_declarative_contributions_permissions_and_idempotency() {
-    let _keyring_lock = KEYRING_TEST_SERIAL.lock().unwrap();
     let tmp = tempdir().unwrap();
     let plugins_root = tmp.path();
     let plugin_id = "wp7-contrib-test";
@@ -1589,7 +1613,7 @@ async fn test_wp7_backend_crashed_on_repeated_failure() {
     )
     .unwrap();
 
-    let _ = super::backend::start_backend(plugins_root, plugin_id, None).await;
+    let started = super::backend::start_backend(plugins_root, plugin_id, None).await;
 
     // Wait for the supervisor loop to process exits and transitions
     // 3 rapid failures will transition to Crashed
@@ -1604,6 +1628,6 @@ async fn test_wp7_backend_crashed_on_repeated_failure() {
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
-    assert!(reached_crashed, "Backend should transition to Crashed after repeated failures");
+    assert!(reached_crashed, "Backend should transition to Crashed after repeated failures (start_backend returned {started:?})");
     super::backend::stop_backend(plugin_id).await;
 }

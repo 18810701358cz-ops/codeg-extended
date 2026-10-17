@@ -161,6 +161,7 @@
 ```
 
 - **`format: "secret"`**：声明为敏感字段。该字段值会安全加密保存在操作系统钥匙串（Credential Manager / Keychain）中，前端读取配置时只返回「已设置/未设置」标记，不会在 HTTP/状态流中明文传输。
+- **平台要求**：Linux 桌面版的钥匙串由 Secret Service（gnome-keyring、KWallet 等）提供。没有运行 Secret Service 时，保存 `secret` 字段、以及启动带 `backend` 的插件（宿主要把后台访问令牌 `${token}` 存进钥匙串）都会失败，并报 `Failed to store backend token in keyring`。`codeg-server`（Docker / 服务器版）改用权限为 0600 的文件保存，不受影响。
 
 ### 3.6 后台守护进程（`backend`）
 

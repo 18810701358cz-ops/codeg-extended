@@ -187,7 +187,7 @@ pub fn expand_string(template: &str, ctx: &VariableContext) -> String {
                 }
             } else if let Some(pid) = ctx.plugin_id {
                 let secret_name = format!("plugin:{pid}:{key}");
-                crate::keyring_store::get_secret(&secret_name)
+                crate::plugin_host::secrets::get_secret(&secret_name)
                     .ok()
                     .flatten()
                     .unwrap_or_default()

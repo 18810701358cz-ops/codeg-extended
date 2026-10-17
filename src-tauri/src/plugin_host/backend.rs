@@ -130,14 +130,14 @@ pub fn allocate_free_port() -> Result<u16, AppCommandError> {
 /// Retrieves or creates the secret backend token for a plugin in the keyring.
 pub fn get_or_create_backend_token(id: &str) -> Result<String, AppCommandError> {
     let secret_name = format!("plugin:{id}:token");
-    if let Ok(Some(existing)) = crate::keyring_store::get_secret(&secret_name) {
+    if let Ok(Some(existing)) = crate::plugin_host::secrets::get_secret(&secret_name) {
         if !existing.trim().is_empty() {
             return Ok(existing);
         }
     }
 
     let token = format!("cgt_{}", uuid::Uuid::new_v4().simple());
-    crate::keyring_store::set_secret(&secret_name, &token).map_err(|e| {
+    crate::plugin_host::secrets::set_secret(&secret_name, &token).map_err(|e| {
         AppCommandError::io_error(format!("Failed to store backend token in keyring: {e}"))
     })?;
     Ok(token)

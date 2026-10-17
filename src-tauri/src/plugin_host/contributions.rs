@@ -91,7 +91,7 @@ pub async fn apply_contributions(
         .unwrap_or_default();
 
     let backend_status = get_backend_status(id);
-    let token = crate::keyring_store::get_secret(&format!("plugin:{id}:token"))
+    let token = crate::plugin_host::secrets::get_secret(&format!("plugin:{id}:token"))
         .ok()
         .flatten();
 

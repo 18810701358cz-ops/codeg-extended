@@ -931,13 +931,13 @@ pub async fn uninstall(
     }
 
     // Clean up backend token secret
-    let _ = crate::keyring_store::delete_secret(&format!("plugin:{id}:token"));
+    let _ = crate::plugin_host::secrets::delete_secret(&format!("plugin:{id}:token"));
 
     // Clean up config secrets
     if let Some(schema) = config_schema {
         for (prop_key, prop) in schema.properties {
             if prop.format.as_deref() == Some("secret") {
-                let _ = crate::keyring_store::delete_secret(&format!("plugin:{id}:{prop_key}"));
+                let _ = crate::plugin_host::secrets::delete_secret(&format!("plugin:{id}:{prop_key}"));
             }
         }
     }
@@ -946,7 +946,7 @@ pub async fn uninstall(
     let state = load_state(plugins_root).await;
     if let Some(entry) = state.plugins.get(id) {
         for key in entry.config.keys() {
-            let _ = crate::keyring_store::delete_secret(&format!("plugin:{id}:{key}"));
+            let _ = crate::plugin_host::secrets::delete_secret(&format!("plugin:{id}:{key}"));
         }
     }
 
