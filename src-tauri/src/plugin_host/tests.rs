@@ -1643,3 +1643,29 @@ async fn test_wp7_backend_crashed_on_repeated_failure() {
     assert!(reached_crashed, "Backend should transition to Crashed after repeated failures (start_backend returned {started:?})");
     super::backend::stop_backend(plugin_id).await;
 }
+#[test]
+fn test_repo_token_meter_plugin_is_accepted_by_the_host() {
+    // The real manifest through the host's own scanner: it must need no more
+    // than the host offers, and its `position` setting must reach the plugin
+    // center as a form field.
+    let plugins_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("plugins");
+    let plugins = scan_plugins(&plugins_root, &PluginHostState::default(), false);
+
+    let info = plugins
+        .iter()
+        .find(|p| p.id == "token-meter")
+        .expect("plugins/token-meter should be scanned");
+    assert_eq!(
+        info.status,
+        PluginStatus::Ok,
+        "problems: {:?}",
+        info.problems
+    );
+    assert!(info.has_main);
+    assert!(info
+        .config_schema
+        .as_ref()
+        .is_some_and(|schema| schema.properties.contains_key("position")));
+}
