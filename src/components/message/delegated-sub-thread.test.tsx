@@ -359,6 +359,55 @@ describe("DelegatedSubThread", () => {
     ).toBeInTheDocument()
   })
 
+  // Parked is parked, whatever the decision: the backend's `blocked_on` and
+  // the `get_delegation_status` row count all three, so this card must too or
+  // the two disagree about the same sub-agent.
+  it.each([
+    {
+      kind: "question",
+      pending: {
+        pendingAskQuestion: {
+          question_id: "q-1",
+          questions: [
+            {
+              id: "q",
+              question: "Which DB?",
+              header: "DB",
+              multi_select: false,
+              options: [],
+            },
+          ],
+          created_at: "2026-10-18T00:00:00Z",
+        },
+      },
+    },
+    {
+      kind: "plan approval",
+      pending: {
+        pendingPlanApproval: {
+          approval_id: "plan-1",
+          tool_call_id: "tc-1",
+          plan_markdown: "1. migrate",
+          created_at: "2026-10-18T00:00:00Z",
+        },
+      },
+    },
+  ])(
+    "badges 'awaiting approval' when the child is parked on a $kind",
+    ({ pending }) => {
+      mockedHook.mockReturnValue({
+        binding: bindingOf({ status: "running" }),
+        detail: null,
+        loading: false,
+        error: null,
+      })
+      mockChildConnection = { ...childConnWith(null), ...pending }
+      renderWithIntl(<DelegatedSubThread parentToolUseId="pt-1" />)
+      expect(screen.getByText("awaiting approval")).toBeInTheDocument()
+      expect(screen.queryByText("running")).not.toBeInTheDocument()
+    }
+  )
+
   it.each<{ shape: string; input: string; expectedTask: string }>([
     {
       shape: "{name, arguments}",

@@ -15,12 +15,14 @@ import {
   STREAM_FLUSH_FRAME_MS,
   STREAM_FLUSH_MAX_MS,
   useAcpActions,
+  useAcpEvent,
   useConnectionStore,
 } from "@/contexts/acp-connections-context"
 import {
   CONNECTION_IDLE_TIMEOUT_MS,
   IDLE_SWEEP_INTERVAL_MS,
 } from "@/lib/constants"
+import { DelegationProvider } from "@/contexts/delegation-context"
 import { parsePermissionToolCall } from "@/lib/permission-request"
 import { subscribe } from "@/lib/platform"
 import { saveConfigPreference } from "@/lib/selector-prefs-storage"
@@ -5426,6 +5428,280 @@ describe("delegation-child attach: mid-turn hydration", () => {
       } as EventEnvelope)
     })
     expect(h.store!.getConnection(CHILD)).toBeUndefined()
+  })
+})
+
+// A sub-agent that is ALREADY parked on the user when this window attaches:
+// reloading the desktop webview, or opening the parent conversation in a
+// second window, while a delegated child waits on a permission. The parent's
+// snapshot re-seeds the binding, and the child is attached mid-turn — so, like
+// any mid-turn attach on the desktop firehose (which only carries FUTURE
+// events), it has to be hydrated from its own snapshot. Otherwise its pending
+// permission never reaches this window: the status card says "awaiting
+// approval" and there is nothing anywhere to approve with (#973). The two
+// providers are wired together for real here — the seed travels through
+// `DelegationProvider` back into `attachDelegationChild`.
+describe("desktop: a sub-agent already parked when this window attaches", () => {
+  const PARENT = "owner-conn"
+  const CHILD = "child-conn"
+  const ACTIVE = {
+    parent_tool_use_id: "toolu_delegate",
+    child_connection_id: CHILD,
+    child_conversation_id: 4242,
+    agent_type: "codex" as const,
+    task_preview: "run the migration",
+    task_id: "task-1",
+  }
+
+  function mountWithDelegations() {
+    render(
+      <AcpConnectionsProvider>
+        <DelegationProvider>
+          <Probe />
+        </DelegationProvider>
+      </AcpConnectionsProvider>
+    )
+  }
+
+  beforeEach(async () => {
+    h.eventStreamValue = null
+    vi.mocked(subscribe).mockClear()
+    h.acpFindConnectionForConversation.mockResolvedValue({
+      connection_id: PARENT,
+      event_seq: 5,
+    })
+    h.acpGetSessionSnapshot.mockImplementation(async (id: string) => ({
+      connection_id: id,
+      event_seq: id === PARENT ? 5 : 9,
+    }))
+    h.denormalizeSnapshot.mockImplementation(
+      (wire: { connection_id: string }) =>
+        wire.connection_id === PARENT
+          ? {
+              ...snapshotBase(),
+              connectionId: PARENT,
+              status: "prompting",
+              eventSeq: 5,
+              activeDelegations: [ACTIVE],
+            }
+          : {
+              ...snapshotBase(),
+              connectionId: CHILD,
+              status: "prompting",
+              eventSeq: 9,
+              pendingPermission: {
+                request_id: "req-1",
+                tool_call: { title: "Run bash", kind: "execute" },
+                options: [
+                  { option_id: "allow", name: "Allow", kind: "allow_once" },
+                ],
+              },
+            }
+    )
+    const actual = await vi.importActual<
+      typeof import("@/lib/delegation-seed")
+    >("@/lib/delegation-seed")
+    h.buildDelegationSeedEnvelopes.mockImplementation(
+      actual.buildDelegationSeedEnvelopes as never
+    )
+  })
+
+  afterEach(() => {
+    h.buildDelegationSeedEnvelopes.mockImplementation(() => [])
+    h.denormalizeSnapshot.mockReset()
+  })
+
+  it("hydrates the re-seeded child, so its pending permission reaches this window", async () => {
+    mountWithDelegations()
+    await act(async () => {})
+
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    // The child's own snapshot fetch resolves on a later tick.
+    await act(async () => {})
+    await act(async () => {})
+
+    expect(h.acpGetSessionSnapshot).toHaveBeenCalledWith(CHILD)
+    const child = h.store!.getConnection(CHILD)
+    expect(child?.isDelegationChild).toBe(true)
+    expect(child?.pendingPermission?.request_id).toBe("req-1")
+  })
+})
+
+// A desktop surface that hydrates from a snapshot routes its connection only
+// once the snapshot is in. When ANOTHER surface already routes that connection,
+// the firehose hands whatever arrives meanwhile to that surface alone — nothing
+// is left in the unmapped buffer — so the hydrating one must keep it itself,
+// or a permission raised in that window never reaches it.
+describe("desktop: hydrating a connection another surface already routes", () => {
+  const CONN = "conn-shared"
+  const seen: EventEnvelope[] = []
+
+  function SubscriberProbe() {
+    useAcpEvent((envelope) => {
+      seen.push(envelope)
+    })
+    return null
+  }
+
+  function mountDesktop() {
+    render(
+      <AcpConnectionsProvider>
+        <Probe />
+        <SubscriberProbe />
+      </AcpConnectionsProvider>
+    )
+  }
+
+  function firehose() {
+    return vi.mocked(subscribe).mock.calls[0]![1] as (
+      envelope: EventEnvelope
+    ) => void
+  }
+
+  function patchAt(eventSeq: number) {
+    return {
+      ...snapshotBase(),
+      connectionId: CONN,
+      status: "prompting",
+      eventSeq,
+    }
+  }
+
+  /** The next snapshot fetch, held until the test releases it. */
+  function holdNextSnapshot() {
+    let release: () => void = () => {}
+    h.acpGetSessionSnapshot.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ connection_id: CONN, event_seq: 5 })
+        })
+    )
+    return () => release()
+  }
+
+  /** OS notifications raised for a permission request. */
+  function permissionNotifications() {
+    return (h.notifyDesktop.mock.calls as unknown as unknown[][]).filter(
+      (call) => call[0] === "permission_request"
+    ).length
+  }
+
+  const permissionRequest = {
+    seq: 6,
+    connection_id: CONN,
+    type: "permission_request",
+    request_id: "req-late",
+    tool_call: { toolCallId: "call_1", title: "Run bash", kind: "execute" },
+    options: [],
+  } as unknown as EventEnvelope
+
+  beforeEach(() => {
+    h.eventStreamValue = null
+    seen.length = 0
+    vi.mocked(subscribe).mockClear()
+    h.notifyDesktop.mockClear()
+    h.acpFindConnectionForConversation.mockResolvedValue({
+      connection_id: CONN,
+      event_seq: 5,
+    })
+    h.acpGetSessionSnapshot.mockResolvedValue({
+      connection_id: CONN,
+      event_seq: 5,
+    })
+    h.denormalizeSnapshot.mockReturnValue(patchAt(5))
+  })
+
+  afterEach(() => {
+    h.denormalizeSnapshot.mockReset()
+  })
+
+  it("keeps for a re-attaching sub-agent what a tab on its conversation got meanwhile", async () => {
+    mountDesktop()
+    await act(async () => {})
+    // A tab is open on the sub-agent's own conversation…
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    expect(h.store!.getConnection(TAB)!.isViewer).toBe(true)
+
+    // …when its delegation re-attaches mid-turn, and the child raises a
+    // permission while that snapshot is still in flight.
+    const release = holdNextSnapshot()
+    act(() => {
+      h.actions!.attachDelegationChild({
+        connectionId: CONN,
+        parentConnectionId: "parent-conn",
+        parentToolUseId: "toolu_delegate",
+        agentType: "codex",
+        hydrate: true,
+      })
+    })
+    act(() => {
+      firehose()(permissionRequest)
+    })
+    expect(h.store!.getConnection(TAB)!.pendingPermission?.request_id).toBe(
+      "req-late"
+    )
+    await act(async () => {
+      release()
+    })
+
+    const child = h.store!.getConnection(CONN)!
+    expect(child.isDelegationChild).toBe(true)
+    expect(child.pendingPermission?.request_id).toBe("req-late")
+    expect(child.lastAppliedSeq).toBe(6)
+    // One envelope, one notification and one subscriber delivery — the
+    // catch-up is the second surface's copy, not a second event.
+    expect(permissionNotifications()).toBe(1)
+    expect(seen.filter((e) => e.type === "permission_request")).toHaveLength(1)
+  })
+
+  it("keeps for a tab attaching as a viewer what the sub-agent's card got meanwhile", async () => {
+    mountDesktop()
+    await act(async () => {})
+    // The delegation's child entry already routes the connection…
+    act(() => {
+      h.actions!.attachDelegationChild({
+        connectionId: CONN,
+        parentConnectionId: "parent-conn",
+        parentToolUseId: "toolu_delegate",
+        agentType: "codex",
+      })
+    })
+
+    // …when a tab on the sub-agent's conversation attaches as a viewer, and
+    // the permission lands while the tab's snapshot is in flight.
+    const release = holdNextSnapshot()
+    let connecting: Promise<void> = Promise.resolve()
+    act(() => {
+      connecting = h.actions!.connect(
+        TAB,
+        "claude_code",
+        "/tmp/x",
+        "sess-1",
+        42
+      )
+    })
+    // Discovery resolves; the viewer is now waiting on its snapshot.
+    await act(async () => {})
+    act(() => {
+      firehose()(permissionRequest)
+    })
+    expect(h.store!.getConnection(CONN)!.pendingPermission?.request_id).toBe(
+      "req-late"
+    )
+    await act(async () => {
+      release()
+      await connecting
+    })
+
+    const tab = h.store!.getConnection(TAB)!
+    expect(tab.isViewer).toBe(true)
+    expect(tab.pendingPermission?.request_id).toBe("req-late")
+    expect(permissionNotifications()).toBe(1)
+    expect(seen.filter((e) => e.type === "permission_request")).toHaveLength(1)
   })
 })
 

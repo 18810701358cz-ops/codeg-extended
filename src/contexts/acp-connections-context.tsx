@@ -3292,6 +3292,13 @@ export function useConnectionStore(): ConnectionStoreApi {
   return ctx
 }
 
+/** The store, or `null` outside `AcpConnectionsProvider` — for a card that
+ *  renders fine without live state and only enriches itself when it has some
+ *  (the `get_delegation_status` row). */
+export function useOptionalConnectionStore(): ConnectionStoreApi | null {
+  return useContext(ConnectionStoreContext)
+}
+
 // ── Actions context (unchanged interface) ──
 
 /**
@@ -3419,10 +3426,12 @@ export interface AcpActionsValue {
      * firehose cannot serve on its own: `acp://event` only carries FUTURE
      * events, so without a snapshot the viewer misses everything the turn
      * already produced and its status stays `connected` instead of
-     * `prompting` (no streaming affordance, empty live message). Real
-     * delegation children attach at `delegation_started` — before the
-     * child's first event — and leave this off. No effect on web/remote:
-     * the attach protocol always opens with a snapshot.
+     * `prompting` (no streaming affordance, empty live message) — and a
+     * permission or question it is already parked on never arrives. A
+     * delegation child attached on its live `delegation_started` — before the
+     * child's first event — leaves this off; one re-seeded from the parent's
+     * snapshot (`seedDelegationsFromSnapshot`) is mid-turn and sets it. No
+     * effect on web/remote: the attach protocol always opens with a snapshot.
      */
     hydrate?: boolean
   }): void
@@ -3515,7 +3524,21 @@ export function useAcpActions(): AcpActionsValue {
 // physical Tauri/WebSocket subscription; consumers register callbacks here
 // instead of opening a second listener. See `useAcpEvent` below.
 
-type EventSubscriberHandler = (envelope: EventEnvelope) => void
+/** How an envelope reached the subscribers, when that matters to them. */
+export interface AcpEventDelivery {
+  /**
+   * Synthesized by `seedDelegationsFromSnapshot` from a snapshot's
+   * `active_delegations` rather than received live: the `delegation_started`
+   * of a delegation that was ALREADY running when this client attached — so its
+   * child is mid-turn, and may already be parked on the user.
+   */
+  seededFromSnapshot: boolean
+}
+
+type EventSubscriberHandler = (
+  envelope: EventEnvelope,
+  delivery?: AcpEventDelivery
+) => void
 type EventSubscriberRef = { current: EventSubscriberHandler }
 
 interface AcpEventSubscriberApi {
@@ -4639,6 +4662,42 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     },
     []
   )
+
+  // connectionId → what each surface still hydrating it has missed.
+  //
+  // A desktop surface that backfills from a snapshot routes the connection
+  // only once the snapshot is in (`connectAsViewer`, `attachDelegationChild`
+  // with `hydrate`), so whatever arrives in between must be kept for it. The
+  // unmapped buffer does that only while NO surface routes the connection;
+  // when another one already does — a tab on a sub-agent's own conversation
+  // while its delegation re-attaches, a second tile on one conversation — the
+  // firehose hands the event to that surface alone, and a permission raised in
+  // the window would never reach this one. So each hydrating attach records
+  // those deliveries itself (one list per attach: concurrent attaches of a
+  // connection never drain each other) and replays them as echoes once routed
+  // (`applyHydrationBacklog`).
+  const hydrationEchoesRef = useRef(new Map<string, Set<EventEnvelope[]>>())
+
+  const beginHydrationEchoes = useCallback((connectionId: string) => {
+    const echoes: EventEnvelope[] = []
+    const lists =
+      hydrationEchoesRef.current.get(connectionId) ?? new Set<EventEnvelope[]>()
+    lists.add(echoes)
+    hydrationEchoesRef.current.set(connectionId, lists)
+    return {
+      echoes,
+      /** Stop recording. Idempotent. */
+      stop: () => {
+        lists.delete(echoes)
+        if (
+          lists.size === 0 &&
+          hydrationEchoesRef.current.get(connectionId) === lists
+        ) {
+          hydrationEchoesRef.current.delete(connectionId)
+        }
+      },
+    }
+  }, [])
 
   // ── RAF batching for tool_call_update events ──
   const pendingToolCallUpdates = useRef<
@@ -6086,6 +6145,41 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     [dispatch]
   )
 
+  /**
+   * Catch a desktop surface up, right after it hydrated and was routed, on
+   * what arrived for its connection while the snapshot was in flight — in seq
+   * order, the snapshot's own seq deduping whatever it already covered:
+   *   - the unmapped buffer: events NO surface routed, applied as a first
+   *     delivery (`applyMappedEnvelope` — one-shot effects, subscriber
+   *     fan-out);
+   *   - `echoes` (`beginHydrationEchoes`): events another surface already
+   *     handled, applied to this one's state only, exactly as the listener
+   *     applies them to a second route.
+   */
+  const applyHydrationBacklog = useCallback(
+    (contextKey: string, connectionId: string, echoes: EventEnvelope[]) => {
+      const backlog = [
+        ...consumeBufferedEvents(connectionId).map((envelope) => ({
+          envelope,
+          echo: false,
+        })),
+        ...echoes.map((envelope) => ({ envelope, echo: true })),
+      ].sort((a, b) => a.envelope.seq - b.envelope.seq)
+      for (const { envelope, echo } of backlog) {
+        if (!echo) {
+          applyMappedEnvelope(contextKey, envelope)
+          continue
+        }
+        const conn = storeRef.current.connections.get(contextKey)
+        if (conn && envelope.seq <= conn.lastAppliedSeq) continue
+        lastActivityRef.current.set(contextKey, Date.now())
+        handleMappedEventRef.current(contextKey, envelope, true)
+        dispatch({ type: "EVENT_APPLIED", contextKey, seq: envelope.seq })
+      }
+    },
+    [applyMappedEnvelope, consumeBufferedEvents, dispatch]
+  )
+
   // Re-seed `DelegationProvider` bindings from a snapshot's active_delegations.
   // `delegation_started` / `delegation_completed` are transient — they mutate
   // no SessionState field, so they are NOT in `to_snapshot()` and (on the
@@ -6099,6 +6193,12 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   // `lastAppliedSeq` / trip the seq-dedup. Idempotent with any live/replayed
   // event for the same `parent_tool_use_id` (DelegationProvider overwrites the
   // binding and `attachDelegationChild` early-returns when already attached).
+  //
+  // Each seed is flagged `seededFromSnapshot`: the child it names is already
+  // mid-turn, so a DelegationProvider attaching it for the first time hydrates
+  // it from its own snapshot. On the desktop firehose nothing else would carry
+  // what it did before this client attached — including a permission it is
+  // parked on, which would then be unanswerable from here.
   const seedDelegationsFromSnapshot = useCallback(
     (
       connectionId: string,
@@ -6113,7 +6213,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       for (const envelope of envelopes) {
         for (const ref of eventSubscribersRef.current) {
           try {
-            ref.current(envelope)
+            ref.current(envelope, { seededFromSnapshot: true })
           } catch (err) {
             console.error(
               "[acp-context] delegation seed subscriber threw:",
@@ -6346,6 +6446,12 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       if (!routes || routes.size === 0) {
         bufferUnmappedEvent(envelope)
         return
+      }
+      // Routed elsewhere while a surface of this connection is still
+      // hydrating: keep it for that one too (`hydrationEchoesRef`).
+      const hydrating = hydrationEchoesRef.current.get(envelope.connection_id)
+      if (hydrating) {
+        for (const echoes of hydrating) echoes.push(envelope)
       }
 
       // Deliver to EVERY surface routing this connection (see
@@ -6750,8 +6856,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // Desktop firehose: the global `acp://event` stream only carries FUTURE
       // events, so fetch a snapshot to backfill the in-flight turn, then route
       // this connection's events via the reverse-map and drain anything that
-      // arrived while the snapshot was in flight. Mirrors the legacy owner
-      // path in `connect()`.
+      // arrived while the snapshot was in flight — including what another
+      // surface already routing it received meanwhile. Mirrors the legacy
+      // owner path in `connect()`.
+      const backlog = beginHydrationEchoes(connectionId)
       let patch: import("@/lib/snapshot-denormalize").SnapshotPatch | null =
         null
       // `null` (as opposed to a thrown error) is the backend saying it holds no
@@ -6769,6 +6877,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           e
         )
       }
+      backlog.stop()
       // Detach race: the tab may have disconnected (disconnect() removed the
       // entry) while the snapshot fetch was in flight. Re-check the store still
       // holds THIS viewer connection BEFORE applying the snapshot, seeding
@@ -6807,15 +6916,13 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         )
       }
       bindConnectionRoute(connectionId, contextKey)
-      for (const env of consumeBufferedEvents(connectionId)) {
-        applyMappedEnvelope(contextKey, env)
-      }
+      applyHydrationBacklog(contextKey, connectionId, backlog.echoes)
       return true
     },
     [
-      applyMappedEnvelope,
+      applyHydrationBacklog,
+      beginHydrationEchoes,
       bindConnectionRoute,
-      consumeBufferedEvents,
       dispatch,
       releaseConnectionRoute,
       seedDelegationsFromSnapshot,
@@ -7982,7 +8089,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // Mid-turn attach: the firehose carries only future events, so backfill
       // the turn already in flight from a snapshot FIRST, then route (same
       // order as `connectAsViewer` — anything that lands while the fetch is in
-      // flight stays in the unmapped buffer and is deduped by seq on drain).
+      // flight is kept, in the unmapped buffer or as an echo of another
+      // surface's delivery, and deduped by seq once routed).
+      const backlog = beginHydrationEchoes(connectionId)
       void (async () => {
         let patch: import("@/lib/snapshot-denormalize").SnapshotPatch | null =
           null
@@ -7996,6 +8105,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             e
           )
         }
+        backlog.stop()
         // The viewer may have closed while the snapshot was in flight —
         // never hydrate or install routing for a detached child.
         const still = storeRef.current.connections.get(connectionId)
@@ -8022,11 +8132,14 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             patch.eventSeq
           )
         }
-        route()
+        bindConnectionRoute(connectionId, connectionId)
+        applyHydrationBacklog(connectionId, connectionId, backlog.echoes)
       })()
     },
     [
+      applyHydrationBacklog,
       applyMappedEnvelope,
+      beginHydrationEchoes,
       bindConnectionRoute,
       consumeBufferedEvents,
       dispatch,

@@ -621,6 +621,14 @@ export interface DelegationTaskRow {
   /** One entry per poll of this task, chronological (`null` where a poll
    *  returned no text) — paginated on expand; length is the `×N` header hint. */
   results: (string | null)[]
+  /**
+   * Whether the backend answered any of these polls with a `running` report
+   * for the task. It only does that for the CALLER's own task — anyone else's
+   * id gets `unknown` (`classify_locked` in `broker.rs`) — so this is what
+   * makes `taskId` more than an argument the model wrote, and what entitles
+   * the row to reach the live sub-agent behind it (`useDelegationTaskLive`).
+   */
+  runningConfirmed: boolean
 }
 
 interface ParsedPollReport {
@@ -712,6 +720,16 @@ export function buildDelegationTaskRows(
     // One entry per poll, in order — so `×N` and the pager total both equal the
     // number of times this task was actually checked.
     const results = entry.polls.map(({ report }) => report.text)
-    return { key, taskId: entry.taskId, report: latest.report, badge, results }
+    const runningConfirmed = entry.polls.some(
+      ({ report }) => report.status === "running"
+    )
+    return {
+      key,
+      taskId: entry.taskId,
+      report: latest.report,
+      badge,
+      results,
+      runningConfirmed,
+    }
   })
 }
