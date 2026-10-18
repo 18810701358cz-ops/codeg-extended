@@ -18,6 +18,7 @@ import {
   ShieldAlert,
 } from "lucide-react"
 import { SettingCard, SettingRow } from "@/components/shared/setting-card"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -264,406 +265,413 @@ export function PluginsSettings() {
   }, [t])
 
   return (
-    <div className="space-y-6 p-4 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b pb-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-xl font-bold tracking-tight">{t("title")}</h1>
-            {listData && (
-              <Badge variant="outline" className="text-xs font-mono">
-                {t("hostVersion", { version: listData.hostVersion })}
-              </Badge>
-            )}
-            {listData?.safeMode && (
-              <Badge variant="destructive" className="text-xs gap-1">
-                <ShieldAlert className="h-3 w-3" />
-                {t("safeModeBadge")}
-              </Badge>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            {t("description")}
-          </p>
-          {listData?.pluginsDir && (
-            <div className="flex items-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
-              <span>{t("pluginsDir")}:</span>
-              <code className="font-mono bg-muted/60 px-1 py-0.5 rounded text-[10px]">
-                {listData.pluginsDir}
-              </code>
-              {desktop && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-1.5 text-[10px] gap-1 hover:text-foreground"
-                  onClick={handleOpenPluginsDirectory}
-                >
-                  <FolderOpen className="h-3 w-3" />
-                  {t("openDir")}
-                </Button>
+    <ScrollArea className="h-full">
+      <div className="space-y-6 p-4 max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b pb-4">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-xl font-bold tracking-tight">{t("title")}</h1>
+              {listData && (
+                <Badge variant="outline" className="text-xs font-mono">
+                  {t("hostVersion", { version: listData.hostVersion })}
+                </Badge>
+              )}
+              {listData?.safeMode && (
+                <Badge variant="destructive" className="text-xs gap-1">
+                  <ShieldAlert className="h-3 w-3" />
+                  {t("safeModeBadge")}
+                </Badge>
               )}
             </div>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div
-            className="flex items-center gap-2 px-2 py-1 rounded border bg-muted/20"
-            title={t("devMode")}
-          >
-            <span className="text-xs font-medium text-muted-foreground">
-              {t("devMode")}
-            </span>
-            <Switch
-              checked={listData?.devMode ?? false}
-              onCheckedChange={handleToggleDevMode}
-              disabled={loading || togglingDevMode}
-              aria-label="Toggle Developer Mode"
-            />
+            <p className="text-xs text-muted-foreground mt-1">
+              {t("description")}
+            </p>
+            {listData?.pluginsDir && (
+              <div className="flex items-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
+                <span>{t("pluginsDir")}:</span>
+                <code className="font-mono bg-muted/60 px-1 py-0.5 rounded text-[10px]">
+                  {listData.pluginsDir}
+                </code>
+                {desktop && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-1.5 text-[10px] gap-1 hover:text-foreground"
+                    onClick={handleOpenPluginsDirectory}
+                  >
+                    <FolderOpen className="h-3 w-3" />
+                    {t("openDir")}
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={fetchPlugins}
-            disabled={loading}
-            className="h-8 gap-1.5 text-xs"
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              className="flex items-center gap-2 px-2 py-1 rounded border bg-muted/20"
+              title={t("devMode")}
+            >
+              <span className="text-xs font-medium text-muted-foreground">
+                {t("devMode")}
+              </span>
+              <Switch
+                checked={listData?.devMode ?? false}
+                onCheckedChange={handleToggleDevMode}
+                disabled={loading || togglingDevMode}
+                aria-label="Toggle Developer Mode"
+              />
+            </div>
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={fetchPlugins}
+              disabled={loading}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+              />
+              {t("refresh")}
+            </Button>
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDisableAllConfirmOpen(true)}
+              disabled={plugins.length === 0}
+              className="h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+            >
+              {t("disableAll")}
+            </Button>
+
+            <Button
+              size="sm"
+              onClick={() => setInstallDialogOpen(true)}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("installPlugin")}
+            </Button>
+          </div>
+        </div>
+
+        {/* Safe Mode Alert */}
+        {listData?.safeMode && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 shrink-0" />
+            <span>{t("safeModeNotice")}</span>
+          </div>
+        )}
+
+        {/* Notice about plugin styles */}
+        <div className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3.5 py-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <Palette className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span>
+              {cssNoticeParts[0]}
+              <Link
+                href="/settings/appearance"
+                className="font-medium text-foreground underline underline-offset-4 hover:text-primary transition-colors"
+              >
+                {t("cssNoticeLink")}
+              </Link>
+              {cssNoticeParts[1]}
+            </span>
+          </div>
+        </div>
+
+        {/* Filter and Search Bar */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <Tabs
+            value={activeCategory}
+            onValueChange={setActiveCategory}
+            className="w-full sm:w-auto"
           >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+            <TabsList className="h-8">
+              <TabsTrigger
+                value="all"
+                className="text-xs"
+                onClick={() => setActiveCategory("all")}
+              >
+                {t("categoryAll")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="appearance"
+                className="text-xs"
+                onClick={() => setActiveCategory("appearance")}
+              >
+                {t("categoryAppearance")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="model-provider"
+                className="text-xs"
+                onClick={() => setActiveCategory("model-provider")}
+              >
+                {t("categoryModelProvider")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="tools"
+                className="text-xs"
+                onClick={() => setActiveCategory("tools")}
+              >
+                {t("categoryTools")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="workflow"
+                className="text-xs"
+                onClick={() => setActiveCategory("workflow")}
+              >
+                {t("categoryWorkflow")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="utility"
+                className="text-xs"
+                onClick={() => setActiveCategory("utility")}
+              >
+                {t("categoryUtility")}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute top-2.5 left-2.5 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder={t("searchPlaceholder")}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-8 pl-8 text-xs"
             />
-            {t("refresh")}
-          </Button>
-
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setDisableAllConfirmOpen(true)}
-            disabled={plugins.length === 0}
-            className="h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
-          >
-            {t("disableAll")}
-          </Button>
-
-          <Button
-            size="sm"
-            onClick={() => setInstallDialogOpen(true)}
-            className="h-8 gap-1.5 text-xs"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("installPlugin")}
-          </Button>
+          </div>
         </div>
-      </div>
 
-      {/* Safe Mode Alert */}
-      {listData?.safeMode && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-2">
-          <ShieldAlert className="h-4 w-4 shrink-0" />
-          <span>{t("safeModeNotice")}</span>
-        </div>
-      )}
+        {/* Plugin Cards Grid */}
+        {filteredPlugins.length === 0 ? (
+          <div className="py-16 text-center text-xs text-muted-foreground border rounded-lg bg-muted/10">
+            {plugins.length === 0 ? t("emptyPlugins") : t("noFilteredPlugins")}
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {filteredPlugins.map((plugin) => {
+              const hasProblems = plugin.problems && plugin.problems.length > 0
+              const isGit = plugin.source.kind === "git"
+              const isChecking = checkingUpdateId === plugin.id
+              const isRestarting = restartingBackendId === plugin.id
 
-      {/* Notice about plugin styles */}
-      <div className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3.5 py-2 text-xs text-muted-foreground">
-        <div className="flex items-center gap-2">
-          <Palette className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span>
-            {cssNoticeParts[0]}
-            <Link
-              href="/settings/appearance"
-              className="font-medium text-foreground underline underline-offset-4 hover:text-primary transition-colors"
-            >
-              {t("cssNoticeLink")}
-            </Link>
-            {cssNoticeParts[1]}
-          </span>
-        </div>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <Tabs
-          value={activeCategory}
-          onValueChange={setActiveCategory}
-          className="w-full sm:w-auto"
-        >
-          <TabsList className="h-8">
-            <TabsTrigger
-              value="all"
-              className="text-xs"
-              onClick={() => setActiveCategory("all")}
-            >
-              {t("categoryAll")}
-            </TabsTrigger>
-            <TabsTrigger
-              value="appearance"
-              className="text-xs"
-              onClick={() => setActiveCategory("appearance")}
-            >
-              {t("categoryAppearance")}
-            </TabsTrigger>
-            <TabsTrigger
-              value="model-provider"
-              className="text-xs"
-              onClick={() => setActiveCategory("model-provider")}
-            >
-              {t("categoryModelProvider")}
-            </TabsTrigger>
-            <TabsTrigger
-              value="tools"
-              className="text-xs"
-              onClick={() => setActiveCategory("tools")}
-            >
-              {t("categoryTools")}
-            </TabsTrigger>
-            <TabsTrigger
-              value="workflow"
-              className="text-xs"
-              onClick={() => setActiveCategory("workflow")}
-            >
-              {t("categoryWorkflow")}
-            </TabsTrigger>
-            <TabsTrigger
-              value="utility"
-              className="text-xs"
-              onClick={() => setActiveCategory("utility")}
-            >
-              {t("categoryUtility")}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        <div className="relative w-full sm:w-72">
-          <Search className="absolute top-2.5 left-2.5 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            placeholder={t("searchPlaceholder")}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 pl-8 text-xs"
-          />
-        </div>
-      </div>
-
-      {/* Plugin Cards Grid */}
-      {filteredPlugins.length === 0 ? (
-        <div className="py-16 text-center text-xs text-muted-foreground border rounded-lg bg-muted/10">
-          {plugins.length === 0 ? t("emptyPlugins") : t("noFilteredPlugins")}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2">
-          {filteredPlugins.map((plugin) => {
-            const hasProblems = plugin.problems && plugin.problems.length > 0
-            const isGit = plugin.source.kind === "git"
-            const isChecking = checkingUpdateId === plugin.id
-            const isRestarting = restartingBackendId === plugin.id
-
-            return (
-              <SettingCard key={plugin.id}>
-                <SettingRow
-                  title={
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">{plugin.name}</span>
-                      <Badge
-                        variant="outline"
-                        className="h-4 px-1.5 font-mono text-[10px]"
-                      >
-                        v{plugin.version}
-                      </Badge>
-                      <Badge
-                        variant="secondary"
-                        className="h-4 px-1 text-[9px]"
-                      >
-                        {plugin.source.kind === "builtin"
-                          ? t("card.builtin")
-                          : plugin.source.kind === "git"
-                            ? t("card.git")
-                            : plugin.source.kind === "upload"
-                              ? t("card.upload")
-                              : t("card.manual")}
-                      </Badge>
-                    </div>
-                  }
-                  description={plugin.description}
-                  control={
-                    <Switch
-                      checked={plugin.enabled}
-                      onCheckedChange={() => handleToggle(plugin)}
-                      aria-label={`Toggle ${plugin.name}`}
-                    />
-                  }
-                >
-                  {/* Status & Author row */}
-                  <div className="mt-2 flex items-center justify-between border-t border-border/40 pt-2 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={cn(
-                          "inline-block h-2 w-2 rounded-full",
-                          plugin.status === "ok" && plugin.enabled
-                            ? "bg-emerald-500 animate-pulse"
-                            : plugin.status === "error"
-                              ? "bg-destructive"
-                              : "bg-muted-foreground/40"
-                        )}
-                      />
-                      <span className="capitalize">
-                        {plugin.status === "ok"
-                          ? plugin.enabled
-                            ? t("card.statusOk")
-                            : "Disabled"
-                          : plugin.status === "invalid"
-                            ? t("card.statusInvalid")
-                            : plugin.status === "incompatible"
-                              ? t("card.statusIncompatible")
-                              : t("card.statusError")}
-                      </span>
-
-                      {plugin.backend && (
+              return (
+                <SettingCard key={plugin.id}>
+                  <SettingRow
+                    title={
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">{plugin.name}</span>
                         <Badge
                           variant="outline"
-                          className={cn(
-                            "h-4 px-1 text-[9px]",
-                            plugin.backend.state === "running"
-                              ? "text-emerald-500 border-emerald-500/30"
-                              : plugin.backend.state === "crashed" ||
-                                  plugin.backend.state === "unhealthy"
-                                ? "text-destructive border-destructive/30"
-                                : "text-muted-foreground"
-                          )}
+                          className="h-4 px-1.5 font-mono text-[10px]"
                         >
-                          {plugin.backend.state}
+                          v{plugin.version}
                         </Badge>
-                      )}
-
-                      {plugin.author && (
-                        <>
-                          <span className="mx-0.5">·</span>
-                          <span className="truncate max-w-[120px]">
-                            {plugin.author}
-                          </span>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      {plugin.hasBackend && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                          title={t("card.restartBackend")}
-                          onClick={() => handleRestartBackend(plugin)}
-                          disabled={isRestarting}
+                        <Badge
+                          variant="secondary"
+                          className="h-4 px-1 text-[9px]"
                         >
-                          <RotateCw
-                            className={`h-3 w-3 ${
-                              isRestarting ? "animate-spin" : ""
-                            }`}
-                          />
-                        </Button>
-                      )}
-
-                      {isGit && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                          title={t("card.checkUpdate")}
-                          onClick={() => handleCheckUpdate(plugin)}
-                          disabled={isChecking}
-                        >
-                          <RefreshCw
-                            className={`h-3 w-3 ${
-                              isChecking ? "animate-spin" : ""
-                            }`}
-                          />
-                        </Button>
-                      )}
-
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => handleOpenDetail(plugin)}
-                      >
-                        <Settings className="mr-1 h-3.5 w-3.5" />
-                        {t("card.settings")}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Problems display */}
-                  {hasProblems && (
-                    <div className="mt-2 rounded-md border border-destructive/20 bg-destructive/10 p-2 text-[11px] text-destructive space-y-0.5">
-                      <div className="font-medium flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3 shrink-0" />
-                        <span>{t("card.issuesTitle")}</span>
+                          {plugin.source.kind === "builtin"
+                            ? t("card.builtin")
+                            : plugin.source.kind === "git"
+                              ? t("card.git")
+                              : plugin.source.kind === "upload"
+                                ? t("card.upload")
+                                : t("card.manual")}
+                        </Badge>
                       </div>
-                      <ul className="list-disc list-inside space-y-0.5">
-                        {plugin.problems.map((prob, i) => (
-                          <li key={i}>{prob}</li>
-                        ))}
-                      </ul>
+                    }
+                    description={plugin.description}
+                    control={
+                      <Switch
+                        checked={plugin.enabled}
+                        onCheckedChange={() => handleToggle(plugin)}
+                        aria-label={`Toggle ${plugin.name}`}
+                      />
+                    }
+                  >
+                    {/* Status & Author row */}
+                    <div className="mt-2 flex items-center justify-between border-t border-border/40 pt-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "inline-block h-2 w-2 rounded-full",
+                            plugin.status === "ok" && plugin.enabled
+                              ? "bg-emerald-500 animate-pulse"
+                              : plugin.status === "error"
+                                ? "bg-destructive"
+                                : "bg-muted-foreground/40"
+                          )}
+                        />
+                        <span className="capitalize">
+                          {plugin.status === "ok"
+                            ? plugin.enabled
+                              ? t("card.statusOk")
+                              : "Disabled"
+                            : plugin.status === "invalid"
+                              ? t("card.statusInvalid")
+                              : plugin.status === "incompatible"
+                                ? t("card.statusIncompatible")
+                                : t("card.statusError")}
+                        </span>
+
+                        {plugin.backend && (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "h-4 px-1 text-[9px]",
+                              plugin.backend.state === "running"
+                                ? "text-emerald-500 border-emerald-500/30"
+                                : plugin.backend.state === "crashed" ||
+                                    plugin.backend.state === "unhealthy"
+                                  ? "text-destructive border-destructive/30"
+                                  : "text-muted-foreground"
+                            )}
+                          >
+                            {plugin.backend.state}
+                          </Badge>
+                        )}
+
+                        {plugin.author && (
+                          <>
+                            <span className="mx-0.5">·</span>
+                            <span className="truncate max-w-[120px]">
+                              {plugin.author}
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {plugin.hasBackend && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                            title={t("card.restartBackend")}
+                            onClick={() => handleRestartBackend(plugin)}
+                            disabled={isRestarting}
+                          >
+                            <RotateCw
+                              className={`h-3 w-3 ${
+                                isRestarting ? "animate-spin" : ""
+                              }`}
+                            />
+                          </Button>
+                        )}
+
+                        {isGit && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                            title={t("card.checkUpdate")}
+                            onClick={() => handleCheckUpdate(plugin)}
+                            disabled={isChecking}
+                          >
+                            <RefreshCw
+                              className={`h-3 w-3 ${
+                                isChecking ? "animate-spin" : ""
+                              }`}
+                            />
+                          </Button>
+                        )}
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => handleOpenDetail(plugin)}
+                        >
+                          <Settings className="mr-1 h-3.5 w-3.5" />
+                          {t("card.settings")}
+                        </Button>
+                      </div>
                     </div>
-                  )}
-                </SettingRow>
-              </SettingCard>
-            )
-          })}
-        </div>
-      )}
 
-      {/* Detail Sheet */}
-      <PluginDetailSheet
-        plugin={selectedPlugin}
-        open={detailOpen}
-        onOpenChange={(open) => {
-          if (!open) handleCloseDetail()
-          else setDetailOpen(true)
-        }}
-        onPluginUpdated={fetchPlugins}
-        onUninstalled={fetchPlugins}
-      />
+                    {/* Problems display */}
+                    {hasProblems && (
+                      <div className="mt-2 rounded-md border border-destructive/20 bg-destructive/10 p-2 text-[11px] text-destructive space-y-0.5">
+                        <div className="font-medium flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3 shrink-0" />
+                          <span>{t("card.issuesTitle")}</span>
+                        </div>
+                        <ul className="list-disc list-inside space-y-0.5">
+                          {plugin.problems.map((prob, i) => (
+                            <li key={i}>{prob}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </SettingRow>
+                </SettingCard>
+              )
+            })}
+          </div>
+        )}
 
-      {/* Install Dialog */}
-      <PluginInstallDialog
-        open={installDialogOpen}
-        onOpenChange={setInstallDialogOpen}
-        onInstalled={fetchPlugins}
-      />
+        {/* Detail Sheet */}
+        <PluginDetailSheet
+          plugin={selectedPlugin}
+          open={detailOpen}
+          onOpenChange={(open) => {
+            if (!open) handleCloseDetail()
+            else setDetailOpen(true)
+          }}
+          onPluginUpdated={fetchPlugins}
+          onUninstalled={fetchPlugins}
+        />
 
-      {/* Disable All Confirmation */}
-      <AlertDialog
-        open={disableAllConfirmOpen}
-        onOpenChange={setDisableAllConfirmOpen}
-      >
-        <AlertDialogContent className="sm:max-w-md">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-base text-destructive">
-              {t("disableAll")}
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-xs text-muted-foreground">
-              {t("disableAllConfirm")}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={disablingAll} className="h-8 text-xs">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault()
-                handleDisableAll()
-              }}
-              disabled={disablingAll}
-              className="h-8 text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
-            >
-              {disablingAll && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {t("disableAll")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+        {/* Install Dialog */}
+        <PluginInstallDialog
+          open={installDialogOpen}
+          onOpenChange={setInstallDialogOpen}
+          onInstalled={fetchPlugins}
+        />
+
+        {/* Disable All Confirmation */}
+        <AlertDialog
+          open={disableAllConfirmOpen}
+          onOpenChange={setDisableAllConfirmOpen}
+        >
+          <AlertDialogContent className="sm:max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-base text-destructive">
+                {t("disableAll")}
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-xs text-muted-foreground">
+                {t("disableAllConfirm")}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                disabled={disablingAll}
+                className="h-8 text-xs"
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault()
+                  handleDisableAll()
+                }}
+                disabled={disablingAll}
+                className="h-8 text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
+              >
+                {disablingAll && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                )}
+                {t("disableAll")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </ScrollArea>
   )
 }
