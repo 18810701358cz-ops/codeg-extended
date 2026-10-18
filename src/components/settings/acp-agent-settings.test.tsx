@@ -896,6 +896,60 @@ describe("buildVersionCheck", () => {
     expect(check?.message).toContain("Already latest")
     expect(check?.fixes.some((fix) => fix.kind === "upgrade_npx")).toBe(false)
   })
+
+  // Cursor publishes several builds a day under one date. A pin that moves to
+  // a later build of the same day must still reach installs of the earlier
+  // one: connect launches whatever build is cached and never downloads, so
+  // Upgrade here is the only way the pinned build arrives.
+  const cursor = (installed: string) =>
+    makeAgent({
+      agent_type: "cursor" as AgentType,
+      distribution_type: "binary",
+      registry_version: "2026.10.14-941492e",
+      installed_version: installed,
+    })
+
+  it("offers the pinned build to an install of another build of that day", () => {
+    const check = buildVersionCheck(cursor("2026.10.14-0f9edde"))
+    expect(check?.status).toBe("warn")
+    expect(check?.message).toContain("Upgrade available")
+    expect(check?.fixes.some((fix) => fix.kind === "upgrade_binary")).toBe(true)
+  })
+
+  it("reads Already latest for the pinned build itself", () => {
+    for (const installed of [
+      "2026.10.14-941492e",
+      // The raw first line of a system install's `--version`.
+      "cursor-agent 2026.10.14-941492e",
+    ]) {
+      const check = buildVersionCheck(cursor(installed))
+      expect(check?.status).toBe("pass")
+      expect(check?.message).toContain("Already latest")
+    }
+  })
+
+  it("keeps ordering builds of different days by date", () => {
+    const behind = buildVersionCheck(cursor("2026.10.01-14929f9"))
+    expect(behind?.message).toContain("Upgrade available")
+    const ahead = buildVersionCheck(cursor("2026.10.15-1234567"))
+    expect(ahead?.status).toBe("pass")
+    expect(ahead?.message).toContain("Already latest")
+  })
+
+  // Only a suffix on both sides names two builds: a probe that reports build
+  // metadata the pin does not carry is not evidence of a different build.
+  it("does not read a suffix on one side alone as another build", () => {
+    const check = buildVersionCheck(
+      makeAgent({
+        agent_type: "gemini" as AgentType,
+        distribution_type: "npx",
+        registry_version: "0.57.0",
+        installed_version: "0.57.0+e5f1a2c",
+      })
+    )
+    expect(check?.status).toBe("pass")
+    expect(check?.message).toContain("Already latest")
+  })
 })
 
 describe("compareReleaseVersion", () => {
@@ -2452,6 +2506,48 @@ describe("Kiro env keys", () => {
     expect(
       patchEnvByImportantKey("kiro" as AgentType, "", "apiKey", "ksk_1")
     ).toBe("KIRO_API_KEY=ksk_1")
+  })
+})
+
+describe("TRAE CLI env keys", () => {
+  // TRAE CLI's sign-in for a browser-less machine is its personal access
+  // token, and `TRAECLI_HOST` points it at an enterprise's own deployment;
+  // the model is chosen over ACP, so there is no model variable.
+  it("offers the token and the API URL under the names TRAE CLI reads", () => {
+    expect(importantEnvKeysByAgent("trae" as AgentType)).toEqual({
+      apiBaseUrl: ["TRAECLI_HOST"],
+      apiKey: ["TRAECLI_PERSONAL_ACCESS_TOKEN"],
+      model: [],
+    })
+    expect(importantFieldsFor("trae" as AgentType)).toEqual({
+      apiBaseUrl: true,
+      apiKey: true,
+      model: false,
+    })
+    expect(
+      patchEnvByImportantKey("trae" as AgentType, "", "apiKey", "pat_1")
+    ).toBe("TRAECLI_PERSONAL_ACCESS_TOKEN=pat_1")
+  })
+})
+
+describe("Command Code env keys", () => {
+  // Command Code's sign-in for a browser-less machine is the API key it reads
+  // ahead of its stored login; it talks only to its own service and the model
+  // is chosen over ACP, so there is no endpoint or model variable.
+  it("offers only the API key, under the name Command Code reads", () => {
+    expect(importantEnvKeysByAgent("command_code" as AgentType)).toEqual({
+      apiBaseUrl: [],
+      apiKey: ["COMMAND_CODE_API_KEY"],
+      model: [],
+    })
+    expect(importantFieldsFor("command_code" as AgentType)).toEqual({
+      apiBaseUrl: false,
+      apiKey: true,
+      model: false,
+    })
+    expect(
+      patchEnvByImportantKey("command_code" as AgentType, "", "apiKey", "k_1")
+    ).toBe("COMMAND_CODE_API_KEY=k_1")
   })
 })
 

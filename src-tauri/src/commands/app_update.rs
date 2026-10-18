@@ -173,8 +173,21 @@ pub async fn restart_app(
     // and on macOS (tauri 2.12.2+ relaunches through LaunchServices and waits
     // for the launch) the new instance finds the old one still listening,
     // hands it its arguments and quits — nothing is left running.
+    //
+    // On macOS the new instance must also not be a plain child of this one.
+    // A codeg started at login runs as the job of
+    // `~/Library/LaunchAgents/codeg.plist`, and when the job's process exits,
+    // launchd sends SIGTERM to everything left in its process group. tauri
+    // 2.11 spawned the new instance as such a child, and it died there,
+    // still in `exec` while Gatekeeper checked the bundle the update had just
+    // put in place: the kernel logged "ASP: Sleep interrupted" and "Security
+    // policy would not allow process", nothing came back, and the macOS 27
+    // Dock showed codeg as running in the background. LaunchServices
+    // (`open -n`) makes the new instance a job of its own, and tauri's
+    // fallback when `open` fails spawns into a new process group.
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tracing::info!("[update] relaunching into the installed update");
         app.restart();
     });
     Ok(())

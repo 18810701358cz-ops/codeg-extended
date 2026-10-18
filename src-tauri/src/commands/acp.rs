@@ -9201,6 +9201,42 @@ pub(crate) fn skill_storage_spec(agent_type: AgentType) -> Option<SkillStorageSp
             global_dirs: vec![crate::parsers::kiro::resolve_kiro_home_dir().join("skills")],
             project_rel_dirs: vec![".kiro/skills"],
         }),
+        // TRAE CLI loads `<id>/SKILL.md` bundles — never a flat `<id>.md` —
+        // from `<TRAE_HOME>/skills` and the shared `~/.agents/skills` store,
+        // plus `.trae/skills` and `.agents/skills` in a trusted workspace.
+        // Verified against 0.209.1 by planting one skill in each candidate
+        // directory: exactly those four appeared in the catalog it sends the
+        // model, while `.codex/skills`, `.claude/skills` and the flat file
+        // were ignored. The TRAE-native directory leads so linking targets it
+        // without touching the shared store (the pi / Cursor ordering). Note
+        // that `~/.trae/skills` is also where the TRAE IDE keeps its skills,
+        // so the CLI — and this list — sees those too. Its bundled skills in
+        // `<TRAE_HOME>/skills/.system` are left out: the CLI owns them.
+        AgentType::Trae => Some(SkillStorageSpec {
+            kind: SkillStorageKind::SkillDirectoryOnly,
+            global_dirs: vec![
+                crate::acp::trae::resolve_trae_home_dir().join("skills"),
+                home_dir_or_default().join(".agents").join("skills"),
+            ],
+            project_rel_dirs: vec![".trae/skills", ".agents/skills"],
+        }),
+        // Command Code loads `<id>/SKILL.md` bundles — found recursively, never
+        // a flat `<id>.md` — from `~/.commandcode/skills` and the shared
+        // `~/.agents/skills` store, plus `.commandcode/skills` and
+        // `.agents/skills` in the project. Verified against 1.84.0 by planting
+        // one skill in each candidate directory: exactly those four reached
+        // the session's commands, while `.claude/skills` (project and user)
+        // and the flat file were ignored. The Command Code directory leads so
+        // linking targets it without touching the shared store (the TRAE CLI
+        // ordering); on a name clash Command Code prefers it too.
+        AgentType::CommandCode => Some(SkillStorageSpec {
+            kind: SkillStorageKind::SkillDirectoryOnly,
+            global_dirs: vec![
+                crate::acp::command_code::command_code_home_dir().join("skills"),
+                home_dir_or_default().join(".agents").join("skills"),
+            ],
+            project_rel_dirs: vec![".commandcode/skills", ".agents/skills"],
+        }),
         // codeg cannot detect where an arbitrary ACP agent loads skills from,
         // so custom agents are gated on the user's own declaration: that the
         // agent reads the shared `.agents/skills` store (the cross-agent
@@ -10377,7 +10413,8 @@ fn agent_env_keys(agent_type: AgentType) -> (&'static str, &'static str, &'stati
         // `auth.type = "gemini-api-key"` reads (the server says so in its own
         // `auth_required` message). `AGY_ACP_DEFAULT_MODEL` is real — it is
         // the env the server's `get_default_model_id` consults before falling
-        // back to `gemini-3.8-flash-high`. There is NO endpoint override, so
+        // back to `gemini-3.8-flash-high` (`gemini-4-argon-high` for an Agent
+        // Platform session since 1.4.1). There is NO endpoint override, so
         // the base-url slot stays an inert `AGY_BASE_URL` placeholder for the
         // same reason `CURSOR_MODEL`/`QODER_BASE_URL` above are: it keeps the
         // generic cascade off the `OPENAI_*` keys.
@@ -10405,6 +10442,30 @@ fn agent_env_keys(agent_type: AgentType) -> (&'static str, &'static str, &'stati
         // answers with `models`). The two placeholders keep the generic
         // cascade off the OPENAI_* keys, like `QODER_BASE_URL` above.
         AgentType::Kiro => ("KIRO_BASE_URL", "KIRO_API_KEY", "KIRO_MODEL"),
+        // TRAE CLI's non-interactive sign-in is its personal access token,
+        // which the handshake exchanges through the `trae-tob-pat` auth method
+        // (see `acp::trae`), and `TRAECLI_HOST` is the API base URL of an
+        // enterprise's own deployment — both straight from TRAE's docs. The
+        // model is chosen per session over ACP, so the model slot is an inert
+        // `TRAE_MODEL` placeholder that keeps the generic cascade off the
+        // OPENAI_* keys, like `KIRO_MODEL` above.
+        AgentType::Trae => (
+            crate::acp::trae::TRAE_HOST_ENV,
+            crate::acp::trae::TRAE_PAT_ENV,
+            "TRAE_MODEL",
+        ),
+        // Command Code's non-interactive sign-in is the API key it reads from
+        // `COMMAND_CODE_API_KEY` ahead of its stored login (see
+        // `acp::command_code`). It talks only to its own service — models from
+        // other providers are declared in its `providers.json`, not in env —
+        // and the model is chosen per session over ACP, so the endpoint and
+        // model slots are inert placeholders that keep the generic cascade off
+        // the OPENAI_* keys, like `KIRO_BASE_URL` / `KIRO_MODEL` above.
+        AgentType::CommandCode => (
+            "COMMAND_CODE_BASE_URL",
+            crate::acp::command_code::COMMAND_CODE_API_KEY_ENV,
+            "COMMAND_CODE_MODEL",
+        ),
         _ => ("OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL"),
     }
 }
@@ -10950,6 +11011,21 @@ fn cascade_update_agent_config(
         }
         AgentType::ZCode => {
             // Authentication and providers belong to the official ZCode runtime.
+        }
+        AgentType::Trae => {
+            // TRAE CLI signs in to TRAE's own service (`traecli login`, or a
+            // PAT in the agent's env, which the handshake exchanges) and its
+            // models come from that account, so it stays off the
+            // model-provider credential cascade. `TRAECLI_HOST` points at an
+            // enterprise deployment of the same service, not at a model
+            // provider.
+        }
+        AgentType::CommandCode => {
+            // Command Code signs in to its own service (`command-code login`,
+            // or `COMMAND_CODE_API_KEY` in the agent's env) and its models come
+            // from that account; other providers are declared in its own
+            // `~/.commandcode/providers.json`. Nothing here maps onto a model
+            // provider's URL and key, so it stays off the cascade.
         }
         AgentType::Custom(_) => {
             // Custom agents are deliberately configuration-free: codeg writes

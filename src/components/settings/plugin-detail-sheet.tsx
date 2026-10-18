@@ -187,8 +187,10 @@ export function PluginDetailSheet({
             </div>
           </DrawerHeader>
 
-          {/* Plugin Details Slot */}
-          <div className="px-4 py-2 border-b bg-muted/10 empty:hidden">
+          {/* Plugin Details Slot. A plugin sets the height of what it mounts
+              here and the drawer body does not scroll, so the region carries
+              its own cap and scrollbar rather than squeezing the tabs. */}
+          <div className="max-h-[40dvh] shrink-0 overflow-y-auto px-4 py-2 border-b bg-muted/10 empty:hidden">
             <PluginSlot name="settings.plugin-detail" />
           </div>
 

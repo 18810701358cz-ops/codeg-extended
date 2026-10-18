@@ -6,8 +6,9 @@ import {
   useImperativeHandle,
   useState,
 } from "react"
-import { act, fireEvent, render } from "@testing-library/react"
+import { act, fireEvent, render, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
+import { toast } from "sonner"
 import {
   afterEach,
   beforeEach,
@@ -251,7 +252,31 @@ vi.mock("@/contexts/workbench-route-context", () => {
 vi.mock("./conversation-manage-dialog", () => ({
   ConversationManageDialog: () => null,
 }))
-vi.mock("@/components/layout/clone-dialog", () => ({ CloneDialog: () => null }))
+
+// The two "add a folder" dialogs matter here only for what the list hands them
+// — whether they are open, and what happens to the folder they report — so
+// they render nothing and record their latest props.
+type FolderDialogProbe = {
+  open: boolean
+  onFolderOpened?: (folder: FolderDetail) => void
+}
+const folderDialogs = vi.hoisted(() => ({
+  clone: null as FolderDialogProbe | null,
+  browser: null as FolderDialogProbe | null,
+}))
+vi.mock("@/components/layout/clone-dialog", () => ({
+  CloneDialog: (props: FolderDialogProbe) => {
+    folderDialogs.clone = props
+    return null
+  },
+}))
+vi.mock("@/components/layout/workspace-folder-dialog", () => ({
+  WorkspaceFolderDialog: (props: FolderDialogProbe & { folder?: unknown }) => {
+    // The links manager (opened ON a folder) is a separate instance.
+    if (!props.folder) folderDialogs.browser = props
+    return null
+  },
+}))
 // The sub-session realtime sync hook reaches @/lib/platform (transport), which
 // these tests don't load; stub it to a no-op — it has its own unit tests.
 vi.mock("@/hooks/use-subsession-sync", () => ({ useSubsessionSync: () => {} }))
@@ -1693,6 +1718,259 @@ describe("SidebarConversationList — folder groups", () => {
     expect(title.className).toContain("text-sidebar-foreground/75")
     expect(title.className).not.toContain("folder-title-tint")
     expect(title.getAttribute("style")).toBeNull()
+  })
+
+  // A group heading carries the Folders heading's Clone Repository / Open
+  // Folder pair, and whatever folder they open is filed into that group.
+  describe("adding a folder from a group heading", () => {
+    const GROUP_EXPANDED_KEY = "workspace:sidebar-folder-group-expanded"
+    const setFolderGroup = vi.fn<
+      (folderId: number, groupId: number | null) => Promise<void>
+    >(() => Promise.resolve())
+
+    // Collapsing persists, and nothing else clears this key between tests.
+    afterEach(() => {
+      localStorage.removeItem(GROUP_EXPANDED_KEY)
+    })
+
+    beforeEach(() => {
+      setFolderGroup.mockClear()
+      folderDialogs.clone = null
+      folderDialogs.browser = null
+      localStorage.removeItem(GROUP_EXPANDED_KEY)
+      const folders = [
+        { ...folder(5, "Member"), sort_order: 1, group_id: 7 },
+        { ...folder(9, "Loose"), sort_order: 2, group_id: null },
+      ] as FolderDetail[]
+      useAppWorkspaceStore.setState({
+        folders,
+        allFolders: folders,
+        folderGroups: [group(7, "Work", 1)],
+        conversations: [],
+        setFolderGroup,
+      })
+    })
+
+    /** The heading row of group 7 — the toggle and its trailing actions. */
+    function groupRow() {
+      const toggle = document.querySelector('[data-folder-group-id="7"]')
+      if (!toggle?.parentElement) throw new Error("group 7 heading not found")
+      return within(toggle.parentElement)
+    }
+
+    /** The Folders section heading's action with this label — the one copy of
+     *  it that is NOT inside a group heading. */
+    function headingAction(label: string): HTMLElement {
+      const groupHeading = document.querySelector('[data-folder-group-id="7"]')
+        ?.parentElement as HTMLElement | null | undefined
+      const match = Array.from(
+        document.querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+      ).find((el) => !groupHeading?.contains(el))
+      if (!match) throw new Error(`Folders heading action ${label} not found`)
+      return match
+    }
+
+    /** A folder as `openFolder` resolves it: brand new, so at the top level. */
+    function opened(id: number, overrides: Partial<FolderDetail> = {}) {
+      return {
+        ...folder(id, `Opened ${id}`),
+        sort_order: 3,
+        group_id: null,
+        ...overrides,
+      } as FolderDetail
+    }
+
+    async function report(
+      dialog: FolderDialogProbe | null,
+      detail: FolderDetail
+    ) {
+      await act(async () => {
+        dialog?.onFolderOpened?.(detail)
+        // The placement awaits the (stubbed) move before it opens the group.
+        await Promise.resolve()
+      })
+    }
+
+    it("files a folder opened from the group's Open Folder into the group", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Open Folder"))
+      })
+      expect(folderDialogs.browser?.open).toBe(true)
+
+      await report(folderDialogs.browser, opened(42))
+
+      expect(setFolderGroup).toHaveBeenCalledTimes(1)
+      expect(setFolderGroup).toHaveBeenCalledWith(42, 7)
+    })
+
+    it("files a repository cloned from the group into the group", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Clone Repository"))
+      })
+      expect(folderDialogs.clone?.open).toBe(true)
+
+      await report(folderDialogs.clone, opened(42))
+
+      expect(setFolderGroup).toHaveBeenCalledTimes(1)
+      expect(setFolderGroup).toHaveBeenCalledWith(42, 7)
+    })
+
+    it("leaves folders added from the Folders heading at the top level", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(headingAction("Open Folder"))
+      })
+      expect(folderDialogs.browser?.open).toBe(true)
+      await report(folderDialogs.browser, opened(42))
+
+      act(() => {
+        fireEvent.click(headingAction("Clone Repository"))
+      })
+      expect(folderDialogs.clone?.open).toBe(true)
+      await report(folderDialogs.clone, opened(43))
+
+      expect(setFolderGroup).not.toHaveBeenCalled()
+    })
+
+    it("files a clone into the group it started from, even if the dialog is reopened elsewhere", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Clone Repository"))
+      })
+      // What a slow clone keeps hold of: the callback of the render its Clone
+      // click happened in (see the CloneDialog test pinning that side).
+      const startedFromGroup = folderDialogs.clone?.onFolderOpened
+      act(() => {
+        fireEvent.click(headingAction("Clone Repository"))
+      })
+      expect(folderDialogs.clone?.onFolderOpened).not.toBe(startedFromGroup)
+
+      await act(async () => {
+        startedFromGroup?.(opened(42))
+        await Promise.resolve()
+      })
+
+      expect(setFolderGroup).toHaveBeenCalledTimes(1)
+      expect(setFolderGroup).toHaveBeenCalledWith(42, 7)
+    })
+
+    it("files every root one open-folder session opens", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Open Folder"))
+      })
+
+      // The dialog's "Change" step goes back and opens another root; both
+      // were opened from this group.
+      await report(folderDialogs.browser, opened(42))
+      await report(folderDialogs.browser, opened(43))
+
+      expect(setFolderGroup.mock.calls).toEqual([
+        [42, 7],
+        [43, 7],
+      ])
+    })
+
+    it("does not carry a group into a later opening from the Folders heading", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Open Folder"))
+      })
+      // The dialog is closed without opening anything, then reopened from the
+      // section heading: that opening names no group, so none may stick.
+      act(() => {
+        fireEvent.click(headingAction("Open Folder"))
+      })
+
+      await report(folderDialogs.browser, opened(42))
+
+      expect(setFolderGroup).not.toHaveBeenCalled()
+    })
+
+    it("opens a collapsed group to show the folder that landed in it", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(document.querySelector('[data-folder-group-id="7"]')!)
+      })
+      expect(document.querySelector('[data-folder-id="5"]')).toBeNull()
+
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Open Folder"))
+      })
+      await report(folderDialogs.browser, opened(42))
+
+      expect(setFolderGroup).toHaveBeenCalledWith(42, 7)
+      expect(document.querySelector('[data-folder-id="5"]')).not.toBeNull()
+      expect(
+        JSON.parse(localStorage.getItem(GROUP_EXPANDED_KEY) ?? "{}")
+      ).toEqual({ 7: true })
+    })
+
+    it("leaves a folder that is already in the group where it is", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Open Folder"))
+      })
+
+      // Re-moving a member would only shuffle it to the end of the group.
+      await report(folderDialogs.browser, opened(5, { group_id: 7 }))
+
+      expect(setFolderGroup).not.toHaveBeenCalled()
+    })
+
+    it("leaves a worktree of an open repo with its repo", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Open Folder"))
+      })
+
+      // Folder 9 is open, so this worktree renders under it wherever it sits
+      // and has no row of its own to file.
+      await report(folderDialogs.browser, opened(43, { parent_id: 9 }))
+
+      expect(setFolderGroup).not.toHaveBeenCalled()
+    })
+
+    it("keeps the folder at the top level when the group is gone by the time it opens", async () => {
+      render(tree())
+      act(() => {
+        fireEvent.click(groupRow().getByLabelText("Open Folder"))
+      })
+      // Deleted from another window while the dialog was open.
+      act(() => {
+        useAppWorkspaceStore.setState({ folderGroups: [] })
+      })
+
+      await report(folderDialogs.browser, opened(42))
+
+      expect(setFolderGroup).not.toHaveBeenCalled()
+    })
+
+    it("says so when the folder cannot be filed, and leaves the group shut", async () => {
+      const toastError = vi.spyOn(toast, "error").mockImplementation(() => 0)
+      setFolderGroup.mockImplementationOnce(() =>
+        Promise.reject(new Error("boom"))
+      )
+      try {
+        render(tree())
+        act(() => {
+          fireEvent.click(document.querySelector('[data-folder-group-id="7"]')!)
+        })
+        act(() => {
+          fireEvent.click(groupRow().getByLabelText("Open Folder"))
+        })
+
+        await report(folderDialogs.browser, opened(42))
+
+        expect(toastError).toHaveBeenCalledWith("Failed to move folder: boom")
+        // Nothing landed, so there is nothing to open the group for.
+        expect(document.querySelector('[data-folder-id="5"]')).toBeNull()
+      } finally {
+        toastError.mockRestore()
+      }
+    })
   })
 })
 

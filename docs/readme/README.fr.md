@@ -31,7 +31,7 @@
 
 <table>
   <tr>
-    <td width="50%" valign="top">🧩 <strong>Une interface pour tous les agents</strong><br/>Dix-sept agents intégrés, et tout agent ACP peut s'y ajouter — tous affichés sous la même forme de conversation structurée, pas dans un terminal.</td>
+    <td width="50%" valign="top">🧩 <strong>Une interface pour tous les agents</strong><br/>Dix-neuf agents intégrés, et tout agent ACP peut s'y ajouter — tous affichés sous la même forme de conversation structurée, pas dans un terminal.</td>
     <td width="50%" valign="top">🔎 <strong>Des sessions qui voyagent</strong><br/>Importez, fouillez et reprenez l'historique que chaque agent conserve sur le disque, puis confiez-le à un autre agent.</td>
   </tr>
   <tr>
@@ -101,7 +101,7 @@
 
 ### Une interface pour tous les agents
 
-Dix-sept agents sont intégrés, et tout autre agent ACP peut les rejoindre depuis le registre public ou via son JSON de distribution. Codeg parle l'Agent Client Protocol avec chacun d'eux : tous bénéficient donc de la même conversation riche — cartes d'outils, diffs en direct, plans et demandes d'autorisation — au lieu d'un terminal à déchiffrer en plissant les yeux. Activez le Rendu d'interface pour un agent et il pourra répondre avec des cartes, des tableaux et des graphiques interactifs.
+Dix-neuf agents sont intégrés, et tout autre agent ACP peut les rejoindre depuis le registre public ou via son JSON de distribution. Codeg parle l'Agent Client Protocol avec chacun d'eux : tous bénéficient donc de la même conversation riche — cartes d'outils, diffs en direct, plans et demandes d'autorisation — au lieu d'un terminal à déchiffrer en plissant les yeux. Activez le Rendu d'interface pour un agent et il pourra répondre avec des cartes, des tableaux et des graphiques interactifs.
 
 [Documentation →](https://docs.codeg.app/guide/supported-agents) · [Agents personnalisés →](https://docs.codeg.app/guide/custom-agents) · [Rendu d'interface →](https://docs.codeg.app/guide/skills#cards-tables-and-charts-in-replies)
 
@@ -267,7 +267,7 @@ Un éditeur, des diffs en direct et côte à côte, un client git complet avec u
 
 ## 🤖 Agents pris en charge
 
-Codeg communique avec chaque agent via l'[Agent Client Protocol](https://agentclientprotocol.com) : chacun bénéficie ainsi de la même interface structurée. Dix-sept sont intégrés, et Codeg installe, épingle et met à jour la plupart d'entre eux pour vous :
+Codeg communique avec chaque agent via l'[Agent Client Protocol](https://agentclientprotocol.com) : chacun bénéficie ainsi de la même interface structurée. Dix-neuf sont intégrés, et Codeg installe, épingle et met à jour la plupart d'entre eux pour vous :
 
 <p>
   <a href="https://www.anthropic.com/claude-code"><kbd><img src="../images/agents/claude-code.svg" alt="" width="16" valign="middle" /> Claude Code</kbd></a> &nbsp;
@@ -287,6 +287,8 @@ Codeg communique avec chaque agent via l'[Agent Client Protocol](https://agentcl
   <a href="https://antigravity.google"><kbd><picture><source media="(prefers-color-scheme: dark)" srcset="../images/agents/google-antigravity-dark.svg" /><img src="../images/agents/google-antigravity.svg" alt="" width="16" valign="middle" /></picture> Google Antigravity</kbd></a> &nbsp;
   <a href="https://kiro.dev/cli/"><kbd><img src="../images/agents/kiro.svg" alt="" width="16" valign="middle" /> Kiro CLI</kbd></a> &nbsp;
   <a href="../agents/zcode.md"><kbd><img src="../images/agents/zcode.svg" alt="" width="16" valign="middle" /> ZCode</kbd></a> &nbsp;
+  <a href="https://docs.trae.cn/cli_about-trae-code-cli-2"><kbd><img src="../images/agents/trae.svg" alt="" width="16" valign="middle" /> TRAE CLI</kbd></a> &nbsp;
+  <a href="https://commandcode.ai"><kbd><img src="../images/agents/command-code.svg" alt="" width="16" valign="middle" /> Command Code</kbd></a> &nbsp;
   <a href="https://docs.codeg.app/guide/custom-agents"><kbd>+ tout agent ACP</kbd></a>
 </p>
 

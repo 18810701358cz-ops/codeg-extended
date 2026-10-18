@@ -126,6 +126,9 @@ function summary() {
   }
 }
 
+// Cheapest first: a second to learn that an upstream release took away something a
+// plugin or the plugin host calls, instead of 15-40 minutes into the steps below.
+step("compat probe", root, command("node scripts/extended-compat.mjs", root))
 if (!skipFrontend) {
   for (const { name, cmd } of frontend) step(name, root, command(cmd, root))
 }

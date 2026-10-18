@@ -161,6 +161,15 @@ import {
   AntigravityConfigPanel,
 } from "./antigravity-config-panel"
 import { KiroConfigPanel } from "./kiro-config-panel"
+import {
+  TRAE_HOST_ENV,
+  TRAE_PAT_ENV,
+  TraeConfigPanel,
+} from "./trae-config-panel"
+import {
+  COMMAND_CODE_API_KEY_ENV,
+  CommandCodeConfigPanel,
+} from "./command-code-config-panel"
 import { CodeBuddyConfigPanel } from "./codebuddy-config-panel"
 import { CursorConfigPanel } from "./cursor-config-panel"
 import {
@@ -853,6 +862,32 @@ export function importantEnvKeysByAgent(
     return {
       apiBaseUrl: [],
       apiKey: ["KIRO_API_KEY"],
+      model: [],
+    }
+  }
+  if (agentType === "trae") {
+    // TRAE CLI's non-interactive sign-in is its personal access token, which
+    // codeg exchanges through TRAE's PAT auth method when a session starts;
+    // `TRAECLI_HOST` is the API URL of an enterprise's own deployment. The
+    // model is picked per session over ACP, so there is no model env. Generic
+    // OPENAI_*/API_KEY aliases are absent: TRAE CLI reads neither. Mirrors the
+    // backend `agent_env_keys(Trae)`.
+    return {
+      apiBaseUrl: [TRAE_HOST_ENV],
+      apiKey: [TRAE_PAT_ENV],
+      model: [],
+    }
+  }
+  if (agentType === "command_code") {
+    // Command Code's non-interactive sign-in is `COMMAND_CODE_API_KEY`, which
+    // it reads ahead of the login `command-code login` stores. It talks only
+    // to its own service and the model is picked per session over ACP, so
+    // there is no endpoint or model env. Generic OPENAI_*/API_KEY aliases are
+    // absent: Command Code reads neither. Mirrors the backend
+    // `agent_env_keys(CommandCode)`.
+    return {
+      apiBaseUrl: [],
+      apiKey: [COMMAND_CODE_API_KEY_ENV],
       model: [],
     }
   }
@@ -3853,6 +3888,40 @@ function compareVersion(a: string, b: string): number {
   return 0
 }
 
+/**
+ * What follows a version's dotted numbers: `-0f9edde` for
+ * `2026.10.14-0f9edde`, nothing for `1.19.3`. Read from where
+ * `compareVersion` starts reading, and only as far as the version runs.
+ */
+function versionBuildSuffix(value: string): string {
+  const version =
+    /^[0-9A-Za-z.+-]*/.exec(value.trim().replace(/^[^\d]*/, ""))?.[0] ?? ""
+  return version.replace(/^\d+(?:\.\d+)*/, "")
+}
+
+/**
+ * Whether Version Status offers the recommended version in place of the
+ * installed one: an older release, or another build of the same release.
+ * Cursor publishes several builds a day under one date (`2026.10.14-0f9edde`,
+ * then `2026.10.14-941492e`), which `compareVersion` ranks equal, so a pin
+ * that moves within a day would leave every install of the earlier build
+ * reading "Already latest" while connect keeps launching it. Builds of one
+ * release cannot be ordered, so the reviewed one is what gets offered. Only a
+ * suffix on both sides names two builds; `1.0.0+abc` against `1.0.0` stays
+ * equal, as it always has.
+ */
+function isBehindRecommended(installed: string, recommended: string): boolean {
+  const order = compareVersion(installed, recommended)
+  if (order !== 0) return order < 0
+  const installedBuild = versionBuildSuffix(installed)
+  const recommendedBuild = versionBuildSuffix(recommended)
+  return (
+    installedBuild !== "" &&
+    recommendedBuild !== "" &&
+    installedBuild !== recommendedBuild
+  )
+}
+
 function hasComparableVersion(
   value: string | null | undefined
 ): value is string {
@@ -4383,7 +4452,7 @@ export function buildVersionCheck(
   if (
     hasComparableVersion(agent.registry_version) &&
     hasComparableVersion(agent.installed_version) &&
-    compareVersion(agent.installed_version, agent.registry_version) < 0
+    isBehindRecommended(agent.installed_version, agent.registry_version)
   ) {
     return {
       check_id: "version_status",
@@ -11199,6 +11268,48 @@ supports_websockets = true`}
                         {
                           KIRO_API_KEY: env.KIRO_API_KEY,
                           KIRO_TRUST_ALL_TOOLS: env.KIRO_TRUST_ALL_TOOLS,
+                        }
+                      )
+                    }
+                  />
+                ) : selectedAgent.agent_type === "trae" ? (
+                  <TraeConfigPanel
+                    agent={selectedAgent}
+                    saving={Boolean(savingEnv[selectedAgent.agent_type])}
+                    onSave={(env, enabled) =>
+                      persistEnv(
+                        selectedAgent.agent_type,
+                        enabled,
+                        envMapToText(env),
+                        selectedAgent.model_provider_id,
+                        // The two keys this panel owns, folded into the raw
+                        // editor's draft (see the Kiro panel above): the
+                        // enable switch and the generic env Save persist that
+                        // draft wholesale. `undefined` (a cleared field)
+                        // deletes the line.
+                        {
+                          [TRAE_PAT_ENV]: env[TRAE_PAT_ENV],
+                          [TRAE_HOST_ENV]: env[TRAE_HOST_ENV],
+                        }
+                      )
+                    }
+                  />
+                ) : selectedAgent.agent_type === "command_code" ? (
+                  <CommandCodeConfigPanel
+                    agent={selectedAgent}
+                    saving={Boolean(savingEnv[selectedAgent.agent_type])}
+                    onSave={(env, enabled) =>
+                      persistEnv(
+                        selectedAgent.agent_type,
+                        enabled,
+                        envMapToText(env),
+                        selectedAgent.model_provider_id,
+                        // The key this panel owns, folded into the raw
+                        // editor's draft like the TRAE CLI panel's above, so
+                        // the enable switch cannot bring back a cleared key.
+                        {
+                          [COMMAND_CODE_API_KEY_ENV]:
+                            env[COMMAND_CODE_API_KEY_ENV],
                         }
                       )
                     }

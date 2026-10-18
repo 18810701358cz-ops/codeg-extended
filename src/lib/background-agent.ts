@@ -56,7 +56,9 @@ export function hasTranscriptOverlay(agentType: string): boolean {
  */
 export function isOutOfTurnContentEvent(envelope: {
   type: string
-  text?: string
+  // `null` too: the `prompt_suggestion` event carries `text: null` to withdraw
+  // its offer, and is not content either way.
+  text?: string | null
 }): boolean {
   if (envelope.type === "content_delta" || envelope.type === "thinking") {
     return (envelope.text?.trim().length ?? 0) > 0

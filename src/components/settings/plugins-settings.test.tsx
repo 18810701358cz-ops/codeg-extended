@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import {
   cleanup,
   fireEvent,
@@ -36,6 +37,22 @@ vi.mock("@/lib/platform", () => ({
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
+}))
+
+// A plain div, so the test can see where the page puts its scroll container;
+// the real OverlayScrollbars component wraps its children in elements of its own.
+vi.mock("@/components/ui/scroll-area", () => ({
+  ScrollArea: ({
+    children,
+    className,
+  }: {
+    children?: ReactNode
+    className?: string
+  }) => (
+    <div data-testid="scroll-area" className={className}>
+      {children}
+    </div>
+  ),
 }))
 
 vi.mock("next-intl", () => ({
@@ -158,6 +175,24 @@ describe("PluginsSettings", () => {
       expect(screen.getByText("Host v1.0.0")).toBeDefined()
       expect(screen.getByText("C:\\Codeg\\plugins")).toBeDefined()
     })
+  })
+
+  it("keeps the whole page inside a full-height scroll area", async () => {
+    const { container } = render(<PluginsSettings />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Cyber Glow")).toBeDefined()
+    })
+
+    // SettingsShell clips what it hosts (`overflow-hidden`), so a page that
+    // does not bring its own scroll container cannot be scrolled past the fold.
+    const root = container.firstElementChild as HTMLElement
+    expect(root).toHaveAttribute("data-testid", "scroll-area")
+    expect(root).toHaveClass("h-full")
+    expect(root).toContainElement(
+      screen.getByRole("heading", { name: "Plugins" })
+    )
+    expect(root).toContainElement(screen.getByText("WorkBuddy Connect"))
   })
 
   it("opens plugin directory when Open Directory button is clicked", async () => {

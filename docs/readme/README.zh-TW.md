@@ -31,7 +31,7 @@
 
 <table>
   <tr>
-    <td width="50%" valign="top">🧩 <strong>一個介面，容納所有智慧體</strong><br/>內建十七個智慧體，任何相容 ACP 的智慧體也都能加入——全部呈現為同一套結構化對話，而不是一個終端機。</td>
+    <td width="50%" valign="top">🧩 <strong>一個介面，容納所有智慧體</strong><br/>內建十九個智慧體，任何相容 ACP 的智慧體也都能加入——全部呈現為同一套結構化對話，而不是一個終端機。</td>
     <td width="50%" valign="top">🔎 <strong>工作階段自由流轉</strong><br/>匯入、搜尋、接續每個智慧體留在磁碟上的歷史，還能把它交給另一個智慧體接手。</td>
   </tr>
   <tr>
@@ -101,7 +101,7 @@
 
 ### 一個介面，容納所有智慧體
 
-內建十七個智慧體，任何其他相容 ACP 的智慧體也能從公開註冊表或它的 distribution JSON 加入。Codeg 透過 Agent Client Protocol 與每一個智慧體溝通，所以它們拿到的都是同一套豐富的對話介面——工具卡片、即時 diff、計畫與權限請求——而不是一個得瞇著眼看的終端機。為智慧體啟用「介面渲染」後，它還能用可互動的卡片、表格與圖表來回覆。
+內建十九個智慧體，任何其他相容 ACP 的智慧體也能從公開註冊表或它的 distribution JSON 加入。Codeg 透過 Agent Client Protocol 與每一個智慧體溝通，所以它們拿到的都是同一套豐富的對話介面——工具卡片、即時 diff、計畫與權限請求——而不是一個得瞇著眼看的終端機。為智慧體啟用「介面渲染」後，它還能用可互動的卡片、表格與圖表來回覆。
 
 [文件 →](https://docs.codeg.app/zh/guide/supported-agents) · [自訂智慧體 →](https://docs.codeg.app/zh/guide/custom-agents) · [介面渲染 →](https://docs.codeg.app/zh/guide/skills#cards-tables-and-charts-in-replies)
 
@@ -267,7 +267,7 @@ Codeg 可以作為桌面應用、可用任何瀏覽器開啟的自架伺服器�
 
 ## 🤖 支援的智慧體
 
-Codeg 透過 [Agent Client Protocol](https://agentclientprotocol.com) 與每個智慧體溝通，所以每一個都能用上同一套結構化介面。內建十七個，其中大部分 Codeg 都能替你安裝、鎖定版本並更新：
+Codeg 透過 [Agent Client Protocol](https://agentclientprotocol.com) 與每個智慧體溝通，所以每一個都能用上同一套結構化介面。內建十九個，其中大部分 Codeg 都能替你安裝、鎖定版本並更新：
 
 <p>
   <a href="https://www.anthropic.com/claude-code"><kbd><img src="../images/agents/claude-code.svg" alt="" width="16" valign="middle" /> Claude Code</kbd></a> &nbsp;
@@ -287,6 +287,8 @@ Codeg 透過 [Agent Client Protocol](https://agentclientprotocol.com) 與每個�
   <a href="https://antigravity.google"><kbd><picture><source media="(prefers-color-scheme: dark)" srcset="../images/agents/google-antigravity-dark.svg" /><img src="../images/agents/google-antigravity.svg" alt="" width="16" valign="middle" /></picture> Google Antigravity</kbd></a> &nbsp;
   <a href="https://kiro.dev/cli/"><kbd><img src="../images/agents/kiro.svg" alt="" width="16" valign="middle" /> Kiro CLI</kbd></a> &nbsp;
   <a href="../agents/zcode.md"><kbd><img src="../images/agents/zcode.svg" alt="" width="16" valign="middle" /> ZCode</kbd></a> &nbsp;
+  <a href="https://docs.trae.cn/cli_about-trae-code-cli-2"><kbd><img src="../images/agents/trae.svg" alt="" width="16" valign="middle" /> TRAE CLI</kbd></a> &nbsp;
+  <a href="https://commandcode.ai"><kbd><img src="../images/agents/command-code.svg" alt="" width="16" valign="middle" /> Command Code</kbd></a> &nbsp;
   <a href="https://docs.codeg.app/zh/guide/custom-agents"><kbd>+ 任何 ACP 智慧體</kbd></a>
 </p>
 

@@ -1112,6 +1112,30 @@
       "apiKeyHint": "يُمرَّر إلى CLI باسم KIRO_API_KEY. اتركه فارغاً لاستخدام الحساب الذي سجلت الدخول به عبر kiro-cli login؛ لا يلزم إلا حيث يتعذر تسجيل الدخول بالمتصفح (الخوادم، Docker).",
       "saveConfig": "حفظ إعدادات Kiro"
     },
+    "trae": {
+      "configManagement": "إدارة الإعدادات",
+      "configDescription": "يتوفر TRAE CLI 2.0 لعملاء الخطة الرئيسية من TRAE Enterprise فقط. يشغّل Codeg أداة traecli التي ثبّتّها، وهي تحفظ تسجيل الدخول والمهارات وخوادم MCP في ~/.trae. النموذج والوضع ومستوى الاستدلال ليست هنا: يُبلغ عنها TRAE CLI عبر ACP، لذا تديرها محددات المحرّر لكل جلسة.",
+      "signInTitle": "تسجيل الدخول",
+      "signInHint": "شغّل هذا الأمر مرة واحدة في الطرفية لتسجيل الدخول عبر SSO الخاص بمؤسستك. تعيد جلسات Codeg استخدام تسجيل الدخول هذا.",
+      "copyCommand": "نسخ الأمر",
+      "commandCopied": "تم نسخ الأمر",
+      "patLabel": "رمز الوصول الشخصي (اختياري)",
+      "patHint": "للأجهزة التي يتعذر فيها تسجيل الدخول بالمتصفح، مثل الخوادم أو تثبيتات Docker. يمرّره Codeg إلى TRAE CLI باسم TRAECLI_PERSONAL_ACCESS_TOKEN ويسجّل الدخول به عند بدء كل جلسة. اتركه فارغاً لاستخدام تسجيل الدخول من traecli login.",
+      "hostLabel": "عنوان API الخاص بالمؤسسة (اختياري)",
+      "hostHint": "فقط إذا كانت مؤسستك تشغّل TRAE على نطاقها الخاص. يُمرَّر باسم TRAECLI_HOST؛ اتركه فارغاً لاستخدام خدمة TRAE نفسها.",
+      "saveConfig": "حفظ إعدادات TRAE CLI"
+    },
+    "commandCode": {
+      "configManagement": "إدارة الإعدادات",
+      "configDescription": "يشغّل Codeg واجهة Command Code CLI من حزمة npm المسماة command-code، وهي تحفظ تسجيل الدخول والمهارات وخوادم MCP في ~/.commandcode. النموذج والوضع ومستوى الاستدلال ليست هنا: يُبلغ عنها Command Code عبر ACP، لذا تديرها محددات المحرّر لكل جلسة.",
+      "signInTitle": "تسجيل الدخول",
+      "signInHint": "شغّل هذا الأمر مرة واحدة في الطرفية لتسجيل الدخول بحساب Command Code الخاص بك. تعيد جلسات Codeg استخدام تسجيل الدخول هذا.",
+      "copyCommand": "نسخ الأمر",
+      "commandCopied": "تم نسخ الأمر",
+      "apiKeyLabel": "مفتاح API (اختياري)",
+      "apiKeyHint": "للأجهزة التي يتعذر فيها تسجيل الدخول بالمتصفح، مثل الخوادم أو تثبيتات Docker. يُمرَّر إلى Command Code باسم COMMAND_CODE_API_KEY ويتقدّم على تسجيل الدخول من command-code login. اتركه فارغاً لاستخدام تسجيل الدخول ذاك.",
+      "saveConfig": "حفظ إعدادات Command Code"
+    },
     "deepseek": {
       "configManagement": "إعدادات DeepSeek Harness",
       "configDescription": "نقطة النهاية والمفتاح متغيّرا بيئة يقرأهما deepseek-acp عند الإقلاع. أما النموذج ومستوى الاستدلال فمحدِّدان على مستوى الجلسة، ويُختاران من حقل الإدخال.",
@@ -1607,6 +1631,10 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "تم حفظ إعدادات Kiro",
       "saveKiroFailed": "تعذّر حفظ إعدادات Kiro",
+      "traeSaved": "تم حفظ إعدادات TRAE CLI",
+      "saveTraeFailed": "تعذّر حفظ إعدادات TRAE CLI",
+      "commandCodeSaved": "تم حفظ إعدادات Command Code",
+      "saveCommandCodeFailed": "تعذّر حفظ إعدادات Command Code",
       "systemAgentAlreadyLatest": "{name} محدَّث بالفعل ({version})"
     },
     "distribution": {
@@ -2378,7 +2406,10 @@
         "commits": "الالتزامات"
       },
       "noFolderTitle": "لا يوجد مجلد مفتوح",
-      "noFolderHint": "افتح مجلدا لعرض محتواه هنا"
+      "noFolderHint": "افتح مجلدا لعرض محتواه هنا",
+      "openFullPage": "فتح في صفحة كاملة",
+      "back": "رجوع",
+      "noAutomations": "لا توجد أتمتة لهذا المشروع بعد"
     },
     "windowControls": {
       "minimizeWindow": "تصغير النافذة",
@@ -3277,6 +3308,7 @@
       },
       "messageInput": {
         "askAnything": "اسأل أي شيء...",
+        "promptSuggestion": "{suggestion} (اضغط Tab للاستخدام)",
         "removeAttachmentAria": "إزالة {name}",
         "attachFiles": "إرفاق ملفات",
         "addActions": "إضافة",
@@ -3306,6 +3338,10 @@
         "searchModelAria": "البحث عن النماذج",
         "modelListLabel": "النماذج",
         "recommendedBadge": "موصى به",
+        "recommendedValue": "موصى به: {value}",
+        "searchOptions": "البحث في الخيارات...",
+        "searchOptionsAria": "البحث في الخيارات",
+        "noOptions": "لم يتم العثور على خيارات",
         "noModels": "لم يتم العثور على نماذج",
         "cancel": "إلغاء",
         "send": "إرسال",
@@ -3918,13 +3954,16 @@
       },
       "messageNav": {
         "title": "تنقل الرسائل",
-        "collapse": "طي تنقل الرسائل",
         "loadingEarlier": "جارٍ تحميل الرسائل السابقة…",
         "loadEarlier": "تحميل الرسائل السابقة",
-        "collapsedSummary": "الرسائل {count}",
         "fileCount": "{count, plural, one {# ملف} other {# ملفات}}",
-        "remove": "إزالة",
-        "noDiffDataAvailable": "لا توجد بيانات diff متاحة لـ {filePath}"
+        "subAgentCount": "{count, plural, one {# وكيل فرعي} other {# وكلاء فرعيين}}",
+        "showDiff": "إظهار تغييرات {filePath}",
+        "hideDiff": "إخفاء تغييرات {filePath}",
+        "openFile": "فتح {filePath}",
+        "collapse": "طي",
+        "currentMessage": "الرسالة الحالية",
+        "scrollToCurrent": "التمرير إلى الرسالة الحالية (#{ordinal})"
       },
       "replyArtifacts": {
         "title": "الملفات المتغيرة",
@@ -3982,6 +4021,9 @@
         "resumeDelegation": "استئناف المهمة {task}",
         "resumeDelegationNoId": "استئناف مهمة مفوضة",
         "promptLabel": "التعليمات",
+        "ackRecorded": "سُجِّل في مهمة العمل",
+        "ackNotRecorded": "لم يُسجَّل في مهمة العمل",
+        "ackNotRecordedWithReason": "لم يُسجَّل في مهمة العمل: {reason}",
         "verdict": {
           "success": "ناجحة",
           "needs_review": "بحاجة إلى مراجعة",
@@ -4098,6 +4140,18 @@
         "tokens": "{count} رمز",
         "stopDeclined": "تعذّر إيقاف هذه المهمة، ربما تكون قد انتهت بالفعل.",
         "stopFailed": "فشل إيقاف المهمة: {error}"
+      },
+      "remoteControl": {
+        "title": "التحكم عن بُعد مُفعّل",
+        "open": "فتح في المتصفح",
+        "copy": "نسخ الرابط",
+        "copied": "تم النسخ",
+        "qr": "رمز QR",
+        "qrLabel": "رمز QR لرابط التحكم عن بُعد لهذه الجلسة",
+        "qrHint": "امسحه بهاتفك لمتابعة هذه الجلسة في تطبيق Claude أو على claude.ai/code.",
+        "noUrl": "لم يُرجع Claude Code رابطًا لهذه الجلسة",
+        "turnOff": "إيقاف",
+        "turnOffBusy": "متاح بعد أن ينتهي Claude"
       },
       "proposedPlan": {
         "title": "الخطة المقترحة",
