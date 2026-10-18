@@ -70,6 +70,7 @@ export function DelegationStatusGroupCard({
             report={r.report}
             badge={r.badge}
             results={r.results}
+            runningConfirmed={r.runningConfirmed}
           />
         </div>
       ))}

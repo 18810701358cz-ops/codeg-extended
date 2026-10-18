@@ -4422,6 +4422,8 @@ mod tests {
         assert!(agents.iter().any(|a| a == "antigravity"));
         assert!(agents.iter().any(|a| a == "kiro"));
         assert!(agents.iter().any(|a| a == "zcode"));
+        assert!(agents.iter().any(|a| a == "trae"));
+        assert!(agents.iter().any(|a| a == "command_code"));
         // get_delegation_status takes a single id param — task_ids (required) —
         // plus wait_ms. The legacy single `task_id` param is gone.
         let status = tools
@@ -4540,6 +4542,8 @@ mod tests {
         assert_eq!(agents[14], "antigravity");
         assert_eq!(agents[15], "kiro");
         assert_eq!(agents[16], "zcode");
+        assert_eq!(agents[17], "trae");
+        assert_eq!(agents[18], "command_code");
     }
 
     #[tokio::test]

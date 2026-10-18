@@ -12,7 +12,7 @@ import {
 import type { Components } from "streamdown"
 import { ImageOff, Loader2 } from "lucide-react"
 import { useTranslations } from "next-intl"
-import { readWorkspaceFileBase64 } from "@/lib/api"
+import { readFileBase64, readWorkspaceFileBase64 } from "@/lib/api"
 import {
   createLocalImageLoader,
   resolveLocalImage,
@@ -42,7 +42,13 @@ export function MarkdownImageProvider({
       rootPath
         ? {
             root: rootPath,
-            load: createLocalImageLoader(rootPath, readWorkspaceFileBase64),
+            // Outside the root: the file panel's own reader, as for a path
+            // the user clicks.
+            load: createLocalImageLoader(
+              rootPath,
+              readWorkspaceFileBase64,
+              readFileBase64
+            ),
           }
         : null,
     [rootPath]

@@ -1235,7 +1235,7 @@ pub(crate) fn qoder_ask_envelope_from_recorded(recorded: &Value) -> Option<Strin
 /// The start and end of the sentence Qoder's `AskUserQuestion` returns once
 /// questions are answered (deobfuscated from the 1.1.67 bundle; the same
 /// strings ship in every release from 1.1.23 through 1.1.69, and again in
-/// 1.1.72).
+/// 1.1.72 and 1.1.73).
 const QODER_ANSWERED_PREFIX: &str = "Your questions have been answered: ";
 const QODER_ANSWERED_SUFFIX: &str = ". You can now continue with these answers in mind.";
 

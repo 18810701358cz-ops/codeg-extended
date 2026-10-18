@@ -15,9 +15,11 @@ import type {
   SessionFailureRecord,
   SessionModeInfo,
   AvailableCommandInfo,
+  RemoteControlInfo,
 } from "@/lib/types"
 import { ComposerStatusStrips } from "@/components/chat/composer-status-strips"
 import { AsyncTaskStrip } from "@/components/chat/async-task-strip"
+import { RemoteControlStrip } from "@/components/chat/remote-control-strip"
 import type {
   PendingPermission,
   PendingQuestion,
@@ -57,6 +59,12 @@ interface ConversationShellProps {
   /** Stops one async task. Omitted for read-only surfaces — the stop buttons
    *  are then hidden, which is right: a viewer has no connection to ask. */
   onStopAsyncTask?: (taskId: string) => Promise<boolean>
+  /** Claude Code's Remote Control while it is on; its strip shows the
+   *  session's link and QR code. Omit/`null` renders nothing. */
+  remoteControl?: RemoteControlInfo | null
+  /** Turns Remote Control off (sends `/remote-control off`). Omitted for
+   *  surfaces without a connection of their own — the button is then hidden. */
+  onRemoteControlOff?: () => void
   pendingPermission: PendingPermission | null
   pendingQuestion: PendingQuestion | null
   /** Awaiting-answer multiple-choice `ask_user_question`. */
@@ -87,6 +95,9 @@ interface ConversationShellProps {
   onConfigOptionChange?: (configId: string, valueId: string) => void
   agentType?: AgentType | null
   availableCommands?: AvailableCommandInfo[] | null
+  /** The prompt the agent predicts the user will send next; the empty
+   *  composer offers it (see `MessageInput.promptSuggestion`). */
+  promptSuggestion?: string | null
   attachmentTabId?: string | null
   /** Pass-through: see `MessageInput`. */
   folderPickerOverride?: ConversationFolderPickerOverride
@@ -166,6 +177,8 @@ export function ConversationShell({
   onSessionFailureDismiss,
   asyncTasks,
   onStopAsyncTask,
+  remoteControl,
+  onRemoteControlOff,
   pendingPermission,
   pendingQuestion,
   pendingAskQuestion,
@@ -188,6 +201,7 @@ export function ConversationShell({
   onConfigOptionChange,
   agentType,
   availableCommands,
+  promptSuggestion,
   attachmentTabId,
   folderPickerOverride,
   draftStorageKey,
@@ -232,6 +246,13 @@ export function ConversationShell({
           messages scroll under it — the stop button doesn't move out from under
           the pointer. The dock below is for things that come and go with the
           turn or the connection (`ComposerStatusStrips`). */}
+      {remoteControl && (
+        <RemoteControlStrip
+          remoteControl={remoteControl}
+          onTurnOff={onRemoteControlOff}
+          canTurnOff={status === "connected"}
+        />
+      )}
       {asyncTasks && asyncTasks.length > 0 && (
         <AsyncTaskStrip tasks={asyncTasks} onStop={onStopAsyncTask} />
       )}
@@ -306,6 +327,7 @@ export function ConversationShell({
               onConfigOptionChange={onConfigOptionChange}
               agentType={agentType}
               availableCommands={availableCommands}
+              promptSuggestion={promptSuggestion}
               attachmentTabId={attachmentTabId}
               folderPickerOverride={folderPickerOverride}
               draftStorageKey={draftStorageKey}

@@ -1115,6 +1115,16 @@ export function SidebarConversationList({
   const [manageFolderId, setManageFolderId] = useState<number | null>(null)
   const [cloneOpen, setCloneOpen] = useState(false)
   const [browserOpen, setBrowserOpen] = useState(false)
+  // The folder group each dialog's folder lands in: set by a group heading's
+  // own Clone Repository / Open Folder actions, and reset to `null` (top level,
+  // where opening puts a folder anyway) by every other entry point — so each
+  // opening states its own destination and none inherits a stale one.
+  const [cloneTargetGroupId, setCloneTargetGroupId] = useState<number | null>(
+    null
+  )
+  const [browserTargetGroupId, setBrowserTargetGroupId] = useState<
+    number | null
+  >(null)
   const [remoteManageOpen, setRemoteManageOpen] = useState(false)
   // Backs the list context menu's "Open remote workspace" submenu. Shared with
   // the status bar's quick-actions menu, which renders the same list from the
@@ -1194,6 +1204,17 @@ export function SidebarConversationList({
     setFolderGroupExpanded((prev) => {
       // Absent key = expanded, so the first click has to write `false`.
       const next = { ...prev, [groupId]: !(prev[groupId] ?? true) }
+      saveFolderGroupExpanded(next)
+      return next
+    })
+  }, [])
+
+  /** Open one group (no-op when it already is), e.g. to show a folder that was
+   *  just filed into it. Same object back when nothing changes, so no write. */
+  const expandFolderGroup = useCallback((groupId: number) => {
+    setFolderGroupExpanded((prev) => {
+      if (prev[groupId] ?? true) return prev
+      const next = { ...prev, [groupId]: true }
       saveFolderGroupExpanded(next)
       return next
     })
@@ -2231,6 +2252,43 @@ export function SidebarConversationList({
     [setFolderGroupAction, t]
   )
 
+  // Files a folder just opened from a group heading's own Clone Repository /
+  // Open Folder actions into that group, then opens the group so the folder is
+  // seen arriving. Opening always lands a NEW folder at the top level (and a
+  // reopened one wherever it used to be), so this is the same append-to-group
+  // move the "Move to group" menu makes, as a second step.
+  const placeOpenedFolderInGroup = useCallback(
+    async (folder: FolderDetail, groupId: number) => {
+      const { folders: openFolders, folderGroups: groups } =
+        useAppWorkspaceStore.getState()
+      // Deleted while its dialog was open (here or in another window): the
+      // folder simply stays where opening put it.
+      if (!groups.some((g) => g.id === groupId)) return
+      // A worktree whose repo is open has no row of its own — it follows its
+      // repo, wherever that sits — so there is nothing to move. The reason its
+      // header has no "Move to group" submenu either.
+      if (
+        folder.parent_id != null &&
+        openFolders.some((f) => f.id === folder.parent_id)
+      )
+        return
+      // Already a member (it was reopened, or opened again while open): moving
+      // it would only shuffle it to the end of the group.
+      if (folder.group_id !== groupId) {
+        try {
+          await setFolderGroupAction(folder.id, groupId)
+        } catch (e) {
+          toast.error(
+            t("toasts.moveToGroupFailed", { message: toErrorMessage(e) })
+          )
+          return
+        }
+      }
+      expandFolderGroup(groupId)
+    },
+    [setFolderGroupAction, expandFolderGroup, t]
+  )
+
   const confirmNewGroup = useCallback(async () => {
     const name = newGroupName.trim() || t("folderGroup.defaultName")
     const folderId = pendingGroupFolderId
@@ -2602,14 +2660,52 @@ export function SidebarConversationList({
   // One dialog everywhere: it owns directory selection *and* the follow-up
   // step that links other folders in, so the native picker can't be a separate
   // path that skips half the flow (it is still offered inside the dialog on
-  // local desktop). Empty deps — `setBrowserOpen` is a stable setter — so the
-  // memoized section header doesn't re-render on every parent render.
-  const handleOpenFolderAction = useCallback(() => setBrowserOpen(true), [])
+  // local desktop). Empty deps — both setters are stable — so the memoized
+  // section header doesn't re-render on every parent render. Not group-scoped:
+  // the folder lands at the top level.
+  const handleOpenFolderAction = useCallback(() => {
+    setBrowserTargetGroupId(null)
+    setBrowserOpen(true)
+  }, [])
 
   // Stable trigger for the Clone Repository dialog, passed to the memoized
-  // Folders section header. Empty deps (setCloneOpen is a stable setter) so the
-  // header doesn't re-render on every parent render.
-  const handleOpenCloneDialog = useCallback(() => setCloneOpen(true), [])
+  // Folders section header. Empty deps (both setters are stable) so the header
+  // doesn't re-render on every parent render. Not group-scoped either.
+  const handleOpenCloneDialog = useCallback(() => {
+    setCloneTargetGroupId(null)
+    setCloneOpen(true)
+  }, [])
+
+  // The same two dialogs opened from a group heading's own actions: whatever
+  // folder they open is filed into that group. Stable (setters only) for the
+  // memoized group headings.
+  const handleOpenFolderInGroup = useCallback((groupId: number) => {
+    setBrowserTargetGroupId(groupId)
+    setBrowserOpen(true)
+  }, [])
+  const handleCloneIntoGroup = useCallback((groupId: number) => {
+    setCloneTargetGroupId(groupId)
+    setCloneOpen(true)
+  }, [])
+
+  // Each dialog reports every folder it opens. The target is read from this
+  // render's closure, which is the one a dialog's in-flight open captured — so
+  // a slow clone still lands in the group it was started from even if the
+  // dialog was reopened from somewhere else before it finished.
+  const handleBrowserFolderOpened = useCallback(
+    (folder: FolderDetail) => {
+      if (browserTargetGroupId == null) return
+      void placeOpenedFolderInGroup(folder, browserTargetGroupId)
+    },
+    [browserTargetGroupId, placeOpenedFolderInGroup]
+  )
+  const handleClonedFolderOpened = useCallback(
+    (folder: FolderDetail) => {
+      if (cloneTargetGroupId == null) return
+      void placeOpenedFolderInGroup(folder, cloneTargetGroupId)
+    },
+    [cloneTargetGroupId, placeOpenedFolderInGroup]
+  )
 
   const handleProjectBoot = useCallback(() => {
     openProjectBootWindow().catch((err) => {
@@ -2854,6 +2950,10 @@ export function SidebarConversationList({
           onRename={handleRenameGroup}
           onChangeColor={handleChangeGroupColor}
           onDelete={handleDeleteGroup}
+          // The Folders heading's "add a folder" pair, filing the new folder
+          // into this group. Both callbacks are stable, so the memo holds.
+          onOpenFolder={handleOpenFolderInGroup}
+          onCloneRepository={handleCloneIntoGroup}
           themeColor={normalizeFolderThemeColor(group.color)}
           appThemeColor={appThemeColor}
           isDragging={dragging?.kind === "group" && dragging.id === row.groupId}
@@ -3159,7 +3259,7 @@ export function SidebarConversationList({
             variant="outline"
             size="sm"
             className="w-full max-w-[14rem] justify-start"
-            onClick={() => setCloneOpen(true)}
+            onClick={handleOpenCloneDialog}
           >
             <FolderGit2 className="h-3.5 w-3.5 mr-1.5" />
             {tFolderDropdown("cloneRepository")}
@@ -3351,7 +3451,7 @@ export function SidebarConversationList({
               <FolderOpenDot className="h-4 w-4" />
               {tFolderDropdown("openFolder")}
             </ContextMenuItem>
-            <ContextMenuItem onSelect={() => setCloneOpen(true)}>
+            <ContextMenuItem onSelect={handleOpenCloneDialog}>
               <FolderGit2 className="h-4 w-4" />
               {tFolderDropdown("cloneRepository")}
             </ContextMenuItem>
@@ -3521,8 +3621,16 @@ export function SidebarConversationList({
         />
       )}
 
-      <CloneDialog open={cloneOpen} onOpenChange={setCloneOpen} />
-      <WorkspaceFolderDialog open={browserOpen} onOpenChange={setBrowserOpen} />
+      <CloneDialog
+        open={cloneOpen}
+        onOpenChange={setCloneOpen}
+        onFolderOpened={handleClonedFolderOpened}
+      />
+      <WorkspaceFolderDialog
+        open={browserOpen}
+        onOpenChange={setBrowserOpen}
+        onFolderOpened={handleBrowserFolderOpened}
+      />
       {/* Sibling of the context menu, never a child of it: the menu unmounts
           its content on close, which would take a nested dialog with it. Mounted
           only where its submenu exists, so web builds don't carry a dialog

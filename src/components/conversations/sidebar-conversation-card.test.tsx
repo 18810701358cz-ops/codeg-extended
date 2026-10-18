@@ -647,6 +647,21 @@ describe("SidebarConversationCard hover details bubble", () => {
     expect(screen.queryByText(FOLDER_PATH)).toBeNull()
   })
 
+  it("leaves a removed source worktree to the bubble, with no mark on the row", () => {
+    const origin = "/Users/dev/projects/codeg-feature-x"
+    const { container } = renderCard({ ...conv(1), origin_cwd: origin })
+
+    expect(screen.queryByText("Source worktree removed")).toBeNull()
+    expect(screen.queryByTitle("Source worktree removed")).toBeNull()
+
+    fireEvent.pointerEnter(rowOf(container), { pointerType: "mouse" })
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(screen.getByText("Source worktree removed")).toBeDefined()
+    expect(screen.getByText(origin)).toBeDefined()
+  })
+
   // NOT covered here: touch. Radix's `excludeTouch` drops enter/leave whose
   // `pointerType === "touch"`, so a tap never strands a bubble on screen — but
   // jsdom ships no `PointerEvent`, so every synthetic pointer event arrives as a

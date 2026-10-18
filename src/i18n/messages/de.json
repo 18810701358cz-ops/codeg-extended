@@ -1112,6 +1112,30 @@
       "apiKeyHint": "Wird der CLI als KIRO_API_KEY übergeben. Leer lassen, um das per kiro-cli login angemeldete Konto zu nutzen; nur nötig, wo keine Browser-Anmeldung möglich ist (Server, Docker).",
       "saveConfig": "Kiro-Konfiguration speichern"
     },
+    "trae": {
+      "configManagement": "Konfiguration",
+      "configDescription": "TRAE CLI 2.0 steht nur Kunden des Flaggschiff-Tarifs von TRAE Enterprise zur Verfügung. Codeg startet das von dir installierte traecli, das Anmeldung, Skills und MCP-Server in ~/.trae speichert. Modell, Modus und Denkaufwand stehen nicht hier: TRAE CLI meldet sie über ACP, daher verwalten die Auswahlfelder im Eingabebereich sie pro Sitzung.",
+      "signInTitle": "Anmelden",
+      "signInHint": "Führe dies einmal in einem Terminal aus, um dich mit dem SSO deines Unternehmens anzumelden. Sitzungen in Codeg verwenden diese Anmeldung wieder.",
+      "copyCommand": "Befehl kopieren",
+      "commandCopied": "Befehl kopiert",
+      "patLabel": "Persönliches Zugriffstoken (optional)",
+      "patHint": "Für Rechner, auf denen keine Browser-Anmeldung möglich ist, etwa Server oder Docker-Installationen. Codeg übergibt es TRAE CLI als TRAECLI_PERSONAL_ACCESS_TOKEN und meldet sich bei jedem Sitzungsstart damit an. Leer lassen, um die Anmeldung aus traecli login zu nutzen.",
+      "hostLabel": "Enterprise-API-URL (optional)",
+      "hostHint": "Nur wenn deine Organisation TRAE unter einer eigenen Domain betreibt. Wird als TRAECLI_HOST übergeben; leer lassen für den Dienst von TRAE.",
+      "saveConfig": "TRAE CLI-Konfiguration speichern"
+    },
+    "commandCode": {
+      "configManagement": "Konfiguration",
+      "configDescription": "Codeg startet die Command Code CLI aus dem npm-Paket command-code, die Anmeldung, Skills und MCP-Server in ~/.commandcode speichert. Modell, Modus und Denkaufwand stehen nicht hier: Command Code meldet sie über ACP, daher verwalten die Auswahlfelder im Eingabebereich sie pro Sitzung.",
+      "signInTitle": "Anmelden",
+      "signInHint": "Führe dies einmal in einem Terminal aus, um dich mit deinem Command Code-Konto anzumelden. Sitzungen in Codeg verwenden diese Anmeldung wieder.",
+      "copyCommand": "Befehl kopieren",
+      "commandCopied": "Befehl kopiert",
+      "apiKeyLabel": "API-Schlüssel (optional)",
+      "apiKeyHint": "Für Rechner, auf denen keine Browser-Anmeldung möglich ist, etwa Server oder Docker-Installationen. Wird Command Code als COMMAND_CODE_API_KEY übergeben und hat Vorrang vor der Anmeldung aus command-code login. Leer lassen, um diese Anmeldung zu nutzen.",
+      "saveConfig": "Command Code-Konfiguration speichern"
+    },
     "deepseek": {
       "configManagement": "DeepSeek-Harness-Konfiguration",
       "configDescription": "Endpunkt und Schlüssel sind Umgebungsvariablen, die deepseek-acp beim Start liest. Modell und Denkstufe sind Auswahlfelder pro Sitzung — sie werden im Eingabefeld gewählt.",
@@ -1607,6 +1631,10 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "Kiro-Konfiguration gespeichert",
       "saveKiroFailed": "Kiro-Konfiguration konnte nicht gespeichert werden",
+      "traeSaved": "TRAE CLI-Konfiguration gespeichert",
+      "saveTraeFailed": "TRAE CLI-Konfiguration konnte nicht gespeichert werden",
+      "commandCodeSaved": "Command Code-Konfiguration gespeichert",
+      "saveCommandCodeFailed": "Command Code-Konfiguration konnte nicht gespeichert werden",
       "systemAgentAlreadyLatest": "{name} ist bereits aktuell ({version})"
     },
     "distribution": {
@@ -2378,7 +2406,10 @@
         "commits": "Einträge"
       },
       "noFolderTitle": "Kein Ordner geöffnet",
-      "noFolderHint": "Öffnen Sie einen Ordner, um seinen Inhalt hier zu sehen"
+      "noFolderHint": "Öffnen Sie einen Ordner, um seinen Inhalt hier zu sehen",
+      "openFullPage": "Als ganze Seite öffnen",
+      "back": "Zurück",
+      "noAutomations": "Für dieses Projekt gibt es noch keine Automatisierungen"
     },
     "windowControls": {
       "minimizeWindow": "Fenster minimieren",
@@ -3277,6 +3308,7 @@
       },
       "messageInput": {
         "askAnything": "Fragen Sie alles...",
+        "promptSuggestion": "{suggestion} (Tab zum Übernehmen)",
         "removeAttachmentAria": "{name} entfernen",
         "attachFiles": "Dateien anhängen",
         "addActions": "Hinzufügen",
@@ -3306,6 +3338,10 @@
         "searchModelAria": "Modelle suchen",
         "modelListLabel": "Modelle",
         "recommendedBadge": "Empfohlen",
+        "recommendedValue": "Empfohlen: {value}",
+        "searchOptions": "Optionen suchen...",
+        "searchOptionsAria": "Optionen suchen",
+        "noOptions": "Keine Optionen gefunden",
         "noModels": "Keine Modelle gefunden",
         "cancel": "Abbrechen",
         "send": "Senden",
@@ -3918,13 +3954,16 @@
       },
       "messageNav": {
         "title": "Nachrichtennavigation",
-        "collapse": "Nachrichtennavigation ausblenden",
         "loadingEarlier": "Frühere Nachrichten werden geladen…",
         "loadEarlier": "Frühere Nachrichten laden",
-        "collapsedSummary": "Nachrichten {count}",
         "fileCount": "{count, plural, one {# Datei} other {# Dateien}}",
-        "remove": "Entfernen",
-        "noDiffDataAvailable": "Keine Diff-Daten verfügbar für {filePath}"
+        "subAgentCount": "{count, plural, one {# Subagent} other {# Subagenten}}",
+        "showDiff": "Änderungen an {filePath} anzeigen",
+        "hideDiff": "Änderungen an {filePath} ausblenden",
+        "openFile": "{filePath} öffnen",
+        "collapse": "Einklappen",
+        "currentMessage": "Aktuelle Nachricht",
+        "scrollToCurrent": "Zur aktuellen Nachricht (#{ordinal}) scrollen"
       },
       "replyArtifacts": {
         "title": "Geänderte Dateien",
@@ -3982,6 +4021,9 @@
         "resumeDelegation": "Aufgabe {task} wird fortgesetzt",
         "resumeDelegationNoId": "Delegierte Aufgabe wird fortgesetzt",
         "promptLabel": "Anweisung",
+        "ackRecorded": "In der Arbeitsaufgabe erfasst",
+        "ackNotRecorded": "Nicht in der Arbeitsaufgabe erfasst",
+        "ackNotRecordedWithReason": "Nicht in der Arbeitsaufgabe erfasst: {reason}",
         "verdict": {
           "success": "erfolgreich",
           "needs_review": "Prüfung nötig",
@@ -4098,6 +4140,18 @@
         "tokens": "{count} Tokens",
         "stopDeclined": "Diese Aufgabe konnte nicht gestoppt werden – sie ist möglicherweise bereits beendet.",
         "stopFailed": "Aufgabe konnte nicht gestoppt werden: {error}"
+      },
+      "remoteControl": {
+        "title": "Fernsteuerung aktiv",
+        "open": "Im Browser öffnen",
+        "copy": "Link kopieren",
+        "copied": "Kopiert",
+        "qr": "QR-Code",
+        "qrLabel": "QR-Code des Fernsteuerungs-Links dieser Sitzung",
+        "qrHint": "Mit dem Handy scannen, um diese Sitzung in der Claude-App oder auf claude.ai/code fortzusetzen.",
+        "noUrl": "Claude Code hat keinen Link für diese Sitzung zurückgegeben",
+        "turnOff": "Ausschalten",
+        "turnOffBusy": "Verfügbar, sobald Claude fertig ist"
       },
       "proposedPlan": {
         "title": "Vorgeschlagener Plan",

@@ -827,7 +827,8 @@ impl ConnectionManager {
     /// "Idle" means: status is `Connected`, no `pending_permission`, no
     /// launched-but-unresolved background work (async sub-agent / background
     /// shell — disconnecting kills the agent CLI and the background work with
-    /// it), and no activity (no events, no commands) for at least
+    /// it), no Claude Remote Control (it runs in the same CLI), and no activity
+    /// (no events, no commands) for at least
     /// `idle_timeout`. `Prompting` connections are always preserved (a turn is
     /// in flight). Returns the number of connections that were disconnected.
     pub async fn sweep_idle(&self, idle_timeout: Duration) -> usize {
@@ -853,6 +854,13 @@ impl ConnectionManager {
                     continue;
                 }
                 if state.has_active_background_work(now) {
+                    continue;
+                }
+                // Claude Code's Remote Control runs in the agent CLI: the user
+                // handed the session to claude.ai/code or a phone, and
+                // disconnecting would end it there. It stays until they turn it
+                // off or close the connection themselves.
+                if state.remote_control.is_some() {
                     continue;
                 }
                 let elapsed = now.signed_duration_since(state.last_activity_at);
@@ -7871,6 +7879,53 @@ mod tests {
         }
         let n = mgr.sweep_idle(Duration::from_secs(300)).await;
         assert_eq!(n, 1, "settled background work no longer exempts the sweep");
+    }
+
+    #[tokio::test]
+    async fn sweep_idle_skips_remote_control() {
+        let mgr = ConnectionManager::new();
+        insert_fake_connection(
+            &mgr,
+            "remote",
+            AgentType::ClaudeCode,
+            None,
+            EventEmitter::Noop,
+        )
+        .await;
+        {
+            let state = mgr.get_state("remote").await.unwrap();
+            state
+                .write()
+                .await
+                .apply_event(&crate::acp::types::AcpEvent::RemoteControl {
+                    remote_control: Some(crate::acp::types::RemoteControlInfo {
+                        session_url: Some("https://claude.ai/code/session_01".into()),
+                    }),
+                });
+        }
+        // After the event, which counts as activity itself.
+        backdate_last_activity(&mgr, "remote", 600).await;
+        let n = mgr.sweep_idle(Duration::from_secs(300)).await;
+        assert_eq!(
+            n, 0,
+            "a connection with Remote Control on must not be swept \
+             (disconnecting kills the CLI and ends the remote session)"
+        );
+        assert!(mgr.connections.lock().await.contains_key("remote"));
+
+        // Turned off, the same connection is sweepable again.
+        {
+            let state = mgr.get_state("remote").await.unwrap();
+            state
+                .write()
+                .await
+                .apply_event(&crate::acp::types::AcpEvent::RemoteControl {
+                    remote_control: None,
+                });
+        }
+        backdate_last_activity(&mgr, "remote", 600).await;
+        let n = mgr.sweep_idle(Duration::from_secs(300)).await;
+        assert_eq!(n, 1, "Remote Control off no longer exempts the sweep");
     }
 
     #[tokio::test]

@@ -1112,6 +1112,30 @@
       "apiKeyHint": "KIRO_API_KEY로 CLI에 전달됩니다. 비워 두면 kiro-cli login으로 로그인한 계정을 사용합니다. 브라우저 로그인이 불가능한 환경(서버, Docker)에서만 필요합니다.",
       "saveConfig": "Kiro 구성 저장"
     },
+    "trae": {
+      "configManagement": "구성 관리",
+      "configDescription": "TRAE CLI 2.0은 TRAE 엔터프라이즈 플래그십 요금제 고객만 사용할 수 있습니다. Codeg는 설치된 traecli를 실행하며, 로그인 정보·스킬·MCP 서버는 ~/.trae에 저장됩니다. 모델, 모드, 추론 강도는 여기에 없습니다. TRAE CLI가 ACP로 보고하므로 입력창의 선택기가 세션별로 관리합니다.",
+      "signInTitle": "로그인",
+      "signInHint": "터미널에서 이 명령을 한 번 실행해 엔터프라이즈 SSO로 로그인하세요. Codeg의 세션은 그 로그인을 재사용합니다.",
+      "copyCommand": "명령 복사",
+      "commandCopied": "명령을 복사했습니다",
+      "patLabel": "개인 액세스 토큰(선택)",
+      "patHint": "서버나 Docker처럼 브라우저 로그인이 불가능한 머신용입니다. Codeg는 TRAECLI_PERSONAL_ACCESS_TOKEN으로 TRAE CLI에 전달하고 세션을 시작할 때마다 이 토큰으로 로그인합니다. 비워 두면 traecli login의 로그인을 사용합니다.",
+      "hostLabel": "엔터프라이즈 API URL(선택)",
+      "hostHint": "조직이 자체 도메인에서 TRAE를 운영하는 경우에만 입력하세요. TRAECLI_HOST로 전달되며, 비워 두면 TRAE 공식 서비스를 사용합니다.",
+      "saveConfig": "TRAE CLI 구성 저장"
+    },
+    "commandCode": {
+      "configManagement": "구성 관리",
+      "configDescription": "Codeg는 command-code npm 패키지의 Command Code CLI를 실행하며, 로그인 정보·스킬·MCP 서버는 ~/.commandcode에 저장됩니다. 모델, 모드, 추론 강도는 여기에 없습니다. Command Code가 ACP로 보고하므로 입력창의 선택기가 세션별로 관리합니다.",
+      "signInTitle": "로그인",
+      "signInHint": "터미널에서 이 명령을 한 번 실행해 Command Code 계정으로 로그인하세요. Codeg의 세션은 그 로그인을 재사용합니다.",
+      "copyCommand": "명령 복사",
+      "commandCopied": "명령을 복사했습니다",
+      "apiKeyLabel": "API 키(선택)",
+      "apiKeyHint": "서버나 Docker처럼 브라우저 로그인이 불가능한 머신용입니다. COMMAND_CODE_API_KEY로 Command Code에 전달되며 command-code login의 로그인보다 우선합니다. 비워 두면 그 로그인을 사용합니다.",
+      "saveConfig": "Command Code 구성 저장"
+    },
     "deepseek": {
       "configManagement": "DeepSeek Harness 구성",
       "configDescription": "엔드포인트와 API 키는 deepseek-acp가 시작할 때 읽는 환경 변수입니다. 모델과 추론 강도는 세션별 선택기이므로 입력창에서 바꿉니다.",
@@ -1607,6 +1631,10 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "Kiro 구성을 저장했습니다",
       "saveKiroFailed": "Kiro 구성을 저장하지 못했습니다",
+      "traeSaved": "TRAE CLI 구성을 저장했습니다",
+      "saveTraeFailed": "TRAE CLI 구성을 저장하지 못했습니다",
+      "commandCodeSaved": "Command Code 구성을 저장했습니다",
+      "saveCommandCodeFailed": "Command Code 구성을 저장하지 못했습니다",
       "systemAgentAlreadyLatest": "{name}은(는) 이미 최신 버전입니다({version})"
     },
     "distribution": {
@@ -2378,7 +2406,10 @@
         "commits": "커밋"
       },
       "noFolderTitle": "열린 폴더 없음",
-      "noFolderHint": "폴더를 열면 여기에 표시됩니다"
+      "noFolderHint": "폴더를 열면 여기에 표시됩니다",
+      "openFullPage": "전체 페이지에서 열기",
+      "back": "뒤로",
+      "noAutomations": "이 프로젝트에는 아직 자동화가 없습니다"
     },
     "windowControls": {
       "minimizeWindow": "창 최소화",
@@ -3277,6 +3308,7 @@
       },
       "messageInput": {
         "askAnything": "무엇이든 물어보세요...",
+        "promptSuggestion": "{suggestion} (Tab 키로 입력)",
         "removeAttachmentAria": "{name} 제거",
         "attachFiles": "파일 첨부",
         "addActions": "추가",
@@ -3306,6 +3338,10 @@
         "searchModelAria": "모델 검색",
         "modelListLabel": "모델",
         "recommendedBadge": "권장",
+        "recommendedValue": "권장: {value}",
+        "searchOptions": "옵션 검색...",
+        "searchOptionsAria": "옵션 검색",
+        "noOptions": "옵션을 찾을 수 없습니다",
         "noModels": "모델을 찾을 수 없습니다",
         "cancel": "취소",
         "send": "보내기",
@@ -3918,13 +3954,16 @@
       },
       "messageNav": {
         "title": "메시지 탐색",
-        "collapse": "메시지 탐색 접기",
         "loadingEarlier": "이전 메시지를 불러오는 중…",
         "loadEarlier": "이전 메시지 불러오기",
-        "collapsedSummary": "메시지 {count}",
         "fileCount": "{count, plural, one {#개 파일} other {#개 파일}}",
-        "remove": "제거",
-        "noDiffDataAvailable": "{filePath}에 대한 diff 데이터가 없습니다"
+        "subAgentCount": "{count, plural, one {서브 에이전트 #개} other {서브 에이전트 #개}}",
+        "showDiff": "{filePath}의 변경 사항 보기",
+        "hideDiff": "{filePath}의 변경 사항 숨기기",
+        "openFile": "{filePath} 열기",
+        "collapse": "접기",
+        "currentMessage": "현재 메시지",
+        "scrollToCurrent": "현재 메시지(#{ordinal})로 스크롤"
       },
       "replyArtifacts": {
         "title": "변경된 파일",
@@ -3982,6 +4021,9 @@
         "resumeDelegation": "작업 {task} 재개 중",
         "resumeDelegationNoId": "위임 작업 재개 중",
         "promptLabel": "프롬프트",
+        "ackRecorded": "작업 항목에 기록됨",
+        "ackNotRecorded": "작업 항목에 기록되지 않음",
+        "ackNotRecordedWithReason": "작업 항목에 기록되지 않음: {reason}",
         "verdict": {
           "success": "성공",
           "needs_review": "검토 필요",
@@ -4098,6 +4140,18 @@
         "tokens": "{count} 토큰",
         "stopDeclined": "해당 작업을 중지할 수 없습니다. 이미 완료되었을 수 있습니다.",
         "stopFailed": "작업 중지에 실패했습니다: {error}"
+      },
+      "remoteControl": {
+        "title": "원격 제어 켜짐",
+        "open": "브라우저에서 열기",
+        "copy": "링크 복사",
+        "copied": "복사됨",
+        "qr": "QR 코드",
+        "qrLabel": "이 세션의 원격 제어 링크 QR 코드",
+        "qrHint": "휴대폰으로 스캔하면 Claude 앱이나 claude.ai/code에서 이 세션을 이어갈 수 있습니다.",
+        "noUrl": "Claude Code가 이 세션의 링크를 반환하지 않았습니다",
+        "turnOff": "끄기",
+        "turnOffBusy": "Claude가 작업을 마치면 사용할 수 있습니다"
       },
       "proposedPlan": {
         "title": "제안된 계획",
