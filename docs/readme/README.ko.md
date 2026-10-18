@@ -263,6 +263,7 @@ Codeg를 데스크톱 앱으로, 어떤 브라우저에서든 여는 자체 호�
 - **[내 취향대로](https://docs.codeg.app/reference/settings/appearance)** — 토큰 단위로 색을 바꿀 수 있는 열두 가지 테마, 배경화면, 모서리 둥글기, 채팅 너비, 사용자 지정 CSS, 데스크톱 펫 — 열 가지 인터페이스 언어 중 어느 언어로든
 - **[백업과 동기화](https://docs.codeg.app/reference/settings/system#backup-restore)** — 암호화된 백업, 그리고 파일이나 직접 운영하는 WebDAV 서버를 통한 컴퓨터 간 설정 동기화
 - **[URL 스킴](../../docs/url-scheme.md)** — `codeg://session/<id>`로 다른 앱에서 대화를 엽니다(데스크톱)
+- **[명령줄](../../docs/cli.md)** — `codeg-cli`로 스크립트나 CI 작업에서 실행 중인 Codeg(데스크톱 또는 서버)에 프롬프트를 보내고, 응답이나 JSON 이벤트를 출력합니다
 - **그 밖에도** — 거의 모든 릴리스마다 새로운 것이 더해집니다. 전체 목록은 [릴리스 노트](https://github.com/spacering-net/codeg/releases)에 있습니다
 
 ## 🤖 지원 에이전트

@@ -263,6 +263,7 @@ An editor, live and side-by-side diffs, a full git client with a three-pane merg
 - **[Make It Yours](https://docs.codeg.app/reference/settings/appearance)** — twelve themes you can recolor token by token, wallpapers, corner radius, chat width, custom CSS, and a desktop pet — in any of ten interface languages
 - **[Backup & Sync](https://docs.codeg.app/reference/settings/system#backup-restore)** — encrypted backups, and configuration sync between machines through a file or your own WebDAV server
 - **[URL Scheme](./docs/url-scheme.md)** — `codeg://session/<id>` opens a conversation from another app (desktop)
+- **[Command Line](./docs/cli.md)** — `codeg-cli` runs a prompt through a running Codeg, desktop or server, from a script or a CI job, and prints the reply or JSON events
 - **And more** — nearly every release adds something; the [release notes](https://github.com/spacering-net/codeg/releases) are the full list
 
 ## 🤖 Supported Agents

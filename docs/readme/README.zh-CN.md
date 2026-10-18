@@ -263,6 +263,7 @@ Codeg 可以作为桌面应用运行，也可以作为用任意浏览器访问�
 - **[外观自定义](https://docs.codeg.app/zh/reference/settings/appearance)** — 十二套主题都能逐个色彩 token 重新调色，还有壁纸、圆角、聊天区域宽度、自定义 CSS 与桌面宠物——界面支持十种语言
 - **[备份与同步](https://docs.codeg.app/zh/reference/settings/system#backup-restore)** — 可加密的备份，以及通过文件或你自己的 WebDAV 服务器在多台机器之间同步配置
 - **[URL Scheme](../../docs/url-scheme.md)** — 用 `codeg://session/<id>` 从其它应用直接打开一个会话（桌面端）
+- **[命令行](../../docs/cli.md)** — 用 `codeg-cli` 在脚本或 CI 任务里把提示词交给正在运行的 Codeg（桌面端或服务器）执行，输出回复或 JSON 事件
 - **还有更多** — 几乎每个版本都有新东西；完整清单见 [发布说明](https://github.com/spacering-net/codeg/releases)
 
 ## 🤖 支持的智能体

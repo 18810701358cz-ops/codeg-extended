@@ -43,6 +43,20 @@
 ; its companion. Silent and passive installs, the updater's included, close it
 ; without asking. An install stopped later on, at some other file, leaves a
 ; moved file where it is; the next install deletes it and writes the new one.
+;
+; codeg-cli.exe, the command-line client, is never stopped: a codeg-cli that
+; runs is the user's own command, a review a CI job is waiting for, say. One
+; in use is moved aside the same way. Its copy in bin\ is the one that goes on
+; PATH (docs/cli.md): $INSTDIR itself would put codeg-mcp.exe and the rest
+; there too. The copy is made after the install, from the codeg-cli.exe just
+; written, and moved aside first if it is running — the copy a terminal runs.
+; A copy that fails puts the moved one back: an older codeg-cli beats none.
+; The uninstaller removes it after Tauri's own files, and then $INSTDIR, which
+; Tauri's uninstaller could not remove with bin\ still in it. Not before
+; them: the uninstaller stops when the user will not close a running codeg,
+; and that codeg would be left without its command. One still running is
+; renamed out of the way instead, so PATH stops finding a codeg-cli of an app
+; that is gone; the next install, or the user once it ends, deletes it.
 
 !macro CODEG_STOP_SIDECARS
   DetailPrint "Stopping codeg-mcp and codeg-computer-helper processes running from $INSTDIR..."
@@ -88,6 +102,8 @@
 !macro CODEG_DELETE_ASIDE
   Delete "$INSTDIR\codeg-mcp.exe.*.old"
   Delete "$INSTDIR\codeg-computer-helper.exe.*.old"
+  Delete "$INSTDIR\codeg-cli.exe.*.old"
+  Delete "$INSTDIR\bin\codeg-cli.exe.*.old"
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
@@ -100,16 +116,43 @@
   ${OrIf} $PassiveMode = 1
     !insertmacro CODEG_MOVE_ASIDE_IF_IN_USE "codeg-mcp.exe"
     !insertmacro CODEG_MOVE_ASIDE_IF_IN_USE "codeg-computer-helper.exe"
+    !insertmacro CODEG_MOVE_ASIDE_IF_IN_USE "codeg-cli.exe"
   ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  CreateDirectory "$INSTDIR\bin"
+  !insertmacro CODEG_MOVE_ASIDE_IF_IN_USE "bin\codeg-cli.exe"
+  ClearErrors
+  CopyFiles /SILENT "$INSTDIR\codeg-cli.exe" "$INSTDIR\bin\codeg-cli.exe"
+  ${If} ${Errors}
+    DetailPrint "Could not copy codeg-cli.exe into $INSTDIR\bin"
+    ; $R9 = 0 and $R8: CODEG_MOVE_ASIDE_IF_IN_USE moved it to .$R8.old.
+    ${If} $R9 = 0
+    ${AndIfNot} ${FileExists} "$INSTDIR\bin\codeg-cli.exe"
+      Rename "$INSTDIR\bin\codeg-cli.exe.$R8.old" "$INSTDIR\bin\codeg-cli.exe"
+    ${EndIf}
+  ${EndIf}
   !insertmacro CODEG_DELETE_ASIDE
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro CODEG_STOP_SIDECARS
   !insertmacro CODEG_DELETE_ASIDE
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  ${If} ${FileExists} "$INSTDIR\bin\codeg-cli.exe"
+    ClearErrors
+    Delete "$INSTDIR\bin\codeg-cli.exe"
+    ${If} ${Errors}
+      System::Call 'kernel32::GetTickCount() i .R8'
+      Rename "$INSTDIR\bin\codeg-cli.exe" "$INSTDIR\bin\codeg-cli.exe.$R8.old"
+    ${EndIf}
+  ${EndIf}
+  Delete "$INSTDIR\bin\codeg-cli.exe.*.old"
+  RMDir "$INSTDIR\bin"
+  RMDir "$INSTDIR"
 !macroend
 
 ; Deliberately NOT cleaning up the "launch at login" HKCU Run values here.
