@@ -1,4 +1,4 @@
-export const PLUGIN_HOST_VERSION = "1.0.0"
+export const PLUGIN_HOST_VERSION = "1.1.0"
 export const PLUGIN_HOST_API_VERSION = 1
 
 export type PluginCategory =

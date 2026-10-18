@@ -20,7 +20,7 @@ pub mod watcher;
 
 pub use watcher::set_dev_mode;
 
-pub const PLUGIN_HOST_VERSION: &str = "1.0.0";
+pub const PLUGIN_HOST_VERSION: &str = "1.1.0";
 pub const PLUGIN_HOST_API_VERSION: u32 = 1;
 
 pub const CHANGED_EVENT: &str = "plugin-host://changed";
