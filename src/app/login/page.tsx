@@ -4,7 +4,11 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { isDesktop } from "@/lib/platform"
-import { codegAuthHeaders, unauthorizedSource } from "@/lib/transport/web-auth"
+import {
+  codegAuthHeaders,
+  probeProxyAuthentication,
+  unauthorizedSource,
+} from "@/lib/transport/web-auth"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -17,6 +21,19 @@ export default function LoginPage() {
   useEffect(() => {
     document.title = t("documentTitle")
   }, [t])
+
+  // Signed in through a proxy in front of Codeg (CODEG_AUTH=proxy-jwt), there
+  // is no token to ask for.
+  useEffect(() => {
+    if (isDesktop()) return
+    let cancelled = false
+    void probeProxyAuthentication().then((result) => {
+      if (!cancelled && result === "proxy") router.replace("/workspace")
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [router])
 
   // Desktop users skip login entirely
   if (isDesktop()) {

@@ -6,6 +6,9 @@
 // call site.
 
 const TOKEN_KEY = "codeg_token"
+// Set when the server admitted this browser without a token: a proxy in front
+// of it vouched for the user (`CODEG_AUTH=proxy-jwt` on codeg-server).
+const PROXY_AUTH_KEY = "codeg_proxy_auth"
 
 // Codeg marks its own 401 with this bearer challenge (`web/auth.rs`). A 401
 // without it came from something in front of Codeg — typically an
@@ -17,7 +20,9 @@ export type UnauthorizedSource = "codeg" | "proxy"
 
 export function codegAuthHeaders(token: string): Record<string, string> {
   return {
-    Authorization: `Bearer ${token}`,
+    // Signed in through a proxy there is no token, and an empty bearer is
+    // noise at best.
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     // Asks a proxy in front of Codeg (e.g. Cloudflare Access) to answer an
     // expired session with 401 instead of a redirect to its login page on
     // another origin, which fetch cannot follow and reports as a network
@@ -26,11 +31,54 @@ export function codegAuthHeaders(token: string): Record<string, string> {
   }
 }
 
-/** Who answered a 401, from its `WWW-Authenticate` header (null if absent). */
+/**
+ * Who answered a 401, from its `WWW-Authenticate` header (null if absent).
+ * Signed in through a proxy without a token, every 401 is the proxy's to
+ * resolve: there is no token to re-enter, only the proxy's login.
+ */
 export function unauthorizedSource(
   challenge: string | null
 ): UnauthorizedSource {
+  if (isProxyAuthenticated() && !getCodegToken()) return "proxy"
   return CODEG_CHALLENGE.test((challenge ?? "").trim()) ? "codeg" : "proxy"
+}
+
+export function isProxyAuthenticated(): boolean {
+  return localStorage.getItem(PROXY_AUTH_KEY) === "1"
+}
+
+/** A token, or a proxy that admitted this browser without one. */
+export function hasCodegCredentials(): boolean {
+  return Boolean(getCodegToken()) || isProxyAuthenticated()
+}
+
+/**
+ * Asks the server whether it admits this browser without a token, which it
+ * does only when a proxy in front of it vouched for the user. Remembers the
+ * answer for the transport; an unreachable server leaves it as it was.
+ */
+export async function probeProxyAuthentication(): Promise<
+  "proxy" | "unauthorized" | "unreachable"
+> {
+  let res: Response
+  try {
+    res = await fetch("/api/health", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...codegAuthHeaders("") },
+      body: "{}",
+    })
+  } catch {
+    return "unreachable"
+  }
+  if (res.ok) {
+    localStorage.setItem(PROXY_AUTH_KEY, "1")
+    return "proxy"
+  }
+  if (res.status === 401) {
+    localStorage.removeItem(PROXY_AUTH_KEY)
+    return "unauthorized"
+  }
+  return "unreachable"
 }
 
 export function getCodegToken(): string {
@@ -40,5 +88,6 @@ export function getCodegToken(): string {
 export function redirectToCodegLogin(): void {
   if (window.location.pathname.startsWith("/login")) return
   localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(PROXY_AUTH_KEY)
   window.location.href = "/login"
 }

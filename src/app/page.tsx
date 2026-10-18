@@ -3,7 +3,11 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { isDesktop } from "@/lib/platform"
-import { codegAuthHeaders, unauthorizedSource } from "@/lib/transport/web-auth"
+import {
+  codegAuthHeaders,
+  probeProxyAuthentication,
+  unauthorizedSource,
+} from "@/lib/transport/web-auth"
 
 export default function Page() {
   const router = useRouter()
@@ -15,7 +19,12 @@ export default function Page() {
     // Web mode: validate token before entering app
     const token = localStorage.getItem("codeg_token")
     if (!token) {
-      router.replace("/login")
+      // A proxy in front of Codeg may have signed the user in already
+      // (CODEG_AUTH=proxy-jwt); an unreachable server leaves that to the
+      // in-app connection dialog, as with a token.
+      void probeProxyAuthentication().then((result) => {
+        router.replace(result === "unauthorized" ? "/login" : "/workspace")
+      })
       return
     }
     // Verify token is still valid

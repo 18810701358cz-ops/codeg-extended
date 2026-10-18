@@ -5,6 +5,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use std::sync::Arc;
+
+use super::proxy_auth::{ProxyJwtAuth, Rejection};
 
 pub const WS_EVENT_PROTOCOL: &str = "codeg-events";
 const WS_TOKEN_PROTOCOL_PREFIX: &str = "codeg-token.";
@@ -32,17 +35,11 @@ fn token_from_ws_protocols(value: &str) -> Option<String> {
         .and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
-pub async fn require_token(request: Request, next: Next, token: String) -> Response {
-    // Fail closed on a misconfigured empty token: otherwise `Bearer ` (an empty
-    // bearer value) would match it and silently disable authentication.
-    if token.is_empty() {
-        return unauthorized("Server token is not configured");
-    }
-
+fn carries_token(request: &Request, token: &str) -> bool {
     if let Some(auth_header) = request.headers().get("authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
             if auth_str.strip_prefix("Bearer ").is_some_and(|t| t == token) {
-                return next.run(request).await;
+                return true;
             }
         }
     }
@@ -50,12 +47,52 @@ pub async fn require_token(request: Request, next: Next, token: String) -> Respo
     if let Some(protocol_header) = request.headers().get("sec-websocket-protocol") {
         if let Ok(protocols) = protocol_header.to_str() {
             if token_from_ws_protocols(protocols).is_some_and(|t| t == token) {
-                return next.run(request).await;
+                return true;
             }
         }
     }
 
+    false
+}
+
+pub async fn require_token(request: Request, next: Next, token: String) -> Response {
+    // Fail closed on a misconfigured empty token: otherwise `Bearer ` (an empty
+    // bearer value) would match it and silently disable authentication.
+    if token.is_empty() {
+        return unauthorized("Server token is not configured");
+    }
+    if carries_token(&request, &token) {
+        return next.run(request).await;
+    }
     unauthorized("Invalid or missing token")
+}
+
+/// How the web API authenticates a request: the access token always, and with
+/// `CODEG_AUTH=proxy-jwt` also a proxy's verified assertion (see
+/// `proxy_auth`). The token keeps working in that mode for clients that do
+/// not pass through the proxy (`codeg-cli --url`, scripts).
+#[derive(Clone)]
+pub struct WebAuth {
+    pub token: String,
+    pub proxy: Option<Arc<ProxyJwtAuth>>,
+}
+
+pub async fn require_auth(request: Request, next: Next, auth: WebAuth) -> Response {
+    let Some(proxy) = auth.proxy.as_ref() else {
+        return require_token(request, next, auth.token).await;
+    };
+    if !auth.token.is_empty() && carries_token(&request, &auth.token) {
+        return next.run(request).await;
+    }
+    match proxy.authenticate(request.headers()).await {
+        Ok(()) => next.run(request).await,
+        Err(Rejection::Missing) => unauthorized("Invalid or missing token"),
+        Err(reason) => {
+            // The reason only: the assertion is a bearer credential.
+            tracing::warn!("[AUTH] proxy-jwt assertion refused: {reason}");
+            unauthorized("Invalid or missing token")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -108,6 +145,108 @@ mod tests {
         let unconfigured = guarded("").post("/api/health").await;
         unconfigured.assert_status_unauthorized();
         assert_eq!(unconfigured.header("www-authenticate"), CODEG_CHALLENGE);
+    }
+
+    fn guarded_with(auth: WebAuth) -> axum_test::TestServer {
+        let app = axum::Router::new()
+            .route("/api/health", axum::routing::post(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(move |req, next| {
+                require_auth(req, next, auth.clone())
+            }));
+        axum_test::TestServer::new(app).unwrap()
+    }
+
+    use crate::web::proxy_auth::testing::{TestIssuer, HEADER};
+
+    #[tokio::test]
+    async fn proxy_mode_admits_a_verified_assertion_without_the_token() {
+        let issuer = TestIssuer::new();
+        let server = guarded_with(WebAuth {
+            token: "tok".into(),
+            proxy: Some(Arc::new(issuer.auth().await)),
+        });
+        server
+            .post("/api/health")
+            .add_header(HEADER, issuer.assertion())
+            .await
+            .assert_status_ok();
+    }
+
+    #[tokio::test]
+    async fn proxy_mode_still_admits_the_token() {
+        let issuer = TestIssuer::new();
+        let server = guarded_with(WebAuth {
+            token: "tok".into(),
+            proxy: Some(Arc::new(issuer.auth().await)),
+        });
+        server
+            .post("/api/health")
+            .authorization_bearer("tok")
+            .await
+            .assert_status_ok();
+    }
+
+    #[tokio::test]
+    async fn proxy_mode_refuses_a_missing_or_bad_assertion_with_the_codeg_challenge() {
+        let issuer = TestIssuer::new();
+        let server = guarded_with(WebAuth {
+            token: "tok".into(),
+            proxy: Some(Arc::new(issuer.auth().await)),
+        });
+
+        let missing = server.post("/api/health").await;
+        missing.assert_status_unauthorized();
+        assert_eq!(missing.header("www-authenticate"), CODEG_CHALLENGE);
+
+        let other_app = server
+            .post("/api/health")
+            .add_header(HEADER, issuer.assertion_for("another-app"))
+            .await;
+        other_app.assert_status_unauthorized();
+        assert_eq!(other_app.header("www-authenticate"), CODEG_CHALLENGE);
+
+        let forged = server
+            .post("/api/health")
+            .add_header(HEADER, TestIssuer::new().assertion())
+            .await;
+        forged.assert_status_unauthorized();
+
+        let wrong_token = server
+            .post("/api/health")
+            .authorization_bearer("nope")
+            .await;
+        wrong_token.assert_status_unauthorized();
+    }
+
+    // Token mode must not grow a second way in: an assertion that would pass
+    // in proxy mode is ignored.
+    #[tokio::test]
+    async fn token_mode_ignores_a_valid_assertion() {
+        let issuer = TestIssuer::new();
+        let server = guarded_with(WebAuth {
+            token: "tok".into(),
+            proxy: None,
+        });
+        let res = server
+            .post("/api/health")
+            .add_header(HEADER, issuer.assertion())
+            .await;
+        res.assert_status_unauthorized();
+        assert_eq!(res.header("www-authenticate"), CODEG_CHALLENGE);
+    }
+
+    #[tokio::test]
+    async fn proxy_mode_with_an_empty_token_accepts_no_empty_bearer() {
+        let issuer = TestIssuer::new();
+        let server = guarded_with(WebAuth {
+            token: String::new(),
+            proxy: Some(Arc::new(issuer.auth().await)),
+        });
+        server
+            .post("/api/health")
+            .add_header("authorization", "Bearer ")
+            .await
+            .assert_status_unauthorized();
     }
 
     #[tokio::test]

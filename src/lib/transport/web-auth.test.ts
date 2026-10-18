@@ -1,5 +1,16 @@
-import { describe, expect, it } from "vitest"
-import { codegAuthHeaders, unauthorizedSource } from "./web-auth"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import {
+  codegAuthHeaders,
+  hasCodegCredentials,
+  isProxyAuthenticated,
+  probeProxyAuthentication,
+  unauthorizedSource,
+} from "./web-auth"
+
+afterEach(() => {
+  localStorage.clear()
+  vi.unstubAllGlobals()
+})
 
 // The challenge as fetch reads it from a real 401 response.
 const with401 = (challenge?: string) =>
@@ -42,5 +53,58 @@ describe("unauthorizedSource", () => {
     expect(unauthorizedSource(with401('Bearer realm="codeg-other"'))).toBe(
       "proxy"
     )
+  })
+})
+
+describe("proxy authentication (CODEG_AUTH=proxy-jwt)", () => {
+  it("sends no Authorization header when there is no token", () => {
+    expect(codegAuthHeaders("")).toEqual({
+      "X-Requested-With": "XMLHttpRequest",
+    })
+  })
+
+  it("counts a token or a proxy sign-in as credentials", () => {
+    expect(hasCodegCredentials()).toBe(false)
+    localStorage.setItem("codeg_token", "tok")
+    expect(hasCodegCredentials()).toBe(true)
+    localStorage.clear()
+    localStorage.setItem("codeg_proxy_auth", "1")
+    expect(hasCodegCredentials()).toBe(true)
+  })
+
+  it("attributes every 401 to the proxy while signed in through it without a token", () => {
+    localStorage.setItem("codeg_proxy_auth", "1")
+    // No token to re-enter: only the proxy's login can help.
+    expect(unauthorizedSource('Bearer realm="codeg"')).toBe("proxy")
+    localStorage.setItem("codeg_token", "tok")
+    expect(unauthorizedSource('Bearer realm="codeg"')).toBe("codeg")
+  })
+
+  it("marks the browser proxy-authenticated when the server admits it without a token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+    vi.stubGlobal("fetch", fetchMock)
+    await expect(probeProxyAuthentication()).resolves.toBe("proxy")
+    expect(isProxyAuthenticated()).toBe(true)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe("/api/health")
+    expect(init.headers).not.toHaveProperty("Authorization")
+    expect(init.headers).toMatchObject({ "X-Requested-With": "XMLHttpRequest" })
+  })
+
+  it("clears the mark when the server wants a token", async () => {
+    localStorage.setItem("codeg_proxy_auth", "1")
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 401 })
+    )
+    await expect(probeProxyAuthentication()).resolves.toBe("unauthorized")
+    expect(isProxyAuthenticated()).toBe(false)
+  })
+
+  it("reports an unreachable server without touching the mark", async () => {
+    localStorage.setItem("codeg_proxy_auth", "1")
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed")))
+    await expect(probeProxyAuthentication()).resolves.toBe("unreachable")
+    expect(isProxyAuthenticated()).toBe(true)
   })
 })

@@ -381,3 +381,46 @@ describe("WebTransport.call", () => {
     expect(proxied.getConnectionSnapshot()).toBe("proxyUnauthorized")
   })
 })
+
+describe("WebTransport signed in through a proxy (no token)", () => {
+  beforeEach(() => {
+    localStorage.removeItem("codeg_token")
+    localStorage.setItem("codeg_proxy_auth", "1")
+  })
+
+  it("opens the event socket without a token protocol", () => {
+    const t = new WebTransport("http://localhost")
+    t.eventStream()
+    expect(MockWebSocket.instances).toHaveLength(1)
+    expect(lastWs().protocols).toEqual(["codeg-events"])
+  })
+
+  it("calls the API without an Authorization header", async () => {
+    const t = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => "{}",
+    })
+    await t.call("list_things")
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.headers).not.toHaveProperty("Authorization")
+  })
+
+  it("probes health after a drop instead of declaring the session gone", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(fetchMock).toHaveBeenCalled()
+    expect(t.getConnectionSnapshot()).toBe("reconnecting")
+  })
+
+  it("treats any 401 as the proxy's: a reload is the only way back in", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(resp401())
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(t.getConnectionSnapshot()).toBe("proxyUnauthorized")
+  })
+})
