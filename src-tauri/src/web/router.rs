@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{DefaultBodyLimit, Extension},
-    http::{StatusCode, Uri},
+    http::{header, HeaderValue, StatusCode, Uri},
     middleware::{self, Next},
     response::IntoResponse,
     routing::{any, get, post},
@@ -2076,6 +2076,9 @@ pub fn build_router(
     // We use a middleware to rewrite "/folder" → "/folder.html" before ServeDir.
     let fallback =
         ServeDir::new(&static_dir).fallback(ServeFile::new(static_dir.join("index.html")));
+    let static_files: Router = Router::new()
+        .fallback_service(fallback)
+        .layer(middleware::from_fn(static_cache_control));
 
     let static_dir_for_mw = static_dir.clone();
     let html_rewrite = middleware::from_fn(move |req: axum::extract::Request, next: Next| {
@@ -2112,7 +2115,7 @@ pub fn build_router(
     Router::new()
         .nest("/api", api)
         .merge(ws_route)
-        .fallback_service(fallback)
+        .fallback_service(static_files)
         .layer(html_rewrite)
         .layer(cors)
         .layer(Extension(state))
@@ -2131,6 +2134,34 @@ pub fn build_router(
         .layer(middleware::from_fn(
             crate::web::browser_bridge::route_by_host,
         ))
+}
+
+/// Only `/_next/static/` is fingerprinted: a new build puts its scripts and
+/// styles there under new names. Everything else keeps its name from one
+/// release to the next, the HTML documents above all, and ServeDir sends no
+/// freshness of its own, so a browser would apply heuristic freshness (a tenth
+/// of the file's age) and could open the previous release for hours after the
+/// server was upgraded. `no-cache` still lets it keep its copy, revalidated on
+/// every use.
+async fn static_cache_control(
+    req: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
+    let fingerprinted = req.uri().path().starts_with("/_next/static/");
+    let mut response = next.run(req).await;
+    // An asset that is not there is answered with index.html, which must not
+    // be kept under the asset's name either.
+    let html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/html"));
+    if !fingerprinted || html {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    }
+    response
 }
 
 async fn health_check() -> impl IntoResponse {

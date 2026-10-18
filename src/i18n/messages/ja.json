@@ -5342,7 +5342,10 @@
     "reconnectNow": "今すぐ再接続",
     "sessionExpiredTitle": "セッションの有効期限が切れました",
     "sessionExpiredDescription": "セッションが無効になりました。続行するには再度サインインしてください。",
-    "goToLogin": "ログインへ移動"
+    "goToLogin": "ログインへ移動",
+    "versionChangedTitle": "サーバーは Codeg {version} で動作しています",
+    "versionChangedDescription": "このページはまだ {version} です。再読み込みするとサーバーのバージョンを使用します。",
+    "reloadPage": "再読み込み"
   },
   "LiveFeedback": {
     "placeholder": "{agent} の作業中にメモを送る…",

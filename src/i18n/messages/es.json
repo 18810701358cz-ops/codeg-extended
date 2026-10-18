@@ -5342,7 +5342,10 @@
     "reconnectNow": "Volver a conectar ahora",
     "sessionExpiredTitle": "Sesión caducada",
     "sessionExpiredDescription": "Tu sesión ya no es válida. Inicia sesión de nuevo para continuar.",
-    "goToLogin": "Ir al inicio de sesión"
+    "goToLogin": "Ir al inicio de sesión",
+    "versionChangedTitle": "El servidor ahora ejecuta Codeg {version}",
+    "versionChangedDescription": "Esta página sigue en la versión {version}. Recárgala para usar la versión del servidor.",
+    "reloadPage": "Recargar"
   },
   "LiveFeedback": {
     "placeholder": "Envía una nota a {agent} mientras trabaja…",

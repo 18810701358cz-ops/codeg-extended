@@ -5342,7 +5342,10 @@
     "reconnectNow": "إعادة الاتصال الآن",
     "sessionExpiredTitle": "انتهت الجلسة",
     "sessionExpiredDescription": "لم تعد جلستك صالحة. يُرجى تسجيل الدخول مرة أخرى للمتابعة.",
-    "goToLogin": "الانتقال إلى تسجيل الدخول"
+    "goToLogin": "الانتقال إلى تسجيل الدخول",
+    "versionChangedTitle": "يعمل الخادم الآن بإصدار Codeg {version}",
+    "versionChangedDescription": "لا تزال هذه الصفحة على الإصدار {version}. أعد تحميلها لاستخدام إصدار الخادم.",
+    "reloadPage": "إعادة التحميل"
   },
   "LiveFeedback": {
     "placeholder": "أرسل ملاحظة إلى {agent} أثناء عمله…",

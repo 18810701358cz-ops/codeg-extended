@@ -5342,7 +5342,10 @@
     "reconnectNow": "Jetzt neu verbinden",
     "sessionExpiredTitle": "Sitzung abgelaufen",
     "sessionExpiredDescription": "Deine Sitzung ist nicht mehr gültig. Bitte melde dich erneut an, um fortzufahren.",
-    "goToLogin": "Zur Anmeldung"
+    "goToLogin": "Zur Anmeldung",
+    "versionChangedTitle": "Auf dem Server läuft jetzt Codeg {version}",
+    "versionChangedDescription": "Diese Seite läuft noch mit {version}. Lade sie neu, um die Version des Servers zu verwenden.",
+    "reloadPage": "Neu laden"
   },
   "LiveFeedback": {
     "placeholder": "Sende {agent} eine Notiz, während er arbeitet…",

@@ -5342,7 +5342,10 @@
     "reconnectNow": "지금 다시 연결",
     "sessionExpiredTitle": "세션이 만료되었습니다",
     "sessionExpiredDescription": "세션이 더 이상 유효하지 않습니다. 계속하려면 다시 로그인하세요.",
-    "goToLogin": "로그인으로 이동"
+    "goToLogin": "로그인으로 이동",
+    "versionChangedTitle": "서버가 Codeg {version}(으)로 실행 중입니다",
+    "versionChangedDescription": "이 페이지는 아직 {version}입니다. 새로고침하면 서버의 버전을 사용합니다.",
+    "reloadPage": "새로고침"
   },
   "LiveFeedback": {
     "placeholder": "{agent}이(가) 작업하는 동안 메모 보내기…",
