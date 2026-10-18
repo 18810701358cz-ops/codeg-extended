@@ -87,7 +87,23 @@ function connectReady() {
 }
 
 const ok200 = () => ({ status: 200, ok: true, json: async () => ({}) })
-const resp401 = () => ({ status: 401, ok: false, json: async () => ({}) })
+// Codeg's own 401 carries its bearer challenge (`web/auth.rs`); a 401 from an
+// identity-aware proxy in front of it carries the proxy's challenge instead.
+const resp401 = () => ({
+  status: 401,
+  ok: false,
+  headers: new Headers({ "WWW-Authenticate": 'Bearer realm="codeg"' }),
+  json: async () => ({}),
+})
+const proxy401 = () => ({
+  status: 401,
+  ok: false,
+  headers: new Headers({
+    "WWW-Authenticate":
+      'Cloudflare-Access resource_metadata="https://example.test/.well-known/x"',
+  }),
+  json: async () => ({}),
+})
 
 describe("WebTransport connection state machine", () => {
   it("starts connected and the first __ready__ does not fire reconnect callbacks", () => {
@@ -301,5 +317,67 @@ describe("WebTransport connection state machine", () => {
     ws.drop() // closes before it ever opened or readied
     expect(t.getConnectionSnapshot()).toBe("reconnecting")
     expect(localStorage.getItem("codeg_token")).toBe("tok") // token preserved
+  })
+
+  it("sends X-Requested-With on health probes so a proxy answers 401, not a redirect", async () => {
+    const { ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer tok",
+      "X-Requested-With": "XMLHttpRequest",
+    })
+  })
+
+  it("enters proxyUnauthorized on a 401 without Codeg's challenge, keeps the token, stops retrying", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(proxy401())
+
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(t.getConnectionSnapshot()).toBe("proxyUnauthorized")
+    // The Codeg token is still valid; only the proxy's session expired.
+    expect(localStorage.getItem("codeg_token")).toBe("tok")
+
+    const callsSoFar = fetchMock.mock.calls.length
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchMock.mock.calls.length).toBe(callsSoFar)
+  })
+})
+
+describe("WebTransport.call", () => {
+  it("sends X-Requested-With alongside the bearer token", async () => {
+    const t = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => "{}",
+    })
+
+    await t.call("list_things")
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe("http://localhost/api/list_things")
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer tok",
+      "X-Requested-With": "XMLHttpRequest",
+    })
+  })
+
+  it("classifies a 401 by its challenge: Codeg's → unauthorized, a proxy's → proxyUnauthorized", async () => {
+    const codeg = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValueOnce(resp401())
+    await expect(codeg.call("x")).rejects.toThrow("Unauthorized")
+    expect(codeg.getConnectionSnapshot()).toBe("unauthorized")
+
+    const proxied = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValueOnce(proxy401())
+    await expect(proxied.call("x")).rejects.toThrow("Unauthorized")
+    expect(proxied.getConnectionSnapshot()).toBe("proxyUnauthorized")
   })
 })

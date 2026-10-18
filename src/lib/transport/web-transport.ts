@@ -9,7 +9,12 @@ import type {
 } from "./types"
 import { buildCodegWebSocketProtocols } from "./ws-auth"
 import { parseJsonOrThrow } from "../json-parse-error"
-import { getCodegToken } from "./web-auth"
+import {
+  codegAuthHeaders,
+  getCodegToken,
+  unauthorizedSource,
+  type UnauthorizedSource,
+} from "./web-auth"
 
 // 60s covers the worst-case ACP probe path: some agents (Gemini in
 // particular) burn 8–10s on the Initialize handshake before session/new
@@ -46,7 +51,13 @@ const HEALTH_PROBE_TIMEOUT_MS = 8_000
 // `subscribeConnection`/`getConnectionSnapshot` so a single global dialog can
 // reflect it. Distinct from the per-ACP-agent `ConnectionStatus` — this is
 // the browser↔server transport link, not an agent session.
-export type WebConnState = "connected" | "reconnecting" | "unauthorized"
+// "proxyUnauthorized" is a 401 that did not come from Codeg: the session of a
+// proxy in front of it expired while the Codeg token is still good.
+export type WebConnState =
+  | "connected"
+  | "reconnecting"
+  | "unauthorized"
+  | "proxyUnauthorized"
 
 interface WebEvent {
   channel: string
@@ -162,7 +173,7 @@ export class WebTransport implements Transport {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...codegAuthHeaders(token),
         },
         body: JSON.stringify(args ?? {}),
         signal: controller.signal,
@@ -179,8 +190,11 @@ export class WebTransport implements Transport {
       // Definitive auth failure. Surface the unified unauthorized dialog
       // rather than an abrupt redirect — a hard `location.href` here would
       // fight a reconnect dialog that may already be on screen. The user
-      // re-authenticates from the dialog's "Go to login" action.
-      this.markUnauthorized()
+      // re-authenticates from the dialog's "Go to login" action, or reloads
+      // when the 401 came from a proxy in front of Codeg.
+      this.markUnauthorized(
+        unauthorizedSource(res.headers.get("www-authenticate"))
+      )
       throw new Error("Unauthorized")
     }
     if (!res.ok) {
@@ -283,11 +297,12 @@ export class WebTransport implements Transport {
 
   /**
    * Enter the unauthorized state: a definitive 401 was observed (token
-   * rejected). Stop reconnecting and let the dialog prompt re-login. Does NOT
-   * clear the token — that happens when the user acts on "Go to login" — so a
-   * spuriously-cached 401 can't silently wipe a still-valid session.
+   * rejected, or a proxy's session expired). Stop reconnecting and let the
+   * dialog prompt re-login. Does NOT clear the token — that happens when the
+   * user acts on "Go to login" — so a spuriously-cached 401 can't silently
+   * wipe a still-valid session.
    */
-  markUnauthorized(): void {
+  markUnauthorized(source: UnauthorizedSource = "codeg"): void {
     if (this.destroyed) return
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -297,7 +312,7 @@ export class WebTransport implements Transport {
     // the socket or re-arm the backoff behind the session-expired dialog.
     this.invalidateProbe()
     this.teardownWs()
-    this.setConnState("unauthorized")
+    this.setConnState(source === "proxy" ? "proxyUnauthorized" : "unauthorized")
   }
 
   // Bump the epoch (so a pending probe's post-await guard bails) and abort its
@@ -515,7 +530,7 @@ export class WebTransport implements Transport {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...codegAuthHeaders(token),
         },
         body: "{}",
         signal: controller.signal,
@@ -524,8 +539,11 @@ export class WebTransport implements Transport {
       // a stale completion must not reopen the socket or re-arm the backoff.
       if (this.destroyed || epoch !== this.probeEpoch) return
       if (res.status === 401) {
-        // Server is up and rejected the token → session genuinely expired.
-        this.markUnauthorized()
+        // Server (or the proxy in front of it) rejected the request → the
+        // session genuinely expired.
+        this.markUnauthorized(
+          unauthorizedSource(res.headers.get("www-authenticate"))
+        )
         return
       }
       if (res.ok) {

@@ -5342,6 +5342,8 @@
     "reconnectNow": "Volver a conectar ahora",
     "sessionExpiredTitle": "Sesión caducada",
     "sessionExpiredDescription": "Tu sesión ya no es válida. Inicia sesión de nuevo para continuar.",
+    "proxySignInTitle": "Inicio de sesión caducado",
+    "proxySignInDescription": "Tu inicio de sesión en el proxy que está delante de este servidor ha caducado. Recarga la página para volver a iniciar sesión; tu token de acceso se conserva.",
     "goToLogin": "Ir al inicio de sesión",
     "versionChangedTitle": "El servidor ahora ejecuta Codeg {version}",
     "versionChangedDescription": "Esta página sigue en la versión {version}. Recárgala para usar la versión del servidor.",

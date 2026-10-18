@@ -5342,6 +5342,8 @@
     "reconnectNow": "立即重新連線",
     "sessionExpiredTitle": "工作階段已過期",
     "sessionExpiredDescription": "登入狀態已失效，請重新登入以繼續。",
+    "proxySignInTitle": "登入已過期",
+    "proxySignInDescription": "此伺服器前置代理的登入已過期。請重新載入頁面以再次登入；你的存取權杖會被保留。",
     "goToLogin": "前往登入",
     "versionChangedTitle": "伺服器已執行 Codeg {version}",
     "versionChangedDescription": "此頁面仍是 {version}，重新整理後即可使用伺服器上的版本。",
