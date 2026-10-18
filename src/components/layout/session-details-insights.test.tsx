@@ -1,4 +1,11 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -309,5 +316,27 @@ describe("SessionDetailsInsights", () => {
       expect.stringContaining("Agent Plan"),
       expect.stringContaining("Message navigation"),
     ])
+  })
+
+  // On the rows' left column, so each title lines up with the rows' text.
+  it("puts the chevron that folds a section before its title", () => {
+    publish(
+      insights({
+        plan: {
+          entries: [{ content: "step", status: "pending", priority: "low" }],
+        },
+        nav: { count: 1, entries: [navEntry("u1", 1)] },
+      })
+    )
+    renderPanel()
+    for (const title of ["Agent Plan", "Message navigation"]) {
+      const header = screen.getByRole("button", { name: new RegExp(title) })
+      const chevron = header.querySelector("svg")
+      expect(chevron).not.toBeNull()
+      expect(
+        chevron!.compareDocumentPosition(within(header).getByText(title)) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+    }
   })
 })

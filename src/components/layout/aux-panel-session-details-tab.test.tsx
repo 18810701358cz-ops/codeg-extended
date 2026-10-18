@@ -15,8 +15,11 @@ vi.mock("./branch-dropdown", () => ({
 vi.mock("./command-dropdown", () => ({
   CommandDropdown: () => <div data-testid="command-dropdown" />,
 }))
-// The agent icon renders inline SVG with a <title> that duplicates the label.
-vi.mock("@/components/agent-icon", () => ({ AgentIcon: () => null }))
+// The agent icon renders inline SVG with a <title> that duplicates the label;
+// the stub only marks where it sits.
+vi.mock("@/components/agent-icon", () => ({
+  AgentIcon: () => <span data-testid="agent-icon" />,
+}))
 // Stats are always supplied here, so the cold-fetch path must never fire; stub
 // the API so an accidental call is inert rather than a real transport hit.
 vi.mock("@/lib/api", () => ({ getFolderConversation: vi.fn() }))
@@ -160,6 +163,21 @@ describe("SessionDetailsTab", () => {
     expect(getByText("Claude Code")).toBeTruthy()
     expect(queryByTestId("branch-dropdown")).toBeNull()
     expect(queryByTestId("command-dropdown")).toBeNull()
+  })
+
+  it("opens its card with the title, the agent's icon by its name under it", () => {
+    setupScene({ hasActiveConversation: true })
+    const { getByText, getByTestId } = renderTab()
+    const title = getByText("My session")
+    // Nothing shares the title's row.
+    expect(title.closest("section")?.firstElementChild).toBe(title)
+    const agentLine = title.nextElementSibling as HTMLElement
+    expect(agentLine).toContainElement(getByText("Claude Code"))
+    // The icon leads the agent's name; the name already says it, so it's
+    // hidden from assistive tech.
+    const icon = getByTestId("agent-icon")
+    expect(agentLine.firstElementChild).toContainElement(icon)
+    expect(icon.closest('[aria-hidden="true"]')).not.toBeNull()
   })
 
   it("lists the session's properties on its card", () => {

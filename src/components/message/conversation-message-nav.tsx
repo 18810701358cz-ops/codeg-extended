@@ -414,8 +414,10 @@ function VirtualRows({
 
 /**
  * A message's number, in a pill of the left column: the same width for any
- * number up to three digits, so the column — and every title beside it —
- * lines up. Solid for the message the transcript is showing.
+ * number up to three digits, so the titles beside the pills line up with
+ * each other and with the section header's above them. Its side padding stays
+ * narrow for that: with more, three digits outgrow the column. Solid for the
+ * message the transcript is showing.
  */
 function NumberPill({
   ordinal,
@@ -433,7 +435,7 @@ function NumberPill({
     <span className="flex min-w-7 shrink-0 justify-center">
       <span
         className={cn(
-          "flex h-5 min-w-7 items-center justify-center rounded-md px-1 text-2xs tabular-nums",
+          "flex h-5 min-w-7 items-center justify-center rounded-md px-0.5 text-2xs tabular-nums",
           current
             ? "bg-primary font-semibold text-primary-foreground"
             : onBand

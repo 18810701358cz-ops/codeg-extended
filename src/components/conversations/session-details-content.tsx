@@ -342,12 +342,13 @@ function PropertyRow({
 
 /**
  * The Session Details side panel's summary of the active conversation: the
- * agent's tile, the title, the agent and the status, then one row per
- * property — the model, the branch, the conversation's and the agent's
- * session ids (copyable), and the parent conversation and the assistant when
- * it has them. The panel's room goes to the plan and the message navigator
- * under it, so this is a card; the dialog (`SessionDetailsContent`) is the
- * full view, with token usage and timestamps.
+ * title on a row of its own, the agent (its icon and name) and the status
+ * under it, then one row per property — the model, the branch, the
+ * conversation's and the agent's session ids (copyable), and the parent
+ * conversation and the assistant when it has them. The panel's room goes to
+ * the plan and the message navigator under it, so this is a card; the dialog
+ * (`SessionDetailsContent`) is the full view, with token usage and
+ * timestamps.
  *
  * `model` is the raw id the transcript recorded (the tab resolves it the way
  * the detail panel does); it is shown by the name the agent's picker uses.
@@ -368,36 +369,25 @@ export function SessionDetailsCard({
 
   return (
     <section className="min-w-0 rounded-lg border border-border/70 bg-muted/40 p-3">
-      <div className="flex min-w-0 gap-2.5">
-        {/* Decorative: the agent is named below. */}
-        <span
-          aria-hidden="true"
-          className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background"
-        >
-          <AgentIcon
-            agentType={summary.agent_type}
-            className="size-[1.125rem]"
-          />
+      <p
+        title={title}
+        className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] font-semibold [overflow-wrap:anywhere]"
+      >
+        {title}
+      </p>
+      <p className="mt-1 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+        {/* Decorative: the name beside it says which agent it is, and the
+            icon's SVG carries a <title> of its own that would repeat it. */}
+        <span aria-hidden="true" className="inline-flex shrink-0">
+          <AgentIcon agentType={summary.agent_type} className="size-3.5" />
         </span>
-        <div className="min-w-0 flex-1">
-          <p
-            title={title}
-            className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] font-semibold [overflow-wrap:anywhere]"
-          >
-            {title}
-          </p>
-          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
-            <span className="truncate">
-              {getAgentLabel(summary.agent_type)}
-            </span>
-            <span aria-hidden="true">·</span>
-            <span className="inline-flex shrink-0 items-center gap-1 text-foreground/80">
-              <ConversationStatusDot status={knownStatus} size="sm" />
-              {knownStatus ? tStatus(knownStatus) : summary.status}
-            </span>
-          </p>
-        </div>
-      </div>
+        <span className="truncate">{getAgentLabel(summary.agent_type)}</span>
+        <span aria-hidden="true">·</span>
+        <span className="inline-flex shrink-0 items-center gap-1 text-foreground/80">
+          <ConversationStatusDot status={knownStatus} size="sm" />
+          {knownStatus ? tStatus(knownStatus) : summary.status}
+        </span>
+      </p>
       <dl className="mt-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-2xs">
         <PropertyRow label={t("model")}>
           <span className="min-w-0 truncate" title={displayModel || undefined}>

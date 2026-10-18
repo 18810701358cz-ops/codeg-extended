@@ -33,8 +33,9 @@ interface SessionDetailsInsightsProps {
  * (see `MessageListView`'s `insightsInSidebar`); each section reads its own
  * part and renders nothing while that part is empty.
  *
- * Both lay their rows on one grid: a left column of fixed width — the plan's
- * step icons, the navigator's message numbers — and the text beside it.
+ * Both lay their rows, headers included, on one grid: a left column of fixed
+ * width — the headers' chevrons, the plan's step icons, the navigator's
+ * message numbers — and the text beside it.
  *
  * The navigator's sub-agent cards open their "查看会话" drawer through a host
  * of their own: the transcript's host is in another branch of the tree, and
@@ -56,11 +57,13 @@ export function SessionDetailsInsights({
 }
 
 /**
- * A section of the panel: a header row — its title, a summary of what it
- * holds, and the chevron that folds it at the far end — then its body. The
- * body renders in either state: what a section still shows while folded is
- * its own business. A `sticky` header stays at the top of the panel while
- * the section scrolls under it.
+ * A section of the panel: a header row — the chevron that folds it, then its
+ * title and a summary of what it holds — then its body. The chevron takes the
+ * rows' left column, over their step icons and message numbers, so the title
+ * lines up with the text of the rows under it. The body renders in either
+ * state: what a section still shows while folded is its own business. A
+ * `sticky` header stays at the top of the panel while the section scrolls
+ * under it.
  */
 function InsightsSection({
   title,
@@ -93,19 +96,20 @@ function InsightsSection({
           onClick={() => onOpenChange(!open)}
           className="group/section flex h-7 w-full min-w-0 items-center gap-2 rounded-md text-start outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
+          <span aria-hidden="true" className="flex w-7 shrink-0 justify-center">
+            <ChevronDown
+              className={cn(
+                "size-3.5 text-muted-foreground transition-transform group-hover/section:text-foreground",
+                !open && "-rotate-90 rtl:rotate-90"
+              )}
+            />
+          </span>
           <span className="min-w-0 truncate text-xs font-semibold text-foreground">
             {title}
           </span>
           <span className="shrink-0 text-2xs text-muted-foreground tabular-nums">
             {summary}
           </span>
-          <ChevronDown
-            aria-hidden="true"
-            className={cn(
-              "ms-auto size-3.5 shrink-0 text-muted-foreground transition-transform group-hover/section:text-foreground",
-              !open && "-rotate-90 rtl:rotate-90"
-            )}
-          />
         </button>
       </h3>
       {children}
