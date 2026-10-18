@@ -289,21 +289,27 @@ $Changing = @($Changing | ForEach-Object {
 # The processes named $Name that run one of the files in $Changing. Their
 # paths come from CIM, which reads every process's, whatever this
 # PowerShell's bitness: a 32-bit one cannot read a 64-bit process's own
-# `Path`. Where CIM cannot be had, Get-Process reads what it can.
+# `Path`. Where CIM cannot be had, Get-Process reads what it can. On some
+# machines a WMI query never returns, so CIM gets a time limit, and once it
+# has failed it is not asked again.
+$script:CimWorks = $true
 function Get-RunningFrom([string]$Name) {
-    try {
-        $running = @(Get-CimInstance Win32_Process -Filter "Name = '$Name.exe'" -ErrorAction Stop |
-            Where-Object {
-                $_.ExecutablePath -and ($Changing -contains [System.IO.Path]::GetFullPath($_.ExecutablePath))
-            })
-        return @($running | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
-    } catch {
-        return @(Get-Process -Name $Name -ErrorAction SilentlyContinue | Where-Object {
-            $path = $null
-            try { $path = $_.Path } catch {}
-            $path -and ($Changing -contains [System.IO.Path]::GetFullPath($path))
-        })
+    if ($script:CimWorks) {
+        try {
+            $running = @(Get-CimInstance Win32_Process -Filter "Name = '$Name.exe'" -OperationTimeoutSec 15 -ErrorAction Stop |
+                Where-Object {
+                    $_.ExecutablePath -and ($Changing -contains [System.IO.Path]::GetFullPath($_.ExecutablePath))
+                })
+            return @($running | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
+        } catch {
+            $script:CimWorks = $false
+        }
     }
+    return @(Get-Process -Name $Name -ErrorAction SilentlyContinue | Where-Object {
+        $path = $null
+        try { $path = $_.Path } catch {}
+        $path -and ($Changing -contains [System.IO.Path]::GetFullPath($path))
+    })
 }
 
 $ServerProcesses = Get-RunningFrom "codeg-server"
@@ -398,11 +404,13 @@ if (Test-Path -LiteralPath $CliDst -PathType Leaf) {
     } catch {
         $why = $_.Exception.Message
         $users = @()
-        try {
-            $users = @(Get-CimInstance Win32_Process -Filter "Name = 'codeg-cli.exe'" -ErrorAction Stop |
-                Where-Object { $_.ExecutablePath -and ([System.IO.Path]::GetFullPath($_.ExecutablePath) -eq [System.IO.Path]::GetFullPath($CliDst)) } |
-                ForEach-Object { $_.ProcessId })
-        } catch {}
+        if ($script:CimWorks) {
+            try {
+                $users = @(Get-CimInstance Win32_Process -Filter "Name = 'codeg-cli.exe'" -OperationTimeoutSec 15 -ErrorAction Stop |
+                    Where-Object { $_.ExecutablePath -and ([System.IO.Path]::GetFullPath($_.ExecutablePath) -eq [System.IO.Path]::GetFullPath($CliDst)) } |
+                    ForEach-Object { $_.ProcessId })
+            } catch {}
+        }
         $who = if ($users.Count -gt 0) { " (in use by PID $($users -join ', '))" } else { "" }
         $stopped = if ($WasRunning) { " codeg-server was stopped for the upgrade: start it again." } else { "" }
         Write-Error "Cannot move $CliDst aside to replace it$who, so no file was changed. Let that codeg-cli finish, then run the installer again.$stopped $why"

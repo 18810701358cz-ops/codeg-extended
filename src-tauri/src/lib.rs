@@ -54,6 +54,8 @@ pub mod pets;
 #[cfg(feature = "tauri-runtime")]
 pub mod preferences;
 pub mod process;
+#[cfg(all(feature = "tauri-runtime", target_os = "macos"))]
+mod relaunch;
 pub mod runtime_lock;
 pub mod supervise;
 mod terminal;
@@ -669,9 +671,8 @@ mod tauri_app {
             // With one difference on macOS: a codeg started at login is the
             // LaunchAgent job's own process, so when it exits, launchd kills
             // whatever is still in its process group. Anything that has to
-            // outlive it must leave the group first; see
-            // `commands::app_update::restart_app` for the relaunch after an
-            // update.
+            // outlive it must leave the group first; see `relaunch` for the
+            // relauncher behind every restart.
             //
             // Nothing rewrites the registration at startup, deliberately. The
             // entry records an absolute path that no backend re-validates, so a
@@ -2399,7 +2400,20 @@ mod tauri_app {
             .expect("error while building tauri application")
             .run(|app, event| match event {
                 // Some quits only ever reach `Exit`; see `shut_down`.
-                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => shut_down(app),
+                tauri::RunEvent::ExitRequested { code, .. } => {
+                    #[cfg(target_os = "macos")]
+                    crate::relaunch::note_exit_requested(code);
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = code;
+                    shut_down(app);
+                }
+                tauri::RunEvent::Exit => {
+                    shut_down(app);
+                    // A restart on macOS goes on from here and never comes
+                    // back; see `relaunch`.
+                    #[cfg(target_os = "macos")]
+                    crate::relaunch::relaunch_after_exit(app);
+                }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => {
                     // Every Dock click, whatever `has_visible_windows` says:
