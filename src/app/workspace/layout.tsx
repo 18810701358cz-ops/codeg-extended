@@ -21,6 +21,7 @@ import { Sidebar } from "@/components/layout/sidebar"
 // [codeg-extended] plugin host
 import { PluginHost } from "@/components/plugin-host/plugin-host"
 import { PluginSlot } from "@/components/plugin-host/plugin-slot"
+import { TokenMeterBridge } from "@/components/plugin-host/token-meter-bridge"
 import { StatusBar } from "@/components/layout/status-bar"
 import {
   AppWorkspaceProvider,
@@ -1464,6 +1465,8 @@ function FolderLayoutShell({ children }: { children: React.ReactNode }) {
       )}
       {/* [codeg-extended] plugin host runtime and workspace overlay container */}
       <PluginHost />
+      {/* [codeg-extended] feeds ctx.tokens; renders nothing */}
+      <TokenMeterBridge />
       <div
         id="plugin-workspace-overlay"
         className="pointer-events-none fixed inset-0 z-40 overflow-hidden"
