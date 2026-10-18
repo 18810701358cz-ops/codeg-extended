@@ -2327,16 +2327,21 @@ impl SessionState {
 /// Whether someone types the prompts of a connection with this owner label, so
 /// that a predicted follow-up prompt has a composer to appear in.
 ///
-/// Not for the two owners codeg drives without one: an automation run (owner
-/// `"automation"`, see `automation::engine`) and a chat-channel bot (owners
+/// Not for the owners codeg drives without one: an automation run (owner
+/// `"automation"`, see `automation::engine`), a chat-channel bot (owners
 /// `"chat_channel:<channel>:<sender>…"`, see
-/// `chat_channel::session_commands::owner_label_for`), whose prompts arrive from
-/// a schedule or a messaging app. For them a prediction would only be paid for.
+/// `chat_channel::session_commands::owner_label_for`) and a `codeg-cli` run
+/// (owner [`CLI_OWNER_LABEL`](crate::cli_run::service::CLI_OWNER_LABEL)), whose
+/// prompts arrive from a schedule, a messaging app or a command line — and a
+/// `codeg-cli` run lets its connection go as soon as its one turn has ended.
+/// For them a prediction would only be paid for.
 /// Everything else is a person's window, a work task (its session takes
 /// follow-ups once the task stops), or a delegated child (which inherits its
 /// parent's label, and whose session the user can open and continue).
 pub(crate) fn owner_composes_prompts(owner_window_label: &str) -> bool {
-    owner_window_label != "automation" && !owner_window_label.starts_with("chat_channel:")
+    owner_window_label != "automation"
+        && owner_window_label != crate::cli_run::service::CLI_OWNER_LABEL
+        && !owner_window_label.starts_with("chat_channel:")
 }
 
 /// Max age of the background keep-alive: how long a connection with
@@ -3563,6 +3568,7 @@ mod tests {
         }
         for owner in [
             "automation",
+            crate::cli_run::service::CLI_OWNER_LABEL,
             "chat_channel:4:wx-user",
             "chat_channel:4:tg-user:thread:9",
         ] {
@@ -3577,6 +3583,14 @@ mod tests {
             None,
         );
         assert!(!automation.wants_prompt_suggestions);
+        let cli_run = SessionState::new(
+            "conn-cli".to_string(),
+            AgentType::ClaudeCode,
+            None,
+            crate::cli_run::service::CLI_OWNER_LABEL.to_string(),
+            None,
+        );
+        assert!(!cli_run.wants_prompt_suggestions);
     }
 
     #[test]
