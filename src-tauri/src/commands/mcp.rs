@@ -455,12 +455,13 @@ pub async fn mcp_install_from_marketplace(
 /// Save `spec` for `server_id` to exactly the agents in `apps`.
 ///
 /// `shown_spec` is the spec the editor loaded for this server before the user
-/// edited it: Kiro keeps its own value for every field the save left as shown
-/// (see `upsert_kiro_server_at`). It comes from the editor because a scan
-/// taken now could already reflect a change another agent made while the
-/// editor was open, and then misread which fields the user touched. A client
-/// that sends none (a new server, or an older build) gets the scan's spec for
-/// the id as the closest stand-in, and a new server has none.
+/// edited it: Kiro and Cursor keep their own value for every field the save
+/// left as shown (see `upsert_kiro_server_at` and `upsert_cursor_server_at`).
+/// It comes from the editor because a scan taken now could already reflect a
+/// change another agent made while the editor was open, and then misread
+/// which fields the user touched. A client that sends none (a new server, or
+/// an older build) gets the scan's spec for the id as the closest stand-in,
+/// and a new server has none.
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn mcp_upsert_local_server(
     server_id: String,
@@ -512,6 +513,9 @@ pub async fn mcp_upsert_local_server(
                 match (app, shown.as_ref()) {
                     (McpAppType::Kiro, Some(shown)) => {
                         upsert_kiro_server_edited(&server_id, &canonical_spec, shown)?
+                    }
+                    (McpAppType::Cursor, Some(shown)) => {
+                        upsert_cursor_server_edited(&server_id, &canonical_spec, shown)?
                     }
                     _ => upsert_server_for_app(app, &server_id, &canonical_spec)?,
                 }
@@ -3247,6 +3251,11 @@ fn scan_local_servers_from_readers(readers: &[LocalMcpReader]) -> LocalMcpScan {
                 let owner_values = openclaw_declares.remove(&id).unwrap_or_default();
                 merge_kimi_extension_fields(&mut entry.0, &spec, &owner_values);
             }
+            if reader.app == McpAppType::Cursor {
+                // Same for Cursor's (`envFile`, `auth`, `tls`, …). See
+                // `merge_cursor_extension_fields`.
+                merge_cursor_extension_fields(&mut entry.0, &spec, &entry.1);
+            }
             if reader.app == McpAppType::Kiro {
                 // Same first-writer-wins hazard for Kiro's own fields
                 // (`disabled`, `autoApprove`, …). See `merge_kiro_extension_fields`.
@@ -3306,6 +3315,7 @@ fn require_complete_scan(scan: &LocalMcpScan) -> Result<(), AppCommandError> {
 }
 
 fn upsert_server_for_app(app: McpAppType, id: &str, spec: &Value) -> Result<(), AppCommandError> {
+    let spec = &without_cursor_only_fields(app, spec);
     match app {
         McpAppType::ClaudeCode => upsert_claude_server(id, spec),
         McpAppType::Codex => upsert_codex_server(id, spec),
@@ -3504,6 +3514,12 @@ fn is_kimi_timeout_ms(value: &Value) -> bool {
 /// `McpServerConfig` and Cline's `McpServerRegistration`, the two richest. That
 /// exclusivity is what lets Kimi's copy be authoritative for them in
 /// `merge_kimi_extension_fields`.
+///
+/// `enabledTools` is the one exception: Cursor's `mcp.json` has it too, with
+/// the same meaning. Kimi's copy can still be authoritative, because Cursor
+/// reads after Kimi — at Kimi's turn in the scan, an `enabledTools` on the
+/// resolved spec came from an agent that does not model it — and Cursor's
+/// merge leaves Kimi's value alone (see `merge_cursor_extension_fields`).
 const KIMI_OWNED_KEYS: &[&str] = &[
     "runtime_id",
     "executor",
@@ -3641,8 +3657,9 @@ fn canonical_to_kimi_code_entry(spec: &Value) -> Result<Value, AppCommandError> 
     // for. They exist on disk when the user set them through Kimi's own
     // `/mcp-config`, and dropping them would quietly break that server — an
     // OAuth'd remote losing its `auth`, or a `runtime_id` entry falling back
-    // to the local runtime. `upsert_kimi_code_server_at` reads the
-    // rest back off disk; this only forwards what the caller's spec carries.
+    // to the local runtime. The scan folds Kimi's own copies into the spec
+    // this receives (`merge_kimi_extension_fields`), so forwarding what the
+    // spec carries keeps them.
     let mut out = Map::new();
     for (key, value) in obj {
         let keep = match key.as_str() {
@@ -4338,14 +4355,25 @@ fn remove_command_code_server_at(path: &Path, id: &str) -> Result<bool, AppComma
 // Cursor  (~/.cursor/mcp.json  →  top-level `mcpServers`)
 //
 // Cursor's CLI (and IDE — the file is shared) reads its user-global MCP config
-// from `<CURSOR_CONFIG_DIR>/mcp.json` (default `~/.cursor/mcp.json`) — a JSON
-// file with a top-level `mcpServers` object. The 2026.07.16 CLI validates it
-// with a Zod union discriminated purely on shape: `command` present ⇒ stdio,
-// `url` present ⇒ remote (transport auto-negotiated http→sse); there is no
-// `type`/`transport` key, and unknown keys are stripped on parse (not
-// rejected). The writer below therefore emits only the fields Cursor models —
-// `command`/`args`/`env`/`cwd` for stdio, `url`/`headers` for remote — so a
-// foreign key can't ride canonicalize's passthrough onto disk.
+// from `~/.cursor/mcp.json` — a JSON file with a top-level `mcpServers`
+// object. The CLI (checked against 2026.10.16-e3cb207) parses each entry with
+// a Zod union: stdio when it has a `command` and its optional `type` is
+// `"stdio"`, otherwise remote when it has a `url` and its optional `type` is
+// `"http"` or `"sse"`. A remote entry tries streamable HTTP first and falls
+// back to SSE unless it says `type: "sse"`, which goes straight to SSE.
+// Unknown keys are stripped, but an entry that fits neither branch, or a
+// field Cursor knows with the wrong shape, fails the WHOLE file, and Cursor
+// then loads none of its servers.
+//
+// Besides the canonical fields, Cursor models `envFile` and
+// `startupTimeoutSec` (stdio), `auth`, `tls` and `placement` (remote), and
+// `enabledTools` (both). The writer emits the canonical fields plus those,
+// each validated to the shape Cursor takes (`is_cursor_extension_field`), and
+// writes `type` only for SSE. The scan folds Cursor's own copies back into a
+// server another agent claimed first (`merge_cursor_extension_fields`), a
+// save from the editor keeps Cursor's value for every field the user left
+// alone (`upsert_cursor_server_at`), and no other agent's config receives
+// them (`without_cursor_only_fields`).
 //
 // Because Cursor loads this file natively at session start, `Cursor` is on the
 // ACP forward skip list in `connection.rs` (like Hermes/Kimi/Grok) so the same
@@ -4357,8 +4385,9 @@ fn remove_command_code_server_at(path: &Path, id: &str) -> Result<bool, AppComma
 fn cursor_mcp_json_path() -> PathBuf {
     // Deliberately NOT `resolve_cursor_config_dir()`: the CLI reads its
     // user-level MCP config from a hardcoded `~/.cursor/mcp.json` (every
-    // loader in the 2026.07.16 bundle joins `homedir()`), even when
-    // `CURSOR_CONFIG_DIR`/`XDG_CONFIG_HOME` relocate chats + cli-config.json.
+    // loader in the 2026.07.16 bundle joins `homedir()`, and 2026.10.16's
+    // still do), even when `CURSOR_CONFIG_DIR`/`XDG_CONFIG_HOME` relocate
+    // chats + cli-config.json.
     dirs::home_dir().unwrap_or_default().join(".cursor").join("mcp.json")
 }
 
@@ -4375,14 +4404,7 @@ fn read_cursor_servers_at(path: &Path) -> Result<BTreeMap<String, Value>, AppCom
     };
 
     for (id, spec) in servers {
-        // Cursor discriminates on shape alone; strip any foreign `type` key so
-        // canonicalize re-infers it the way Cursor actually will (`command` ⇒
-        // stdio, `url` ⇒ http).
-        let mut spec = spec.clone();
-        if let Some(obj) = spec.as_object_mut() {
-            obj.remove("type");
-        }
-        match canonicalize_spec(&spec, &format!("Cursor config '{id}'")) {
+        match cursor_entry_to_canonical(spec, id) {
             Ok(normalized) => {
                 out.insert(id.to_string(), normalized);
             }
@@ -4395,37 +4417,344 @@ fn read_cursor_servers_at(path: &Path) -> Result<BTreeMap<String, Value>, AppCom
     Ok(out)
 }
 
-/// Convert codeg's canonical spec into a Cursor `mcpServers` entry: only the
-/// fields Cursor models, shape-discriminated (no `type`/`transport` key).
+/// Convert one Cursor `mcpServers` entry into codeg's canonical spec.
+///
+/// The transport is the branch of Cursor's union the entry lands in: stdio
+/// when it passes [`fits_cursor_stdio`], otherwise remote when it passes
+/// [`fits_cursor_remote`], with its `type` (none meaning `http`). So an entry
+/// with both a `command` and a `url` is remote when a stdio field is
+/// malformed, as it is for Cursor. An entry that lands in neither is one
+/// Cursor rejects; its `type` is dropped and canonicalize infers the
+/// transport from shape, as it did before Cursor had a `type` field.
+///
+/// A valid `auth` keeps only the keys Cursor reads, as Cursor itself does.
+/// That also leaves every `auth` taken from Cursor recognizably Cursor's (see
+/// [`is_cursor_style_auth`]), whatever else the user's file put in it.
+fn cursor_entry_to_canonical(spec: &Value, id: &str) -> Result<Value, AppCommandError> {
+    let source = format!("Cursor config '{id}'");
+    let Some(obj) = spec.as_object() else {
+        return canonicalize_spec(spec, &source);
+    };
+    let transport = if fits_cursor_stdio(obj) {
+        Some("stdio")
+    } else if fits_cursor_remote(obj) {
+        Some(obj.get("type").and_then(Value::as_str).unwrap_or("http"))
+    } else {
+        None
+    };
+    let mut obj = obj.clone();
+    match transport {
+        Some(transport) => {
+            obj.insert("type".to_string(), Value::String(transport.to_string()));
+        }
+        None => {
+            obj.remove("type");
+        }
+    }
+    if obj.get("auth").is_some_and(is_cursor_auth) {
+        if let Some(Value::Object(auth)) = obj.get_mut("auth") {
+            auth.retain(|key, _| matches!(key.as_str(), "CLIENT_ID" | "CLIENT_SECRET" | "scopes"));
+        }
+    }
+    canonicalize_spec(&Value::Object(obj), &source)
+}
+
+/// Whether `entry` passes the stdio branch of Cursor's union: a string
+/// `command`, and every other stdio field it has well-formed. A field that is
+/// present must hold a value — `null` fails, as Zod's `optional` takes only
+/// a missing key. A bad `startupTimeoutSec` is no reason to fail: Cursor
+/// discards it.
+fn fits_cursor_stdio(entry: &Map<String, Value>) -> bool {
+    let absent_or = |key: &str, check: fn(&Value) -> bool| entry.get(key).is_none_or(check);
+    entry.get("command").is_some_and(Value::is_string)
+        && absent_or("type", |value| value.as_str() == Some("stdio"))
+        && absent_or("args", is_string_array)
+        && absent_or("env", is_string_map)
+        && absent_or("envFile", Value::is_string)
+        && absent_or("cwd", Value::is_string)
+        && absent_or("enabledTools", is_string_array)
+}
+
+/// Whether `entry` passes the remote branch of Cursor's union: a string
+/// `url`, and every other remote field it has well-formed.
+fn fits_cursor_remote(entry: &Map<String, Value>) -> bool {
+    let absent_or = |key: &str, check: fn(&Value) -> bool| entry.get(key).is_none_or(check);
+    entry.get("url").is_some_and(Value::is_string)
+        && absent_or("type", |value| matches!(value.as_str(), Some("http" | "sse")))
+        && absent_or("headers", is_string_map)
+        && absent_or("auth", is_cursor_auth)
+        && absent_or("tls", is_cursor_tls)
+        && absent_or("placement", |value| {
+            matches!(value.as_str(), Some("server" | "client"))
+        })
+        && absent_or("enabledTools", is_string_array)
+}
+
+fn is_string_map(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|map| map.values().all(Value::is_string))
+}
+
+/// The per-server fields Cursor models beyond the canonical spec.
+const CURSOR_EXTENSION_KEYS: &[&str] = &[
+    "envFile",
+    "startupTimeoutSec",
+    "auth",
+    "tls",
+    "placement",
+    "enabledTools",
+];
+
+/// A Cursor field, validated to the shape Cursor's schema takes for this
+/// transport.
+///
+/// A wrong-shaped value is dropped rather than written: one would cost the
+/// user every server in the file. Only `startupTimeoutSec` is forgiving —
+/// Cursor discards a bad value and waits the default 60 s (it caps a good one
+/// at 300 s) — but codeg still writes only a value Cursor would use. An
+/// `auth` must also be recognizably Cursor's: pi's object is one Cursor
+/// would accept, but it is pi's, and taking it would replace Cursor's client.
+fn is_cursor_extension_field(key: &str, value: &Value, stdio: bool) -> bool {
+    match key {
+        "envFile" => stdio && value.is_string(),
+        "startupTimeoutSec" => stdio && value.as_f64().is_some_and(|secs| secs > 0.0),
+        "auth" => !stdio && is_cursor_style_auth(value) && is_cursor_auth(value),
+        "tls" => !stdio && is_cursor_tls(value),
+        "placement" => !stdio && matches!(value.as_str(), Some("server" | "client")),
+        "enabledTools" => is_string_array(value),
+        _ => false,
+    }
+}
+
+/// Cursor's `auth`, the static OAuth client of a server that has no dynamic
+/// registration: a string `CLIENT_ID`, optionally a string `CLIENT_SECRET`
+/// and string `scopes`. Cursor drops any other key in it.
+fn is_cursor_auth(value: &Value) -> bool {
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    obj.get("CLIENT_ID").is_some_and(Value::is_string)
+        && obj.get("CLIENT_SECRET").is_none_or(Value::is_string)
+        && obj.get("scopes").is_none_or(is_string_array)
+}
+
+/// Whether `value` is meant as Cursor's `auth`, valid or not: an object naming
+/// a `CLIENT_ID`. Kimi's and OpenClaw's `auth` is the string `"oauth"`, and
+/// pi's object names a `provider` — and may carry other keys besides, so one
+/// with a `provider` is pi's even when it has a `CLIENT_ID` too.
+fn is_cursor_style_auth(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|obj| obj.contains_key("CLIENT_ID") && !obj.contains_key("provider"))
+}
+
+/// Cursor's `tls`: exactly `{"caBundle": <PEM>}` — any other key in it fails
+/// the file — with the PEM, trimmed the way JavaScript trims, between 1 and
+/// 131072 UTF-16 code units long.
+fn is_cursor_tls(value: &Value) -> bool {
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    let Some(pem) = obj.get("caBundle").and_then(Value::as_str) else {
+        return false;
+    };
+    // `String.prototype.trim` strips U+FEFF but not U+0085; Rust's
+    // `char::is_whitespace` does the opposite and agrees on everything else.
+    let trimmed =
+        pem.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}');
+    obj.len() == 1 && (1..=131_072).contains(&trimmed.encode_utf16().count())
+}
+
+/// Resolve Cursor's fields on the spec the scan resolved a server to.
+///
+/// The scan is first-writer-wins and reads Cursor late, so a server another
+/// agent also holds surfaces as THAT agent's copy. Its value for a Cursor
+/// field is at best a stale echo of an earlier save, so Cursor's copy is
+/// authoritative, its ABSENCE included: the editor shows what Cursor's file
+/// says, and a field deleted there stays deleted.
+///
+/// Two fields are not Cursor's alone. `enabledTools` means the same in Kimi's
+/// `mcp.json`, and when Kimi also holds the server its own merge has already
+/// settled it: Kimi's value, or its absence, stands, and Cursor's is not
+/// folded in on top, or the next save would hand Kimi a tool allowlist it
+/// never had. `auth` is a client object only in Cursor's config: Kimi and
+/// OpenClaw write the string `"oauth"`, and pi either a string or
+/// `{"provider": …}`. A resolved `auth` of another shape is therefore never
+/// an echo of Cursor's and stays — whether pi holds the server cannot even be
+/// known yet, as pi is read last. Either way the save still keeps Cursor's
+/// own value on disk (see [`upsert_cursor_server_at`]).
+fn merge_cursor_extension_fields(
+    resolved: &mut Value,
+    cursor_spec: &Value,
+    earlier_holders: &BTreeSet<McpAppType>,
+) {
+    let stdio = resolved.get("type").and_then(Value::as_str) == Some("stdio");
+    let Some(target) = resolved.as_object_mut() else {
+        return;
+    };
+    let source = cursor_spec.as_object();
+    for key in CURSOR_EXTENSION_KEYS {
+        let theirs = match *key {
+            "enabledTools" => earlier_holders.contains(&McpAppType::KimiCode),
+            "auth" => target
+                .get("auth")
+                .is_some_and(|auth| !is_cursor_style_auth(auth)),
+            _ => false,
+        };
+        if theirs {
+            continue;
+        }
+        match source
+            .and_then(|obj| obj.get(*key))
+            .filter(|value| is_cursor_extension_field(key, value, stdio))
+        {
+            Some(value) => {
+                target.insert((*key).to_string(), value.clone());
+            }
+            None => {
+                target.remove(*key);
+            }
+        }
+    }
+}
+
+/// `spec` as `app` should receive it: without the fields only Cursor reads.
+///
+/// Once Cursor holds a server, the canonical spec carries Cursor's fields (see
+/// [`merge_cursor_extension_fields`]), and the writers that pass unknown keys
+/// through would copy them into every other agent's config. They do nothing
+/// there, and Cursor's `auth` object does harm: OpenClaw rejects its whole
+/// config when `auth` is anything but `"oauth"`, and pi's MCP adapter skips a
+/// server whose `auth` object names no provider. Kimi models `enabledTools`
+/// itself, so Kimi keeps it.
+fn without_cursor_only_fields(app: McpAppType, spec: &Value) -> Value {
+    let mut spec = spec.clone();
+    if app == McpAppType::Cursor {
+        return spec;
+    }
+    if let Some(obj) = spec.as_object_mut() {
+        obj.retain(|key, value| match key.as_str() {
+            "envFile" | "startupTimeoutSec" | "tls" | "placement" => false,
+            "enabledTools" => app == McpAppType::KimiCode,
+            "auth" => !is_cursor_style_auth(value),
+            _ => true,
+        });
+    }
+    spec
+}
+
+/// Convert codeg's canonical spec into a Cursor `mcpServers` entry: the
+/// canonical fields Cursor models plus the Cursor fields that pass
+/// [`is_cursor_extension_field`], and `type` only for SSE, the one transport
+/// Cursor would not pick by itself. Anything else — whatever foreign keys
+/// canonicalize passed through from another agent's file — stays off disk.
 fn canonical_to_cursor_entry(spec: &Value) -> Result<Value, AppCommandError> {
     let canonical = canonicalize_spec(spec, "Cursor write")?;
     let Some(obj) = canonical.as_object() else {
         return Ok(canonical);
     };
+    let transport = obj.get("type").and_then(Value::as_str);
+    let stdio = transport == Some("stdio");
     let mut out = Map::new();
     for (key, value) in obj {
-        let keep = matches!(
+        let base = matches!(
             key.as_str(),
             "command" | "args" | "env" | "cwd" | "url" | "headers"
         );
-        if keep {
+        if base || is_cursor_extension_field(key, value, stdio) {
             out.insert(key.clone(), value.clone());
         }
+    }
+    if transport == Some("sse") {
+        out.insert("type".to_string(), Value::String("sse".to_string()));
     }
     Ok(Value::Object(out))
 }
 
-fn upsert_cursor_server(id: &str, spec: &Value) -> Result<(), AppCommandError> {
-    upsert_cursor_server_at(&cursor_mcp_json_path(), id, spec)
+/// `spec`'s value for the Cursor field `key`, when it is one Cursor would take.
+fn cursor_field<'a>(spec: &'a Value, key: &str) -> Option<&'a Value> {
+    let stdio = spec.get("type").and_then(Value::as_str) == Some("stdio");
+    spec.get(key)
+        .filter(|value| is_cursor_extension_field(key, value, stdio))
 }
 
-fn upsert_cursor_server_at(path: &Path, id: &str, spec: &Value) -> Result<(), AppCommandError> {
+fn upsert_cursor_server(id: &str, spec: &Value) -> Result<(), AppCommandError> {
+    upsert_cursor_server_at(&cursor_mcp_json_path(), id, spec, None)
+}
+
+/// [`upsert_cursor_server`] for a save from the MCP editor, which knows the
+/// spec the editor showed for the server before the user edited it.
+fn upsert_cursor_server_edited(
+    id: &str,
+    spec: &Value,
+    shown: &Value,
+) -> Result<(), AppCommandError> {
+    upsert_cursor_server_at(&cursor_mcp_json_path(), id, spec, Some(shown))
+}
+
+/// Write `spec` as Cursor's entry for `id`.
+///
+/// With `shown` (the spec the editor showed before the edit), a Cursor field
+/// the save left as shown keeps the value Cursor's own entry has — its
+/// absence included. The editor shows ONE spec per server, and for a server
+/// another agent also holds that spec can carry its value instead of
+/// Cursor's (see [`merge_cursor_extension_fields`]): writing it back would
+/// hand Cursor the tool allowlist the user gave only to Kimi, or lose
+/// Cursor's OAuth client to an OpenClaw `"oauth"` Cursor cannot read. A field
+/// counts as left alone when what Cursor would make of it did not change, so
+/// deleting that `"oauth"` leaves Cursor's client in place too. A field the
+/// user did change is theirs, and is written.
+///
+/// Without `shown` the save did not come from the editor — a marketplace
+/// install over a server Cursor already holds, say — so nothing in it is a
+/// deletion: a field the spec does not set keeps Cursor's value, and
+/// reinstalling a server does not cost it its OAuth client or CA bundle.
+///
+/// Either way, only an entry the Cursor reader lists counts as Cursor's own,
+/// read the way the reader reads it: one it skips was never shown, so
+/// nothing in it is carried over.
+fn upsert_cursor_server_at(
+    path: &Path,
+    id: &str,
+    spec: &Value,
+    shown: Option<&Value>,
+) -> Result<(), AppCommandError> {
     let mut root = read_json_file(path)?;
     if !root.is_object() {
         root = json!({});
     }
 
-    let canonical = canonical_to_cursor_entry(spec)?;
+    let spec = canonicalize_spec(spec, "Cursor write")?;
+    let mut entry = canonical_to_cursor_entry(&spec)?;
+    let existing = root
+        .get("mcpServers")
+        .and_then(|servers| servers.get(id))
+        .and_then(|existing| cursor_entry_to_canonical(existing, id).ok());
+    let existing = existing.as_ref().and_then(Value::as_object);
+    if let (Some(existing), Some(entry)) = (existing, entry.as_object_mut()) {
+        let stdio = spec.get("type").and_then(Value::as_str) == Some("stdio");
+        for key in CURSOR_EXTENSION_KEYS {
+            let left_alone = match shown {
+                Some(shown) => cursor_field(&spec, key) == cursor_field(shown, key),
+                None => cursor_field(&spec, key).is_none(),
+            };
+            if !left_alone {
+                continue;
+            }
+            match existing
+                .get(*key)
+                .filter(|value| is_cursor_extension_field(key, value, stdio))
+            {
+                Some(value) => {
+                    entry.insert((*key).to_string(), value.clone());
+                }
+                None => {
+                    entry.remove(*key);
+                }
+            }
+        }
+    }
 
     let obj = root.as_object_mut().ok_or_else(|| {
         mcp_configuration_invalid(format!("invalid JSON root in {}", path.display()))
@@ -4440,7 +4769,7 @@ fn upsert_cursor_server_at(path: &Path, id: &str, spec: &Value) -> Result<(), Ap
         .ok_or_else(|| {
             mcp_configuration_invalid(format!("invalid mcpServers in {}", path.display()))
         })?;
-    map.insert(id.to_string(), canonical);
+    map.insert(id.to_string(), entry);
 
     write_json_file(path, &root)
 }
@@ -4462,6 +4791,16 @@ fn remove_cursor_server_at(path: &Path, id: &str) -> Result<bool, AppCommandErro
         return Ok(false);
     };
 
+    // An entry the reader skips was never listed as Cursor's, so no edit made
+    // in codeg can be about it — and the walk a same-named save runs to
+    // remove the server from every agent it was not assigned to must leave
+    // it alone.
+    let representable = servers
+        .get(id)
+        .is_some_and(|spec| cursor_entry_to_canonical(spec, id).is_ok());
+    if !representable {
+        return Ok(false);
+    }
     let removed = servers.remove(id).is_some();
     if removed {
         write_json_file(path, &root)?;
@@ -7140,60 +7479,618 @@ mod tests {
     }
 
     #[test]
-    fn cursor_mcp_json_round_trips_and_strips_type() {
-        // Cursor reads `~/.cursor/mcp.json` (`mcpServers`) natively, shape-
-        // discriminated (command ⇒ stdio, url ⇒ remote) with NO `type` key —
-        // the writer must emit only the fields Cursor models, and the reader
-        // must re-infer transport rather than trusting a foreign `type`.
+    fn cursor_mcp_json_round_trips_its_own_fields() {
+        // Cursor reads `~/.cursor/mcp.json` natively. Re-saving what the
+        // reader returned must leave every field Cursor models in place, and
+        // write `type` only where it changes what Cursor does (SSE).
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("mcp.json");
 
         assert!(read_cursor_servers_at(&path).expect("read missing").is_empty());
         assert!(!remove_cursor_server_at(&path, "ctx7").expect("remove missing"));
 
-        // Upsert a stdio server; the canonical `type` must not reach disk.
-        let spec = json!({
-            "type": "stdio",
+        let ctx7 = json!({
             "command": "npx",
             "args": ["-y", "ctx7-mcp"],
-            "env": { "TOKEN": "t" },
+            "env": {"TOKEN": "t"},
+            "envFile": "${workspaceFolder}/.env",
+            "cwd": "/srv",
+            "enabledTools": ["resolve", "get-docs"],
+            "startupTimeoutSec": 90
         });
-        upsert_cursor_server_at(&path, "ctx7", &spec).expect("upsert");
-        let raw = std::fs::read_to_string(&path).expect("read file");
-        let root: Value = serde_json::from_str(&raw).expect("parse json");
-        let on_disk = root.pointer("/mcpServers/ctx7").expect("entry on disk");
-        assert!(on_disk.get("type").is_none(), "no type key on disk");
-        assert_eq!(on_disk.get("command").and_then(Value::as_str), Some("npx"));
-
-        // Read-back canonicalizes (command ⇒ stdio).
-        let servers = read_cursor_servers_at(&path).expect("read back");
-        assert_eq!(
-            servers.get("ctx7").and_then(|s| s.get("type")).and_then(Value::as_str),
-            Some("stdio")
-        );
-
-        // A remote entry keeps url/headers only; a foreign on-disk `type` is
-        // ignored on read (shape wins, like the CLI's Zod parse).
-        upsert_cursor_server_at(
+        let remote = json!({
+            "type": "sse",
+            "url": "https://mcp.example.com/sse",
+            "headers": {"X-Team": "a"},
+            "auth": {"CLIENT_ID": "${env:ID}", "CLIENT_SECRET": "s", "scopes": ["read"]},
+            "tls": {"caBundle": "-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"},
+            "placement": "client",
+            "enabledTools": []
+        });
+        let http = json!({"type": "http", "url": "https://mcp.example.com/mcp"});
+        std::fs::write(
             &path,
-            "remote",
-            &json!({"type": "sse", "url": "https://mcp.example.com/sse"}),
+            json!({"mcpServers": {"ctx7": ctx7, "remote": remote, "http": http}}).to_string(),
         )
-        .expect("upsert remote");
-        let raw2 = std::fs::read_to_string(&path).expect("read file 2");
-        let root2: Value = serde_json::from_str(&raw2).expect("parse json 2");
-        assert!(root2.pointer("/mcpServers/remote/type").is_none());
-        let servers2 = read_cursor_servers_at(&path).expect("read back 2");
+        .expect("seed");
+
+        let servers = read_cursor_servers_at(&path).expect("read");
+        assert_eq!(servers["ctx7"]["type"], json!("stdio"));
         assert_eq!(
-            servers2.get("remote").and_then(|s| s.get("type")).and_then(Value::as_str),
-            Some("http"),
-            "url-only entries classify as http (Cursor auto-negotiates)"
+            servers["remote"]["type"],
+            json!("sse"),
+            "Cursor's `type: sse` is SSE"
+        );
+        assert_eq!(servers["http"]["type"], json!("http"));
+        for (id, spec) in &servers {
+            upsert_cursor_server_at(&path, id, spec, None).expect("re-save");
+        }
+
+        let root: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read file"))
+            .expect("parse json");
+        assert_eq!(root["mcpServers"]["ctx7"], ctx7, "no `type` for stdio");
+        assert_eq!(root["mcpServers"]["remote"], remote);
+        assert_eq!(
+            root["mcpServers"]["http"],
+            json!({"url": "https://mcp.example.com/mcp"}),
+            "Cursor tries streamable HTTP by itself"
         );
 
-        // Remove round-trips.
         assert!(remove_cursor_server_at(&path, "ctx7").expect("remove"));
         assert!(remove_cursor_server_at(&path, "remote").expect("remove remote"));
+        assert!(remove_cursor_server_at(&path, "http").expect("remove http"));
         assert!(read_cursor_servers_at(&path).expect("read after remove").is_empty());
+    }
+
+    // The transport is whichever branch of Cursor's union the entry lands in;
+    // an entry that lands in neither falls back to shape, as before Cursor
+    // had a `type` field.
+    #[test]
+    fn cursor_reader_classifies_entries_the_way_cursor_does() {
+        let classify = |entry: Value| {
+            cursor_entry_to_canonical(&entry, "srv").expect("canonical")["type"].clone()
+        };
+        // Stdio is tried first, so a `command` beats a `url`...
+        assert_eq!(
+            classify(json!({"command": "x", "url": "https://h/mcp"})),
+            json!("stdio")
+        );
+        // ...unless `type` rules the stdio branch out.
+        assert_eq!(
+            classify(json!({"type": "sse", "command": "x", "url": "https://h/sse"})),
+            json!("sse")
+        );
+        assert_eq!(
+            classify(json!({"type": "http", "url": "https://h/mcp"})),
+            json!("http")
+        );
+        assert_eq!(
+            classify(json!({"type": "stdio", "command": "x"})),
+            json!("stdio")
+        );
+        // A malformed stdio field fails the stdio branch, and an entry that
+        // also has a `url` lands in the remote one.
+        for (key, broken) in [
+            ("args", json!(null)),
+            ("env", json!({"TOKEN": 1})),
+            ("envFile", json!(1)),
+        ] {
+            let mut entry = json!({"command": "node", "url": "https://h/mcp"});
+            entry[key] = broken;
+            assert_eq!(classify(entry), json!("http"), "{key}");
+        }
+        // Neither branch: Cursor rejects these, and shape decides. A field
+        // both branches have fails both.
+        for (key, broken) in [("type", json!(null)), ("enabledTools", json!("all"))] {
+            let mut entry = json!({"command": "node", "url": "https://h/mcp"});
+            entry[key] = broken;
+            assert_eq!(classify(entry), json!("stdio"), "{key}");
+        }
+        assert_eq!(
+            classify(json!({"type": "streamableHttp", "url": "https://h/mcp"})),
+            json!("http")
+        );
+        assert_eq!(
+            classify(json!({"type": "http", "command": "x"})),
+            json!("stdio")
+        );
+    }
+
+    // Cursor takes an entry with a `command` and a `url` as remote when a
+    // stdio field is malformed, so codeg must too, or a save would rewrite it
+    // as stdio and lose its URL, OAuth client and CA bundle.
+    #[test]
+    fn a_remote_entry_with_a_malformed_stdio_field_stays_remote() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mcp.json");
+        let entry = json!({
+            "command": "node", "args": null, "url": "https://h/mcp",
+            "auth": {"CLIENT_ID": "id"}, "tls": {"caBundle": "PEM"}
+        });
+        std::fs::write(&path, json!({"mcpServers": {"api": entry}}).to_string()).expect("seed");
+        let spec = read_cursor_servers_at(&path).expect("read")["api"].clone();
+        assert_eq!(spec["type"], json!("http"));
+        upsert_cursor_server_at(&path, "api", &spec, Some(&spec)).expect("save");
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        assert_eq!(
+            root["mcpServers"]["api"],
+            json!({"url": "https://h/mcp", "auth": {"CLIENT_ID": "id"}, "tls": {"caBundle": "PEM"}})
+        );
+    }
+
+    // Cursor validates the whole file at once, so a field it knows with the
+    // wrong shape would cost every server in it. Such a value is dropped, as
+    // is anything Cursor does not model.
+    #[test]
+    fn cursor_writer_drops_what_cursor_would_reject() {
+        let write = |spec: Value| canonical_to_cursor_entry(&spec).expect("entry");
+
+        let stdio = write(json!({
+            "type": "stdio",
+            "command": "npx",
+            "envFile": 1,
+            "startupTimeoutSec": 0,
+            "enabledTools": ["ok", 2],
+            "placement": "client",
+            "disabled": true
+        }));
+        assert_eq!(stdio, json!({"command": "npx"}));
+
+        let remote = write(json!({
+            "type": "http",
+            "url": "https://h/mcp",
+            "auth": "oauth",
+            "tls": {"caBundle": "PEM", "verify": false},
+            "placement": "edge",
+            "envFile": ".env",
+            "startupTimeoutSec": 30
+        }));
+        assert_eq!(remote, json!({"url": "https://h/mcp"}));
+
+        let auth = |auth: Value| is_cursor_extension_field("auth", &auth, false);
+        assert!(auth(json!({"CLIENT_ID": "id"})));
+        assert!(
+            auth(json!({"CLIENT_ID": "id", "extra": 1})),
+            "Cursor drops other keys"
+        );
+        assert!(!auth(json!({"CLIENT_SECRET": "s"})));
+        assert!(!auth(json!({"CLIENT_ID": "id", "CLIENT_SECRET": null})));
+        assert!(!auth(json!({"CLIENT_ID": "id", "scopes": "read"})));
+        assert!(!is_cursor_extension_field(
+            "auth",
+            &json!({"CLIENT_ID": "id"}),
+            true
+        ));
+
+        // The CA bundle is measured the way JavaScript trims and counts it.
+        let tls = |pem: String| is_cursor_extension_field("tls", &json!({"caBundle": pem}), false);
+        assert!(tls("PEM".to_string()));
+        assert!(!tls(" \n\t".to_string()));
+        assert!(!tls("\u{feff}".to_string()), "JS trims a BOM");
+        assert!(tls("\u{85}".to_string()), "JS keeps NEL");
+        assert!(tls(format!("  {}  ", "a".repeat(131_072))));
+        assert!(!tls("a".repeat(131_073)));
+        assert!(!tls("😀".repeat(65_537)), "two UTF-16 units each");
+    }
+
+    // First-writer-wins must not strip Cursor's fields from a server another
+    // agent also holds, nor let a stale echo in that agent's file mask what
+    // Cursor's own file says — unless the field is one that agent reads itself.
+    #[test]
+    fn cursor_extension_fields_resolve_by_ownership() {
+        let claude: BTreeSet<McpAppType> = [McpAppType::ClaudeCode].into();
+        let kimi: BTreeSet<McpAppType> = [McpAppType::KimiCode].into();
+        let openclaw: BTreeSet<McpAppType> = [McpAppType::OpenClaw].into();
+        let cursor_stdio = json!({
+            "type": "stdio", "command": "x",
+            "envFile": ".env", "enabledTools": ["read"], "placement": "client"
+        });
+
+        // Claude reads none of these: its copies are echoes, Cursor's win, and
+        // one Cursor no longer sets goes too.
+        let mut resolved = json!({
+            "type": "stdio", "command": "x", "envFile": "old.env", "startupTimeoutSec": 5
+        });
+        merge_cursor_extension_fields(&mut resolved, &cursor_stdio, &claude);
+        assert_eq!(
+            resolved,
+            json!({"type": "stdio", "command": "x", "envFile": ".env", "enabledTools": ["read"]}),
+            "`placement` is remote-only"
+        );
+
+        // Kimi's merge already settled `enabledTools`: its value stands, and
+        // so does its absence.
+        let mut resolved = json!({"type": "stdio", "command": "x", "enabledTools": ["write"]});
+        merge_cursor_extension_fields(&mut resolved, &cursor_stdio, &kimi);
+        assert_eq!(resolved["enabledTools"], json!(["write"]));
+        assert_eq!(resolved["envFile"], json!(".env"));
+        let mut resolved = json!({"type": "stdio", "command": "x"});
+        merge_cursor_extension_fields(&mut resolved, &cursor_stdio, &kimi);
+        assert!(resolved.get("enabledTools").is_none());
+
+        // Only Cursor writes `auth` as a client object, so any other shape —
+        // OpenClaw's or Kimi's "oauth", pi's provider — belongs to another
+        // agent and stays, whoever else holds the server.
+        let client = json!({"CLIENT_ID": "id"});
+        let cursor_remote = json!({"type": "http", "url": "https://h/mcp", "auth": client});
+        for (theirs, holders) in [
+            (json!("oauth"), &openclaw),
+            (json!("oauth"), &claude),
+            (json!({"provider": "openai"}), &claude),
+            (json!({"provider": "openai", "CLIENT_ID": "id"}), &claude),
+        ] {
+            let mut resolved = json!({"type": "http", "url": "https://h/mcp", "auth": theirs});
+            merge_cursor_extension_fields(&mut resolved, &cursor_remote, holders);
+            assert_eq!(resolved["auth"], theirs);
+        }
+        // A Cursor-shaped one is Cursor's: missing, it is filled in, and stale,
+        // it is an echo.
+        let mut resolved = json!({"type": "http", "url": "https://h/mcp"});
+        merge_cursor_extension_fields(&mut resolved, &cursor_remote, &openclaw);
+        assert_eq!(resolved["auth"], client);
+        let mut resolved =
+            json!({"type": "http", "url": "https://h/mcp", "auth": {"CLIENT_ID": "old"}});
+        merge_cursor_extension_fields(
+            &mut resolved,
+            &json!({"type": "http", "url": "u"}),
+            &openclaw,
+        );
+        assert!(
+            resolved.get("auth").is_none(),
+            "a stale Cursor client is an echo"
+        );
+    }
+
+    fn test_provider_auth_server() -> Result<BTreeMap<String, Value>, AppCommandError> {
+        Ok(BTreeMap::from([(
+            "api".to_string(),
+            json!({"type": "http", "url": "https://h/mcp", "auth": {"provider": "openai"}}),
+        )]))
+    }
+
+    fn test_pi_auth_with_client_id() -> Result<BTreeMap<String, Value>, AppCommandError> {
+        Ok(BTreeMap::from([(
+            "api".to_string(),
+            json!({
+                "type": "http", "url": "https://h/mcp",
+                "auth": {"provider": "openai", "CLIENT_ID": "id"}
+            }),
+        )]))
+    }
+
+    fn test_cursor_holds_pi_server() -> Result<BTreeMap<String, Value>, AppCommandError> {
+        Ok(BTreeMap::from([(
+            "api".to_string(),
+            json!({"type": "http", "url": "https://h/mcp"}),
+        )]))
+    }
+
+    // pi is read after Cursor, so at Cursor's turn in the scan nothing says pi
+    // holds the server. Its provider `auth`, carried by the copy that won,
+    // must survive Cursor's merge and reach pi's file on the next save.
+    #[test]
+    fn an_auth_pi_holds_survives_a_scan_cursor_takes_part_in() {
+        let cases: [(LocalMcpReadFn, Value); 2] = [
+            (test_provider_auth_server, json!({"provider": "openai"})),
+            (
+                test_pi_auth_with_client_id,
+                json!({"provider": "openai", "CLIENT_ID": "id"}),
+            ),
+        ];
+        for (read, auth) in cases {
+            let readers = [
+                LocalMcpReader::new("Claude Code", McpAppType::ClaudeCode, read),
+                LocalMcpReader::new("Cursor", McpAppType::Cursor, test_cursor_holds_pi_server),
+                LocalMcpReader::new("pi", McpAppType::Pi, read),
+            ];
+            let scan = scan_local_servers_from_readers(&readers);
+            assert_eq!(scan.servers.len(), 1);
+            let spec = &scan.servers[0].spec;
+            assert_eq!(spec["auth"], auth);
+
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("mcp.json");
+            let for_pi = without_cursor_only_fields(McpAppType::Pi, spec);
+            upsert_pi_server_at(&path, "api", &for_pi).expect("save to pi");
+            assert_eq!(
+                read_pi_servers_at(&path).expect("read pi")["api"]["auth"],
+                auth
+            );
+        }
+    }
+
+    fn test_claude_holds_cursor_server() -> Result<BTreeMap<String, Value>, AppCommandError> {
+        Ok(BTreeMap::from([(
+            "docs".to_string(),
+            json!({"type": "stdio", "command": "npx", "args": ["docs"]}),
+        )]))
+    }
+
+    fn test_cursor_servers() -> Result<BTreeMap<String, Value>, AppCommandError> {
+        Ok(BTreeMap::from([(
+            "docs".to_string(),
+            json!({"type": "stdio", "command": "npx", "args": ["docs"], "envFile": ".env"}),
+        )]))
+    }
+
+    #[test]
+    fn cursor_fields_survive_a_scan_another_agent_won() {
+        let readers = [
+            LocalMcpReader::new(
+                "Claude Code",
+                McpAppType::ClaudeCode,
+                test_claude_holds_cursor_server,
+            ),
+            LocalMcpReader::new("Cursor", McpAppType::Cursor, test_cursor_servers),
+        ];
+        let scan = scan_local_servers_from_readers(&readers);
+        assert_eq!(scan.servers.len(), 1);
+        assert_eq!(scan.servers[0].spec["envFile"], json!(".env"));
+        assert_eq!(
+            scan.servers[0].apps,
+            [McpAppType::ClaudeCode, McpAppType::Cursor]
+        );
+    }
+
+    // The editor shows one spec per server, and for a server Kimi or OpenClaw
+    // also holds it can show their value for a field Cursor has too. Saving
+    // an unrelated edit must not write that into Cursor. A field the user did
+    // change is written.
+    #[test]
+    fn a_save_keeps_cursors_own_value_for_every_field_it_left_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            json!({"mcpServers": {
+                "fs": {
+                    "command": "npx", "args": ["fs-v1"],
+                    "envFile": ".env", "enabledTools": ["read"]
+                },
+                "api": {"url": "https://h/mcp", "auth": {"CLIENT_ID": "id"}}
+            }})
+            .to_string(),
+        )
+        .expect("seed");
+        let read = |id: &str| -> Value {
+            serde_json::from_str::<Value>(&std::fs::read_to_string(&path).expect("read"))
+                .expect("parse")["mcpServers"][id]
+                .clone()
+        };
+
+        // What the editor showed: Kimi's `enabledTools`, which won the scan.
+        let shown = json!({
+            "type": "stdio", "command": "npx", "args": ["fs-v1"],
+            "envFile": ".env", "enabledTools": ["write"]
+        });
+        let mut edited = shown.clone();
+        edited["args"] = json!(["fs-v2"]);
+        upsert_cursor_server_at(&path, "fs", &edited, Some(&shown)).expect("save");
+        assert_eq!(
+            read("fs"),
+            json!({
+                "command": "npx", "args": ["fs-v2"],
+                "envFile": ".env", "enabledTools": ["read"]
+            })
+        );
+
+        // The user narrows the allowlist and deletes `envFile`: both land.
+        let mut edited = shown.clone();
+        edited["enabledTools"] = json!(["read", "list"]);
+        edited.as_object_mut().expect("object").remove("envFile");
+        upsert_cursor_server_at(&path, "fs", &edited, Some(&shown)).expect("save");
+        assert_eq!(
+            read("fs"),
+            json!({"command": "npx", "args": ["fs-v1"], "enabledTools": ["read", "list"]})
+        );
+
+        // OpenClaw's `auth: "oauth"` was shown. Changing something else, or
+        // deleting that string, changes nothing Cursor reads: its client stays.
+        let shown = json!({"type": "http", "url": "https://h/mcp", "auth": "oauth"});
+        let mut edited = shown.clone();
+        edited["headers"] = json!({"X-Team": "a"});
+        upsert_cursor_server_at(&path, "api", &edited, Some(&shown)).expect("save");
+        assert_eq!(read("api")["auth"], json!({"CLIENT_ID": "id"}));
+        let mut edited = shown.clone();
+        edited.as_object_mut().expect("object").remove("auth");
+        upsert_cursor_server_at(&path, "api", &edited, Some(&shown)).expect("save");
+        assert_eq!(read("api")["auth"], json!({"CLIENT_ID": "id"}));
+        // Putting a Cursor client there is a change Cursor reads.
+        let mut edited = shown.clone();
+        edited["auth"] = json!({"CLIENT_ID": "new"});
+        upsert_cursor_server_at(&path, "api", &edited, Some(&shown)).expect("save");
+        assert_eq!(read("api")["auth"], json!({"CLIENT_ID": "new"}));
+
+        // pi's `auth` names a provider and may carry a `CLIENT_ID` as well.
+        // Cursor would accept it, but it is pi's: editing or deleting it in
+        // the editor touches no Cursor setting.
+        let shown = json!({
+            "type": "http", "url": "https://h/mcp",
+            "auth": {"provider": "openai", "CLIENT_ID": "pi-id"}
+        });
+        let mut edited = shown.clone();
+        edited["auth"]["provider"] = json!("anthropic");
+        upsert_cursor_server_at(&path, "api", &edited, Some(&shown)).expect("save");
+        assert_eq!(read("api")["auth"], json!({"CLIENT_ID": "new"}));
+        let mut edited = shown.clone();
+        edited.as_object_mut().expect("object").remove("auth");
+        upsert_cursor_server_at(&path, "api", &edited, Some(&shown)).expect("save");
+        assert_eq!(read("api")["auth"], json!({"CLIENT_ID": "new"}));
+
+        // Without a shown spec the save is not an edit — a marketplace
+        // reinstall, say. Nothing it leaves out is a deletion, so Cursor keeps
+        // its own value for every field the spec does not set (pi's `auth` and
+        // an `"oauth"` set nothing Cursor reads); one the spec does set wins.
+        let reinstall = json!({"type": "http", "url": "https://h/v2/mcp"});
+        upsert_cursor_server_at(&path, "api", &reinstall, None).expect("save");
+        assert_eq!(
+            read("api"),
+            json!({"url": "https://h/v2/mcp", "auth": {"CLIENT_ID": "new"}})
+        );
+        let flagged = json!({"type": "http", "url": "https://h/mcp", "auth": "oauth"});
+        for spec in [&shown, &flagged] {
+            upsert_cursor_server_at(&path, "api", spec, None).expect("save");
+            assert_eq!(read("api")["auth"], json!({"CLIENT_ID": "new"}));
+        }
+        let mut with_client = reinstall.clone();
+        with_client["auth"] = json!({"CLIENT_ID": "installed"});
+        upsert_cursor_server_at(&path, "api", &with_client, None).expect("save");
+        assert_eq!(read("api")["auth"], json!({"CLIENT_ID": "installed"}));
+        // A stdio-only field is not carried onto a server reinstalled as
+        // remote; one both transports have is.
+        let stdio = json!({"type": "stdio", "command": "npx", "envFile": ".env"});
+        upsert_cursor_server_at(&path, "fs", &stdio, None).expect("save");
+        assert_eq!(
+            read("fs"),
+            json!({"command": "npx", "envFile": ".env", "enabledTools": ["read", "list"]})
+        );
+        upsert_cursor_server_at(&path, "fs", &reinstall, None).expect("save");
+        assert_eq!(
+            read("fs"),
+            json!({"url": "https://h/v2/mcp", "enabledTools": ["read", "list"]})
+        );
+    }
+
+    fn test_remote_without_auth() -> Result<BTreeMap<String, Value>, AppCommandError> {
+        Ok(BTreeMap::from([(
+            "api".to_string(),
+            json!({"type": "http", "url": "https://h/mcp"}),
+        )]))
+    }
+
+    fn test_cursor_auth_with_ignored_keys() -> Result<BTreeMap<String, Value>, AppCommandError> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mcp.json");
+        let entry = json!({
+            "url": "https://h/mcp",
+            "auth": {"CLIENT_ID": "cursor-id", "provider": null, "note": "x"}
+        });
+        std::fs::write(&path, json!({"mcpServers": {"api": entry}}).to_string()).expect("seed");
+        read_cursor_servers_at(&path)
+    }
+
+    // Cursor reads only CLIENT_ID, CLIENT_SECRET and scopes from `auth`, so a
+    // client the user's file pads with other keys — even one named `provider`
+    // — is still Cursor's alone, and must not ride the canonical spec into
+    // OpenClaw (which rejects its whole config over an `auth` object) or pi.
+    #[test]
+    fn a_cursor_client_with_extra_keys_stays_out_of_other_agents_configs() {
+        let readers = [
+            LocalMcpReader::new(
+                "Claude Code",
+                McpAppType::ClaudeCode,
+                test_remote_without_auth,
+            ),
+            LocalMcpReader::new("OpenClaw", McpAppType::OpenClaw, test_remote_without_auth),
+            LocalMcpReader::new(
+                "Cursor",
+                McpAppType::Cursor,
+                test_cursor_auth_with_ignored_keys,
+            ),
+        ];
+        let scan = scan_local_servers_from_readers(&readers);
+        assert_eq!(scan.servers.len(), 1);
+        let spec = &scan.servers[0].spec;
+        assert_eq!(spec["auth"], json!({"CLIENT_ID": "cursor-id"}));
+        for app in [McpAppType::OpenClaw, McpAppType::Pi, McpAppType::ClaudeCode] {
+            assert!(
+                without_cursor_only_fields(app, spec).get("auth").is_none(),
+                "{app:?}"
+            );
+        }
+    }
+
+    // Only an entry the Cursor reader lists is Cursor's own. One it skips (here:
+    // no command or url) was never shown, so a save must not borrow from it,
+    // and the remove walk of a same-named save must leave it alone.
+    #[test]
+    fn a_cursor_entry_the_reader_skips_is_neither_borrowed_from_nor_removed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            json!({"mcpServers": {"fs": {"envFile": ".env", "enabledTools": ["read"]}}})
+                .to_string(),
+        )
+        .expect("seed");
+        assert!(read_cursor_servers_at(&path).expect("read").is_empty());
+
+        assert!(!remove_cursor_server_at(&path, "fs").expect("remove"));
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        assert_eq!(root["mcpServers"]["fs"]["envFile"], json!(".env"));
+
+        let shown = json!({"type": "stdio", "command": "npx"});
+        upsert_cursor_server_at(&path, "fs", &shown, Some(&shown)).expect("save");
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        assert_eq!(root["mcpServers"]["fs"], json!({"command": "npx"}));
+    }
+
+    // Cursor's fields reach the canonical spec, and the writers that pass
+    // unknown keys through must not copy them into another agent's config:
+    // Cursor's `auth` object breaks OpenClaw's whole config and makes pi skip
+    // the server. Kimi reads `enabledTools` itself.
+    #[test]
+    fn cursor_only_fields_never_reach_another_agents_config() {
+        let spec = json!({
+            "type": "http", "url": "https://h/mcp", "headers": {"A": "b"},
+            "auth": {"CLIENT_ID": "id"}, "tls": {"caBundle": "PEM"}, "placement": "client",
+            "enabledTools": ["read"], "envFile": ".env", "startupTimeoutSec": 30,
+            "headersHelper": "/bin/headers"
+        });
+        let plain = json!({
+            "type": "http", "url": "https://h/mcp", "headers": {"A": "b"},
+            "headersHelper": "/bin/headers"
+        });
+        for app in [
+            McpAppType::OpenClaw,
+            McpAppType::Pi,
+            McpAppType::ClaudeCode,
+            McpAppType::Gemini,
+        ] {
+            assert_eq!(without_cursor_only_fields(app, &spec), plain, "{app:?}");
+        }
+        let mut for_kimi = plain.clone();
+        for_kimi["enabledTools"] = json!(["read"]);
+        assert_eq!(
+            without_cursor_only_fields(McpAppType::KimiCode, &spec),
+            for_kimi
+        );
+        assert_eq!(without_cursor_only_fields(McpAppType::Cursor, &spec), spec);
+
+        // Another agent's own `auth` is not Cursor's to take away — pi's
+        // included when it happens to carry a `CLIENT_ID` as well.
+        for auth in [
+            json!("oauth"),
+            json!({"provider": "github"}),
+            json!({"provider": "github", "CLIENT_ID": "id"}),
+        ] {
+            let theirs = json!({"type": "http", "url": "https://h/mcp", "auth": auth});
+            assert_eq!(without_cursor_only_fields(McpAppType::Pi, &theirs), theirs);
+        }
+    }
+
+    #[test]
+    fn cursor_extension_keys_and_their_validator_stay_in_step() {
+        // The merge clears every listed key before refilling it from Cursor's
+        // copy, so a key the validator does not know would be erased for good.
+        for key in CURSOR_EXTENSION_KEYS {
+            let (value, stdio) = match *key {
+                "envFile" => (json!(".env"), true),
+                "startupTimeoutSec" => (json!(30), true),
+                "auth" => (json!({"CLIENT_ID": "id"}), false),
+                "tls" => (json!({"caBundle": "PEM"}), false),
+                "placement" => (json!("server"), false),
+                "enabledTools" => (json!(["a"]), true),
+                other => panic!("{other:?} was listed with no sample value here"),
+            };
+            assert!(
+                is_cursor_extension_field(key, &value, stdio),
+                "{key} is listed but its validator rejects a well-formed value"
+            );
+        }
     }
 
     #[test]

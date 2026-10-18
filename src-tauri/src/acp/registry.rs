@@ -4550,41 +4550,65 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // "Already latest" while connect, which never downloads, kept
             // launching it.
             //
+            // 2026.10.16-e3cb207, checked against 941492e in all six archives:
+            // `initialize` and the unauthenticated `session/new` answer are
+            // identical, and with minified names, build paths and chunk
+            // numbers normalized the ACP modules differ in three places.
+            // `generateVideoToolCall`'s `rawInput` gains `lastFramePath`, which
+            // codeg still shows on the generic card, and the shell executor is
+            // now imported from `shell-exec/dist/api`. The third is the ACP
+            // SDK's import path, and it marks the larger change: the ACP SDK
+            // (still 0.14.1), the MCP SDK and Cursor's own config schemas moved
+            // from zod 3.25.76 to zod 4.6.5. Replayed against unauthenticated
+            // processes of both builds, every request codeg sends Cursor
+            // (`initialize`, `session/new` and `session/load` carrying
+            // codeg-mcp, `session/prompt` with each content block kind,
+            // `session/set_mode`, `session/set_config_option` with a select
+            // value, `session/cancel`) gets the same answer. Only a
+            // request that fails validation is reported differently: -32602
+            // "Invalid params" with zod's formatted tree, where 941492e
+            // answered -32603 with the raw issue list, because the SDK's
+            // `ZodError` check now names the class its schemas throw. codeg's
+            // requests never take that path. The `cli-config.json` schema still
+            // reads `sandbox.mode` and `permissions.allow`/`deny`, the keys the
+            // Cursor panel writes, and `mcp.json` stdio entries gain an
+            // optional `startupTimeoutSec`.
+            //
             // Every pin still has to be triaged in `cursor_acp_retry_compat`.
             distribution: AgentDistribution::Binary {
-                version: "2026.10.14-941492e",
+                version: "2026.10.16-e3cb207",
                 cmd: "cursor-agent",
                 args: &["acp"],
                 env: &[],
                 platforms: &[
                     PlatformBinary {
                         platform: "darwin-aarch64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/darwin/arm64/agent-cli-package.tar.gz",
+                        url: "https://downloads.cursor.com/lab/2026.10.16-e3cb207/darwin/arm64/agent-cli-package.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "darwin-x86_64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/darwin/x64/agent-cli-package.tar.gz",
+                        url: "https://downloads.cursor.com/lab/2026.10.16-e3cb207/darwin/x64/agent-cli-package.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "linux-aarch64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/linux/arm64/agent-cli-package.tar.gz",
+                        url: "https://downloads.cursor.com/lab/2026.10.16-e3cb207/linux/arm64/agent-cli-package.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "linux-x86_64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/linux/x64/agent-cli-package.tar.gz",
+                        url: "https://downloads.cursor.com/lab/2026.10.16-e3cb207/linux/x64/agent-cli-package.tar.gz",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "windows-aarch64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/windows/arm64/agent-cli-package.zip",
+                        url: "https://downloads.cursor.com/lab/2026.10.16-e3cb207/windows/arm64/agent-cli-package.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "windows-x86_64",
-                        url: "https://downloads.cursor.com/lab/2026.10.14-941492e/windows/x64/agent-cli-package.zip",
+                        url: "https://downloads.cursor.com/lab/2026.10.16-e3cb207/windows/x64/agent-cli-package.zip",
                         sha256: None,
                     },
                 ],
@@ -5030,8 +5054,26 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // for the server to map. A model switch now takes effect at the
             // next prompt, and `start_subagent` became `invoke_subagent` beside
             // a new `run_workflow` tool; codeg maps neither name.
+            //
+            // 1.4.1, checked against 1.4.0: every archive is still flat with
+            // the same two executables and modes. Of the server's own Python
+            // only `server.py`, `model_selection.py`, `client_info.py`, the
+            // gateway modules and the version string changed; `main.py`,
+            // `tools.py`, `config_options.py`, `paths.py`, `settings.py`,
+            // `oauth/` and the MCP modules are byte-identical, the protobuf
+            // descriptors the history parser reads are unchanged, and the Go
+            // harness differs only in build stamps. `initialize` (apart from
+            // the version), `session/new` with its `model`, `thinking_level`
+            // and `mode` values and flat `models` list, the slash commands, a
+            // model then thinking-level switch, and a gateway turn that calls a
+            // tool on a wire MCP server all answer as 1.4.0 does. What moved:
+            // an Agent Platform session now defaults to `gemini-4-argon-high`
+            // and lists Gemini 4 Argon first, a Google-login model list drops
+            // the models the plan marks disabled, and the Windows server, still
+            // the PyInstaller onefile, embeds Python 3.14 where it embedded
+            // 3.10.
             distribution: AgentDistribution::Binary {
-                version: "1.4.0",
+                version: "1.4.1",
                 // Never resolvable on PATH (there is no standalone CLI by
                 // this name); it exists because `Binary` requires one, and
                 // for dir-tree agents `installed_binary_path` ignores it in
@@ -5048,32 +5090,32 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
                 platforms: &[
                     PlatformBinary {
                         platform: "darwin-aarch64",
-                        url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.0-darwin-arm64.zip",
+                        url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.1-darwin-arm64.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "darwin-x86_64",
-                        url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.0-darwin-x86_64.zip",
+                        url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.1-darwin-x86_64.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "linux-aarch64",
-                        url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.4.0-linux-arm64.zip",
+                        url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.4.1-linux-arm64.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "linux-x86_64",
-                        url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.4.0-linux-x86_64.zip",
+                        url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.4.1-linux-x86_64.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "windows-aarch64",
-                        url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.0-windows-arm64.zip",
+                        url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.1-windows-arm64.zip",
                         sha256: None,
                     },
                     PlatformBinary {
                         platform: "windows-x86_64",
-                        url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.0-windows-x86_64.zip",
+                        url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.1-windows-x86_64.zip",
                         sha256: None,
                     },
                 ],
@@ -5346,7 +5388,7 @@ mod tests {
                 dir_entry,
                 ..
             } => {
-                assert_eq!(version, "1.4.0");
+                assert_eq!(version, "1.4.1");
                 assert_eq!(cmd, "agy_acp_server");
                 let entry = dir_entry.expect("antigravity must use dir-tree extraction");
                 assert_eq!(entry.unix, "agy_acp_server.par");
@@ -5356,7 +5398,7 @@ mod tests {
                 assert!(platforms.iter().any(|p| p.platform == "darwin-x86_64"));
                 for platform in platforms {
                     assert!(
-                        platform.url.contains("/agy-acp-server-1.4.0-"),
+                        platform.url.contains("/agy-acp-server-1.4.1-"),
                         "{} URL lost the release name: {}",
                         platform.platform,
                         platform.url
@@ -5471,8 +5513,8 @@ mod tests {
         let meta = get_agent_meta(AgentType::Cursor);
         assert_binary_version(
             AgentType::Cursor,
-            "2026.10.14-941492e",
-            "/lab/2026.10.14-941492e/",
+            "2026.10.16-e3cb207",
+            "/lab/2026.10.16-e3cb207/",
         );
         match meta.distribution {
             AgentDistribution::Binary {
