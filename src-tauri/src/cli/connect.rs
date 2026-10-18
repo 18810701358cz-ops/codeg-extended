@@ -184,6 +184,21 @@ pub enum CandidateState {
     Incompatible,
 }
 
+impl CandidateState {
+    /// The state's name, as `status --json` writes it and docs/cli.md lists
+    /// it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Stale => "stale",
+            Self::Unreachable => "unreachable",
+            Self::Unverified => "unverified",
+            Self::AccessDenied => "access_denied",
+            Self::Incompatible => "incompatible",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Candidate {
     /// The discovery file, or the URL.
@@ -957,5 +972,23 @@ mod tests {
         let err = choose(&level, &candidates, None).unwrap_err();
         assert_eq!(err.subtype, Subtype::ErrorRuntimeUnavailable);
         assert!(err.message.contains("Nothing was sent"), "{}", err.message);
+    }
+
+    /// `status` shows a person the very names its JSON gives a script.
+    #[test]
+    fn a_state_is_named_as_its_json_names_it() {
+        for state in [
+            CandidateState::Ready,
+            CandidateState::Stale,
+            CandidateState::Unreachable,
+            CandidateState::Unverified,
+            CandidateState::AccessDenied,
+            CandidateState::Incompatible,
+        ] {
+            assert_eq!(
+                serde_json::to_value(state).unwrap(),
+                serde_json::json!(state.name())
+            );
+        }
     }
 }

@@ -137,6 +137,27 @@ fn candidate_json(c: &Candidate, chosen: bool) -> serde_json::Value {
     })
 }
 
+/// One candidate as `status` shows it to a person: `*` marks the one a run
+/// would use.
+fn candidate_line(c: &Candidate, chosen: bool) -> String {
+    let mark = if chosen { "*" } else { " " };
+    let what = c
+        .hello
+        .as_ref()
+        .map(|h| format!("{:?} {:?} {}", h.build, h.runtime, h.version))
+        .unwrap_or_default();
+    format!(
+        "{mark} {:13} {} {}{}",
+        c.state.name(),
+        c.source,
+        what,
+        c.detail
+            .as_deref()
+            .map(|d| format!(" — {d}"))
+            .unwrap_or_default()
+    )
+}
+
 /// Every runtime the applicable lookup level offers, what each turned out
 /// to be, and which one a run would use. Exit 0 when one would be used.
 pub async fn status(global: &GlobalArgs, list: &ListArgs, env: &Env) -> i32 {
@@ -172,25 +193,9 @@ pub async fn status(global: &GlobalArgs, list: &ListArgs, env: &Env) -> i32 {
             println!("  (no discovery files)");
         }
         for c in &candidates {
-            let mark = if Some(&c.source) == chosen_source.as_ref() {
-                "*"
-            } else {
-                " "
-            };
-            let what = c
-                .hello
-                .as_ref()
-                .map(|h| format!("{:?} {:?} {}", h.build, h.runtime, h.version))
-                .unwrap_or_default();
             println!(
-                "{mark} {:13} {} {}{}",
-                format!("{:?}", c.state).to_lowercase(),
-                c.source,
-                what,
-                c.detail
-                    .as_deref()
-                    .map(|d| format!(" — {d}"))
-                    .unwrap_or_default()
+                "{}",
+                candidate_line(c, Some(&c.source) == chosen_source.as_ref())
             );
         }
         if let Err(f) = &chosen {
@@ -408,4 +413,34 @@ fn windows_open(url: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(state: CandidateState) -> Candidate {
+        Candidate {
+            source: "/data/cli/endpoint-7.json".into(),
+            record: None,
+            state,
+            detail: None,
+            hello: None,
+            url: String::new(),
+            token: String::new(),
+        }
+    }
+
+    /// A person reads the same state names `status --json` writes and
+    /// docs/cli.md lists: `access_denied`, not `accessdenied`.
+    #[test]
+    fn status_lines_name_each_state_as_the_json_does() {
+        let line = candidate_line(&candidate(CandidateState::AccessDenied), false);
+        assert!(
+            line.starts_with("  access_denied /data/cli/endpoint-7.json"),
+            "{line}"
+        );
+        let line = candidate_line(&candidate(CandidateState::Ready), true);
+        assert!(line.starts_with("* ready         /data"), "{line}");
+    }
 }
