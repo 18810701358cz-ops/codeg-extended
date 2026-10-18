@@ -4021,6 +4021,9 @@
         "resumeDelegation": "Reprise de la tâche {task}",
         "resumeDelegationNoId": "Reprise d'une tâche déléguée",
         "promptLabel": "Instruction",
+        "ackRecorded": "Enregistré dans la tâche",
+        "ackNotRecorded": "Non enregistré dans la tâche",
+        "ackNotRecordedWithReason": "Non enregistré dans la tâche : {reason}",
         "verdict": {
           "success": "réussie",
           "needs_review": "à relire",

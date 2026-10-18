@@ -4021,6 +4021,9 @@
         "resumeDelegation": "작업 {task} 재개 중",
         "resumeDelegationNoId": "위임 작업 재개 중",
         "promptLabel": "프롬프트",
+        "ackRecorded": "작업 항목에 기록됨",
+        "ackNotRecorded": "작업 항목에 기록되지 않음",
+        "ackNotRecordedWithReason": "작업 항목에 기록되지 않음: {reason}",
         "verdict": {
           "success": "성공",
           "needs_review": "검토 필요",

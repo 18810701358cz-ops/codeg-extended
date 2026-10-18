@@ -4021,6 +4021,9 @@
         "resumeDelegation": "恢復任務 {task}",
         "resumeDelegationNoId": "恢復委派任務",
         "promptLabel": "指令",
+        "ackRecorded": "已記錄到待辦任務",
+        "ackNotRecorded": "未記錄到待辦任務",
+        "ackNotRecordedWithReason": "未記錄到待辦任務：{reason}",
         "verdict": {
           "success": "成功",
           "needs_review": "待複核",

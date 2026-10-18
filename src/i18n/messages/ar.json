@@ -4021,6 +4021,9 @@
         "resumeDelegation": "استئناف المهمة {task}",
         "resumeDelegationNoId": "استئناف مهمة مفوضة",
         "promptLabel": "التعليمات",
+        "ackRecorded": "سُجِّل في مهمة العمل",
+        "ackNotRecorded": "لم يُسجَّل في مهمة العمل",
+        "ackNotRecordedWithReason": "لم يُسجَّل في مهمة العمل: {reason}",
         "verdict": {
           "success": "ناجحة",
           "needs_review": "بحاجة إلى مراجعة",

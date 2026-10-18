@@ -4021,6 +4021,9 @@
         "resumeDelegation": "タスク {task} を再開中",
         "resumeDelegationNoId": "委任タスクを再開中",
         "promptLabel": "プロンプト",
+        "ackRecorded": "作業タスクに記録しました",
+        "ackNotRecorded": "作業タスクに記録されていません",
+        "ackNotRecordedWithReason": "作業タスクに記録されていません: {reason}",
         "verdict": {
           "success": "成功",
           "needs_review": "要確認",
