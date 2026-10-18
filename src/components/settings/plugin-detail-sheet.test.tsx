@@ -123,6 +123,22 @@ describe("PluginDetailSheet", () => {
     })
   })
 
+  it("scrolls the plugin widget region instead of letting it crowd out the tabs", () => {
+    render(
+      <PluginDetailSheet
+        plugin={mockPlugin}
+        open={true}
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    // A plugin decides how tall what it mounts here is (WorkBuddy lists every
+    // model it serves), and the drawer body does not scroll: left unbounded, the
+    // region pushes the tabs down to no height and the drawer clips both.
+    const region = screen.getByTestId("mock-plugin-slot").parentElement
+    expect(region).toHaveClass("max-h-[40dvh]", "overflow-y-auto", "shrink-0")
+  })
+
   it("renders applied contributions tab", async () => {
     render(
       <PluginDetailSheet
