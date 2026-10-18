@@ -91,6 +91,15 @@ describe("WorkBuddy UI Integration", () => {
       assets: {
         url: vi.fn(async (path: string) => `blob:mock-asset/${path}`),
       },
+      tokens: {
+        get: vi.fn(() => ({
+          totalTokens: null,
+          liveTokens: 0,
+          tokensPerSecond: null,
+          streaming: false,
+        })),
+        onChange: vi.fn(),
+      },
       env: {
         locale: "zh-CN",
         theme: "light",

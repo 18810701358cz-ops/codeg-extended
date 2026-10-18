@@ -173,6 +173,33 @@ export interface SlotContribution {
   mount(el: HTMLElement): void | (() => void)
 }
 
+/** What `ctx.tokens` reports about the conversation in focus. */
+export interface TokenMeterSnapshot {
+  /**
+   * Tokens the agent has reported for the whole conversation so far
+   * (input + output + cache): the figure the composer's usage popover shows as
+   * "Total". `null` until the agent reports any. It settles after each turn,
+   * not while one streams; `liveTokens` is the part still in flight.
+   */
+  totalTokens: number | null
+  /** Estimated tokens generated so far by the turn in flight; `0` when idle. */
+  liveTokens: number
+  /**
+   * Smoothed output speed of the turn in flight, in tok/s. `null` when idle or
+   * while the first reading is still warming up.
+   */
+  tokensPerSecond: number | null
+  /** `true` while the conversation is generating a reply. */
+  streaming: boolean
+}
+
+export interface PluginTokens {
+  /** The current snapshot of the conversation in focus. */
+  get(): TokenMeterSnapshot
+  /** Calls `fn` on every change. Unsubscribed automatically on dispose. */
+  onChange(fn: (snapshot: TokenMeterSnapshot) => void): void
+}
+
 export interface PluginContext {
   readonly id: string
   readonly version: string
@@ -193,6 +220,7 @@ export interface PluginContext {
     fetch(path: string, init?: BackendFetchInit): Promise<BackendFetchResult>
   }
   assets: { url(path: string): Promise<string> }
+  tokens: PluginTokens
   env: { locale: string; theme: "light" | "dark"; mode: "desktop" | "web" }
   react: {
     React: typeof import("react")
