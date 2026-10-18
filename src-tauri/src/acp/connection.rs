@@ -29526,6 +29526,11 @@ mod tests {
         }
 
         /// Wait for codeg's end of the connection to go away.
+        ///
+        /// Only once the agent has nothing left to send: an answer still on its
+        /// way out when codeg lets go is written into a closed pipe, and the
+        /// agent's connection ends on that failed write without reporting the
+        /// close.
         async fn closed(self) {
             tokio::time::timeout(std::time::Duration::from_secs(5), self.closed)
                 .await
@@ -29619,6 +29624,20 @@ mod tests {
                 .expect("the connection is running");
         }
 
+        /// Wait for the turn in flight to end.
+        async fn turn_completed(&mut self) {
+            loop {
+                let envelope =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), self.events.recv())
+                        .await
+                        .expect("the turn ends")
+                        .expect("event stream");
+                if matches!(envelope.payload, AcpEvent::TurnComplete { .. }) {
+                    return;
+                }
+            }
+        }
+
         /// How the connection ended — which has to be soon — and what it
         /// emitted on the way.
         async fn ended(mut self) -> (Result<(), AcpError>, Vec<AcpEvent>) {
@@ -29697,7 +29716,7 @@ mod tests {
     async fn a_prompt_sent_during_the_handshake_reaches_the_agent() {
         let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
         let mut agent = HandshakeAgent::start(agent_end, HandshakeScript::default());
-        let run = HandshakeRun::start(client_end).await;
+        let mut run = HandshakeRun::start(client_end).await;
         assert_eq!(agent.next_request().await, "initialize");
         assert_eq!(agent.next_request().await, "session/new");
 
@@ -29705,6 +29724,9 @@ mod tests {
         agent.open_session.notify_one();
 
         assert_eq!(agent.next_request().await, "session/prompt: hello");
+        // The agent reports the prompt before it answers, so let the answer
+        // reach codeg before letting go (see `HandshakeAgent::closed`).
+        run.turn_completed().await;
         run.cmd_tx
             .send(ConnectionCommand::Disconnect)
             .await
