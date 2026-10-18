@@ -35,7 +35,7 @@ Docker image.
 | Linux `.deb` / `.rpm` | `/usr/bin/codeg-cli` | Yes |
 | macOS app | `codeg.app/Contents/MacOS/codeg-cli` | Install command-line tool, below |
 | Windows installer | `%LOCALAPPDATA%\codeg\bin\codeg-cli.exe` | Install command-line tool, below |
-| AppImage (built yourself) | Inside the image, copied out at every start | Install command-line tool, below |
+| AppImage | Inside the image, copied out at every start | Install command-line tool, below |
 | `install.sh` / `install.ps1` | Next to `codeg-server` | Yes |
 | Docker image | `/usr/local/bin/codeg-cli` | Yes |
 
@@ -80,13 +80,13 @@ If you installed Codeg in another folder, use its `bin` folder. `codeg-cli.exe`
 is a console program: it behaves the same in PowerShell, `cmd` and Git Bash,
 and a prompt reaches the agent exactly as you wrote it.
 
-**AppImage.** The release downloads have none, but `tauri build` makes one. Its
-files are only there while it runs, so at every start the app copies its
-`codeg-cli` to `<data dir>/cli/bin/codeg-cli` — `~/.local/share/app.codeg`
-by default — over the copy it wrote before, never over a file you changed;
-Install command-line tool links that copy into `~/.local/bin`. Until the newer
-app first starts, the older copy keeps working with it. Or take it out of the
-image yourself:
+**AppImage.** The release has one for x64; `tauri build` makes one for other
+machines. Its files are only there while it runs, so at every start the app
+copies its `codeg-cli` to `<data dir>/cli/bin/codeg-cli` —
+`~/.local/share/app.codeg` by default — over the copy it wrote before, never
+over a file you changed; Install command-line tool links that copy into
+`~/.local/bin`. Until the newer app first starts, the older copy keeps working
+with it. Or take it out of the image yourself:
 
 ```bash
 ./codeg.AppImage --appimage-extract usr/bin/codeg-cli
@@ -98,8 +98,11 @@ mv squashfs-root/usr/bin/codeg-cli ~/.local/bin/
 the release has it, and leave alone a desktop app's `codeg-cli` they find there
 — in its install, or the ones it keeps in its data directory for its own
 terminals.
-The server's in-place update brings the matching `codeg-cli` with it. A
-`codeg-cli` that is running while you upgrade carries on undisturbed.
+From 0.38.0 on, the server's in-place update brings the matching `codeg-cli`
+with it. The update from 0.37.0 does not, as 0.37.0 knows nothing of
+`codeg-cli`: take it from the server package on the release page and put it
+next to `codeg-server`. Replacing `codeg-cli` never stops one that is running,
+but a run it waits on in that server ends when the upgrade stops the server.
 
 **Docker.** Run it in the container: it finds the server there by itself. The
 workspace is a path in the container, e.g. under the `/projects` mount of
