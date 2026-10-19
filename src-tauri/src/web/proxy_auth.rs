@@ -17,6 +17,7 @@
 //! rejects the request (the caller answers 401).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -420,6 +421,10 @@ pub struct ProxyJwtAuth {
     /// for the rate limit.
     last_refresh: Mutex<Option<Instant>>,
     min_refresh_interval: Duration,
+    keys_max_age: Duration,
+    /// Set while a refresh started for keys past their age is out, so the
+    /// requests that find them stale meanwhile do not start one each.
+    refreshing_in_background: AtomicBool,
 }
 
 impl ProxyJwtAuth {
@@ -435,6 +440,8 @@ impl ProxyJwtAuth {
             keys: RwLock::new(None),
             last_refresh: Mutex::new(None),
             min_refresh_interval: MIN_REFRESH_INTERVAL,
+            keys_max_age: KEYS_MAX_AGE,
+            refreshing_in_background: AtomicBool::new(false),
         })
     }
 
@@ -456,7 +463,7 @@ impl ProxyJwtAuth {
     }
 
     /// Checks the request's assertion header.
-    pub async fn authenticate(&self, headers: &HeaderMap) -> Result<(), Rejection> {
+    pub async fn authenticate(self: &Arc<Self>, headers: &HeaderMap) -> Result<(), Rejection> {
         let assertion = headers
             .get(&self.config.header)
             .ok_or(Rejection::Missing)?
@@ -480,12 +487,21 @@ impl ProxyJwtAuth {
         self.keys.read().await.clone()
     }
 
-    async fn keys_for(&self, kid: &str) -> Result<Arc<KeySet>, Rejection> {
+    async fn keys_for(self: &Arc<Self>, kid: &str) -> Result<Arc<KeySet>, Rejection> {
         if let Some((keys, fetched)) = self.cached().await {
-            if keys.contains(kid) && fetched.elapsed() < KEYS_MAX_AGE {
+            if keys.contains(kid) {
+                // Past their age the keys still verify what they signed: answer
+                // with them and refresh beside the request, so a slow or
+                // unreachable key endpoint never holds requests up. A key the
+                // endpoint has withdrawn is refused once the refresh is in.
+                if fetched.elapsed() >= self.keys_max_age {
+                    self.refresh_in_background();
+                }
                 return Ok(keys);
             }
         }
+        // An unknown key id (a rotation) or no keys yet: nothing cached can
+        // answer, so this request waits for the fetch.
         self.refresh().await;
         // A failed refresh keeps the previous keys: they still verify what
         // they signed, and `exp` bounds how long such an assertion lives.
@@ -493,6 +509,18 @@ impl ProxyJwtAuth {
             .await
             .map(|(keys, _)| keys)
             .ok_or(Rejection::NoKeys)
+    }
+
+    fn refresh_in_background(self: &Arc<Self>) {
+        if self.refreshing_in_background.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            this.refresh().await;
+            this.refreshing_in_background
+                .store(false, Ordering::Release);
+        });
     }
 
     async fn refresh(&self) {
@@ -1133,6 +1161,10 @@ mod tests {
     }
 
     async fn key_server(doc: Value) -> KeyServer {
+        key_server_answering_after(doc, Duration::ZERO).await
+    }
+
+    async fn key_server_answering_after(doc: Value, delay: Duration) -> KeyServer {
         let served = Arc::new(std::sync::Mutex::new(doc));
         let hits = Arc::new(AtomicUsize::new(0));
         let (s, h) = (served.clone(), hits.clone());
@@ -1142,7 +1174,9 @@ mod tests {
                 let (s, h) = (s.clone(), h.clone());
                 async move {
                     h.fetch_add(1, Ordering::SeqCst);
-                    axum::Json(s.lock().unwrap().clone())
+                    tokio::time::sleep(delay).await;
+                    let doc = s.lock().unwrap().clone();
+                    axum::Json(doc)
                 }
             }),
         );
@@ -1186,7 +1220,7 @@ mod tests {
     async fn fetches_keys_once_and_serves_from_the_cache() {
         let rsa = rsa_signer("r1");
         let server = key_server(json!({"keys": [rsa.jwk()]})).await;
-        let auth = auth_for(&server.url, Duration::ZERO);
+        let auth = Arc::new(auth_for(&server.url, Duration::ZERO));
         let token = rsa.sign(&live_claims());
 
         assert_eq!(auth.authenticate(&with_assertion(&token)).await, Ok(()));
@@ -1198,7 +1232,7 @@ mod tests {
     async fn an_unknown_key_id_refreshes_the_keys_after_a_rotation() {
         let (old, new) = (ec_signer("old"), ec_signer("new"));
         let server = key_server(json!({"keys": [old.jwk()]})).await;
-        let auth = auth_for(&server.url, Duration::ZERO);
+        let auth = Arc::new(auth_for(&server.url, Duration::ZERO));
         auth.prime().await;
 
         *server.served.lock().unwrap() = json!({"keys": [old.jwk(), new.jwk()]});
@@ -1211,7 +1245,7 @@ mod tests {
     async fn unknown_key_ids_cannot_drive_a_fetch_per_request() {
         let (known, stranger) = (ec_signer("known"), ec_signer("stranger"));
         let server = key_server(json!({"keys": [known.jwk()]})).await;
-        let auth = auth_for(&server.url, Duration::from_secs(3600));
+        let auth = Arc::new(auth_for(&server.url, Duration::from_secs(3600)));
         auth.prime().await;
 
         let token = stranger.sign(&live_claims());
@@ -1230,7 +1264,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/certs", listener.local_addr().unwrap());
         drop(listener);
-        let auth = auth_for(&url, Duration::ZERO);
+        let auth = Arc::new(auth_for(&url, Duration::ZERO));
         let token = rsa_signer("r1").sign(&live_claims());
         assert_eq!(
             auth.authenticate(&with_assertion(&token)).await,
@@ -1242,7 +1276,7 @@ mod tests {
     async fn keeps_the_last_keys_when_a_refresh_fails() {
         let (rsa, stranger) = (rsa_signer("r1"), ec_signer("x"));
         let server = key_server(json!({"keys": [rsa.jwk()]})).await;
-        let auth = auth_for(&server.url, Duration::ZERO);
+        let auth = Arc::new(auth_for(&server.url, Duration::ZERO));
         auth.prime().await;
 
         // The endpoint now serves garbage; an unknown kid forces a refresh.
@@ -1259,9 +1293,98 @@ mod tests {
         );
     }
 
+    /// `auth_for` already holding `signers`' keys, which are past their age.
+    async fn with_stale_keys(url: &str, signers: &[&Signer]) -> Arc<ProxyJwtAuth> {
+        let mut auth = auth_for(url, Duration::ZERO);
+        auth.keys_max_age = Duration::ZERO;
+        *auth.keys.write().await = Some((Arc::new(keyset(signers)), Instant::now()));
+        Arc::new(auth)
+    }
+
+    // Keys past their age still verify what they signed, so the refresh they
+    // call for must not hold the request up, however slow the key endpoint.
+    #[tokio::test]
+    async fn a_stale_key_set_answers_without_waiting_for_its_refresh() {
+        // Takes connections and never answers: a fetch waits out its timeout.
+        let blackhole = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/certs", blackhole.local_addr().unwrap());
+        let rsa = rsa_signer("r1");
+        let auth = with_stale_keys(&url, &[&rsa]).await;
+
+        let answer = tokio::time::timeout(
+            Duration::from_secs(3),
+            auth.authenticate(&with_assertion(&rsa.sign(&live_claims()))),
+        )
+        .await;
+        assert_eq!(answer, Ok(Ok(())));
+    }
+
+    // The refresh runs beside the request; once it is in, a key the endpoint
+    // no longer publishes is refused.
+    #[tokio::test]
+    async fn a_stale_key_set_is_refreshed_beside_the_request() {
+        let (old, new) = (ec_signer("old"), ec_signer("new"));
+        let server = key_server(json!({"keys": [new.jwk()]})).await;
+        let auth = with_stale_keys(&server.url, &[&old]).await;
+
+        let signed_by_old = with_assertion(&old.sign(&live_claims()));
+        assert_eq!(auth.authenticate(&signed_by_old).await, Ok(()));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !auth
+            .cached()
+            .await
+            .is_some_and(|(keys, _)| keys.contains("new"))
+        {
+            assert!(Instant::now() < deadline, "the refresh never landed");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            auth.authenticate(&signed_by_old).await,
+            Err(Rejection::UnknownKey)
+        );
+        assert_eq!(
+            auth.authenticate(&with_assertion(&new.sign(&live_claims())))
+                .await,
+            Ok(())
+        );
+    }
+
+    // Requests that find the keys stale while a refresh is out do not start
+    // one each.
+    #[tokio::test]
+    async fn stale_keys_start_one_refresh_at_a_time() {
+        let rsa = rsa_signer("r1");
+        let server =
+            key_server_answering_after(json!({"keys": [rsa.jwk()]}), Duration::from_millis(300))
+                .await;
+        let auth = with_stale_keys(&server.url, &[&rsa]).await;
+        let headers = with_assertion(&rsa.sign(&live_claims()));
+
+        let answers =
+            futures_util::future::join_all((0..8).map(|_| auth.authenticate(&headers))).await;
+        assert!(
+            answers.iter().all(|answer| *answer == Ok(())),
+            "{answers:?}"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while server.hits.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "no refresh started");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(server.hits.load(Ordering::SeqCst), 1);
+
+        // Once that refresh is over, keys found stale again start the next one.
+        assert_eq!(auth.authenticate(&headers).await, Ok(()));
+        while server.hits.load(Ordering::SeqCst) < 2 {
+            assert!(Instant::now() < deadline, "no second refresh started");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     #[tokio::test]
     async fn refuses_a_request_without_the_header() {
-        let auth = auth_for("http://127.0.0.1:9/certs", Duration::ZERO);
+        let auth = Arc::new(auth_for("http://127.0.0.1:9/certs", Duration::ZERO));
         assert_eq!(
             auth.authenticate(&HeaderMap::new()).await,
             Err(Rejection::Missing)

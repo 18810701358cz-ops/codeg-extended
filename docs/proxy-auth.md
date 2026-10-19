@@ -61,8 +61,9 @@ with a 403, and the server's warning names the `Origin` and the hosts it saw.
 
 The keys are fetched at startup, kept for an hour, and fetched again early when
 an assertion names a key id the server has not seen (a key rotation) — at most
-once every 30 seconds. If a fetch fails, the keys already held stay in use.
-`exp` and `nbf` allow 60 seconds of clock skew.
+once every 30 seconds. Past the hour, the keys held keep answering while a fresh
+copy is fetched beside the request. If a fetch fails, the keys already held stay
+in use. `exp` and `nbf` allow 60 seconds of clock skew.
 
 ### Cloudflare Access
 
