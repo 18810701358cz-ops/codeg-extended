@@ -1,6 +1,6 @@
 use axum::{
     extract::Request,
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -77,6 +77,59 @@ pub struct WebAuth {
     pub proxy: Option<Arc<ProxyJwtAuth>>,
 }
 
+/// Why a request the proxy's assertion would admit was not sent by Codeg's own
+/// page, or `None` when it was.
+///
+/// The assertion rides on the proxy's session cookie, and the browser attaches
+/// that cookie to requests other sites' pages make as well: Cloudflare sets its
+/// application cookie `SameSite=None` unless the operator changes it. Such a
+/// page could then open the event or browser-tunnel WebSocket, or post a
+/// multipart upload (neither needs a CORS preflight), as the signed-in user.
+/// The token cannot travel that way, so only the assertion needs this check.
+///
+/// `Sec-Fetch-Site` is set by the browser and a page cannot change it:
+/// `same-origin` is Codeg's own page and `none` an address the user typed;
+/// `same-site` (a sibling subdomain) and `cross-site` are refused. A browser
+/// that sends no Fetch Metadata still sends `Origin` on every WebSocket
+/// handshake and every cross-origin POST, so when present it must name the host
+/// the request was addressed to: `Host`, or a proxy's `X-Forwarded-Host` — a
+/// page cannot set either on a request to another site. A request with neither
+/// header is not another site's WebSocket or POST: it comes from a client that
+/// is not a browser, or is a cross-site GET from an old browser, whose answer
+/// that site cannot read (CORS) and which changes nothing here.
+fn cross_origin_initiator(headers: &HeaderMap) -> Option<String> {
+    if let Some(site) = headers.get("sec-fetch-site") {
+        let site = site.to_str().unwrap_or_default().trim();
+        return (!matches!(site, "same-origin" | "none"))
+            .then(|| format!("Sec-Fetch-Site: {site}"));
+    }
+    let origin = headers.get(header::ORIGIN)?;
+    let origin = origin.to_str().unwrap_or_default().trim();
+    let addressed = reqwest::Url::parse(origin)
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .and_then(|url| {
+            let host = url.host_str()?.to_ascii_lowercase();
+            Some(match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host,
+            })
+        });
+    let hosts: Vec<String> = headers
+        .get_all(header::HOST)
+        .iter()
+        .chain(headers.get_all("x-forwarded-host").iter())
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|host| host.trim().to_ascii_lowercase())
+        .collect();
+    if addressed.is_some_and(|addressed| hosts.contains(&addressed)) {
+        return None;
+    }
+    // Both, so a proxy that rewrites `Host` without `X-Forwarded-Host` shows.
+    Some(format!("Origin: {origin}; sent to: {}", hosts.join(", ")))
+}
+
 pub async fn require_auth(request: Request, next: Next, auth: WebAuth) -> Response {
     let Some(proxy) = auth.proxy.as_ref() else {
         return require_token(request, next, auth.token).await;
@@ -85,7 +138,15 @@ pub async fn require_auth(request: Request, next: Next, auth: WebAuth) -> Respon
         return next.run(request).await;
     }
     match proxy.authenticate(request.headers()).await {
-        Ok(()) => next.run(request).await,
+        Ok(()) => match cross_origin_initiator(request.headers()) {
+            None => next.run(request).await,
+            Some(initiator) => {
+                tracing::warn!(
+                    "[AUTH] proxy-jwt: refused a request sent by another site's page ({initiator})"
+                );
+                (StatusCode::FORBIDDEN, "Cross-origin request refused").into_response()
+            }
+        },
         Err(Rejection::Missing) => unauthorized("Invalid or missing token"),
         Err(reason) => {
             // The reason only: the assertion is a bearer credential.
@@ -247,6 +308,156 @@ mod tests {
             .add_header("authorization", "Bearer ")
             .await
             .assert_status_unauthorized();
+    }
+
+    async fn proxy_server(issuer: &TestIssuer) -> axum_test::TestServer {
+        let auth = WebAuth {
+            token: "tok".into(),
+            proxy: Some(Arc::new(issuer.auth().await)),
+        };
+        let app = axum::Router::new()
+            .route("/api/health", axum::routing::post(|| async { "ok" }))
+            .route("/ws/events", axum::routing::get(|| async { "upgraded" }))
+            .layer(axum::middleware::from_fn(move |req, next| {
+                require_auth(req, next, auth.clone())
+            }));
+        axum_test::TestServer::new(app).unwrap()
+    }
+
+    // The assertion rides on the proxy's session cookie, which the browser
+    // also attaches to requests that other sites' pages make (Cloudflare's
+    // application cookie is SameSite=None unless the operator changes it).
+    #[tokio::test]
+    async fn proxy_mode_refuses_an_assertion_carried_by_another_sites_request() {
+        let issuer = TestIssuer::new();
+        let server = proxy_server(&issuer).await;
+
+        for site in ["cross-site", "same-site"] {
+            server
+                .post("/api/health")
+                .add_header(HEADER, issuer.assertion())
+                .add_header("sec-fetch-site", site)
+                .await
+                .assert_status(StatusCode::FORBIDDEN);
+        }
+        // Without Fetch Metadata the Origin decides; `null` is an opaque one.
+        for origin in ["https://evil.example.test", "null"] {
+            server
+                .post("/api/health")
+                .add_header(HEADER, issuer.assertion())
+                .add_header("host", "codeg.example.test")
+                .add_header("origin", origin)
+                .await
+                .assert_status(StatusCode::FORBIDDEN);
+        }
+    }
+
+    // A WebSocket handshake is a GET, and the one another site's page opens
+    // carries the proxy's cookie too.
+    #[tokio::test]
+    async fn proxy_mode_refuses_another_sites_websocket_handshake() {
+        let issuer = TestIssuer::new();
+        let server = proxy_server(&issuer).await;
+        server
+            .get("/ws/events")
+            .add_header(HEADER, issuer.assertion())
+            .add_header("sec-fetch-mode", "websocket")
+            .add_header("sec-fetch-site", "cross-site")
+            .add_header("origin", "https://evil.example.test")
+            .await
+            .assert_status(StatusCode::FORBIDDEN);
+        server
+            .get("/ws/events")
+            .add_header(HEADER, issuer.assertion())
+            .add_header("host", "codeg.example.test")
+            .add_header("origin", "https://evil.example.test")
+            .await
+            .assert_status(StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn proxy_mode_admits_an_assertion_sent_by_codegs_own_page() {
+        let issuer = TestIssuer::new();
+        let server = proxy_server(&issuer).await;
+
+        for site in ["same-origin", "none"] {
+            server
+                .post("/api/health")
+                .add_header(HEADER, issuer.assertion())
+                .add_header("sec-fetch-site", site)
+                .await
+                .assert_status_ok();
+        }
+        server
+            .get("/ws/events")
+            .add_header(HEADER, issuer.assertion())
+            .add_header("sec-fetch-mode", "websocket")
+            .add_header("sec-fetch-site", "same-origin")
+            .add_header("origin", "https://codeg.example.test")
+            .await
+            .assert_status_ok();
+        // Chrome sends no Fetch Metadata on a WebSocket handshake, so its Origin
+        // decides: against the browser's Host, or, where cloudflared rewrites
+        // Host (`httpHostHeader`), the X-Forwarded-Host it moves the original to.
+        server
+            .get("/ws/events")
+            .add_header(HEADER, issuer.assertion())
+            .add_header("host", "codeg.example.test")
+            .add_header("origin", "https://codeg.example.test")
+            .await
+            .assert_status_ok();
+        server
+            .get("/ws/events")
+            .add_header(HEADER, issuer.assertion())
+            .add_header("host", "localhost:3080")
+            .add_header("x-forwarded-host", "codeg.example.test")
+            .add_header("origin", "https://codeg.example.test")
+            .await
+            .assert_status_ok();
+        // A browser without Fetch Metadata: its Origin names the host it
+        // addressed, as `Host` or, behind a proxy that rewrites it, as
+        // `X-Forwarded-Host`.
+        server
+            .post("/api/health")
+            .add_header(HEADER, issuer.assertion())
+            .add_header("host", "codeg.example.test")
+            .add_header("origin", "https://codeg.example.test")
+            .await
+            .assert_status_ok();
+        server
+            .post("/api/health")
+            .add_header(HEADER, issuer.assertion())
+            .add_header("host", "127.0.0.1:3080")
+            .add_header("x-forwarded-host", "codeg.example.test")
+            .add_header("origin", "https://codeg.example.test")
+            .await
+            .assert_status_ok();
+        // Neither header: not a request a page made.
+        server
+            .post("/api/health")
+            .add_header(HEADER, issuer.assertion())
+            .await
+            .assert_status_ok();
+    }
+
+    // Another site's page cannot send the token, so the token needs no proof
+    // of where the request came from, in either mode.
+    #[tokio::test]
+    async fn the_token_is_admitted_whoever_sent_the_request() {
+        let issuer = TestIssuer::new();
+        proxy_server(&issuer)
+            .await
+            .post("/api/health")
+            .authorization_bearer("tok")
+            .add_header("sec-fetch-site", "cross-site")
+            .await
+            .assert_status_ok();
+        guarded("tok")
+            .post("/api/health")
+            .authorization_bearer("tok")
+            .add_header("sec-fetch-site", "cross-site")
+            .await
+            .assert_status_ok();
     }
 
     #[tokio::test]

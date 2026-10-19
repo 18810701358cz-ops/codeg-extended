@@ -26,6 +26,28 @@ Everything fails closed:
   audience or by another issuer, signed with an unknown key or an algorithm
   other than RS256 / ES256 gets a 401. So does every request without the token
   while no keys could be fetched.
+- A request with a valid assertion that another site's page sent gets a 403
+  (see below).
+
+### Requests from other sites
+
+The assertion rides on the proxy's session cookie, and the browser attaches
+that cookie to requests other sites' pages make as well (Cloudflare sets its
+application cookie `SameSite=None` unless you change it). Without a further
+check, any page the signed-in user opens could use Codeg's WebSockets or upload
+endpoints in their name. So a request admitted by an assertion must come from
+Codeg's own page: the server refuses it when the browser marks it as sent by
+another site (`Sec-Fetch-Site`), or, in a browser that does not send that
+header, when its `Origin` names a host other than the one the request was sent
+to (`Host`, or `X-Forwarded-Host` from a proxy that rewrites `Host`). The
+token is not affected: another site's page cannot send it.
+
+Chrome sends no `Sec-Fetch-Site` on a WebSocket handshake, so for the event
+socket the `Origin` always decides. A proxy between the browser and Codeg must
+therefore pass on the browser's `Host`, or put it in `X-Forwarded-Host`.
+Cloudflare Tunnel does: it keeps the `Host` unless `httpHostHeader` is set, and
+then moves the original to `X-Forwarded-Host`. Otherwise the socket is refused
+with a 403, and the server's warning names the `Origin` and the hosts it saw.
 
 ## Configuration
 
@@ -56,7 +78,10 @@ CODEG_PROXY_AUTH_AUDIENCE=<AUD tag>
 ```
 
 Bind the server to loopback (`CODEG_HOST=127.0.0.1`) and reach it only through
-the tunnel, so every browser request passes Access.
+the tunnel, so every browser request passes Access. In the application's
+cookie settings, setting **SameSite Attribute** to `Lax` stops the browser from
+attaching the cookie to other sites' requests in the first place, apart from a
+link the user follows into Codeg.
 
 ## In the browser
 
