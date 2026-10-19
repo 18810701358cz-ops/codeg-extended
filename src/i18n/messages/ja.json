@@ -5343,7 +5343,7 @@
     "sessionExpiredTitle": "セッションの有効期限が切れました",
     "sessionExpiredDescription": "セッションが無効になりました。続行するには再度サインインしてください。",
     "proxySignInTitle": "サインインの有効期限切れ",
-    "proxySignInDescription": "このサーバーの前段にあるプロキシのサインインが期限切れになりました。ページを再読み込みして再度サインインしてください。アクセストークンは保持されます。",
+    "proxySignInDescription": "このサーバーの前段にあるプロキシのサインインが期限切れになりました。ページを再読み込みして再度サインインしてください。",
     "goToLogin": "ログインへ移動",
     "versionChangedTitle": "サーバーは Codeg {version} で動作しています",
     "versionChangedDescription": "このページはまだ {version} です。再読み込みするとサーバーのバージョンを使用します。",

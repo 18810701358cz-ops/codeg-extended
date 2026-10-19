@@ -5343,7 +5343,7 @@
     "sessionExpiredTitle": "세션이 만료되었습니다",
     "sessionExpiredDescription": "세션이 더 이상 유효하지 않습니다. 계속하려면 다시 로그인하세요.",
     "proxySignInTitle": "로그인 만료",
-    "proxySignInDescription": "이 서버 앞단 프록시의 로그인이 만료되었습니다. 페이지를 새로고침하여 다시 로그인하세요. 액세스 토큰은 유지됩니다.",
+    "proxySignInDescription": "이 서버 앞단 프록시의 로그인이 만료되었습니다. 페이지를 새로고침하여 다시 로그인하세요.",
     "goToLogin": "로그인으로 이동",
     "versionChangedTitle": "서버가 Codeg {version}(으)로 실행 중입니다",
     "versionChangedDescription": "이 페이지는 아직 {version}입니다. 새로고침하면 서버의 버전을 사용합니다.",

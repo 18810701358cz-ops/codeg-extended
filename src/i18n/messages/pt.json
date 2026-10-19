@@ -5343,7 +5343,7 @@
     "sessionExpiredTitle": "Sessão expirada",
     "sessionExpiredDescription": "Sua sessão não é mais válida. Faça login novamente para continuar.",
     "proxySignInTitle": "Sessão expirada",
-    "proxySignInDescription": "Sua sessão no proxy à frente deste servidor expirou. Recarregue a página para entrar novamente; seu token de acesso é mantido.",
+    "proxySignInDescription": "Sua sessão no proxy à frente deste servidor expirou. Recarregue a página para entrar novamente.",
     "goToLogin": "Ir para o login",
     "versionChangedTitle": "O servidor agora executa o Codeg {version}",
     "versionChangedDescription": "Esta página ainda está na versão {version}. Recarregue-a para usar a versão do servidor.",
