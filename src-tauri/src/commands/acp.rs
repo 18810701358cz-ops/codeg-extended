@@ -6018,6 +6018,27 @@ fn account_home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
+/// Read the launch's agent-directory `enabledModels` preference. Missing,
+/// malformed or empty settings leave the model selector unrestricted.
+pub(crate) fn pi_enabled_model_patterns_for_env(
+    runtime_env: &BTreeMap<String, String>,
+    workspace: &Path,
+) -> Option<Vec<String>> {
+    let settings = read_json_object_or_empty(
+        &pi_agent_dir_in_workspace(runtime_env, workspace).join("settings.json"),
+    );
+    let patterns = settings
+        .get("enabledModels")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    (!patterns.is_empty()).then_some(patterns)
+}
+
 /// Pi's agent dir as the pi CHILD of a launch with `runtime_env` resolves it —
 /// before a relative value is anchored (see [`pi_agent_dir_in_workspace`]).
 ///
@@ -17173,6 +17194,62 @@ echo {"id":"codeg-models","type":"response","command":"get_available_models","su
                 Some("xhigh".to_string())
             );
         });
+    }
+
+    #[test]
+    fn pi_enabled_model_patterns_read_from_the_launch_agent_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            tmp.path().join("settings.json"),
+            r#"{"enabledModels":["openai/*"," anthropic/claude-opus:high ",42,"  "]}"#,
+        )
+        .unwrap();
+        let env = BTreeMap::from([(
+            String::from("PI_CODING_AGENT_DIR"),
+            tmp.path().to_string_lossy().into_owned(),
+        )]);
+
+        assert_eq!(
+            pi_enabled_model_patterns_for_env(&env, tmp.path()),
+            Some(vec![
+                "openai/*".to_string(),
+                "anthropic/claude-opus:high".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn pi_enabled_model_patterns_treat_missing_or_empty_as_unscoped() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let env = BTreeMap::from([(
+            String::from("PI_CODING_AGENT_DIR"),
+            tmp.path().to_string_lossy().into_owned(),
+        )]);
+
+        assert_eq!(pi_enabled_model_patterns_for_env(&env, tmp.path()), None);
+
+        fs::write(tmp.path().join("settings.json"), r#"{"enabledModels":[]}"#).unwrap();
+        assert_eq!(pi_enabled_model_patterns_for_env(&env, tmp.path()), None);
+        fs::write(tmp.path().join("settings.json"), "invalid json").unwrap();
+        assert_eq!(pi_enabled_model_patterns_for_env(&env, tmp.path()), None);
+    }
+
+    #[test]
+    fn pi_enabled_model_patterns_resolve_relative_agent_dir_in_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let agent_dir = tmp.path().join("agent");
+        fs::create_dir(&agent_dir).unwrap();
+        fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"enabledModels":["openai/*"]}"#,
+        )
+        .unwrap();
+        let env = BTreeMap::from([("PI_CODING_AGENT_DIR".into(), "agent".into())]);
+
+        assert_eq!(
+            pi_enabled_model_patterns_for_env(&env, tmp.path()),
+            Some(vec!["openai/*".into()])
+        );
     }
 
     #[test]

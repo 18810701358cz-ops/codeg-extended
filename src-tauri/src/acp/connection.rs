@@ -2564,6 +2564,8 @@ pub async fn spawn_agent_connection(
     terminal_shell_config: TerminalShellRuntimeConfig,
     cli_root: Option<crate::cli_run::RootSeed>,
 ) -> Result<tokio::sync::oneshot::Receiver<()>, AcpError> {
+    // Use the same cwd for launch settings, the subprocess and session/new.
+    let launch_cwd = resolve_working_dir(working_dir.as_deref());
     // Create the authoritative session state up front. Subsequent emit_with_state
     // calls write through this state and increment its seq counter so the first
     // event the frontend sees has seq=1, not the placeholder 0 from Phase 0.
@@ -2593,6 +2595,10 @@ pub async fn spawn_agent_connection(
         initial_state.cli_run = Some(seed.tag);
         initial_state.cli_output_schema = seed.output_schema;
     }
+    if agent_type == AgentType::Pi {
+        initial_state.pi_enabled_model_patterns =
+            crate::commands::acp::pi_enabled_model_patterns_for_env(&runtime_env, &launch_cwd);
+    }
 
     let session_state = Arc::new(RwLock::new(initial_state));
 
@@ -2612,12 +2618,6 @@ pub async fn spawn_agent_connection(
         crate::commands::acp::reconcile_hermes_runtime_env(&runtime_env);
     }
 
-    // Resolve the launch cwd from the same `working_dir` (via the same helper)
-    // that run_connection uses for the session/new request, so the process
-    // cwd, the ACP session cwd, and any os.getcwd()-derived agent state all
-    // agree. Computed here because `working_dir` is moved into run_connection
-    // below.
-    let launch_cwd = resolve_working_dir(working_dir.as_deref());
     // Shared cell that receives the agent process's OS pid the instant it
     // spawns (via `on_spawn` below). Stored on the `AgentConnection` so the
     // shutdown path can `kill_tree` the process tree synchronously as a
@@ -3823,6 +3823,128 @@ fn visible_config_options(
         .collect()
 }
 
+const PI_THINKING_LEVEL_SUFFIXES: &[&str] =
+    &["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+fn pi_model_pattern_without_thinking_level(pattern: &str) -> &str {
+    let Some((model, level)) = pattern.rsplit_once(':') else {
+        return pattern;
+    };
+    if model.is_empty() || !PI_THINKING_LEVEL_SUFFIXES.contains(&level) {
+        pattern
+    } else {
+        model
+    }
+}
+
+fn pi_model_glob_matches(value: &str, pattern: &str) -> bool {
+    let value = value.chars().collect::<Vec<_>>();
+    let pattern = pattern.chars().collect::<Vec<_>>();
+    let mut value_index = 0;
+    let mut pattern_index = 0;
+    let mut star_index = None;
+    let mut star_value_index = 0;
+    while value_index < value.len() {
+        if let Some(candidate) = pattern.get(pattern_index) {
+            if *candidate == '*' {
+                star_index = Some(pattern_index);
+                star_value_index = value_index;
+                pattern_index += 1;
+            } else if *candidate == '?' || candidate.eq_ignore_ascii_case(&value[value_index]) {
+                value_index += 1;
+                pattern_index += 1;
+            } else {
+                let Some(star) = star_index else {
+                    return false;
+                };
+                star_value_index += 1;
+                value_index = star_value_index;
+                pattern_index = star + 1;
+            }
+        } else {
+            let Some(star) = star_index else {
+                return false;
+            };
+            star_value_index += 1;
+            value_index = star_value_index;
+            pattern_index = star + 1;
+        }
+    }
+    pattern[pattern_index..].iter().all(|ch| *ch == '*')
+}
+
+fn pi_model_pattern_matches(option: &SessionConfigSelectOption, pattern: &str) -> bool {
+    let raw_pattern = pattern.trim();
+    if raw_pattern.is_empty() {
+        return false;
+    }
+    let value = option.value.to_string();
+    let bare_id = value
+        .split_once('/')
+        .map(|(_, id)| id)
+        .unwrap_or(value.as_str());
+    if value.eq_ignore_ascii_case(raw_pattern) || bare_id.eq_ignore_ascii_case(raw_pattern) {
+        return true;
+    }
+    let pattern = pi_model_pattern_without_thinking_level(raw_pattern);
+    if pattern.contains('*') || pattern.contains('?') {
+        pi_model_glob_matches(&value, pattern) || pi_model_glob_matches(bare_id, pattern)
+    } else {
+        value.eq_ignore_ascii_case(pattern) || bare_id.eq_ignore_ascii_case(pattern)
+    }
+}
+
+/// Apply Pi's native `enabledModels` scope to the model selector advertised by
+/// pi-acp. Keep non-model options untouched and leave the list unrestricted
+/// when no configured pattern matches an available option.
+fn filter_pi_enabled_model_options(
+    patterns: &[String],
+    config_options: Vec<SessionConfigOption>,
+) -> Vec<SessionConfigOption> {
+    if patterns.is_empty() {
+        return config_options;
+    }
+    config_options
+        .into_iter()
+        .map(|mut option| {
+            if !is_model_config_option(&option) {
+                return option;
+            }
+            let SessionConfigKind::Select(select) = &mut option.kind else {
+                return option;
+            };
+            let matches = |option: &SessionConfigSelectOption| {
+                patterns
+                    .iter()
+                    .any(|pattern| pi_model_pattern_matches(option, pattern))
+            };
+            let has_match = match &select.options {
+                SessionConfigSelectOptions::Ungrouped(options) => options.iter().any(&matches),
+                SessionConfigSelectOptions::Grouped(groups) => {
+                    groups
+                        .iter()
+                        .any(|group| group.options.iter().any(&matches))
+                }
+                _ => false,
+            };
+            if !has_match {
+                return option;
+            }
+            match &mut select.options {
+                SessionConfigSelectOptions::Ungrouped(options) => options.retain(&matches),
+                SessionConfigSelectOptions::Grouped(groups) => {
+                    for group in groups.iter_mut() {
+                        group.options.retain(&matches);
+                    }
+                    groups.retain(|group| !group.options.is_empty());
+                }
+                _ => {}
+            }
+            option
+        })
+        .collect()
+}
+
 async fn emit_session_config_options_values(
     state: &Arc<RwLock<SessionState>>,
     emitter: &EventEmitter,
@@ -3831,8 +3953,18 @@ async fn emit_session_config_options_values(
     // Drop what this launch froze BEFORE mapping, so every producer of this
     // event — establishment, the answer to a set, and the agent's own
     // `config_option_update` push — is filtered by one rule.
-    let pinned = state.read().await.env_pinned_config_option_ids.clone();
+    let (pinned, pi_enabled_model_patterns) = {
+        let guard = state.read().await;
+        (
+            guard.env_pinned_config_option_ids.clone(),
+            guard.pi_enabled_model_patterns.clone(),
+        )
+    };
     let visible = visible_config_options(&pinned, config_options);
+    let visible = match pi_enabled_model_patterns.as_deref() {
+        Some(patterns) => filter_pi_enabled_model_options(patterns, visible),
+        None => visible,
+    };
     emit_with_state(
         state,
         emitter,
@@ -35435,6 +35567,137 @@ mod tests {
             ids(visible_config_options(&[], options())),
             vec!["auto_approve".to_string(), "provider".to_string()]
         );
+    }
+
+    fn pi_model_selector_options() -> Vec<SessionConfigOption> {
+        serde_json::from_value(serde_json::json!([
+            {
+                "type": "select",
+                "id": "model",
+                "name": "Model",
+                "category": "model",
+                "currentValue": "openai/gpt-5",
+                "options": [
+                    {"value": "openai/gpt-5", "name": "OpenAI/GPT-5"},
+                    {"value": "openai/gpt-4o", "name": "OpenAI/GPT-4o"},
+                    {"value": "anthropic/claude-opus", "name": "Anthropic/Claude Opus"}
+                ]
+            },
+            {
+                "type": "select",
+                "id": "thought_level",
+                "name": "Thinking",
+                "category": "thought_level",
+                "currentValue": "high",
+                "options": [{"value": "high", "name": "High"}]
+            }
+        ]))
+        .expect("pi model selector fixture")
+    }
+
+    fn pi_select_values(options: &[SessionConfigOption], id: &str) -> Vec<String> {
+        options
+            .iter()
+            .find(|option| option.id.to_string() == id)
+            .and_then(|option| match &option.kind {
+                SessionConfigKind::Select(select) => match &select.options {
+                    SessionConfigSelectOptions::Ungrouped(options) => Some(
+                        options
+                            .iter()
+                            .map(|option| option.value.to_string())
+                            .collect(),
+                    ),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn pi_enabled_models_filter_only_the_model_selector() {
+        let filtered = filter_pi_enabled_model_options(
+            &["openai/*".to_string()],
+            pi_model_selector_options(),
+        );
+
+        assert_eq!(
+            pi_select_values(&filtered, "model"),
+            vec!["openai/gpt-5", "openai/gpt-4o"]
+        );
+        assert_eq!(pi_select_values(&filtered, "thought_level"), vec!["high"]);
+    }
+
+    #[test]
+    fn pi_enabled_models_accept_exact_ids_and_thinking_suffixes() {
+        let filtered = filter_pi_enabled_model_options(
+            &["anthropic/claude-opus:high".to_string()],
+            pi_model_selector_options(),
+        );
+
+        assert_eq!(
+            pi_select_values(&filtered, "model"),
+            vec!["anthropic/claude-opus"]
+        );
+    }
+
+    #[test]
+    fn pi_enabled_models_leave_the_list_unrestricted_when_nothing_matches() {
+        let original = pi_model_selector_options();
+        let filtered =
+            filter_pi_enabled_model_options(&["does-not-exist".to_string()], original);
+
+        assert_eq!(
+            pi_select_values(&filtered, "model"),
+            vec!["openai/gpt-5", "openai/gpt-4o", "anthropic/claude-opus"]
+        );
+    }
+
+    #[test]
+    fn pi_enabled_models_match_bare_ids_and_wildcards() {
+        for pattern in ["gpt-5", "OPENAI/GPT-?", "*gpt-5*", "openai/*:high"] {
+            let filtered = filter_pi_enabled_model_options(
+                &[pattern.to_string()],
+                pi_model_selector_options(),
+            );
+            let expected = if pattern == "openai/*:high" {
+                vec!["openai/gpt-5", "openai/gpt-4o"]
+            } else {
+                vec!["openai/gpt-5"]
+            };
+            assert_eq!(pi_select_values(&filtered, "model"), expected, "{pattern}");
+        }
+    }
+
+    #[test]
+    fn pi_enabled_models_preserve_grouped_options_and_drop_empty_groups() {
+        let options = serde_json::from_value(serde_json::json!([{
+            "type": "select",
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "currentValue": "openai/gpt-5",
+            "options": [
+                {"group": "OpenAI", "name": "OpenAI", "options": [
+                    {"value": "openai/gpt-5", "name": "GPT-5"},
+                    {"value": "openai/gpt-4o", "name": "GPT-4o"}
+                ]},
+                {"group": "Anthropic", "name": "Anthropic", "options": [
+                    {"value": "anthropic/claude-opus", "name": "Claude Opus"}
+                ]}
+            ]
+        }]))
+        .expect("grouped model selector fixture");
+        let filtered = filter_pi_enabled_model_options(&["openai/gpt-5".into()], options);
+        let SessionConfigKind::Select(select) = &filtered[0].kind else {
+            panic!("expected a model selector");
+        };
+        let SessionConfigSelectOptions::Grouped(groups) = &select.options else {
+            panic!("expected grouped model options");
+        };
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].options.len(), 1);
+        assert_eq!(groups[0].options[0].value.to_string(), "openai/gpt-5");
     }
 
     struct TestConversationDepthLookup;

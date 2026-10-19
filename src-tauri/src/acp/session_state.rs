@@ -446,6 +446,12 @@ pub struct SessionState {
     ///
     /// Backend-internal — not serialized, not carried on `to_snapshot()`.
     pub trae_pat_sign_in: bool,
+    /// Pi's native `enabledModels` scope for this launch. The ACP adapter
+    /// advertises every authenticated model, so the connection layer applies
+    /// this Pi-only preference before publishing the model selector.
+    ///
+    /// Backend-internal — not serialized, not carried on `to_snapshot()`.
+    pub pi_enabled_model_patterns: Option<Vec<String>>,
     pub prompt_capabilities: Option<PromptCapabilitiesInfo>,
     pub fork_supported: bool,
     pub available_commands: Vec<AvailableCommandInfo>,
@@ -846,6 +852,7 @@ impl SessionState {
             agent_chosen_config_values: BTreeMap::new(),
             env_pinned_config_option_ids: Vec::new(),
             trae_pat_sign_in: false,
+            pi_enabled_model_patterns: None,
             prompt_capabilities: None,
             fork_supported: false,
             available_commands: Vec::new(),
