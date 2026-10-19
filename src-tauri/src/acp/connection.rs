@@ -3873,6 +3873,46 @@ fn pi_model_glob_matches(value: &str, pattern: &str) -> bool {
     pattern[pattern_index..].iter().all(|ch| *ch == '*')
 }
 
+/// minimatch's verdict, with pi's `nocase` and its own default `dot: false`,
+/// for a glob [`pi_model_glob_is_supported`] accepts on a path
+/// [`PiModelRow::glob_plain`] calls plain: segment by segment, so `*` and `?`
+/// stop at `/`, and a segment that starts with `.` only matches a literal `.`.
+fn pi_minimatch(path: &str, glob: &str) -> bool {
+    let path: Vec<&str> = path.split('/').collect();
+    let glob: Vec<&str> = glob.split('/').collect();
+    path.len() == glob.len()
+        && path.iter().zip(&glob).all(|(segment, pattern)| {
+            !(segment.starts_with('.') && pattern.starts_with(['*', '?']))
+                && pi_model_glob_matches(segment, pattern)
+        })
+}
+
+/// Whether minimatch could match a supported glob on a path that is not plain
+/// — never `false` where minimatch matches. `?` stands for any run (minimatch
+/// counts UTF-16 units), `*` crosses `/`, and the path is lowercased (as
+/// minimatch's own shortcuts do) with runs of `/` folded into one and a final
+/// `/` optional, as minimatch reads a path; a `\` is tried both as itself and
+/// as the separator it is on Windows.
+fn pi_minimatch_may_match(path: &str, glob: &str) -> bool {
+    let glob = glob.replace('?', "*");
+    let lower = path.to_lowercase();
+    [false, true].into_iter().any(|backslash_separates| {
+        let mut folded = String::with_capacity(lower.len());
+        for ch in lower.chars() {
+            let ch = if backslash_separates && ch == '\\' {
+                '/'
+            } else {
+                ch
+            };
+            if !(ch == '/' && folded.ends_with('/')) {
+                folded.push(ch);
+            }
+        }
+        pi_model_glob_matches(&folded, &glob)
+            || pi_model_glob_matches(folded.strip_suffix('/').unwrap_or(&folded), &glob)
+    })
+}
+
 /// One advertised model row, split the way pi names the model behind it:
 /// pi-acp publishes each of pi's models as value `provider/id` and label
 /// `provider/name`. Lowercased once, because every comparison pi makes here is
@@ -3882,6 +3922,12 @@ struct PiModelRow {
     provider: String,
     id: String,
     name: String,
+    /// Whether minimatch reads the value (and so the id) the way
+    /// [`pi_minimatch`] does: ASCII — beyond it minimatch counts `?` in UTF-16
+    /// units and folds case its own way — with no `\` (a separator on
+    /// Windows), no empty segment (minimatch folds repeated slashes and lets a
+    /// final `/` go) and no `.` or `..` segment (which no glob matches).
+    glob_plain: bool,
 }
 
 impl PiModelRow {
@@ -3894,10 +3940,16 @@ impl PiModelRow {
             .and_then(|rest| rest.strip_prefix('/'))
             .filter(|_| !provider.is_empty())
             .unwrap_or(&option.name);
+        let glob_plain = value.is_ascii()
+            && !value.contains('\\')
+            && !value
+                .split('/')
+                .any(|segment| matches!(segment, "" | "." | ".."));
         Self {
             provider: provider.to_lowercase(),
             id: id.to_lowercase(),
             name: name.to_lowercase(),
+            glob_plain,
             value,
         }
     }
@@ -3912,9 +3964,9 @@ impl PiModelRow {
 #[derive(Debug, PartialEq, Eq)]
 enum PiScopeEntry {
     /// Indexes of the rows pi can pick for the entry: never fewer than pi
-    /// picks, at times more — codeg's `*` and `?` also cross `/`, and a
-    /// `provider/id` also takes another provider's model listed under that
-    /// whole text as its id.
+    /// picks, at times more — a `provider/id` also takes another provider's
+    /// model listed under that whole text as its id — and never any when pi
+    /// picks none.
     Rows(Vec<usize>),
     /// No row pi could pick: pi skips such an entry too (a retired id, a typo).
     Dead,
@@ -3965,14 +4017,17 @@ fn pi_exact_model_rows(lower: &str, rows: &[PiModelRow]) -> (Vec<usize>, bool) {
     (exact, named_fuzzily)
 }
 
-/// Whether codeg's glob matcher reads `glob` the way pi's `minimatch` does, up
-/// to its `*` and `?` also crossing `/` (so it only ever matches more rows).
-/// Whatever minimatch reads more into is left out: character classes, brace
-/// sets, extglobs, escapes, negation, comments, and its path rules — `**`
-/// spanning zero or more segments, repeated slashes folding into one, `..`
-/// undoing the segment before it.
+/// Whether `glob` stays inside what [`pi_minimatch`] reads exactly as
+/// minimatch does: ASCII, with `*` and `?` its only magic. Left out are
+/// character classes, brace sets, extglobs, escapes, negation, comments, and
+/// minimatch's path rules — `**` spanning zero or more segments, repeated
+/// slashes folding into one, `..` undoing the segment before it, and a leading
+/// drive letter (`c:`), whose segment Windows minimatch takes literally.
 fn pi_model_glob_is_supported(glob: &str) -> bool {
-    !glob.contains(['[', ']', '{', '}', '(', ')', '\\'])
+    let drive = matches!(glob.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic());
+    !drive
+        && glob.is_ascii()
+        && !glob.contains(['[', ']', '{', '}', '(', ')', '\\'])
         && !glob.starts_with(['!', '#'])
         && !glob.contains("**")
         && !glob.contains("//")
@@ -3989,24 +4044,28 @@ fn pi_model_glob_is_supported(glob: &str) -> bool {
 /// fuzzy pick, where 1.x keeps all of them, as this does.
 fn pi_scope_entry(pattern: &str, rows: &[PiModelRow]) -> PiScopeEntry {
     if pattern.contains(['*', '?', '[']) {
-        let glob = pi_model_pattern_without_thinking_level(pattern).to_lowercase();
+        let glob = pi_model_pattern_without_thinking_level(pattern);
         // pi first takes a glob that is literally a model id (`model[1m]`).
-        let (exact, _) = pi_exact_model_rows(glob.trim(), rows);
+        let (exact, _) = pi_exact_model_rows(&glob.trim().to_lowercase(), rows);
         if !exact.is_empty() {
             return PiScopeEntry::Rows(exact);
         }
-        if !pi_model_glob_is_supported(&glob) {
+        if !pi_model_glob_is_supported(glob) {
             return PiScopeEntry::Unknown;
         }
-        let matched: Vec<usize> = rows
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| {
-                pi_model_glob_matches(&row.value.to_lowercase(), &glob)
-                    || pi_model_glob_matches(&row.id, &glob)
-            })
-            .map(|(index, _)| index)
-            .collect();
+        // pi matches the glob against `provider/id` and against the bare id.
+        let mut matched = Vec::new();
+        for (index, row) in rows.iter().enumerate() {
+            if row.glob_plain {
+                if pi_minimatch(&row.value, glob) || pi_minimatch(&row.id, glob) {
+                    matched.push(index);
+                }
+            } else if pi_minimatch_may_match(&row.value, glob)
+                || pi_minimatch_may_match(&row.id, glob)
+            {
+                return PiScopeEntry::Unknown;
+            }
+        }
         return if matched.is_empty() {
             PiScopeEntry::Dead
         } else {
@@ -4041,10 +4100,11 @@ fn pi_scope_reference(lower: &str, rows: &[PiModelRow]) -> PiScopeEntry {
 /// whole.
 ///
 /// Mirroring pi's resolver has to fail safe, because a row dropped here is a
-/// model the user cannot pick in codeg at all: an entry whose rows codeg
-/// cannot know keeps the whole list, while an entry pi would skip anyway is
-/// skipped. An empty result keeps the whole list too — pi itself runs unscoped
-/// when no entry resolves.
+/// model the user cannot pick in codeg at all. So the result never leaves out
+/// a model pi's scope holds, and never scopes a list pi leaves unscoped (pi
+/// runs unscoped when no entry resolves): an entry whose rows codeg cannot
+/// know keeps the whole list, an entry pi would skip is skipped, and an empty
+/// result keeps the whole list.
 fn pi_enabled_model_scope(
     patterns: &[String],
     options: &SessionConfigSelectOptions,
@@ -35990,18 +36050,79 @@ mod tests {
             pi_scope_of(&["openrouter/free"], PI_SCOPE_ROWS),
             Some(vec!["openrouter/openrouter/free".to_string()])
         );
-        // pi's `*` stops at `/`; codeg's crosses it, so it only ever adds rows.
+    }
+
+    #[test]
+    fn pi_enabled_models_match_globs_segment_by_segment_like_minimatch() {
+        // A glob tries `provider/id` and the bare id; `*` stops at `/`.
         assert_eq!(
-            pi_scope_of(&["openrouter/*"], PI_SCOPE_ROWS),
+            pi_scope_of(&["openai/*"], PI_SCOPE_ROWS),
             Some(vec![
+                "openai/gpt-4o".to_string(),
+                "openai/gpt-5".to_string(),
                 "openrouter/openai/gpt-5".to_string(),
-                "openrouter/openrouter/free".to_string(),
             ])
         );
-        // Case is ignored beyond ASCII, as minimatch's `nocase` does.
         assert_eq!(
-            pi_scope_of(&["CUSTOM/ä*"], PI_SCOPE_ROWS),
-            Some(vec!["custom/Äther-1".to_string()])
+            pi_scope_of(&["OpenRouter/*"], PI_SCOPE_ROWS),
+            Some(vec!["openrouter/openrouter/free".to_string()])
+        );
+        // A glob pi matches to nothing must not scope the list pi leaves
+        // whole: `*` crossing `/` would have kept only OpenRouter's GPT-5.
+        assert_eq!(
+            pi_scope_of(
+                &["*gpt-5*"],
+                &[
+                    ("openrouter/openai/gpt-5", "openrouter/OpenAI: GPT-5"),
+                    ("anthropic/claude-opus", "anthropic/Claude Opus"),
+                ]
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn pi_enabled_models_keep_the_whole_list_for_globs_past_ascii() {
+        // minimatch folds case the JavaScript way (σ ~ ς) and counts `?` in
+        // UTF-16 units (an emoji is two): neither is mirrored, so both keep
+        // the whole list instead of hiding the second row.
+        let rows = |second| [("openai/gpt-5", "openai/GPT-5"), second];
+        assert_eq!(
+            pi_scope_of(
+                &["openai/gpt-5", "custom/σ*"],
+                &rows(("custom/ς-model", "custom/ς model"))
+            ),
+            None
+        );
+        assert_eq!(
+            pi_scope_of(
+                &["openai/gpt-5", "custom/??"],
+                &rows(("custom/😀", "custom/smile"))
+            ),
+            None
+        );
+        // minimatch lets a path's final `/` go: pi keeps `custom/trail/` here.
+        assert_eq!(
+            pi_scope_of(
+                &["openai/gpt-5", "custom/*l"],
+                &rows(("custom/trail/", "custom/Trail"))
+            ),
+            None
+        );
+        // No glob matches a `.` segment, and Windows minimatch takes a leading
+        // drive letter literally: pi leaves both lists unscoped.
+        assert_eq!(
+            pi_scope_of(&[".*"], &rows(("custom/.", "custom/Dot"))),
+            None
+        );
+        assert_eq!(
+            pi_scope_of(&["c:*"], &rows(("custom/c:x", "custom/C"))),
+            None
+        );
+        // A row past ASCII no glob could reach leaves the rest to scope.
+        assert_eq!(
+            pi_scope_of(&["openai/*"], &rows(("custom/Äther-1", "custom/Äther 1"))),
+            Some(vec!["openai/gpt-5".to_string()])
         );
     }
 
