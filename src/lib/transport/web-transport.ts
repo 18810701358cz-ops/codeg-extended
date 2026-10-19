@@ -13,6 +13,7 @@ import {
   codegAuthHeaders,
   getCodegToken,
   hasCodegCredentials,
+  probeProxyAuthentication,
   unauthorizedSource,
   type UnauthorizedSource,
 } from "./web-auth"
@@ -111,6 +112,14 @@ export class WebTransport implements Transport {
   // a late 200 can't reopen the socket behind the session-expired dialog.
   private probeEpoch = 0
   private probeController: AbortController | null = null
+  // Asking the server whether a proxy in front of it admits this browser
+  // without a token (see `discoverProxyAuth`): the request in flight, the retry
+  // while the server cannot be reached, how many tries that took, and whether
+  // the server already said no.
+  private proxyDiscovery: Promise<void> | null = null
+  private proxyDiscoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private proxyDiscoveryAttempts = 0
+  private proxyDiscoveryRefused = false
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl
@@ -225,9 +234,11 @@ export class WebTransport implements Transport {
     const wrappedHandler = handler as (payload: unknown) => void
     this.handlers.get(event)!.add(wrappedHandler)
 
-    // If WS is not connected but we now have credentials, connect
-    if (!this.ws && hasCodegCredentials()) {
-      this.connectWs()
+    // If WS is not connected but we now have credentials, connect. With none,
+    // ask the server whether a proxy in front of it admits this browser.
+    if (!this.ws) {
+      if (hasCodegCredentials()) this.connectWs()
+      else await this.discoverProxyAuth()
     }
 
     // Gate on the server-side broadcaster receiver actually being subscribed.
@@ -351,12 +362,56 @@ export class WebTransport implements Transport {
       this.eventStreamInstance = new WebEventStream(host)
       // If credentials are present but the WS hasn't been opened yet (no legacy
       // subscribe has run), trigger the connect now so attach frames sent
-      // by the consumer have a place to land.
-      if (!this.ws && hasCodegCredentials()) {
-        this.connectWs()
+      // by the consumer have a place to land. With none, ask the server
+      // whether a proxy in front of it admits this browser.
+      if (!this.ws) {
+        if (hasCodegCredentials()) this.connectWs()
+        else void this.discoverProxyAuth()
       }
     }
     return this.eventStreamInstance
+  }
+
+  // Signed in through a proxy, a browser that opens the workspace directly (a
+  // bookmark, a restored tab, or the root page could not reach the server)
+  // holds neither a token nor the proxy mark, and its HTTP calls succeed
+  // without either, so nothing else would ever open the event socket. Only the
+  // server can tell, so it is asked when a consumer needs the socket. A refusal
+  // ends the matter without touching the connection state: the token flow
+  // surfaces its own 401s, and on the login page there is nothing to reconnect.
+  // An unreachable server is asked again on the reconnect backoff, quietly for
+  // the same reason.
+  private discoverProxyAuth(): Promise<void> {
+    if (
+      this.destroyed ||
+      this.proxyDiscoveryRefused ||
+      this.proxyDiscoveryTimer
+    ) {
+      return this.proxyDiscovery ?? Promise.resolve()
+    }
+    this.proxyDiscovery ??= probeProxyAuthentication().then((result) => {
+      this.proxyDiscovery = null
+      if (this.destroyed) return
+      if (result === "proxy") {
+        if (!this.ws) this.connectWs()
+        return
+      }
+      if (result === "unauthorized") {
+        this.proxyDiscoveryRefused = true
+        return
+      }
+      const shift = Math.min(this.proxyDiscoveryAttempts++, 8)
+      this.proxyDiscoveryTimer = setTimeout(
+        () => {
+          this.proxyDiscoveryTimer = null
+          if (this.ws) return
+          if (hasCodegCredentials()) this.connectWs()
+          else void this.discoverProxyAuth()
+        },
+        Math.min(WS_BACKOFF_INITIAL_MS << shift, WS_BACKOFF_MAX_MS)
+      )
+    })
+    return this.proxyDiscovery
   }
 
   private sendWsFrame(frame: object): boolean {
@@ -598,6 +653,10 @@ export class WebTransport implements Transport {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
+    }
+    if (this.proxyDiscoveryTimer) {
+      clearTimeout(this.proxyDiscoveryTimer)
+      this.proxyDiscoveryTimer = null
     }
     // Abort any in-flight health probe; the `destroyed` guard already blocks
     // its post-await branches, but this frees the request promptly.
