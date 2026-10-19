@@ -81,11 +81,13 @@ pub struct WebAuth {
 /// page, or `None` when it was.
 ///
 /// The assertion rides on the proxy's session cookie, and the browser attaches
-/// that cookie to requests other sites' pages make as well: Cloudflare sets its
-/// application cookie `SameSite=None` unless the operator changes it. Such a
-/// page could then open the event or browser-tunnel WebSocket, or post a
-/// multipart upload (neither needs a CORS preflight), as the signed-in user.
-/// The token cannot travel that way, so only the assertion needs this check.
+/// that cookie to requests that pages on other origins make as well:
+/// Cloudflare sets its application cookie `SameSite=None` unless the operator
+/// changes it, and even `Lax` or `Strict` lets a sibling subdomain's page send
+/// it, because `SameSite` compares sites, not origins. Such a page could then
+/// open the event or browser-tunnel WebSocket, or post a multipart upload
+/// (neither needs a CORS preflight), as the signed-in user. The token cannot
+/// travel that way, so only the assertion needs this check.
 ///
 /// `Sec-Fetch-Site` is set by the browser and a page cannot change it:
 /// `same-origin` is Codeg's own page and `none` an address the user typed;
@@ -93,10 +95,11 @@ pub struct WebAuth {
 /// that sends no Fetch Metadata still sends `Origin` on every WebSocket
 /// handshake and every cross-origin POST, so when present it must name the host
 /// the request was addressed to: `Host`, or a proxy's `X-Forwarded-Host` — a
-/// page cannot set either on a request to another site. A request with neither
-/// header is not another site's WebSocket or POST: it comes from a client that
-/// is not a browser, or is a cross-site GET from an old browser, whose answer
-/// that site cannot read (CORS) and which changes nothing here.
+/// page cannot set either on a request to another origin. A request with
+/// neither header is not a WebSocket or POST from another origin's page: it
+/// comes from a client that is not a browser, or is a cross-origin GET from an
+/// old browser, whose answer that page cannot read (CORS) and which changes
+/// nothing here.
 fn cross_origin_initiator(headers: &HeaderMap) -> Option<String> {
     if let Some(site) = headers.get("sec-fetch-site") {
         let site = site.to_str().unwrap_or_default().trim();
@@ -142,7 +145,7 @@ pub async fn require_auth(request: Request, next: Next, auth: WebAuth) -> Respon
             None => next.run(request).await,
             Some(initiator) => {
                 tracing::warn!(
-                    "[AUTH] proxy-jwt: refused a request sent by another site's page ({initiator})"
+                    "[AUTH] proxy-jwt: refused a request sent by a page on another origin ({initiator})"
                 );
                 (StatusCode::FORBIDDEN, "Cross-origin request refused").into_response()
             }
@@ -325,10 +328,11 @@ mod tests {
     }
 
     // The assertion rides on the proxy's session cookie, which the browser
-    // also attaches to requests that other sites' pages make (Cloudflare's
-    // application cookie is SameSite=None unless the operator changes it).
+    // also attaches to requests that pages on other origins make: Cloudflare's
+    // application cookie is SameSite=None unless the operator changes it, and
+    // a sibling subdomain's page (`same-site`) sends it even under Lax or Strict.
     #[tokio::test]
-    async fn proxy_mode_refuses_an_assertion_carried_by_another_sites_request() {
+    async fn proxy_mode_refuses_an_assertion_carried_by_another_origins_request() {
         let issuer = TestIssuer::new();
         let server = proxy_server(&issuer).await;
 
@@ -352,10 +356,10 @@ mod tests {
         }
     }
 
-    // A WebSocket handshake is a GET, and the one another site's page opens
-    // carries the proxy's cookie too.
+    // A WebSocket handshake is a GET, and the one a page on another origin
+    // opens carries the proxy's cookie too.
     #[tokio::test]
-    async fn proxy_mode_refuses_another_sites_websocket_handshake() {
+    async fn proxy_mode_refuses_another_origins_websocket_handshake() {
         let issuer = TestIssuer::new();
         let server = proxy_server(&issuer).await;
         server
@@ -440,8 +444,8 @@ mod tests {
             .assert_status_ok();
     }
 
-    // Another site's page cannot send the token, so the token needs no proof
-    // of where the request came from, in either mode.
+    // A page on another origin cannot send the token, so the token needs no
+    // proof of where the request came from, in either mode.
     #[tokio::test]
     async fn the_token_is_admitted_whoever_sent_the_request() {
         let issuer = TestIssuer::new();
