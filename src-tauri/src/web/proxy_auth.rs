@@ -547,7 +547,7 @@ impl ProxyJwtAuth {
     }
 
     async fn fetch(&self) -> Result<KeySet, String> {
-        let response = self
+        let mut response = self
             .client
             .get(self.config.jwks_url.clone())
             .send()
@@ -562,12 +562,17 @@ impl ProxyJwtAuth {
         {
             return Err("document too large".into());
         }
-        let body = response
-            .bytes()
+        // Read by chunk so a body sent without a length stops at the cap too.
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map_err(|e| e.without_url().to_string())?;
-        if body.len() > MAX_JWKS_BYTES {
-            return Err("document too large".into());
+            .map_err(|e| e.without_url().to_string())?
+        {
+            if body.len() + chunk.len() > MAX_JWKS_BYTES {
+                return Err("document too large".into());
+            }
+            body.extend_from_slice(&chunk);
         }
         parse_jwks(&body).map_err(|e| e.to_string())
     }
@@ -1290,6 +1295,36 @@ mod tests {
             auth.authenticate(&with_assertion(&rsa.sign(&live_claims())))
                 .await,
             Ok(())
+        );
+    }
+
+    // The size cap holds for a body sent without a length too: the fetch stops
+    // reading once the document is past it, instead of keeping all of it until
+    // the stream ends or the timeout.
+    #[tokio::test]
+    async fn an_endless_key_document_is_cut_off_at_the_size_cap() {
+        let app = axum::Router::new().route(
+            "/certs",
+            axum::routing::get(|| async {
+                let chunks = futures_util::stream::unfold((), |()| async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Some((
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![b' '; 64 * 1024])),
+                        (),
+                    ))
+                });
+                axum::body::Body::from_stream(chunks)
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/certs", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let auth = Arc::new(auth_for(&url, Duration::ZERO));
+
+        let fetched = tokio::time::timeout(Duration::from_secs(3), auth.fetch()).await;
+        assert_eq!(
+            fetched.map(|r| r.err()),
+            Ok(Some("document too large".into()))
         );
     }
 
