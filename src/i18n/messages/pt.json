@@ -1967,7 +1967,8 @@
     "settingsMenuItem": "Configurações de mensagens de commit…",
     "toasts": {
       "failed": "Não foi possível gerar a mensagem de commit",
-      "openSettings": "Configurações"
+      "openSettings": "Configurações",
+      "autoCommitSkipped": "Commit automático não feito: as alterações mudaram enquanto a mensagem era escrita. Confira-a e faça o commit."
     },
     "errors": {
       "noChanges": "Não há alterações para descrever.",
@@ -1978,16 +1979,24 @@
     "dialog": {
       "title": "Geração de mensagens de commit",
       "description": "O botão de gerar ao lado da caixa de commit faz um agente escrever uma mensagem para exatamente o que o commit vai conter. Isso roda em uma sessão separada que nunca aparece na sua lista de sessões, e qualquer permissão que ele peça é recusada.",
+      "scope": "Escopo",
+      "scopeGlobal": "Todas as pastas (padrões globais)",
+      "scopeGlobalHint": "Pastas sem configurações próprias usam estes padrões globais.",
+      "source": "Origem da configuração",
+      "sourceGlobal": "Padrões globais",
+      "sourceCustom": "Personalizada",
+      "sourceGlobalFollow": "Segue as configurações globais — mudanças lá se aplicam aqui automaticamente.",
+      "sourceCustomHint": "Salva configurações próprias desta pasta, que deixa de seguir os padrões globais.",
       "pinAgent": "Usar um agente específico",
       "pinAgentHint": "Este agente escreve todas as mensagens, com as opções abaixo. Um modelo rápido e barato é suficiente para a tarefa.",
       "followSessionHint": "Desativado: quem escreve é o agente da sessão que você está vendo ou, se não houver, o agente padrão da pasta, com o modelo padrão dele.",
+      "autoCommit": "Fazer commit automaticamente",
+      "autoCommitHint": "Faz o commit assim que a mensagem fica pronta. Se as alterações mudaram nesse meio-tempo, a mensagem só é preenchida, para você conferir.",
       "instructions": "Instruções",
       "instructionsHint": "Anexadas a cada pedido e com prioridade sobre as regras embutidas (como seguir o idioma dos commits recentes).",
       "instructionsPlaceholder": "ex.: Escrever em português. Seguir Conventional Commits. Explicar o porquê no corpo.",
       "save": "Salvar",
       "cancel": "Cancelar",
-      "saved": "Configurações de mensagens de commit salvas",
-      "saveFailed": "Não foi possível salvar as configurações",
       "loadFailed": "Não foi possível carregar as configurações"
     }
   },

@@ -1935,6 +1935,7 @@ mod tauri_app {
                 commit_message_commands::git_generate_commit_message_cancel,
                 commit_message_commands::get_commit_message_settings,
                 commit_message_commands::set_commit_message_settings,
+                commit_message_commands::delete_commit_message_settings,
                 folders::git_rollback_file,
                 folders::git_add_files,
                 folders::git_list_all_branches,

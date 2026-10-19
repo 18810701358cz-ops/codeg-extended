@@ -416,6 +416,8 @@ describe("GitChangesTab quick commit IME guard", () => {
 // Quick-commit box: multi-line, and the ✨ that writes its message.
 // ---------------------------------------------------------------------------
 
+type Generated = { message: string; agent_type: string; auto_commit: boolean }
+
 describe("GitChangesTab commit message box", () => {
   const PLACEHOLDER = "Commit message (Enter to commit)"
   const GENERATE = "Generate a commit message"
@@ -453,7 +455,7 @@ describe("GitChangesTab commit message box", () => {
   it("fills the box with a message written for the tracked changes", async () => {
     const box = setup()
     fireEvent.change(box, { target: { value: "parser" } })
-    let finish!: (value: { message: string; agent_type: string }) => void
+    let finish!: (value: Generated) => void
     generateMock.mockReturnValueOnce(
       new Promise((resolve) => {
         finish = resolve
@@ -478,6 +480,7 @@ describe("GitChangesTab commit message box", () => {
       finish({
         message: "fix(parser): keep quotes\n\nThey were dropped.",
         agent_type: "claude_code",
+        auto_commit: false,
       })
     })
     expect(box.value).toBe("fix(parser): keep quotes\n\nThey were dropped.")
@@ -487,7 +490,7 @@ describe("GitChangesTab commit message box", () => {
   it("stops on a second click and keeps the draft", async () => {
     const box = setup()
     fireEvent.change(box, { target: { value: "draft" } })
-    let finish!: (value: { message: string; agent_type: string }) => void
+    let finish!: (value: Generated) => void
     generateMock.mockReturnValueOnce(
       new Promise((resolve) => {
         finish = resolve
@@ -498,9 +501,63 @@ describe("GitChangesTab commit message box", () => {
     fireEvent.click(screen.getByRole("button", { name: /Stop generating/ }))
     expect(cancelGenerateMock).toHaveBeenCalledWith(requestId)
     await act(async () => {
-      finish({ message: "too late", agent_type: "claude_code" })
+      finish({
+        message: "too late",
+        agent_type: "claude_code",
+        auto_commit: false,
+      })
     })
     expect(box.value).toBe("draft")
+  })
+
+  it("commits what the message was written for when the settings say so", async () => {
+    const box = setup()
+    generateMock.mockResolvedValueOnce({
+      message: "fix: both",
+      agent_type: "claude_code",
+      auto_commit: true,
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: GENERATE }))
+    })
+    expect(gitCommitMock).toHaveBeenCalledWith(
+      "/repo",
+      "fix: both",
+      ["f0001", "f0002"],
+      "f1"
+    )
+    expect(box.value).toBe("")
+  })
+
+  it("only fills the box when the changes moved while it was written", async () => {
+    store.git = flatGit(2)
+    gitCommitMock.mockClear()
+    generateMock.mockReset()
+    const view = renderTab()
+    let finish!: (value: Generated) => void
+    generateMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    fireEvent.click(screen.getByRole("button", { name: GENERATE }))
+    store.git = flatGit(3)
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <GitChangesTab />
+      </NextIntlClientProvider>
+    )
+    await act(async () => {
+      finish({
+        message: "fix: two",
+        agent_type: "claude_code",
+        auto_commit: true,
+      })
+    })
+    expect(gitCommitMock).not.toHaveBeenCalled()
+    expect(
+      (screen.getByPlaceholderText(PLACEHOLDER) as HTMLTextAreaElement).value
+    ).toBe("fix: two")
   })
 
   it("has nothing to describe without tracked changes", () => {

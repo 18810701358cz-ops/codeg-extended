@@ -655,6 +655,10 @@ pub fn build_router(
             "/set_commit_message_settings",
             post(handlers::commit_message::set_commit_message_settings),
         )
+        .route(
+            "/delete_commit_message_settings",
+            post(handlers::commit_message::delete_commit_message_settings),
+        )
         .route("/git_fetch_remote", post(handlers::git::git_fetch_remote))
         .route("/git_delete_branch", post(handlers::git::git_delete_branch))
         .route(

@@ -1967,7 +1967,8 @@
     "settingsMenuItem": "提交信息生成设置…",
     "toasts": {
       "failed": "未能生成提交信息",
-      "openSettings": "设置"
+      "openSettings": "设置",
+      "autoCommitSkipped": "未自动提交：生成期间改动有变化，请检查提交信息后再提交。"
     },
     "errors": {
       "noChanges": "没有可描述的改动。",
@@ -1978,16 +1979,24 @@
     "dialog": {
       "title": "提交信息生成",
       "description": "提交框旁的生成按钮会让 agent 按这次提交的实际内容写提交信息。生成在单独的会话里进行，不会出现在会话列表里；它申请的任何权限都会被拒绝。",
+      "scope": "作用域",
+      "scopeGlobal": "全部文件夹（全局默认）",
+      "scopeGlobalHint": "未单独设置的文件夹将使用这份全局默认配置。",
+      "source": "配置来源",
+      "sourceGlobal": "使用全局默认",
+      "sourceCustom": "单独配置",
+      "sourceGlobalFollow": "跟随全局设置，全局改动会自动生效。",
+      "sourceCustomHint": "为此文件夹保存独立设置，不再跟随全局默认。",
       "pinAgent": "指定 agent",
       "pinAgentHint": "每条提交信息都由这个 agent 按下面的选项来写。选一个又快又便宜的模型就够用。",
       "followSessionHint": "关闭时由当前正在看的会话的 agent 来写；没有会话时用文件夹的默认 agent，都使用它的默认模型。",
+      "autoCommit": "生成后自动提交",
+      "autoCommitHint": "提交信息写好后立即提交；如果生成期间改动有变化，只填入提交框，留给你检查。",
       "instructions": "附加说明",
       "instructionsHint": "每次生成都会附上，并优先于内置规则（比如跟随最近提交的语言）。",
       "instructionsPlaceholder": "例如：用中文写；遵循 Conventional Commits；在正文里说明原因。",
       "save": "保存",
       "cancel": "取消",
-      "saved": "提交信息生成设置已保存",
-      "saveFailed": "未能保存设置",
       "loadFailed": "未能读取设置"
     }
   },

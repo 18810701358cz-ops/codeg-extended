@@ -1967,7 +1967,8 @@
     "settingsMenuItem": "Einstellungen für Commit-Nachrichten…",
     "toasts": {
       "failed": "Commit-Nachricht konnte nicht generiert werden",
-      "openSettings": "Einstellungen"
+      "openSettings": "Einstellungen",
+      "autoCommitSkipped": "Nicht automatisch committet: Die Änderungen haben sich verschoben, während die Nachricht geschrieben wurde. Prüfe sie und committe dann."
     },
     "errors": {
       "noChanges": "Es gibt keine Änderungen zu beschreiben.",
@@ -1978,16 +1979,24 @@
     "dialog": {
       "title": "Commit-Nachrichten generieren",
       "description": "Mit der Schaltfläche neben dem Commit-Feld schreibt ein Agent eine Nachricht genau zu dem, was der Commit enthalten wird. Das läuft in einer eigenen Sitzung, die nie in deiner Sitzungsliste erscheint, und jede Berechtigungsanfrage wird abgelehnt.",
+      "scope": "Geltungsbereich",
+      "scopeGlobal": "Alle Ordner (globale Standardwerte)",
+      "scopeGlobalHint": "Ordner ohne eigene Einstellungen verwenden diese globalen Standardwerte.",
+      "source": "Konfigurationsquelle",
+      "sourceGlobal": "Globale Standards",
+      "sourceCustom": "Eigene",
+      "sourceGlobalFollow": "Folgt den globalen Einstellungen — Änderungen dort gelten hier automatisch.",
+      "sourceCustomHint": "Speichert eigene Einstellungen für diesen Ordner; die globalen Standards gelten dann nicht mehr.",
       "pinAgent": "Bestimmten Agenten verwenden",
       "pinAgentHint": "Dieser Agent schreibt jede Nachricht, mit den Optionen unten. Ein schnelles, günstiges Modell reicht für die Aufgabe.",
       "followSessionHint": "Aus: Es schreibt der Agent der Sitzung, die du gerade ansiehst, sonst der Standard-Agent des Ordners, jeweils mit seinem Standardmodell.",
+      "autoCommit": "Automatisch committen",
+      "autoCommitHint": "Committet, sobald die Nachricht geschrieben ist. Haben sich die Änderungen inzwischen verschoben, wird die Nachricht nur eingetragen, damit du sie prüfen kannst.",
       "instructions": "Anweisungen",
       "instructionsHint": "Wird jeder Anfrage angehängt und hat Vorrang vor den eingebauten Regeln (etwa der Sprache der letzten Commits zu folgen).",
       "instructionsPlaceholder": "z. B. Auf Deutsch schreiben. Conventional Commits verwenden. Im Text das Warum erklären.",
       "save": "Speichern",
       "cancel": "Abbrechen",
-      "saved": "Einstellungen für Commit-Nachrichten gespeichert",
-      "saveFailed": "Einstellungen konnten nicht gespeichert werden",
       "loadFailed": "Einstellungen konnten nicht geladen werden"
     }
   },

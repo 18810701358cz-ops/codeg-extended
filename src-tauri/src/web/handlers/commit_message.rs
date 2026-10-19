@@ -9,8 +9,9 @@ use serde::Deserialize;
 use crate::app_error::AppCommandError;
 use crate::app_state::AppState;
 use crate::commands::commit_message::{
-    get_commit_message_settings_core, git_generate_commit_message_cancel_core,
-    git_generate_commit_message_core, set_commit_message_settings_core,
+    delete_commit_message_settings_core, get_commit_message_settings_core,
+    git_generate_commit_message_cancel_core, git_generate_commit_message_core,
+    set_commit_message_settings_core,
 };
 use crate::commit_message::{CommitMessageSettings, GenerateRequest, GeneratedCommitMessage};
 
@@ -43,14 +44,27 @@ pub async fn git_generate_commit_message_cancel(
     Ok(Json(()))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetSettingsParams {
+    #[serde(default)]
+    pub folder_id: Option<i32>,
+}
+
 pub async fn get_commit_message_settings(
     Extension(state): Extension<Arc<AppState>>,
-) -> Result<Json<CommitMessageSettings>, AppCommandError> {
-    Ok(Json(get_commit_message_settings_core(&state.db).await))
+    Json(params): Json<GetSettingsParams>,
+) -> Result<Json<Option<CommitMessageSettings>>, AppCommandError> {
+    Ok(Json(
+        get_commit_message_settings_core(&state.db, params.folder_id).await,
+    ))
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SetSettingsParams {
+    #[serde(default)]
+    pub folder_id: Option<i32>,
     pub settings: CommitMessageSettings,
 }
 
@@ -58,6 +72,21 @@ pub async fn set_commit_message_settings(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<SetSettingsParams>,
 ) -> Result<Json<CommitMessageSettings>, AppCommandError> {
-    let saved = set_commit_message_settings_core(&state.db, params.settings).await?;
+    let saved =
+        set_commit_message_settings_core(&state.db, params.folder_id, params.settings).await?;
     Ok(Json(saved))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSettingsParams {
+    pub folder_id: i32,
+}
+
+pub async fn delete_commit_message_settings(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<DeleteSettingsParams>,
+) -> Result<Json<()>, AppCommandError> {
+    delete_commit_message_settings_core(&state.db, params.folder_id).await?;
+    Ok(Json(()))
 }

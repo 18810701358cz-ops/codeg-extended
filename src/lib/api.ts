@@ -3141,14 +3141,31 @@ export async function gitGenerateCommitMessageCancel(
   })
 }
 
-export async function getCommitMessageSettings(): Promise<CommitMessageSettings> {
-  return getTransport().call("get_commit_message_settings")
+/** A project folder's own settings — `null` while it follows the global ones
+ *  — or with `folderId` null the global settings. */
+export async function getCommitMessageSettings(
+  folderId: number | null
+): Promise<CommitMessageSettings | null> {
+  return getTransport().call("get_commit_message_settings", { folderId })
 }
 
+/** Save a project folder's own settings, or with `folderId` null the global
+ *  ones. */
 export async function setCommitMessageSettings(
+  folderId: number | null,
   settings: CommitMessageSettings
 ): Promise<CommitMessageSettings> {
-  return getTransport().call("set_commit_message_settings", { settings })
+  return getTransport().call("set_commit_message_settings", {
+    folderId,
+    settings,
+  })
+}
+
+/** Drop a project folder's own settings: it follows the global ones again. */
+export async function deleteCommitMessageSettings(
+  folderId: number
+): Promise<void> {
+  return getTransport().call("delete_commit_message_settings", { folderId })
 }
 
 export async function gitRollbackFile(

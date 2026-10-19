@@ -1,6 +1,7 @@
 //! Commands of the commit message generator (`crate::commit_message`): one to
-//! write a message, one to stop that, and the settings pair. The web handlers
-//! in `web::handlers::commit_message` call the same core functions.
+//! write a message, one to stop that, and the settings, global or a project
+//! folder's own. The web handlers in `web::handlers::commit_message` call the
+//! same core functions.
 
 use std::path::Path;
 
@@ -22,16 +23,35 @@ pub fn git_generate_commit_message_cancel_core(request_id: &str) {
     commit_message::cancel(request_id);
 }
 
-pub async fn get_commit_message_settings_core(db: &AppDatabase) -> CommitMessageSettings {
-    commit_message::load_settings(&db.conn).await
+/// A project folder's own settings, `None` while it follows the global ones;
+/// without a folder, the global settings (never `None`).
+pub async fn get_commit_message_settings_core(
+    db: &AppDatabase,
+    folder_id: Option<i32>,
+) -> Option<CommitMessageSettings> {
+    let own = commit_message::load_settings(&db.conn, folder_id).await;
+    match folder_id {
+        Some(_) => own,
+        None => Some(own.unwrap_or_default()),
+    }
 }
 
+/// Save a project folder's own settings, or without a folder the global ones.
 pub async fn set_commit_message_settings_core(
     db: &AppDatabase,
+    folder_id: Option<i32>,
     settings: CommitMessageSettings,
 ) -> Result<CommitMessageSettings, AppCommandError> {
-    commit_message::save_settings(&db.conn, &settings).await?;
+    commit_message::save_settings(&db.conn, folder_id, &settings).await?;
     Ok(settings)
+}
+
+/// Drop a project folder's own settings, so it follows the global ones again.
+pub async fn delete_commit_message_settings_core(
+    db: &AppDatabase,
+    folder_id: i32,
+) -> Result<(), AppCommandError> {
+    commit_message::delete_settings(&db.conn, folder_id).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -98,15 +118,26 @@ pub async fn git_generate_commit_message_cancel(request_id: String) -> Result<()
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn get_commit_message_settings(
     db: tauri::State<'_, AppDatabase>,
-) -> Result<CommitMessageSettings, AppCommandError> {
-    Ok(get_commit_message_settings_core(&db).await)
+    folder_id: Option<i32>,
+) -> Result<Option<CommitMessageSettings>, AppCommandError> {
+    Ok(get_commit_message_settings_core(&db, folder_id).await)
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn set_commit_message_settings(
     db: tauri::State<'_, AppDatabase>,
+    folder_id: Option<i32>,
     settings: CommitMessageSettings,
 ) -> Result<CommitMessageSettings, AppCommandError> {
-    set_commit_message_settings_core(&db, settings).await
+    set_commit_message_settings_core(&db, folder_id, settings).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn delete_commit_message_settings(
+    db: tauri::State<'_, AppDatabase>,
+    folder_id: i32,
+) -> Result<(), AppCommandError> {
+    delete_commit_message_settings_core(&db, folder_id).await
 }

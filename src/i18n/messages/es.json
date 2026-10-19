@@ -1967,7 +1967,8 @@
     "settingsMenuItem": "Ajustes de mensajes de commit…",
     "toasts": {
       "failed": "No se pudo generar el mensaje de commit",
-      "openSettings": "Ajustes"
+      "openSettings": "Ajustes",
+      "autoCommitSkipped": "No se hizo commit automáticamente: los cambios se movieron mientras se escribía el mensaje. Revísalo y haz commit."
     },
     "errors": {
       "noChanges": "No hay cambios que describir.",
@@ -1978,16 +1979,24 @@
     "dialog": {
       "title": "Generación de mensajes de commit",
       "description": "El botón de generar junto al cuadro de commit hace que un agente escriba un mensaje para exactamente lo que contendrá el commit. Se ejecuta en una sesión aparte que nunca aparece en tu lista de sesiones, y se rechaza cualquier permiso que pida.",
+      "scope": "Ámbito",
+      "scopeGlobal": "Todas las carpetas (valores globales)",
+      "scopeGlobalHint": "Las carpetas sin configuración propia usan estos valores globales.",
+      "source": "Origen de configuración",
+      "sourceGlobal": "Valores globales",
+      "sourceCustom": "Personalizada",
+      "sourceGlobalFollow": "Sigue la configuración global; los cambios allí se aplican aquí automáticamente.",
+      "sourceCustomHint": "Guarda configuración propia para esta carpeta y deja de seguir los valores globales.",
       "pinAgent": "Usar un agente concreto",
       "pinAgentHint": "Este agente escribe todos los mensajes, con las opciones de abajo. Un modelo rápido y económico basta para la tarea.",
       "followSessionHint": "Desactivado: lo escribe el agente de la sesión que estás viendo o, si no hay, el agente por defecto de la carpeta, con su modelo por defecto.",
+      "autoCommit": "Hacer commit automáticamente",
+      "autoCommitHint": "Hace commit en cuanto el mensaje está escrito. Si los cambios se movieron mientras tanto, solo se rellena el mensaje para que lo revises.",
       "instructions": "Instrucciones",
       "instructionsHint": "Se añaden a cada solicitud y tienen prioridad sobre las reglas integradas (como seguir el idioma de los commits recientes).",
       "instructionsPlaceholder": "p. ej. Escribir en español. Seguir Conventional Commits. Explicar el porqué en el cuerpo.",
       "save": "Guardar",
       "cancel": "Cancelar",
-      "saved": "Ajustes de mensajes de commit guardados",
-      "saveFailed": "No se pudieron guardar los ajustes",
       "loadFailed": "No se pudieron cargar los ajustes"
     }
   },

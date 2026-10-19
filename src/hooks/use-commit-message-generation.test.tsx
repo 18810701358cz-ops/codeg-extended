@@ -17,7 +17,11 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: toastError },
 }))
 
-import { useCommitMessageGeneration } from "./use-commit-message-generation"
+import {
+  sameFiles,
+  useCommitMessageGeneration,
+  type GeneratedMessage,
+} from "./use-commit-message-generation"
 import enMessages from "@/i18n/messages/en.json"
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -30,17 +34,17 @@ function wrapper({ children }: { children: ReactNode }) {
 
 /** A generation the test settles by hand. */
 function pending() {
-  let resolve!: (value: { message: string; agent_type: string }) => void
+  let resolve!: (value: Generated) => void
   let reject!: (error: unknown) => void
-  const promise = new Promise<{ message: string; agent_type: string }>(
-    (res, rej) => {
-      resolve = res
-      reject = rej
-    }
-  )
+  const promise = new Promise<Generated>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
   api.generate.mockReturnValueOnce(promise)
   return { resolve, reject }
 }
+
+type Generated = { message: string; agent_type: string; auto_commit: boolean }
 
 const input = { files: ["a.ts"], draft: "fix it", fallbackAgent: null }
 
@@ -57,7 +61,7 @@ describe("useCommitMessageGeneration", () => {
       () => useCommitMessageGeneration({ path: "/repo", folderId: 7 }),
       { wrapper }
     )
-    let message: Promise<string | null> = Promise.resolve(null)
+    let message: Promise<GeneratedMessage | null> = Promise.resolve(null)
     act(() => {
       message = result.current.generate(input)
     })
@@ -71,10 +75,34 @@ describe("useCommitMessageGeneration", () => {
       fallbackAgent: null,
     })
     await act(async () => {
-      run.resolve({ message: "fix: it", agent_type: "claude_code" })
-      expect(await message).toBe("fix: it")
+      run.resolve({
+        message: "fix: it",
+        agent_type: "claude_code",
+        auto_commit: false,
+      })
+      expect(await message).toEqual({ message: "fix: it", autoCommit: false })
     })
     expect(result.current.generating).toBe(false)
+  })
+
+  it("passes on that the settings want the message committed", async () => {
+    const run = pending()
+    const { result } = renderHook(
+      () => useCommitMessageGeneration({ path: "/repo", folderId: 7 }),
+      { wrapper }
+    )
+    let message: Promise<GeneratedMessage | null> = Promise.resolve(null)
+    act(() => {
+      message = result.current.generate(input)
+    })
+    await act(async () => {
+      run.resolve({
+        message: "fix: it",
+        agent_type: "claude_code",
+        auto_commit: true,
+      })
+      expect(await message).toEqual({ message: "fix: it", autoCommit: true })
+    })
   })
 
   it("sends no draft for a box holding only whitespace", () => {
@@ -95,7 +123,7 @@ describe("useCommitMessageGeneration", () => {
       () => useCommitMessageGeneration({ path: "/repo", folderId: 7 }),
       { wrapper }
     )
-    let message: Promise<string | null> = Promise.resolve(null)
+    let message: Promise<GeneratedMessage | null> = Promise.resolve(null)
     act(() => {
       message = result.current.generate(input)
     })
@@ -104,7 +132,11 @@ describe("useCommitMessageGeneration", () => {
     expect(api.cancel).toHaveBeenCalledWith(requestId)
     expect(result.current.generating).toBe(false)
     await act(async () => {
-      run.resolve({ message: "too late", agent_type: "claude_code" })
+      run.resolve({
+        message: "too late",
+        agent_type: "claude_code",
+        auto_commit: false,
+      })
       expect(await message).toBeNull()
     })
   })
@@ -115,7 +147,7 @@ describe("useCommitMessageGeneration", () => {
       ({ path }) => useCommitMessageGeneration({ path, folderId: 7 }),
       { wrapper, initialProps: { path: "/a" } }
     )
-    let message: Promise<string | null> = Promise.resolve(null)
+    let message: Promise<GeneratedMessage | null> = Promise.resolve(null)
     act(() => {
       message = result.current.generate(input)
     })
@@ -123,7 +155,11 @@ describe("useCommitMessageGeneration", () => {
     expect(api.cancel).toHaveBeenCalledTimes(1)
     expect(result.current.generating).toBe(false)
     await act(async () => {
-      run.resolve({ message: "for /a", agent_type: "claude_code" })
+      run.resolve({
+        message: "for /a",
+        agent_type: "claude_code",
+        auto_commit: false,
+      })
       expect(await message).toBeNull()
     })
   })
@@ -147,7 +183,7 @@ describe("useCommitMessageGeneration", () => {
       () => useCommitMessageGeneration({ path: "/repo", folderId: 7 }),
       { wrapper }
     )
-    let message: Promise<string | null> = Promise.resolve(null)
+    let message: Promise<GeneratedMessage | null> = Promise.resolve(null)
     act(() => {
       message = result.current.generate(input)
     })
@@ -189,5 +225,14 @@ describe("useCommitMessageGeneration", () => {
       void result.current.generate(input)
     })
     expect(api.generate).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("sameFiles", () => {
+  it("compares the files, not their order", () => {
+    expect(sameFiles(["a.ts", "b.ts"], ["b.ts", "a.ts"])).toBe(true)
+    expect(sameFiles(["a.ts"], ["a.ts", "b.ts"])).toBe(false)
+    expect(sameFiles(["a.ts", "b.ts"], ["a.ts", "c.ts"])).toBe(false)
+    expect(sameFiles([], [])).toBe(true)
   })
 })

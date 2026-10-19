@@ -1967,7 +1967,8 @@
     "settingsMenuItem": "Commit message settings…",
     "toasts": {
       "failed": "Couldn't generate a commit message",
-      "openSettings": "Settings"
+      "openSettings": "Settings",
+      "autoCommitSkipped": "Not committed automatically: the changes moved while the message was being written. Check it, then commit."
     },
     "errors": {
       "noChanges": "There are no changes to describe.",
@@ -1978,16 +1979,24 @@
     "dialog": {
       "title": "Commit message generation",
       "description": "The generate button next to the commit box has an agent write a message for exactly what the commit will contain. It runs in a separate session that never appears in your session list, and anything it asks permission for is refused.",
+      "scope": "Scope",
+      "scopeGlobal": "All folders (global defaults)",
+      "scopeGlobalHint": "Folders without their own settings use these global defaults.",
+      "source": "Configuration",
+      "sourceGlobal": "Global defaults",
+      "sourceCustom": "Custom",
+      "sourceGlobalFollow": "Follows the global settings — changes there apply here automatically.",
+      "sourceCustomHint": "Saves this folder's own settings; it stops following the global defaults.",
       "pinAgent": "Use a specific agent",
       "pinAgentHint": "This agent writes every message, with the options below. A fast, inexpensive model is plenty for the job.",
       "followSessionHint": "Off: the agent of the session you're looking at writes it, else the folder's default agent, with its default model.",
+      "autoCommit": "Commit automatically",
+      "autoCommitHint": "Commits as soon as the message is written. If the changes moved in the meantime, the message is only filled in, for you to check.",
       "instructions": "Instructions",
       "instructionsHint": "Added to every request, and followed over the built-in rules (such as matching the language of recent commits).",
       "instructionsPlaceholder": "e.g. Write in Chinese. Use Conventional Commits. Explain why in the body.",
       "save": "Save",
       "cancel": "Cancel",
-      "saved": "Commit message settings saved",
-      "saveFailed": "Couldn't save the settings",
       "loadFailed": "Couldn't load the settings"
     }
   },

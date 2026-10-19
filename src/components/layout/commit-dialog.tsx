@@ -68,13 +68,19 @@ import { ImageDiffView } from "@/components/diff/image-diff-view"
 import { loadImageDiffSides, type ImageDiffSides } from "@/lib/image-diff"
 import { isBinaryImageFile, languageFromPath } from "@/lib/language-detect"
 import { toErrorMessage } from "@/lib/app-error"
-import { useCommitMessageGeneration } from "@/hooks/use-commit-message-generation"
+import {
+  sameFiles,
+  useCommitMessageGeneration,
+} from "@/hooks/use-commit-message-generation"
 import { CommitMessageGenerateButton } from "@/components/layout/commit-message-generate-button"
 import { CommitMessageSettingsDialog } from "@/components/layout/commit-message-settings-dialog"
 
 interface CommitWorkspaceProps {
   folderPath: string
   folderId?: number | null
+  /** The project folder whose commit message settings apply — a worktree
+   *  folder's repository. Defaults to `folderId`. */
+  projectFolderId?: number | null
   onCommitted?: () => void
   onCancel?: () => void
 }
@@ -234,6 +240,7 @@ const CONFIRM_INITIAL: ConfirmState = {
 export function CommitWorkspace({
   folderPath,
   folderId,
+  projectFolderId,
   onCommitted,
   onCancel,
 }: CommitWorkspaceProps) {
@@ -278,6 +285,8 @@ export function CommitWorkspace({
   // Use refs to track mutable values without causing callback recreation
   const diffFileRef = useRef(diffFile)
   diffFileRef.current = diffFile
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
   const entriesRef = useRef(entries)
   entriesRef.current = entries
 
@@ -761,18 +770,27 @@ export function CommitWorkspace({
       ? tGenerate("selectFiles")
       : null
   const handleGenerate = useCallback(async () => {
-    const message = await generation.generate({
-      files: Array.from(selected),
+    const files = Array.from(selected)
+    const generated = await generation.generate({
+      files,
       draft: messageRef.current,
       // A commit window shows no session; the folder's default agent stands in.
       fallbackAgent: null,
     })
     const box = messageBoxRef.current
-    if (message === null || !box) return
-    box.value = message
-    messageRef.current = message
-    setHasMessage(message.trim().length > 0)
-  }, [generation, selected])
+    if (generated === null || !box) return
+    box.value = generated.message
+    messageRef.current = generated.message
+    setHasMessage(generated.message.trim().length > 0)
+    if (!generated.autoCommit) return
+    // Only ever the files the message was written for: a selection changed
+    // meanwhile leaves the message in the box for the user to check.
+    if (!sameFiles(files, Array.from(selectedRef.current))) {
+      toast.info(tGenerate("toasts.autoCommitSkipped"))
+      return
+    }
+    await handleCommit()
+  }, [generation, handleCommit, selected, tGenerate])
 
   useEffect(() => {
     const container = containerRef.current
@@ -1302,6 +1320,7 @@ export function CommitWorkspace({
               <CommitMessageSettingsDialog
                 open={generation.settingsOpen}
                 onOpenChange={generation.setSettingsOpen}
+                folderId={projectFolderId ?? folderId ?? null}
               />
               <div className="mt-3 flex items-center justify-end gap-2">
                 <Button variant="outline" onClick={onCancel}>

@@ -4,12 +4,14 @@
 //! ([`scope`]), turn it into a request ([`prompt`]), and have the chosen agent
 //! answer it on a hidden throwaway session ([`crate::acp::one_shot`]) — no
 //! conversation row, no tools, nothing for anyone to approve. The answer goes
-//! back to the box it was asked from; nothing is committed until the user
-//! commits.
+//! back to the box it was asked from, with whether the settings want it
+//! committed right away; the commit is the box's own, as if the user had
+//! pressed it.
 //!
-//! Which agent: the one picked in the settings ([`CommitMessageSettings`]),
-//! else the agent of the session the user is looking at (the caller's
-//! `fallback_agent`), else the folder's default agent.
+//! Which settings: the folder's own, else its repository's (for a worktree
+//! folder), else the global ones ([`effective_settings`]). Which agent: the
+//! one picked there, else the agent of the session the user is looking at
+//! (the caller's `fallback_agent`), else the folder's default agent.
 
 pub(crate) mod prompt;
 pub(crate) mod scope;
@@ -27,25 +29,36 @@ use crate::app_error::{AppCommandError, AppErrorCode};
 use crate::db::service::{app_metadata_service, folder_service};
 use crate::db::AppDatabase;
 use crate::models::agent::AgentType;
+use crate::models::AssistantAgentConfig;
 
-/// `app_metadata` key of the settings.
+/// `app_metadata` key of the global settings. A project folder's own settings
+/// are kept under `<this>:folder:<id>`.
 const SETTINGS_KEY: &str = "commit_message_generation";
 
-/// How the generator runs. Everything optional: with nothing set it follows
-/// the session in front of the user (see the module docs).
+fn settings_key(folder_id: Option<i32>) -> String {
+    match folder_id {
+        Some(id) => format!("{SETTINGS_KEY}:folder:{id}"),
+        None => SETTINGS_KEY.to_string(),
+    }
+}
+
+/// How the generator runs, saved globally and, if the user wants, for a
+/// project folder — whose own settings then replace the global ones whole.
+/// Everything optional: with nothing set it follows the session in front of
+/// the user (see the module docs).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CommitMessageSettings {
-    /// The agent that writes messages; `None` follows the active session.
-    /// An agent that no longer exists reads back as `None`.
-    #[serde(deserialize_with = "lenient_agent")]
-    pub agent_type: Option<AgentType>,
-    /// The agent's mode and config options (model, effort, …) to start it
-    /// with, as launch preferences. Only applied to `agent_type`.
-    pub mode_id: Option<String>,
-    pub config_values: BTreeMap<String, String>,
+    /// The agent that writes messages with every option it offers picked —
+    /// an assistant's kind of selection, checked the same way. `None` follows
+    /// the active session. One that no longer reads (its agent is gone) reads
+    /// back as `None`, without taking the rest of the settings with it.
+    #[serde(deserialize_with = "lenient_agent_config")]
+    pub agent: Option<AssistantAgentConfig>,
     /// The user's standing instructions, e.g. "write in Chinese".
     pub instructions: String,
+    /// Commit as soon as the message is written.
+    pub auto_commit: bool,
 }
 
 fn lenient_agent<'de, D: Deserializer<'de>>(
@@ -55,28 +68,78 @@ fn lenient_agent<'de, D: Deserializer<'de>>(
     Ok(raw.as_deref().and_then(AgentType::from_wire))
 }
 
-pub async fn load_settings(conn: &sea_orm::DatabaseConnection) -> CommitMessageSettings {
-    match app_metadata_service::get_value(conn, SETTINGS_KEY).await {
-        Ok(Some(raw)) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-            tracing::warn!("[commit-message] unreadable settings, using defaults: {e}");
-            CommitMessageSettings::default()
-        }),
-        Ok(None) => CommitMessageSettings::default(),
+fn lenient_agent_config<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<AssistantAgentConfig>, D::Error> {
+    let raw = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(raw.and_then(|value| serde_json::from_value(value).ok()))
+}
+
+/// The settings saved for a project folder, or with `None` the global ones;
+/// `None` when there are none — a folder that follows the global settings.
+pub async fn load_settings(
+    conn: &sea_orm::DatabaseConnection,
+    folder_id: Option<i32>,
+) -> Option<CommitMessageSettings> {
+    let key = settings_key(folder_id);
+    match app_metadata_service::get_value(conn, &key).await {
+        Ok(Some(raw)) => serde_json::from_str(&raw)
+            .map_err(|e| tracing::warn!("[commit-message] unreadable settings {key}, skipped: {e}"))
+            .ok(),
+        Ok(None) => None,
         Err(e) => {
-            tracing::warn!("[commit-message] could not read settings, using defaults: {e}");
-            CommitMessageSettings::default()
+            tracing::warn!("[commit-message] could not read settings {key}: {e}");
+            None
         }
     }
 }
 
+/// What a generation in `folder_id` runs with: the folder's own settings,
+/// else its repository's (a worktree folder's parent), else the global ones,
+/// else the defaults.
+pub async fn effective_settings(
+    conn: &sea_orm::DatabaseConnection,
+    folder_id: Option<i32>,
+) -> CommitMessageSettings {
+    let mut next = folder_id;
+    for _ in 0..2 {
+        let Some(id) = next else { break };
+        if let Some(own) = load_settings(conn, Some(id)).await {
+            return own;
+        }
+        next = match folder_service::get_folder_by_id(conn, id).await {
+            Ok(Some(folder)) => folder.parent_id,
+            _ => None,
+        };
+    }
+    load_settings(conn, None).await.unwrap_or_default()
+}
+
+/// Save a project folder's own settings, or with `None` the global ones.
 pub async fn save_settings(
     conn: &sea_orm::DatabaseConnection,
+    folder_id: Option<i32>,
     settings: &CommitMessageSettings,
 ) -> Result<(), AppCommandError> {
+    if let Some(agent) = &settings.agent {
+        agent.validate().map_err(|e| {
+            AppCommandError::invalid_input("Invalid agent selection").with_detail(e)
+        })?;
+    }
     let raw = serde_json::to_string(settings).map_err(|e| {
         AppCommandError::invalid_input("Invalid settings").with_detail(e.to_string())
     })?;
-    app_metadata_service::upsert_value(conn, SETTINGS_KEY, &raw)
+    app_metadata_service::upsert_value(conn, &settings_key(folder_id), &raw)
+        .await
+        .map_err(AppCommandError::from)
+}
+
+/// Drop a project folder's own settings: it follows the global ones again.
+pub async fn delete_settings(
+    conn: &sea_orm::DatabaseConnection,
+    folder_id: i32,
+) -> Result<(), AppCommandError> {
+    app_metadata_service::delete_value(conn, &settings_key(Some(folder_id)))
         .await
         .map_err(AppCommandError::from)
 }
@@ -104,6 +167,8 @@ pub struct GenerateRequest {
 pub struct GeneratedCommitMessage {
     pub message: String,
     pub agent_type: AgentType,
+    /// The settings the run used want the message committed right away.
+    pub auto_commit: bool,
 }
 
 /// i18n keys of the errors the UI words itself (namespace
@@ -136,7 +201,7 @@ pub async fn generate(
     // First, so a cancel for this id is honoured however early it came.
     let registration = Inflight::register(&request_id)?;
 
-    let settings = load_settings(&db.conn).await;
+    let settings = effective_settings(&db.conn, folder_id).await;
     let (agent_type, mode_id, config_values) =
         resolve_agent(&db.conn, &settings, fallback_agent, folder_id).await?;
     let scope = scope::read(&path, &files).await?;
@@ -190,6 +255,7 @@ pub async fn generate(
     Ok(GeneratedCommitMessage {
         message,
         agent_type,
+        auto_commit: settings.auto_commit,
     })
 }
 
@@ -268,11 +334,11 @@ async fn resolve_agent(
     fallback_agent: Option<AgentType>,
     folder_id: Option<i32>,
 ) -> Result<(AgentType, Option<String>, BTreeMap<String, String>), AppCommandError> {
-    if let Some(agent) = settings.agent_type {
+    if let Some(agent) = &settings.agent {
         return Ok((
-            agent,
-            settings.mode_id.clone(),
-            settings.config_values.clone(),
+            agent.agent_type,
+            agent.agent_options.mode_id.clone(),
+            agent.agent_options.config_values.clone(),
         ));
     }
     if let Some(agent) = fallback_agent {
@@ -300,14 +366,36 @@ async fn resolve_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::acp::delegation::types::AgentDelegationDefaults;
+    use crate::db::test_helpers::{fresh_in_memory_db, seed_folder};
+    use crate::models::{AssistantLabelSnapshot, AssistantOptionKind, AssistantOptionLabel};
+
+    fn claude_on_haiku() -> AssistantAgentConfig {
+        AssistantAgentConfig {
+            agent_type: AgentType::ClaudeCode,
+            agent_options: AgentDelegationDefaults {
+                mode_id: None,
+                config_values: BTreeMap::from([("model".to_string(), "haiku".to_string())]),
+            },
+            label_snapshot: AssistantLabelSnapshot {
+                agent: "Claude Code".to_string(),
+                mode: None,
+                options: vec![AssistantOptionLabel {
+                    id: "model".to_string(),
+                    kind: AssistantOptionKind::Select,
+                    name: "Model".to_string(),
+                    value_label: "Haiku".to_string(),
+                }],
+            },
+        }
+    }
 
     #[test]
     fn settings_round_trip_and_tolerate_a_vanished_agent() {
         let settings = CommitMessageSettings {
-            agent_type: Some(AgentType::ClaudeCode),
-            mode_id: None,
-            config_values: BTreeMap::from([("model".to_string(), "haiku".to_string())]),
+            agent: Some(claude_on_haiku()),
             instructions: "Write in Chinese.".to_string(),
+            auto_commit: true,
         };
         let raw = serde_json::to_string(&settings).unwrap();
         assert_eq!(
@@ -315,14 +403,69 @@ mod tests {
             settings
         );
 
-        let stale: CommitMessageSettings =
-            serde_json::from_str(r#"{"agent_type":"no_such_agent","instructions":"keep me"}"#)
-                .unwrap();
-        assert_eq!(stale.agent_type, None);
-        assert_eq!(stale.instructions, "keep me");
+        // An agent that is gone takes its selection along, not the rest.
+        let mut stale: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        stale["agent"]["agent_type"] = "no_such_agent".into();
+        let stale: CommitMessageSettings = serde_json::from_value(stale).unwrap();
+        assert_eq!(stale.agent, None);
+        assert_eq!(stale.instructions, "Write in Chinese.");
+        assert!(stale.auto_commit);
 
         let empty: CommitMessageSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, CommitMessageSettings::default());
+    }
+
+    #[tokio::test]
+    async fn a_folder_runs_with_its_own_settings_else_its_repositorys_else_the_global_ones() {
+        let db = fresh_in_memory_db().await;
+        let repo = seed_folder(&db, "/tmp/cm-repo").await;
+        let worktree =
+            folder_service::add_folder_with_parent(&db.conn, "/tmp/cm-repo-wt", Some(repo))
+                .await
+                .unwrap()
+                .id;
+        let other = seed_folder(&db, "/tmp/cm-other").await;
+        assert_eq!(
+            effective_settings(&db.conn, Some(worktree)).await,
+            CommitMessageSettings::default()
+        );
+
+        let global = CommitMessageSettings {
+            instructions: "Write in Chinese.".to_string(),
+            ..Default::default()
+        };
+        save_settings(&db.conn, None, &global).await.unwrap();
+        let own = CommitMessageSettings {
+            agent: Some(claude_on_haiku()),
+            auto_commit: true,
+            ..Default::default()
+        };
+        save_settings(&db.conn, Some(repo), &own).await.unwrap();
+
+        // Whole settings: the repository's own don't pick up the global
+        // instructions.
+        assert_eq!(effective_settings(&db.conn, Some(repo)).await, own);
+        assert_eq!(effective_settings(&db.conn, Some(worktree)).await, own);
+        assert_eq!(effective_settings(&db.conn, Some(other)).await, global);
+        assert_eq!(effective_settings(&db.conn, None).await, global);
+        assert_eq!(load_settings(&db.conn, Some(other)).await, None);
+
+        delete_settings(&db.conn, repo).await.unwrap();
+        assert_eq!(load_settings(&db.conn, Some(repo)).await, None);
+        assert_eq!(effective_settings(&db.conn, Some(worktree)).await, global);
+    }
+
+    #[tokio::test]
+    async fn an_agent_with_an_option_left_unpicked_is_not_saved() {
+        let db = fresh_in_memory_db().await;
+        let mut agent = claude_on_haiku();
+        agent.agent_options.config_values.clear();
+        let settings = CommitMessageSettings {
+            agent: Some(agent),
+            ..Default::default()
+        };
+        assert!(save_settings(&db.conn, None, &settings).await.is_err());
+        assert_eq!(load_settings(&db.conn, None).await, None);
     }
 
     #[test]

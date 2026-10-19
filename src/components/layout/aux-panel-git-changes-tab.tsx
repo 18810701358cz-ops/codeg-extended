@@ -66,7 +66,10 @@ import { useWorkspaceActions } from "@/contexts/workspace-context"
 import { useWorkspaceStateStore } from "@/hooks/use-workspace-state-store"
 import { useGitQuickActions } from "@/hooks/use-git-quick-actions"
 import { useImeGuard } from "@/hooks/use-ime-guard"
-import { useCommitMessageGeneration } from "@/hooks/use-commit-message-generation"
+import {
+  sameFiles,
+  useCommitMessageGeneration,
+} from "@/hooks/use-commit-message-generation"
 import { AuxPanelNoFolderEmpty } from "@/components/layout/aux-panel-no-folder-empty"
 import { CommitMessageGenerateButton } from "@/components/layout/commit-message-generate-button"
 import { CommitMessageSettingsDialog } from "@/components/layout/commit-message-settings-dialog"
@@ -798,6 +801,9 @@ export function GitChangesTab() {
     () => trackedChanges.map((change) => change.path),
     [trackedChanges]
   )
+  // The latest list, for a commit that follows a generation on its own.
+  const trackedPathsRef = useRef(trackedPaths)
+  trackedPathsRef.current = trackedPaths
   const generation = useCommitMessageGeneration({
     path: folder?.path ?? null,
     folderId: folder?.id ?? null,
@@ -818,14 +824,6 @@ export function GitChangesTab() {
     : trackedPaths.length === 0
       ? tGenerate("noChanges")
       : null
-  const handleGenerate = useCallback(async () => {
-    const message = await generateCommitMessage({
-      files: trackedPaths,
-      draft: commitMessage,
-      fallbackAgent: activeAgentType,
-    })
-    if (message !== null) setCommitMessage(message)
-  }, [activeAgentType, commitMessage, generateCommitMessage, trackedPaths])
 
   // The box grows with its message. `field-sizing: content` does it where the
   // engine has it; elsewhere (older WebKitGTK) it is measured here.
@@ -839,46 +837,67 @@ export function GitChangesTab() {
     box.style.height = `${box.scrollHeight}px`
   }, [commitMessage])
 
-  const handleQuickCommit = useCallback(async () => {
-    const message = commitMessage.trim()
-    if (!folder || !message || trackedPaths.length === 0 || committing) return
+  const commitFiles = useCallback(
+    async (rawMessage: string, files: string[]) => {
+      const message = rawMessage.trim()
+      if (!folder || !message || files.length === 0) return
 
-    setCommitting(true)
-    try {
-      const result = await gitCommit(
-        folder.path,
-        message,
-        trackedPaths,
-        folder.id
-      )
-      setCommitMessage("")
-      // `git_commit_core` also broadcasts `folder://git-commit-succeeded`, and
-      // every mounted BranchDropdown (one per conversation tile) toasts on it.
-      // Keying all of them to the same folder-scoped id makes sonner UPDATE one
-      // toast instead of stacking N — while still guaranteeing feedback here
-      // when no tile is mounted at all (e.g. the Automations route).
-      toast.success(tBranch("toasts.commitCodeCompleted"), {
-        id: `git-commit-succeeded:${folder.id}`,
-        description: tBranch("toasts.committedFiles", {
-          count: result.committed_files,
-        }),
-      })
-      await workspaceState.requestResync("git_action:commit")
-    } catch (error) {
-      toast.error(t("toasts.commitFailed"), {
-        description: toErrorMessage(error),
-      })
-    } finally {
-      setCommitting(false)
+      setCommitting(true)
+      try {
+        const result = await gitCommit(folder.path, message, files, folder.id)
+        setCommitMessage("")
+        // `git_commit_core` also broadcasts `folder://git-commit-succeeded`,
+        // and every mounted BranchDropdown (one per conversation tile) toasts
+        // on it. Keying all of them to the same folder-scoped id makes sonner
+        // UPDATE one toast instead of stacking N — while still guaranteeing
+        // feedback here when no tile is mounted at all (e.g. the Automations
+        // route).
+        toast.success(tBranch("toasts.commitCodeCompleted"), {
+          id: `git-commit-succeeded:${folder.id}`,
+          description: tBranch("toasts.committedFiles", {
+            count: result.committed_files,
+          }),
+        })
+        await workspaceState.requestResync("git_action:commit")
+      } catch (error) {
+        toast.error(t("toasts.commitFailed"), {
+          description: toErrorMessage(error),
+        })
+      } finally {
+        setCommitting(false)
+      }
+    },
+    [folder, t, tBranch, workspaceState]
+  )
+  const handleQuickCommit = useCallback(async () => {
+    if (committing) return
+    await commitFiles(commitMessage, trackedPaths)
+  }, [commitFiles, commitMessage, committing, trackedPaths])
+
+  const handleGenerate = useCallback(async () => {
+    const files = trackedPaths
+    const generated = await generateCommitMessage({
+      files,
+      draft: commitMessage,
+      fallbackAgent: activeAgentType,
+    })
+    if (generated === null) return
+    setCommitMessage(generated.message)
+    if (!generated.autoCommit) return
+    // Only ever the files the message was written for: if the changes moved
+    // meanwhile, the message waits in the box for the user to check.
+    if (!sameFiles(files, trackedPathsRef.current)) {
+      toast.info(tGenerate("toasts.autoCommitSkipped"))
+      return
     }
+    await commitFiles(generated.message, files)
   }, [
+    activeAgentType,
+    commitFiles,
     commitMessage,
-    committing,
-    folder,
-    t,
-    tBranch,
+    generateCommitMessage,
+    tGenerate,
     trackedPaths,
-    workspaceState,
   ])
   const handleAttachToSession = useCallback(
     (relativePath: string) => {
@@ -1700,7 +1719,7 @@ export function GitChangesTab() {
       <CommitMessageSettingsDialog
         open={generation.settingsOpen}
         onOpenChange={generation.setSettingsOpen}
-        defaultAgentType={activeAgentType}
+        folderId={folder ? (folder.parent_id ?? folder.id) : null}
       />
       {workspaceState.degraded && (
         <WorkspaceDegradedBanner onRetry={workspaceState.restart} />

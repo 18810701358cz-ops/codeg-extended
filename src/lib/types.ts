@@ -4769,19 +4769,23 @@ export interface GitCommitResult {
 
 /** How the commit message generator runs (`commit_message` on the backend).
  *  With no agent it follows the active session, then the folder's default. */
+/** How commit messages are written: globally, or for one project folder,
+ *  whose own settings replace the global ones whole. */
 export interface CommitMessageSettings {
-  agent_type: AgentType | null
-  /** Launch selections for `agent_type`: its mode and config options (model,
-   *  effort, …). Only overrides: an option left out keeps the agent's own. */
-  mode_id: string | null
-  config_values: Record<string, string>
+  /** The agent that writes them with every option it offers picked — an
+   *  assistant's kind of selection. `null` follows the active session. */
+  agent: AssistantAgentConfig | null
   /** Standing instructions, e.g. "write in Chinese". */
   instructions: string
+  /** Commit as soon as the message is written. */
+  auto_commit: boolean
 }
 
 export interface GeneratedCommitMessage {
   message: string
   agent_type: AgentType
+  /** The settings the run used want the message committed right away. */
+  auto_commit: boolean
 }
 
 export interface GitRemote {
