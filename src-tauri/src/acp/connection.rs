@@ -3873,30 +3873,213 @@ fn pi_model_glob_matches(value: &str, pattern: &str) -> bool {
     pattern[pattern_index..].iter().all(|ch| *ch == '*')
 }
 
-fn pi_model_pattern_matches(option: &SessionConfigSelectOption, pattern: &str) -> bool {
-    let raw_pattern = pattern.trim();
-    if raw_pattern.is_empty() {
-        return false;
+/// One advertised model row, split the way pi names the model behind it:
+/// pi-acp publishes each of pi's models as value `provider/id` and label
+/// `provider/name`. Lowercased once, because every comparison pi makes here is
+/// case-insensitive.
+struct PiModelRow {
+    value: String,
+    provider: String,
+    id: String,
+    name: String,
+}
+
+impl PiModelRow {
+    fn new(option: &SessionConfigSelectOption) -> Self {
+        let value = option.value.to_string();
+        let (provider, id) = value.split_once('/').unwrap_or(("", value.as_str()));
+        let name = option
+            .name
+            .strip_prefix(provider)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .filter(|_| !provider.is_empty())
+            .unwrap_or(&option.name);
+        Self {
+            provider: provider.to_lowercase(),
+            id: id.to_lowercase(),
+            name: name.to_lowercase(),
+            value,
+        }
     }
-    let value = option.value.to_string();
-    let bare_id = value
-        .split_once('/')
-        .map(|(_, id)| id)
-        .unwrap_or(value.as_str());
-    if value.eq_ignore_ascii_case(raw_pattern) || bare_id.eq_ignore_ascii_case(raw_pattern) {
-        return true;
-    }
-    let pattern = pi_model_pattern_without_thinking_level(raw_pattern);
-    if pattern.contains('*') || pattern.contains('?') {
-        pi_model_glob_matches(&value, pattern) || pi_model_glob_matches(bare_id, pattern)
-    } else {
-        value.eq_ignore_ascii_case(pattern) || bare_id.eq_ignore_ascii_case(pattern)
+
+    fn fuzzy_matches(&self, text: &str) -> bool {
+        self.id.contains(text) || self.name.contains(text)
     }
 }
 
+/// How one `enabledModels` entry resolves against the advertised rows, as far
+/// as codeg can tell without running pi's own resolver.
+#[derive(Debug, PartialEq, Eq)]
+enum PiScopeEntry {
+    /// Indexes of the rows pi can pick for the entry: never fewer than pi
+    /// picks, at times more — codeg's `*` and `?` also cross `/`, and a
+    /// `provider/id` also takes another provider's model listed under that
+    /// whole text as its id.
+    Rows(Vec<usize>),
+    /// No row pi could pick: pi skips such an entry too (a retired id, a typo).
+    Dead,
+    /// pi decides this entry by a rule codeg does not mirror — a fuzzy id/name
+    /// match, or glob syntax beyond `*` and `?` — so its rows are unknown here.
+    Unknown,
+}
+
+/// pi's exact reading of a model reference: `provider/id` (or that provider's
+/// own literal id, like OpenRouter's `openrouter/free`) plus every model whose
+/// bare id is the whole text. `lower` is the reference lowercased.
+///
+/// Also answers whether pi would instead settle the named provider with a
+/// fuzzy pick: when the text names a provider that lists neither, pi picks the
+/// provider's closest id/name match before it looks at any other provider.
+fn pi_exact_model_rows(lower: &str, rows: &[PiModelRow]) -> (Vec<usize>, bool) {
+    let mut exact = Vec::new();
+    let mut named_fuzzily = false;
+    if let Some((provider, rest)) = lower.split_once('/') {
+        let (provider, rest) = (provider.trim(), rest.trim());
+        let provider_rows = || {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, row)| row.provider == provider)
+        };
+        if !provider.is_empty() && !rest.is_empty() && provider_rows().next().is_some() {
+            exact.extend(
+                provider_rows()
+                    .filter(|(_, row)| row.id == rest)
+                    .map(|(i, _)| i),
+            );
+            if exact.is_empty() {
+                exact.extend(
+                    provider_rows()
+                        .filter(|(_, row)| row.id == lower)
+                        .map(|(i, _)| i),
+                );
+            }
+            named_fuzzily =
+                exact.is_empty() && provider_rows().any(|(_, row)| row.fuzzy_matches(rest));
+        }
+    }
+    for (index, row) in rows.iter().enumerate() {
+        if row.id == lower && !exact.contains(&index) {
+            exact.push(index);
+        }
+    }
+    (exact, named_fuzzily)
+}
+
+/// Whether codeg's glob matcher reads `glob` the way pi's `minimatch` does, up
+/// to its `*` and `?` also crossing `/` (so it only ever matches more rows).
+/// Whatever minimatch reads more into is left out: character classes, brace
+/// sets, extglobs, escapes, negation, comments, and its path rules — `**`
+/// spanning zero or more segments, repeated slashes folding into one, `..`
+/// undoing the segment before it.
+fn pi_model_glob_is_supported(glob: &str) -> bool {
+    !glob.contains(['[', ']', '{', '}', '(', ')', '\\'])
+        && !glob.starts_with(['!', '#'])
+        && !glob.contains("**")
+        && !glob.contains("//")
+        && !glob
+            .split('/')
+            .any(|segment| segment == "." || segment == "..")
+}
+
+/// Classify one `enabledModels` entry the way pi 1.x resolves a scope pattern
+/// (`resolveModelScopeFromModels` in pi's `core/model-resolver.js`, checked
+/// against 1.3.0): a pattern with `*`, `?` or `[` is a glob after an optional
+/// thinking suffix, anything else a model reference. The one older rule left
+/// out: pi 0.81 settled a bare id that several providers list with a single
+/// fuzzy pick, where 1.x keeps all of them, as this does.
+fn pi_scope_entry(pattern: &str, rows: &[PiModelRow]) -> PiScopeEntry {
+    if pattern.contains(['*', '?', '[']) {
+        let glob = pi_model_pattern_without_thinking_level(pattern).to_lowercase();
+        // pi first takes a glob that is literally a model id (`model[1m]`).
+        let (exact, _) = pi_exact_model_rows(glob.trim(), rows);
+        if !exact.is_empty() {
+            return PiScopeEntry::Rows(exact);
+        }
+        if !pi_model_glob_is_supported(&glob) {
+            return PiScopeEntry::Unknown;
+        }
+        let matched: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                pi_model_glob_matches(&row.value.to_lowercase(), &glob)
+                    || pi_model_glob_matches(&row.id, &glob)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        return if matched.is_empty() {
+            PiScopeEntry::Dead
+        } else {
+            PiScopeEntry::Rows(matched)
+        };
+    }
+    let text = pattern.trim();
+    if text.is_empty() {
+        return PiScopeEntry::Dead;
+    }
+    pi_scope_reference(&text.to_lowercase(), rows)
+}
+
+/// pi's reference rule, in pi's order: an exact model, else a fuzzy id/name
+/// match, else the same text without its last `:suffix` (a thinking level, or
+/// — scope parsing being lenient — anything after the colon).
+fn pi_scope_reference(lower: &str, rows: &[PiModelRow]) -> PiScopeEntry {
+    let (exact, named_fuzzily) = pi_exact_model_rows(lower, rows);
+    if named_fuzzily || (exact.is_empty() && rows.iter().any(|row| row.fuzzy_matches(lower))) {
+        return PiScopeEntry::Unknown;
+    }
+    if !exact.is_empty() {
+        return PiScopeEntry::Rows(exact);
+    }
+    match lower.rsplit_once(':') {
+        Some((base, _)) => pi_scope_reference(base, rows),
+        None => PiScopeEntry::Dead,
+    }
+}
+
+/// The advertised values pi's scope covers, or `None` when the list must stay
+/// whole.
+///
+/// Mirroring pi's resolver has to fail safe, because a row dropped here is a
+/// model the user cannot pick in codeg at all: an entry whose rows codeg
+/// cannot know keeps the whole list, while an entry pi would skip anyway is
+/// skipped. An empty result keeps the whole list too — pi itself runs unscoped
+/// when no entry resolves.
+fn pi_enabled_model_scope(
+    patterns: &[String],
+    options: &SessionConfigSelectOptions,
+) -> Option<HashSet<String>> {
+    let rows: Vec<PiModelRow> = match options {
+        SessionConfigSelectOptions::Ungrouped(options) => {
+            options.iter().map(PiModelRow::new).collect()
+        }
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .map(PiModelRow::new)
+            .collect(),
+        _ => return None,
+    };
+    let mut scope = HashSet::new();
+    for pattern in patterns {
+        match pi_scope_entry(pattern, &rows) {
+            PiScopeEntry::Rows(found) => {
+                scope.extend(found.into_iter().map(|index| rows[index].value.clone()));
+            }
+            PiScopeEntry::Dead => {}
+            PiScopeEntry::Unknown => return None,
+        }
+    }
+    (!scope.is_empty()).then_some(scope)
+}
+
 /// Apply Pi's native `enabledModels` scope to the model selector advertised by
-/// pi-acp. Keep non-model options untouched and leave the list unrestricted
-/// when no configured pattern matches an available option.
+/// pi-acp. Non-model options are untouched, and the list stays whole whenever
+/// [`pi_enabled_model_scope`] cannot name the scope.
+///
+/// The model in effect keeps its row even outside the scope (a resumed
+/// session, or a saved pick replayed on connect), so the selector still shows
+/// what the session runs; once the user switches away, the row goes too.
 fn filter_pi_enabled_model_options(
     patterns: &[String],
     config_options: Vec<SessionConfigOption>,
@@ -3913,28 +4096,19 @@ fn filter_pi_enabled_model_options(
             let SessionConfigKind::Select(select) = &mut option.kind else {
                 return option;
             };
-            let matches = |option: &SessionConfigSelectOption| {
-                patterns
-                    .iter()
-                    .any(|pattern| pi_model_pattern_matches(option, pattern))
-            };
-            let has_match = match &select.options {
-                SessionConfigSelectOptions::Ungrouped(options) => options.iter().any(&matches),
-                SessionConfigSelectOptions::Grouped(groups) => {
-                    groups
-                        .iter()
-                        .any(|group| group.options.iter().any(&matches))
-                }
-                _ => false,
-            };
-            if !has_match {
+            let Some(scope) = pi_enabled_model_scope(patterns, &select.options) else {
                 return option;
-            }
+            };
+            let current = select.current_value.to_string();
+            let keep = |row: &SessionConfigSelectOption| {
+                let value = row.value.to_string();
+                value == current || scope.contains(&value)
+            };
             match &mut select.options {
-                SessionConfigSelectOptions::Ungrouped(options) => options.retain(&matches),
+                SessionConfigSelectOptions::Ungrouped(options) => options.retain(&keep),
                 SessionConfigSelectOptions::Grouped(groups) => {
                     for group in groups.iter_mut() {
-                        group.options.retain(&matches);
+                        group.options.retain(&keep);
                     }
                     groups.retain(|group| !group.options.is_empty());
                 }
@@ -35635,10 +35809,19 @@ mod tests {
             pi_model_selector_options(),
         );
 
+        // The fixture runs on `openai/gpt-5`, outside this scope: its row stays.
         assert_eq!(
             pi_select_values(&filtered, "model"),
-            vec!["anthropic/claude-opus"]
+            vec!["openai/gpt-5", "anthropic/claude-opus"]
         );
+        // pi's scope parsing is lenient: an unknown suffix still names the model.
+        for pattern in ["anthropic/claude-opus:high", "anthropic/claude-opus:turbo"] {
+            assert_eq!(
+                pi_scope_of(&[pattern], PI_SCOPE_ROWS),
+                Some(vec!["anthropic/claude-opus".to_string()]),
+                "{pattern}"
+            );
+        }
     }
 
     #[test]
@@ -35698,6 +35881,141 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].options.len(), 1);
         assert_eq!(groups[0].options[0].value.to_string(), "openai/gpt-5");
+    }
+
+    /// Rows the way pi-acp publishes them: value `provider/id`, label
+    /// `provider/name`.
+    const PI_SCOPE_ROWS: &[(&str, &str)] = &[
+        ("openai/gpt-5", "openai/GPT-5"),
+        ("openai/gpt-4o", "openai/GPT-4o"),
+        ("anthropic/claude-opus", "anthropic/Claude Opus"),
+        ("openrouter/openai/gpt-5", "openrouter/OpenAI: GPT-5"),
+        ("openrouter/openrouter/free", "openrouter/Free Router"),
+        ("custom/model[1m]", "custom/Model 1M"),
+        ("custom/Äther-1", "custom/Äther 1"),
+    ];
+
+    /// The sorted values `patterns` scope `rows` to; `None` keeps the list whole.
+    fn pi_scope_of(patterns: &[&str], rows: &[(&str, &str)]) -> Option<Vec<String>> {
+        let options: SessionConfigSelectOptions = serde_json::from_value(serde_json::Value::Array(
+            rows.iter()
+                .map(|(value, name)| serde_json::json!({"value": value, "name": name}))
+                .collect(),
+        ))
+        .expect("model rows");
+        let patterns: Vec<String> = patterns.iter().map(|pattern| pattern.to_string()).collect();
+        pi_enabled_model_scope(&patterns, &options).map(|scope| {
+            let mut values: Vec<String> = scope.into_iter().collect();
+            values.sort();
+            values
+        })
+    }
+
+    #[test]
+    fn pi_enabled_models_keep_the_whole_list_for_entries_pi_settles_fuzzily() {
+        // pi resolves each second entry by a fuzzy id/name match, which codeg
+        // does not mirror: scoping by the first alone would hide the model pi
+        // enables for the second, with no other way to pick it in codeg.
+        for fuzzy in ["opus", "anthropic/opus", "Claude Opus", "opus:high", "gpt"] {
+            assert_eq!(
+                pi_scope_of(&["openai/gpt-4o", fuzzy], PI_SCOPE_ROWS),
+                None,
+                "{fuzzy}"
+            );
+        }
+        let filtered = filter_pi_enabled_model_options(
+            &["openai/gpt-5".to_string(), "opus".to_string()],
+            pi_model_selector_options(),
+        );
+        assert_eq!(
+            pi_select_values(&filtered, "model"),
+            vec!["openai/gpt-5", "openai/gpt-4o", "anthropic/claude-opus"]
+        );
+    }
+
+    #[test]
+    fn pi_enabled_models_skip_entries_no_model_answers() {
+        // A retired id or a typo is skipped by pi as well, so the rest still scope.
+        assert_eq!(
+            pi_scope_of(
+                &[
+                    "openai/gpt-4o",
+                    "anthropic/claude-sonnet-9",
+                    "retired-model:high"
+                ],
+                PI_SCOPE_ROWS
+            ),
+            Some(vec!["openai/gpt-4o".to_string()])
+        );
+    }
+
+    #[test]
+    fn pi_enabled_models_keep_the_whole_list_for_glob_syntax_beyond_star_and_question_mark() {
+        for glob in [
+            "anthropic/claude-[a-z]*",
+            "openai/{gpt-5,gpt-4o}*",
+            "!openai/*",
+            "openai/@(gpt-5)*",
+            // minimatch's path rules: each of these matches `openai/gpt-5`.
+            "openai/**/gpt-*",
+            "openai//gpt-*",
+            "x/../openai/gpt-*",
+        ] {
+            assert_eq!(
+                pi_scope_of(&["openai/gpt-4o", glob], PI_SCOPE_ROWS),
+                None,
+                "{glob}"
+            );
+        }
+        // Except a glob that is literally a model id, which pi takes as that model.
+        assert_eq!(
+            pi_scope_of(&["model[1m]"], PI_SCOPE_ROWS),
+            Some(vec!["custom/model[1m]".to_string()])
+        );
+    }
+
+    #[test]
+    fn pi_enabled_models_read_a_provider_id_the_way_pi_does() {
+        // `provider/id` names that provider's model; another provider listing
+        // the whole text as its own id comes along (pi keeps only the named one).
+        assert_eq!(
+            pi_scope_of(&["openai/gpt-5"], PI_SCOPE_ROWS),
+            Some(vec![
+                "openai/gpt-5".to_string(),
+                "openrouter/openai/gpt-5".to_string(),
+            ])
+        );
+        // A provider's own literal id beats a fuzzy pick inside that provider.
+        assert_eq!(
+            pi_scope_of(&["openrouter/free"], PI_SCOPE_ROWS),
+            Some(vec!["openrouter/openrouter/free".to_string()])
+        );
+        // pi's `*` stops at `/`; codeg's crosses it, so it only ever adds rows.
+        assert_eq!(
+            pi_scope_of(&["openrouter/*"], PI_SCOPE_ROWS),
+            Some(vec![
+                "openrouter/openai/gpt-5".to_string(),
+                "openrouter/openrouter/free".to_string(),
+            ])
+        );
+        // Case is ignored beyond ASCII, as minimatch's `nocase` does.
+        assert_eq!(
+            pi_scope_of(&["CUSTOM/ä*"], PI_SCOPE_ROWS),
+            Some(vec!["custom/Äther-1".to_string()])
+        );
+    }
+
+    #[test]
+    fn pi_enabled_models_keep_the_row_of_the_model_in_effect() {
+        // The fixture runs on `openai/gpt-5`; the scope names only gpt-4o.
+        let filtered = filter_pi_enabled_model_options(
+            &["openai/gpt-4o".to_string()],
+            pi_model_selector_options(),
+        );
+        assert_eq!(
+            pi_select_values(&filtered, "model"),
+            vec!["openai/gpt-5", "openai/gpt-4o"]
+        );
     }
 
     struct TestConversationDepthLookup;

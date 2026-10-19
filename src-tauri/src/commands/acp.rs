@@ -6020,10 +6020,30 @@ fn account_home_dir() -> Option<PathBuf> {
 
 /// Read the launch's agent-directory `enabledModels` preference. Missing,
 /// malformed or empty settings leave the model selector unrestricted.
+///
+/// So does a workspace that sets its own: a trusted project's
+/// `.pi/settings.json` replaces the agent dir's list outright, and whether pi
+/// trusts the project is settled inside pi at startup (`trust.json`, an
+/// extension, `defaultProjectTrust` or a prompt). codeg cannot tell which list
+/// that pi runs with, and the wrong one would hide models it offers. A project
+/// file pi loads nothing from — unreadable, or JSON other than an object —
+/// leaves the agent dir's list in force, as in pi; one codeg cannot parse
+/// counts as setting its own, since pi's parser may still read it.
 pub(crate) fn pi_enabled_model_patterns_for_env(
     runtime_env: &BTreeMap<String, String>,
     workspace: &Path,
 ) -> Option<Vec<String>> {
+    if let Ok(raw) = fs::read_to_string(workspace.join(".pi").join("settings.json")) {
+        // pi reads past a byte-order mark; serde_json does not.
+        let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+        match serde_json::from_str::<serde_json::Value>(raw) {
+            Ok(serde_json::Value::Object(project)) if project.contains_key("enabledModels") => {
+                return None
+            }
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
     let settings = read_json_object_or_empty(
         &pi_agent_dir_in_workspace(runtime_env, workspace).join("settings.json"),
     );
@@ -17250,6 +17270,51 @@ echo {"id":"codeg-models","type":"response","command":"get_available_models","su
             pi_enabled_model_patterns_for_env(&env, tmp.path()),
             Some(vec!["openai/*".into()])
         );
+    }
+
+    #[test]
+    fn pi_enabled_model_patterns_yield_to_a_project_that_sets_its_own() {
+        let agent_dir = tempfile::tempdir().expect("agent dir");
+        fs::write(
+            agent_dir.path().join("settings.json"),
+            r#"{"enabledModels":["openai/*"]}"#,
+        )
+        .unwrap();
+        let env = BTreeMap::from([(
+            String::from("PI_CODING_AGENT_DIR"),
+            agent_dir.path().to_string_lossy().into_owned(),
+        )]);
+        let workspace = tempfile::tempdir().expect("workspace");
+        let project = workspace.path().join(".pi");
+        fs::create_dir(&project).unwrap();
+        let global = Some(vec!["openai/*".to_string()]);
+
+        // A trusted project's list replaces the agent dir's — and an empty one
+        // unscopes pi — so whether pi trusts the project decides; codeg can't.
+        // A file codeg cannot parse might be one of those for pi's parser.
+        for own in [
+            r#"{"enabledModels":["anthropic/*"]}"#,
+            r#"{"enabledModels":[]}"#,
+            "\u{feff}{\"enabledModels\":[\"anthropic/*\"]}",
+            "not json",
+        ] {
+            fs::write(project.join("settings.json"), own).unwrap();
+            assert_eq!(
+                pi_enabled_model_patterns_for_env(&env, workspace.path()),
+                None,
+                "{own}"
+            );
+        }
+        // A project file without the key, or JSON pi loads nothing from,
+        // leaves the agent dir's list in force.
+        for other in [r#"{"theme":"dark"}"#, "[]", "null"] {
+            fs::write(project.join("settings.json"), other).unwrap();
+            assert_eq!(
+                pi_enabled_model_patterns_for_env(&env, workspace.path()),
+                global,
+                "{other}"
+            );
+        }
     }
 
     #[test]
