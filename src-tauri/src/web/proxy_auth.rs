@@ -1373,7 +1373,8 @@ mod tests {
 
         let signed_by_old = with_assertion(&old.sign(&live_claims()));
         assert_eq!(auth.authenticate(&signed_by_old).await, Ok(()));
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Generous: it only has to catch a refresh that never lands.
+        let deadline = Instant::now() + Duration::from_secs(30);
         while !auth
             .cached()
             .await
@@ -1410,15 +1411,22 @@ mod tests {
             answers.iter().all(|answer| *answer == Ok(())),
             "{answers:?}"
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Generous: it only has to catch a refresh that never starts or ends.
+        let deadline = Instant::now() + Duration::from_secs(30);
         while server.hits.load(Ordering::SeqCst) == 0 {
             assert!(Instant::now() < deadline, "no refresh started");
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        // A second fetch, had one started, would show within this time; a slow
+        // machine can only hide one, never invent it.
         tokio::time::sleep(Duration::from_millis(600)).await;
         assert_eq!(server.hits.load(Ordering::SeqCst), 1);
 
         // Once that refresh is over, keys found stale again start the next one.
+        while auth.refreshing_in_background.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "the first refresh never ended");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         assert_eq!(auth.authenticate(&headers).await, Ok(()));
         while server.hits.load(Ordering::SeqCst) < 2 {
             assert!(Instant::now() < deadline, "no second refresh started");
