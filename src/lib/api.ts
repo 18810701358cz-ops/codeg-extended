@@ -139,6 +139,8 @@ import type {
   GitResetMode,
   GitConflictFileVersions,
   GitCommitResult,
+  CommitMessageSettings,
+  GeneratedCommitMessage,
   GitRemote,
   GitStashEntry,
   PreflightResult,
@@ -3099,6 +3101,54 @@ export async function gitCommit(
     files,
     folderId: folderId ?? null,
   })
+}
+
+/**
+ * Have an agent write a message for the commit `gitCommit(path, …, files)`
+ * would make. Runs as long as the agent takes — there is no deadline on the
+ * backend — so the call waits well past the transport defaults (60 s on web,
+ * 30 s through the remote-desktop proxy); stop it with
+ * `gitGenerateCommitMessageCancel(requestId)`.
+ */
+export async function gitGenerateCommitMessage(params: {
+  requestId: string
+  path: string
+  folderId: number | null
+  files: string[]
+  draft: string | null
+  fallbackAgent: AgentType | null
+}): Promise<GeneratedCommitMessage> {
+  return getTransport().call(
+    "git_generate_commit_message",
+    {
+      requestId: params.requestId,
+      path: params.path,
+      folderId: params.folderId,
+      files: params.files,
+      draft: params.draft,
+      fallbackAgent: params.fallbackAgent,
+    },
+    { timeoutMs: 30 * 60_000 }
+  )
+}
+
+/** Stop the generation started under `requestId` (a no-op once it ended). */
+export async function gitGenerateCommitMessageCancel(
+  requestId: string
+): Promise<void> {
+  return getTransport().call("git_generate_commit_message_cancel", {
+    requestId,
+  })
+}
+
+export async function getCommitMessageSettings(): Promise<CommitMessageSettings> {
+  return getTransport().call("get_commit_message_settings")
+}
+
+export async function setCommitMessageSettings(
+  settings: CommitMessageSettings
+): Promise<CommitMessageSettings> {
+  return getTransport().call("set_commit_message_settings", { settings })
 }
 
 export async function gitRollbackFile(

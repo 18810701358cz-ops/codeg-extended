@@ -1956,6 +1956,41 @@
     "invalidFolderId": "Invalid folder ID",
     "loadingRepo": "Loading repository..."
   },
+  "CommitMessageGeneration": {
+    "generate": "Generate a commit message",
+    "stop": "Stop generating ({seconds}s)",
+    "generating": "Writing a commit message… {seconds}s",
+    "noChanges": "No tracked changes to describe",
+    "selectFiles": "Select the files to describe",
+    "busyCommitting": "Committing…",
+    "settings": "Commit message settings",
+    "settingsMenuItem": "Commit message settings…",
+    "toasts": {
+      "failed": "Couldn't generate a commit message",
+      "openSettings": "Settings"
+    },
+    "errors": {
+      "noChanges": "There are no changes to describe.",
+      "noAgent": "No agent to write it. Pick one in the commit message settings.",
+      "emptyAnswer": "The agent's answer had no commit message in it.",
+      "cancelled": "Generation was stopped."
+    },
+    "dialog": {
+      "title": "Commit message generation",
+      "description": "The generate button next to the commit box has an agent write a message for exactly what the commit will contain. It runs in a separate session that never appears in your session list, and anything it asks permission for is refused.",
+      "pinAgent": "Use a specific agent",
+      "pinAgentHint": "This agent writes every message, with the options below. A fast, inexpensive model is plenty for the job.",
+      "followSessionHint": "Off: the agent of the session you're looking at writes it, else the folder's default agent, with its default model.",
+      "instructions": "Instructions",
+      "instructionsHint": "Added to every request, and followed over the built-in rules (such as matching the language of recent commits).",
+      "instructionsPlaceholder": "e.g. Write in Chinese. Use Conventional Commits. Explain why in the body.",
+      "save": "Save",
+      "cancel": "Cancel",
+      "saved": "Commit message settings saved",
+      "saveFailed": "Couldn't save the settings",
+      "loadFailed": "Couldn't load the settings"
+    }
+  },
   "MergePage": {
     "title": "Resolve Conflicts",
     "invalidFolderId": "Invalid folder ID",

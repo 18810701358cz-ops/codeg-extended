@@ -1956,6 +1956,41 @@
     "invalidFolderId": "ID de pasta inválido",
     "loadingRepo": "Carregando repositório..."
   },
+  "CommitMessageGeneration": {
+    "generate": "Gerar mensagem de commit",
+    "stop": "Parar a geração ({seconds} s)",
+    "generating": "Escrevendo a mensagem de commit… {seconds} s",
+    "noChanges": "Nenhuma alteração rastreada para descrever",
+    "selectFiles": "Selecione os arquivos a descrever",
+    "busyCommitting": "Fazendo commit…",
+    "settings": "Configurações de mensagens de commit",
+    "settingsMenuItem": "Configurações de mensagens de commit…",
+    "toasts": {
+      "failed": "Não foi possível gerar a mensagem de commit",
+      "openSettings": "Configurações"
+    },
+    "errors": {
+      "noChanges": "Não há alterações para descrever.",
+      "noAgent": "Nenhum agente para escrevê-la. Escolha um nas configurações de mensagens de commit.",
+      "emptyAnswer": "A resposta do agente não trazia nenhuma mensagem de commit.",
+      "cancelled": "A geração foi interrompida."
+    },
+    "dialog": {
+      "title": "Geração de mensagens de commit",
+      "description": "O botão de gerar ao lado da caixa de commit faz um agente escrever uma mensagem para exatamente o que o commit vai conter. Isso roda em uma sessão separada que nunca aparece na sua lista de sessões, e qualquer permissão que ele peça é recusada.",
+      "pinAgent": "Usar um agente específico",
+      "pinAgentHint": "Este agente escreve todas as mensagens, com as opções abaixo. Um modelo rápido e barato é suficiente para a tarefa.",
+      "followSessionHint": "Desativado: quem escreve é o agente da sessão que você está vendo ou, se não houver, o agente padrão da pasta, com o modelo padrão dele.",
+      "instructions": "Instruções",
+      "instructionsHint": "Anexadas a cada pedido e com prioridade sobre as regras embutidas (como seguir o idioma dos commits recentes).",
+      "instructionsPlaceholder": "ex.: Escrever em português. Seguir Conventional Commits. Explicar o porquê no corpo.",
+      "save": "Salvar",
+      "cancel": "Cancelar",
+      "saved": "Configurações de mensagens de commit salvas",
+      "saveFailed": "Não foi possível salvar as configurações",
+      "loadFailed": "Não foi possível carregar as configurações"
+    }
+  },
   "MergePage": {
     "title": "Resolver conflitos",
     "invalidFolderId": "ID de pasta inválido",

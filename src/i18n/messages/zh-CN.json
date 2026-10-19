@@ -1956,6 +1956,41 @@
     "invalidFolderId": "无效的 folderId",
     "loadingRepo": "正在加载仓库..."
   },
+  "CommitMessageGeneration": {
+    "generate": "生成提交信息",
+    "stop": "停止生成（{seconds} 秒）",
+    "generating": "正在生成提交信息… {seconds} 秒",
+    "noChanges": "没有可描述的已跟踪改动",
+    "selectFiles": "先勾选要提交的文件",
+    "busyCommitting": "正在提交…",
+    "settings": "提交信息生成设置",
+    "settingsMenuItem": "提交信息生成设置…",
+    "toasts": {
+      "failed": "未能生成提交信息",
+      "openSettings": "设置"
+    },
+    "errors": {
+      "noChanges": "没有可描述的改动。",
+      "noAgent": "没有可用的 agent，请在提交信息生成设置里选一个。",
+      "emptyAnswer": "agent 的回复里没有提交信息。",
+      "cancelled": "已停止生成。"
+    },
+    "dialog": {
+      "title": "提交信息生成",
+      "description": "提交框旁的生成按钮会让 agent 按这次提交的实际内容写提交信息。生成在单独的会话里进行，不会出现在会话列表里；它申请的任何权限都会被拒绝。",
+      "pinAgent": "指定 agent",
+      "pinAgentHint": "每条提交信息都由这个 agent 按下面的选项来写。选一个又快又便宜的模型就够用。",
+      "followSessionHint": "关闭时由当前正在看的会话的 agent 来写；没有会话时用文件夹的默认 agent，都使用它的默认模型。",
+      "instructions": "附加说明",
+      "instructionsHint": "每次生成都会附上，并优先于内置规则（比如跟随最近提交的语言）。",
+      "instructionsPlaceholder": "例如：用中文写；遵循 Conventional Commits；在正文里说明原因。",
+      "save": "保存",
+      "cancel": "取消",
+      "saved": "提交信息生成设置已保存",
+      "saveFailed": "未能保存设置",
+      "loadFailed": "未能读取设置"
+    }
+  },
   "MergePage": {
     "title": "解决冲突",
     "invalidFolderId": "无效的 folderId",

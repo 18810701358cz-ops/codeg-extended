@@ -1956,6 +1956,41 @@
     "invalidFolderId": "無効なフォルダID",
     "loadingRepo": "リポジトリを読み込み中..."
   },
+  "CommitMessageGeneration": {
+    "generate": "コミットメッセージを生成",
+    "stop": "生成を停止（{seconds} 秒）",
+    "generating": "コミットメッセージを作成中… {seconds} 秒",
+    "noChanges": "説明する追跡中の変更がありません",
+    "selectFiles": "説明するファイルを選択してください",
+    "busyCommitting": "コミット中…",
+    "settings": "コミットメッセージ生成の設定",
+    "settingsMenuItem": "コミットメッセージ生成の設定…",
+    "toasts": {
+      "failed": "コミットメッセージを生成できませんでした",
+      "openSettings": "設定"
+    },
+    "errors": {
+      "noChanges": "説明する変更がありません。",
+      "noAgent": "書き手のエージェントがありません。コミットメッセージ生成の設定で選んでください。",
+      "emptyAnswer": "エージェントの回答にコミットメッセージが含まれていませんでした。",
+      "cancelled": "生成を停止しました。"
+    },
+    "dialog": {
+      "title": "コミットメッセージ生成",
+      "description": "コミット欄の横の生成ボタンを押すと、このコミットに実際に含まれる内容をもとにエージェントがメッセージを書きます。セッション一覧に表示されない別セッションで実行され、権限の要求はすべて拒否されます。",
+      "pinAgent": "エージェントを指定",
+      "pinAgentHint": "すべてのメッセージをこのエージェントが下のオプションで書きます。高速で安価なモデルで十分です。",
+      "followSessionHint": "オフのときは表示中のセッションのエージェントが書きます。セッションがなければフォルダーの既定のエージェントを使います（いずれも既定のモデル）。",
+      "instructions": "追加の指示",
+      "instructionsHint": "毎回の依頼に添えられ、組み込みのルール（最近のコミットの言語に合わせる など）より優先されます。",
+      "instructionsPlaceholder": "例：日本語で書く。Conventional Commits に従う。本文で理由を説明する。",
+      "save": "保存",
+      "cancel": "キャンセル",
+      "saved": "コミットメッセージ生成の設定を保存しました",
+      "saveFailed": "設定を保存できませんでした",
+      "loadFailed": "設定を読み込めませんでした"
+    }
+  },
   "MergePage": {
     "title": "コンフリクトの解決",
     "invalidFolderId": "無効なフォルダID",

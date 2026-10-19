@@ -6260,6 +6260,27 @@ fn build_new_session_request(
     req
 }
 
+/// The `session/new` a connection sends: [`build_new_session_request`], except
+/// that a one-shot generation's Claude session is created with its own `_meta`
+/// (see `acp::one_shot::session_meta`). Never needed for load, resume or fork:
+/// a one-shot connection only ever opens a fresh session.
+fn new_session_request_for(
+    agent_type: AgentType,
+    cwd: &Path,
+    mcp_servers: Vec<McpServer>,
+    prompt_suggestions: bool,
+    one_shot: bool,
+) -> NewSessionRequest {
+    let req = build_new_session_request(agent_type, cwd, mcp_servers, prompt_suggestions);
+    match one_shot
+        .then(|| crate::acp::one_shot::session_meta(agent_type))
+        .flatten()
+    {
+        Some(meta) => req.meta(meta),
+        None => req,
+    }
+}
+
 fn build_load_session_request(
     agent_type: AgentType,
     session_id: SessionId,
@@ -7874,11 +7895,19 @@ async fn run_connection(
             // load→new fallback, so gating here keeps server entries off the
             // wire on every path. See `AcpAgentMeta::supports_mcp`.
             let agent_supports_mcp = registry::get_agent_meta(agent_type).supports_mcp;
+            // A one-shot generation (`acp::one_shot`) is offered no MCP server
+            // at all, neither the user's nor codeg-mcp: it is meant to answer
+            // without tools, and every server is one more process to start
+            // before it can. Also what gives its Claude session the one-shot
+            // `_meta` at `session/new` below.
+            let one_shot =
+                crate::acp::one_shot::is_one_shot_owner(&state.read().await.owner_window_label);
+            let offer_mcp = agent_supports_mcp && !one_shot;
 
             // Load MCP servers configured for this agent and filter by the
             // capabilities the agent just declared. Stdio is mandatory per
             // ACP spec; HTTP/SSE are gated on `mcp_capabilities.{http,sse}`.
-            let mut mcp_servers: Vec<McpServer> = if agent_supports_mcp {
+            let mut mcp_servers: Vec<McpServer> = if offer_mcp {
                 let mcp_caps = &init_resp.agent_capabilities.mcp_capabilities;
                 load_mcp_servers_for_agent(agent_type)
                     .into_iter()
@@ -7910,10 +7939,12 @@ async fn run_connection(
                     })
                     .collect()
             } else {
-                tracing::info!(
-                    "[ACP][{}] supports_mcp=false: skipping all MCP wire forwarding (user servers + codeg-mcp companion)",
-                    agent_type
-                );
+                if !one_shot {
+                    tracing::info!(
+                        "[ACP][{}] supports_mcp=false: skipping all MCP wire forwarding (user servers + codeg-mcp companion)",
+                        agent_type
+                    );
+                }
                 Vec::new()
             };
 
@@ -7922,7 +7953,7 @@ async fn run_connection(
             // filter needed. The returned token is stashed on the session
             // state so connection teardown can revoke it. Skipped entirely
             // for agents that don't accept MCP over the wire (above).
-            let delegate_injection = if agent_supports_mcp && agent_delivers_wire_mcp(agent_type) {
+            let delegate_injection = if offer_mcp && agent_delivers_wire_mcp(agent_type) {
                 if let Some(inj) = delegation_injection.as_ref() {
                     // Task-engine launches (owner label "work_task") carry the
                     // task_progress / task_complete tool group; the root of a
@@ -8529,11 +8560,12 @@ async fn run_connection(
                             &handshake,
                             send_new_session_capturing_models(
                                 &cx,
-                                build_new_session_request(
+                                new_session_request_for(
                                     agent_type,
                                     &cwd,
                                     mcp_servers.clone(),
                                     prompt_suggestions,
+                                    one_shot,
                                 ),
                             ),
                         )
@@ -8653,11 +8685,12 @@ async fn run_connection(
                     &handshake,
                     send_new_session_capturing_models(
                         &cx,
-                        build_new_session_request(
+                        new_session_request_for(
                             agent_type,
                             &cwd,
                             mcp_servers.clone(),
                             prompt_suggestions,
+                            one_shot,
                         ),
                     ),
                 )
@@ -29176,6 +29209,28 @@ mod tests {
                 .and_then(|v| v.as_bool()),
             Some(true)
         );
+    }
+
+    #[test]
+    fn a_one_shot_session_new_carries_the_one_shot_meta_for_claude_only() {
+        let cwd = std::path::PathBuf::from("/tmp/codeg");
+        let req = new_session_request_for(AgentType::ClaudeCode, &cwd, Vec::new(), false, true);
+        let meta = req.meta.expect("claude gets a meta");
+        assert_eq!(
+            meta["claudeCode"]["options"]["tools"],
+            serde_json::json!([])
+        );
+        assert!(meta.contains_key("systemPrompt"));
+
+        // A connection that is not one-shot keeps the usual meta.
+        let req = new_session_request_for(AgentType::ClaudeCode, &cwd, Vec::new(), true, false);
+        let meta = req.meta.expect("claude gets a meta");
+        assert!(!meta.contains_key("systemPrompt"));
+        assert!(meta["claudeCode"].get("options").is_none());
+
+        // Other agents take no meta either way.
+        let req = new_session_request_for(AgentType::Codex, &cwd, Vec::new(), false, true);
+        assert!(req.meta.is_none());
     }
 
     /// The `loadSession` capability gate hands the failure ladder a synthetic

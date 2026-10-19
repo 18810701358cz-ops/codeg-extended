@@ -3967,7 +3967,7 @@ const FILE_IO_MAX_CONCURRENT_OPS: usize = 8;
 static FILE_IO_SEMAPHORE: LazyLock<Semaphore> =
     LazyLock::new(|| Semaphore::new(FILE_IO_MAX_CONCURRENT_OPS));
 
-fn to_git_literal_pathspec(path: &str) -> String {
+pub(crate) fn to_git_literal_pathspec(path: &str) -> String {
     format!(":(literal){path}")
 }
 

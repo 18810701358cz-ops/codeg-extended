@@ -1956,6 +1956,41 @@
     "invalidFolderId": "ID de dossier invalide",
     "loadingRepo": "Chargement du dépôt..."
   },
+  "CommitMessageGeneration": {
+    "generate": "Générer un message de commit",
+    "stop": "Arrêter la génération ({seconds} s)",
+    "generating": "Rédaction du message de commit… {seconds} s",
+    "noChanges": "Aucune modification suivie à décrire",
+    "selectFiles": "Sélectionnez les fichiers à décrire",
+    "busyCommitting": "Commit en cours…",
+    "settings": "Paramètres des messages de commit",
+    "settingsMenuItem": "Paramètres des messages de commit…",
+    "toasts": {
+      "failed": "Impossible de générer un message de commit",
+      "openSettings": "Paramètres"
+    },
+    "errors": {
+      "noChanges": "Il n'y a aucune modification à décrire.",
+      "noAgent": "Aucun agent pour le rédiger. Choisissez-en un dans les paramètres des messages de commit.",
+      "emptyAnswer": "La réponse de l'agent ne contenait aucun message de commit.",
+      "cancelled": "La génération a été arrêtée."
+    },
+    "dialog": {
+      "title": "Génération des messages de commit",
+      "description": "Le bouton de génération à côté du champ de commit demande à un agent de rédiger un message pour exactement ce que contiendra le commit. Cela s'exécute dans une session à part, qui n'apparaît jamais dans votre liste de sessions, et toute demande d'autorisation est refusée.",
+      "pinAgent": "Utiliser un agent précis",
+      "pinAgentHint": "Cet agent rédige chaque message, avec les options ci-dessous. Un modèle rapide et peu coûteux suffit largement.",
+      "followSessionHint": "Désactivé : l'agent de la session que vous consultez le rédige, sinon l'agent par défaut du dossier, avec son modèle par défaut.",
+      "instructions": "Instructions",
+      "instructionsHint": "Ajoutées à chaque demande et prioritaires sur les règles intégrées (comme suivre la langue des derniers commits).",
+      "instructionsPlaceholder": "p. ex. Écrire en français. Suivre Conventional Commits. Expliquer le pourquoi dans le corps.",
+      "save": "Enregistrer",
+      "cancel": "Annuler",
+      "saved": "Paramètres des messages de commit enregistrés",
+      "saveFailed": "Impossible d'enregistrer les paramètres",
+      "loadFailed": "Impossible de charger les paramètres"
+    }
+  },
   "MergePage": {
     "title": "Résoudre les conflits",
     "invalidFolderId": "ID de dossier invalide",

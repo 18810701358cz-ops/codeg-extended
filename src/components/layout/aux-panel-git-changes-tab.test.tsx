@@ -141,10 +141,14 @@ const store = vi.hoisted(() => ({
 const gitCommitMock = vi.hoisted(() =>
   vi.fn(async () => ({ committed_files: 1 }))
 )
+const generateMock = vi.hoisted(() => vi.fn())
+const cancelGenerateMock = vi.hoisted(() => vi.fn(async () => {}))
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   gitCommit: gitCommitMock,
+  gitGenerateCommitMessage: generateMock,
+  gitGenerateCommitMessageCancel: cancelGenerateMock,
 }))
 
 vi.mock("@/hooks/use-workspace-state-store", () => ({
@@ -405,5 +409,105 @@ describe("GitChangesTab quick commit IME guard", () => {
       ["f0001"],
       "f1"
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Quick-commit box: multi-line, and the ✨ that writes its message.
+// ---------------------------------------------------------------------------
+
+describe("GitChangesTab commit message box", () => {
+  const PLACEHOLDER = "Commit message (Enter to commit)"
+  const GENERATE = "Generate a commit message"
+
+  function setup(count = 2) {
+    store.git = flatGit(count)
+    gitCommitMock.mockClear()
+    generateMock.mockReset()
+    cancelGenerateMock.mockClear()
+    renderTab()
+    return screen.getByPlaceholderText(PLACEHOLDER) as HTMLTextAreaElement
+  }
+
+  it("starts a new line on Shift+Enter instead of committing", () => {
+    const box = setup()
+    fireEvent.change(box, { target: { value: "fix: a" } })
+    fireEvent.keyDown(box, { key: "Enter", shiftKey: true })
+    expect(gitCommitMock).not.toHaveBeenCalled()
+  })
+
+  it("commits a multi-line message whole", async () => {
+    const box = setup(1)
+    fireEvent.change(box, { target: { value: "fix: a\n\nbecause b" } })
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "Enter" })
+    })
+    expect(gitCommitMock).toHaveBeenCalledWith(
+      "/repo",
+      "fix: a\n\nbecause b",
+      ["f0001"],
+      "f1"
+    )
+  })
+
+  it("fills the box with a message written for the tracked changes", async () => {
+    const box = setup()
+    fireEvent.change(box, { target: { value: "parser" } })
+    let finish!: (value: { message: string; agent_type: string }) => void
+    generateMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    fireEvent.click(screen.getByRole("button", { name: GENERATE }))
+    expect(generateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "/repo",
+        folderId: "f1",
+        files: ["f0001", "f0002"],
+        draft: "parser",
+        fallbackAgent: null,
+      })
+    )
+    // Read-only while it is written, and Enter does not commit the draft.
+    expect(box.readOnly).toBe(true)
+    fireEvent.keyDown(box, { key: "Enter" })
+    expect(gitCommitMock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      finish({
+        message: "fix(parser): keep quotes\n\nThey were dropped.",
+        agent_type: "claude_code",
+      })
+    })
+    expect(box.value).toBe("fix(parser): keep quotes\n\nThey were dropped.")
+    expect(box.readOnly).toBe(false)
+  })
+
+  it("stops on a second click and keeps the draft", async () => {
+    const box = setup()
+    fireEvent.change(box, { target: { value: "draft" } })
+    let finish!: (value: { message: string; agent_type: string }) => void
+    generateMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    fireEvent.click(screen.getByRole("button", { name: GENERATE }))
+    const requestId = generateMock.mock.calls[0][0].requestId
+    fireEvent.click(screen.getByRole("button", { name: /Stop generating/ }))
+    expect(cancelGenerateMock).toHaveBeenCalledWith(requestId)
+    await act(async () => {
+      finish({ message: "too late", agent_type: "claude_code" })
+    })
+    expect(box.value).toBe("draft")
+  })
+
+  it("has nothing to describe without tracked changes", () => {
+    setup(0)
+    const button = screen.getByRole("button", {
+      name: "No tracked changes to describe",
+    })
+    expect(button).toBeDisabled()
   })
 })

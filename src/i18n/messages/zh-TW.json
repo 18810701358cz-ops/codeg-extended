@@ -1956,6 +1956,41 @@
     "invalidFolderId": "無效的 folderId",
     "loadingRepo": "正在載入倉庫..."
   },
+  "CommitMessageGeneration": {
+    "generate": "產生提交訊息",
+    "stop": "停止產生（{seconds} 秒）",
+    "generating": "正在產生提交訊息… {seconds} 秒",
+    "noChanges": "沒有可描述的已追蹤變更",
+    "selectFiles": "請先勾選要提交的檔案",
+    "busyCommitting": "正在提交…",
+    "settings": "提交訊息產生設定",
+    "settingsMenuItem": "提交訊息產生設定…",
+    "toasts": {
+      "failed": "無法產生提交訊息",
+      "openSettings": "設定"
+    },
+    "errors": {
+      "noChanges": "沒有可描述的變更。",
+      "noAgent": "沒有可用的 agent，請在提交訊息產生設定中選擇一個。",
+      "emptyAnswer": "agent 的回覆中沒有提交訊息。",
+      "cancelled": "已停止產生。"
+    },
+    "dialog": {
+      "title": "提交訊息產生",
+      "description": "提交框旁的產生按鈕會讓 agent 依這次提交的實際內容撰寫提交訊息。產生過程在獨立的會話中進行，不會出現在會話清單中；它申請的任何權限都會被拒絕。",
+      "pinAgent": "指定 agent",
+      "pinAgentHint": "每則提交訊息都由這個 agent 依下方選項撰寫。選擇快速又便宜的模型就足夠了。",
+      "followSessionHint": "關閉時由目前正在檢視的會話的 agent 撰寫；沒有會話時使用資料夾的預設 agent，皆採用其預設模型。",
+      "instructions": "附加說明",
+      "instructionsHint": "每次產生都會附上，並優先於內建規則（例如沿用最近提交的語言）。",
+      "instructionsPlaceholder": "例如：用中文撰寫；遵循 Conventional Commits；在內文說明原因。",
+      "save": "儲存",
+      "cancel": "取消",
+      "saved": "提交訊息產生設定已儲存",
+      "saveFailed": "無法儲存設定",
+      "loadFailed": "無法讀取設定"
+    }
+  },
   "MergePage": {
     "title": "解決衝突",
     "invalidFolderId": "無效的 folderId",

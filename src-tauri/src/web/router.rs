@@ -639,6 +639,22 @@ pub fn build_router(
             post(handlers::git::git_update_branch),
         )
         .route("/git_commit", post(handlers::git::git_commit))
+        .route(
+            "/git_generate_commit_message",
+            post(handlers::commit_message::git_generate_commit_message),
+        )
+        .route(
+            "/git_generate_commit_message_cancel",
+            post(handlers::commit_message::git_generate_commit_message_cancel),
+        )
+        .route(
+            "/get_commit_message_settings",
+            post(handlers::commit_message::get_commit_message_settings),
+        )
+        .route(
+            "/set_commit_message_settings",
+            post(handlers::commit_message::set_commit_message_settings),
+        )
         .route("/git_fetch_remote", post(handlers::git::git_fetch_remote))
         .route("/git_delete_branch", post(handlers::git::git_delete_branch))
         .route(

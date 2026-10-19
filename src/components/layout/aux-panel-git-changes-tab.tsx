@@ -5,6 +5,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -23,6 +24,7 @@ import {
   MoreHorizontal,
   PlusCircle,
   RefreshCw,
+  Settings2,
   Undo2,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
@@ -42,8 +44,8 @@ import {
   FileTreeFolder,
 } from "@/components/ai-elements/file-tree"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Textarea } from "@/components/ui/textarea"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -64,7 +66,10 @@ import { useWorkspaceActions } from "@/contexts/workspace-context"
 import { useWorkspaceStateStore } from "@/hooks/use-workspace-state-store"
 import { useGitQuickActions } from "@/hooks/use-git-quick-actions"
 import { useImeGuard } from "@/hooks/use-ime-guard"
+import { useCommitMessageGeneration } from "@/hooks/use-commit-message-generation"
 import { AuxPanelNoFolderEmpty } from "@/components/layout/aux-panel-no-folder-empty"
+import { CommitMessageGenerateButton } from "@/components/layout/commit-message-generate-button"
+import { CommitMessageSettingsDialog } from "@/components/layout/commit-message-settings-dialog"
 import { GIT_TOOLBAR_ICON_BUTTON_CLASS } from "@/components/layout/git-toolbar-controls"
 import { WorkspaceDegradedBanner } from "@/components/layout/workspace-degraded-banner"
 import {
@@ -493,6 +498,7 @@ export function GitChangesTab() {
   // The toolbar's git operations reuse the branch selector's wording verbatim —
   // same actions, so the same labels.
   const tBranch = useTranslations("Folder.branchDropdown")
+  const tGenerate = useTranslations("CommitMessageGeneration")
   // Defer the folder so a cross-folder conversation-tab switch commits first and
   // this tab's heavy rebuild (buildChangeFileTree + auto-expand + up to
   // MAX_VISIBLE_ROWS ContextMenu rows) runs in a non-blocking transition a frame
@@ -564,6 +570,12 @@ export function GitChangesTab() {
     return activeTab.id
   }, [activeTabId, tabs])
   const canAttachToSession = Boolean(activeSessionTabId && folder?.path)
+  // Who writes a generated commit message when its settings name no agent:
+  // the agent of the session in front of the user.
+  const activeAgentType = useMemo(() => {
+    const activeTab = tabs.find((tab) => tab.id === activeTabId)
+    return activeTab?.kind === "conversation" ? activeTab.agentType : null
+  }, [activeTabId, tabs])
 
   const changes = useMemo<WorkingTreeChange[]>(() => {
     return [...workspaceState.git]
@@ -786,8 +798,46 @@ export function GitChangesTab() {
     () => trackedChanges.map((change) => change.path),
     [trackedChanges]
   )
+  const generation = useCommitMessageGeneration({
+    path: folder?.path ?? null,
+    folderId: folder?.id ?? null,
+  })
+  const {
+    generate: generateCommitMessage,
+    stop: stopGeneration,
+    generating,
+  } = generation
   const canQuickCommit =
-    commitMessage.trim().length > 0 && trackedPaths.length > 0 && !committing
+    commitMessage.trim().length > 0 &&
+    trackedPaths.length > 0 &&
+    !committing &&
+    !generating
+  // The same files Enter would commit, so the message describes the commit.
+  const generateDisabledReason = committing
+    ? tGenerate("busyCommitting")
+    : trackedPaths.length === 0
+      ? tGenerate("noChanges")
+      : null
+  const handleGenerate = useCallback(async () => {
+    const message = await generateCommitMessage({
+      files: trackedPaths,
+      draft: commitMessage,
+      fallbackAgent: activeAgentType,
+    })
+    if (message !== null) setCommitMessage(message)
+  }, [activeAgentType, commitMessage, generateCommitMessage, trackedPaths])
+
+  // The box grows with its message. `field-sizing: content` does it where the
+  // engine has it; elsewhere (older WebKitGTK) it is measured here.
+  const commitBoxRef = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    const box = commitBoxRef.current
+    if (!box) return
+    if (typeof CSS !== "undefined" && CSS.supports?.("field-sizing", "content"))
+      return
+    box.style.height = "auto"
+    box.style.height = `${box.scrollHeight}px`
+  }, [commitMessage])
 
   const handleQuickCommit = useCallback(async () => {
     const message = commitMessage.trim()
@@ -1097,8 +1147,12 @@ export function GitChangesTab() {
     setRollbackTarget(null)
     setDeleteTarget(null)
     setCommitMessage("")
+    // A message being written describes the previous folder too. The hook
+    // stops it once the deferred folder catches up; stopping here as well
+    // leaves no frame in which its answer could land in the cleared box.
+    stopGeneration()
     resetDirectoryGitActionDialog()
-  }, [activeFolder?.id, resetDirectoryGitActionDialog])
+  }, [activeFolder?.id, resetDirectoryGitActionDialog, stopGeneration])
 
   const renderTrackedNode = useCallback(
     function renderNode(node: ChangeTreeNode): ReactElement {
@@ -1492,16 +1546,22 @@ export function GitChangesTab() {
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar: type a message and commit right here with Enter, or reach the
-          same git operations the branch selector offers. Just a text field and
-          one round "more" circle — no commit button: Enter is the submit (the
-          placeholder says so) and the menu's "commit code" row opens the full
-          commit window, so a dedicated button would only repeat what both
-          already do. The circle matches the commits tab's header, so the two
-          tabs read as one panel. Hidden on a non-repo folder — there is nothing
-          to commit to (the body shows the "not a repo" hint). */}
+          same git operations the branch selector offers. A message box, the ✨
+          that writes the message, and one round "more" circle — no commit
+          button: Enter is the submit (the placeholder says so) and the menu's
+          "commit code" row opens the full commit window, so a dedicated button
+          would only repeat what both already do. The circles match the commits
+          tab's header, so the two tabs read as one panel. Hidden on a non-repo
+          folder — there is nothing to commit to (the body shows the "not a
+          repo" hint). */}
       {workspaceState.isGitRepo && (
-        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border/50 px-2">
-          <Input
+        <div className="flex min-h-10 shrink-0 items-start gap-1 border-b border-border/50 px-2 py-1">
+          {/* Multi-line, because a message is: Enter commits, Shift+Enter
+              starts a new line, and the box grows to about six lines before it
+              scrolls. Read-only while a message is being written into it. */}
+          <Textarea
+            ref={commitBoxRef}
+            rows={1}
             value={commitMessage}
             onChange={(event) => setCommitMessage(event.target.value)}
             {...ime.props}
@@ -1509,21 +1569,36 @@ export function GitChangesTab() {
               // Never submit mid-IME-composition: a CJK candidate is confirmed
               // with Enter, which must not also fire the commit.
               if (ime.isComposing(event)) return
-              if (event.key === "Enter" && canQuickCommit) {
+              if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault()
-                void handleQuickCommit()
+                if (canQuickCommit) void handleQuickCommit()
               }
             }}
+            readOnly={generating}
             disabled={committing}
-            placeholder={t("quickCommit.placeholder")}
+            placeholder={
+              generating
+                ? tGenerate("generating", {
+                    seconds: generation.elapsedSeconds,
+                  })
+                : t("quickCommit.placeholder")
+            }
             aria-label={t("quickCommit.placeholder")}
-            className="h-8 min-w-0 flex-1 border-0 bg-transparent px-1.5 text-xs shadow-none focus-visible:ring-0"
+            className="max-h-28 min-h-8 min-w-0 flex-1 rounded-none border-0 bg-transparent px-1.5 py-2 text-xs shadow-none focus-visible:ring-0 md:text-xs dark:bg-transparent"
           />
           {/* With no button to grey out, this is the only sign a commit is in
               flight besides the disabled field — so it stays. */}
           {committing && (
-            <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+            <Loader2 className="mt-2.5 size-3.5 shrink-0 animate-spin text-muted-foreground" />
           )}
+          <CommitMessageGenerateButton
+            generating={generating}
+            elapsedSeconds={generation.elapsedSeconds}
+            disabledReason={generateDisabledReason}
+            onGenerate={() => void handleGenerate()}
+            onStop={stopGeneration}
+            className={GIT_TOOLBAR_ICON_BUTTON_CLASS}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -1557,6 +1632,12 @@ export function GitChangesTab() {
               <DropdownMenuItem onSelect={handleOpenCommitWindow}>
                 <GitCommitHorizontal />
                 {tBranch("openCommitWindow")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => generation.setSettingsOpen(true)}
+              >
+                <Settings2 />
+                {tGenerate("settingsMenuItem")}
               </DropdownMenuItem>
               {/* Wrapped, not passed bare: onSelect hands the handler an Event,
                   which openPushWindow would read as the branch to push. */}
@@ -1616,6 +1697,11 @@ export function GitChangesTab() {
           </DropdownMenu>
         </div>
       )}
+      <CommitMessageSettingsDialog
+        open={generation.settingsOpen}
+        onOpenChange={generation.setSettingsOpen}
+        defaultAgentType={activeAgentType}
+      />
       {workspaceState.degraded && (
         <WorkspaceDegradedBanner onRetry={workspaceState.restart} />
       )}

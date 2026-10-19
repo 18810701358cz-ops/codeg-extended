@@ -4767,6 +4767,23 @@ export interface GitCommitResult {
   committed_files: number
 }
 
+/** How the commit message generator runs (`commit_message` on the backend).
+ *  With no agent it follows the active session, then the folder's default. */
+export interface CommitMessageSettings {
+  agent_type: AgentType | null
+  /** Launch selections for `agent_type`: its mode and config options (model,
+   *  effort, …). Only overrides: an option left out keeps the agent's own. */
+  mode_id: string | null
+  config_values: Record<string, string>
+  /** Standing instructions, e.g. "write in Chinese". */
+  instructions: string
+}
+
+export interface GeneratedCommitMessage {
+  message: string
+  agent_type: AgentType
+}
+
 export interface GitRemote {
   name: string
   url: string
