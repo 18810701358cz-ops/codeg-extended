@@ -29,6 +29,16 @@ Everything fails closed:
 - A request with a valid assertion that another site's page sent gets a 403
   (see below).
 
+### Who gets in
+
+Codeg does not choose users in this mode. It admits every request the proxy
+vouches for with a valid assertion for this application, including requests
+made with a service token the application's policy allows. The proxy's policy
+is the user list: keep it to the people who should use this server, such as
+your own address or one group, and never `Everyone`. The audience check ties an
+assertion to this application, so a sign-in to another application of the same
+proxy does not get in.
+
 ### Requests from other sites
 
 The assertion rides on the proxy's session cookie, and the browser attaches
