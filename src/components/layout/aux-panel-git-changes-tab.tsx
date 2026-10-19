@@ -1584,7 +1584,7 @@ export function GitChangesTab() {
                 : t("quickCommit.placeholder")
             }
             aria-label={t("quickCommit.placeholder")}
-            className="max-h-28 min-h-8 min-w-0 flex-1 rounded-none border-0 bg-transparent px-1.5 py-2 text-xs shadow-none focus-visible:ring-0 md:text-xs dark:bg-transparent"
+            className="field-scrollbar field-fade-y max-h-28 min-h-8 min-w-0 flex-1 rounded-none border-0 bg-transparent px-1.5 py-2 text-xs shadow-none focus-visible:ring-0 md:text-xs dark:bg-transparent"
           />
           {/* With no button to grey out, this is the only sign a commit is in
               flight besides the disabled field — so it stays. */}

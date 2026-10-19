@@ -1297,7 +1297,7 @@ export function CommitWorkspace({
                 defaultValue=""
                 readOnly={generating}
                 onChange={handleMessageChange}
-                className="min-h-[5.625rem] max-h-[12.5rem] resize-y"
+                className="field-scrollbar min-h-[5.625rem] max-h-[12.5rem] resize-y"
               />
               <CommitMessageSettingsDialog
                 open={generation.settingsOpen}
