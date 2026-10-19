@@ -439,7 +439,10 @@ describe("WebTransport opened without any credential", () => {
     fetchMock.mockResolvedValue(ok200())
     const t = new WebTransport("http://localhost")
     const handler = vi.fn()
-    const subscribed = t.subscribe("folders", handler)
+    let resolved = false
+    const subscribed = t.subscribe("folders", handler).then(() => {
+      resolved = true
+    })
     await vi.advanceTimersByTimeAsync(0)
 
     const [url, init] = fetchMock.mock.calls[0]
@@ -451,8 +454,11 @@ describe("WebTransport opened without any credential", () => {
 
     // subscribe() still resolves only once the server-side receiver is in.
     lastWs().open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolved).toBe(false)
     lastWs().ready()
     await subscribed
+    expect(resolved).toBe(true)
     lastWs().onmessage?.({
       data: JSON.stringify({ channel: "folders", payload: 1 }),
     })

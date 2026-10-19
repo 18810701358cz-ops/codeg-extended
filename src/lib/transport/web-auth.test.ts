@@ -101,6 +101,28 @@ describe("proxy authentication (CODEG_AUTH=proxy-jwt)", () => {
     expect(isProxyAuthenticated()).toBe(false)
   })
 
+  it("gives up on a server that takes the request and never answers", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          (_url: string, init: RequestInit) =>
+            new Promise((_resolve, reject) => {
+              init.signal?.addEventListener("abort", () =>
+                reject(new DOMException("aborted", "AbortError"))
+              )
+            })
+        )
+      )
+      const probe = probeProxyAuthentication()
+      await vi.advanceTimersByTimeAsync(8_000)
+      await expect(probe).resolves.toBe("unreachable")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("reports an unreachable server without touching the mark", async () => {
     localStorage.setItem("codeg_proxy_auth", "1")
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed")))

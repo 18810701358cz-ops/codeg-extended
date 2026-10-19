@@ -9,6 +9,8 @@ const TOKEN_KEY = "codeg_token"
 // Set when the server admitted this browser without a token: a proxy in front
 // of it vouched for the user (`CODEG_AUTH=proxy-jwt` on codeg-server).
 const PROXY_AUTH_KEY = "codeg_proxy_auth"
+// As long as the transport's own health probe waits (`web-transport.ts`).
+const PROBE_TIMEOUT_MS = 8_000
 
 // Codeg marks its own 401 with this bearer challenge (`web/auth.rs`). A 401
 // without it came from something in front of Codeg — typically an
@@ -60,15 +62,22 @@ export function hasCodegCredentials(): boolean {
 export async function probeProxyAuthentication(): Promise<
   "proxy" | "unauthorized" | "unreachable"
 > {
+  // A server that takes the request and never answers counts as unreachable,
+  // rather than holding the page, or a subscription waiting on this, forever.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   let res: Response
   try {
     res = await fetch("/api/health", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...codegAuthHeaders("") },
       body: "{}",
+      signal: controller.signal,
     })
   } catch {
     return "unreachable"
+  } finally {
+    clearTimeout(timeout)
   }
   if (res.ok) {
     localStorage.setItem(PROXY_AUTH_KEY, "1")
