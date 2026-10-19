@@ -6034,9 +6034,7 @@ pub(crate) fn pi_enabled_model_patterns_for_env(
     workspace: &Path,
 ) -> Option<Vec<String>> {
     if let Ok(raw) = fs::read_to_string(workspace.join(".pi").join("settings.json")) {
-        // pi reads past a byte-order mark; serde_json does not.
-        let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
-        match serde_json::from_str::<serde_json::Value>(raw) {
+        match serde_json::from_str::<serde_json::Value>(without_bom(&raw)) {
             Ok(serde_json::Value::Object(project)) if project.contains_key("enabledModels") => {
                 return None
             }
@@ -6741,7 +6739,7 @@ fn pi_write_trust_decision_at(
     // and doesn't parse as a JSON object must NOT be rewritten from scratch.
     // Surface that rather than silently doing nothing, so the user can go fix it.
     let mut obj = match fs::read_to_string(path) {
-        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(without_bom(&text)) {
             Ok(serde_json::Value::Object(map)) => map,
             _ => {
                 return Err(AcpError::protocol(format!(
@@ -6849,14 +6847,21 @@ pub struct PiModelReasoningSpec {
 /// no picker will ever offer.
 const PI_THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
+/// `raw` past a leading UTF-8 byte-order mark, which pi strips from its files
+/// before parsing them and serde_json rejects.
+fn without_bom(raw: &str) -> &str {
+    raw.strip_prefix('\u{feff}').unwrap_or(raw)
+}
+
 /// Read a JSON file into an owned object map, returning an empty map when the
 /// file is absent, unreadable, or does not parse to a JSON object. Pi's native
 /// files are small and codeg-owned; corruption shouldn't abort a save (we
-/// re-author the managed keys and preserve whatever else parses).
+/// re-author the managed keys and preserve whatever else parses). A leading
+/// byte-order mark is not corruption: pi reads past it, and so does this.
 fn read_json_object_or_empty(path: &Path) -> serde_json::Map<String, serde_json::Value> {
     fs::read_to_string(path)
         .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(without_bom(&raw)).ok())
         .and_then(|value| match value {
             serde_json::Value::Object(map) => Some(map),
             _ => None,
@@ -16478,6 +16483,34 @@ base_url = \"https://example.test/v1\"
 
     /// `trust.json` holds decisions the user made inside pi. If codeg can't parse
     /// it, it must refuse loudly rather than rewrite the file from scratch.
+    /// pi reads `trust.json` past a byte-order mark, so a grant behind one is in
+    /// force for pi and must stop the launch here too.
+    #[test]
+    fn pi_launch_is_blocked_by_a_grant_behind_a_byte_order_mark() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (ws, agent_dir, home) = gated_workspace(tmp.path(), Some(true));
+        let trust = agent_dir.join("trust.json");
+        let text = fs::read_to_string(&trust).unwrap();
+        fs::write(&trust, format!("\u{feff}{text}")).unwrap();
+
+        assert!(launch_block_for(&agent_dir, &home, &ws).is_some());
+    }
+
+    #[test]
+    fn pi_set_project_trust_reads_past_a_byte_order_mark() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join("ws");
+        fs::create_dir_all(&ws).unwrap();
+        let trust = tmp.path().join("trust.json");
+        fs::write(&trust, "\u{feff}{\"/elsewhere\":false}").unwrap();
+
+        pi_write_trust_decision_at(&trust, &ws, Some(true)).unwrap();
+
+        let map = read_json_object_or_empty(&trust);
+        assert_eq!(map.get("/elsewhere"), Some(&serde_json::json!(false)));
+        assert_eq!(map.get(&canonical_key(&ws)), Some(&serde_json::json!(true)));
+    }
+
     #[test]
     fn pi_set_project_trust_never_clobbers_an_unparseable_file() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -17269,6 +17302,31 @@ echo {"id":"codeg-models","type":"response","command":"get_available_models","su
         assert_eq!(
             pi_enabled_model_patterns_for_env(&env, tmp.path()),
             Some(vec!["openai/*".into()])
+        );
+    }
+
+    #[test]
+    fn pi_files_are_read_past_a_byte_order_mark() {
+        // pi strips a UTF-8 byte-order mark before parsing its files. Read as
+        // corrupt instead, the settings merge-write would replace every key
+        // the user had with codeg's three.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let settings = tmp.path().join("settings.json");
+        fs::write(
+            &settings,
+            "\u{feff}{\"enabledModels\":[\"openai/*\"],\"sessionDir\":\"/s\"}",
+        )
+        .unwrap();
+
+        let map = read_json_object_or_empty(&settings);
+        assert_eq!(map.get("sessionDir"), Some(&serde_json::json!("/s")));
+        let env = BTreeMap::from([(
+            String::from("PI_CODING_AGENT_DIR"),
+            tmp.path().to_string_lossy().into_owned(),
+        )]);
+        assert_eq!(
+            pi_enabled_model_patterns_for_env(&env, tmp.path()),
+            Some(vec!["openai/*".to_string()])
         );
     }
 
