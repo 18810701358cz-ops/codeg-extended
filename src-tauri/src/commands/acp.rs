@@ -6107,15 +6107,17 @@ fn pi_agent_dir_in_workspace(runtime_env: &BTreeMap<String, String>, workspace: 
 
 /// The `<cwd>/.pi/` entries whose mere presence makes a project "trust-requiring"
 /// for pi. Mirrors pi's own `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`
-/// (`core/trust-manager.js`, verified against pi 0.80.2).
+/// (`core/trust-manager.js`, verified against pi 1.3.0, whose native MCP added
+/// `mcp.json`).
 ///
 /// This list is a mirror of another project's constant, so it can drift if pi
-/// adds a resource kind. It fails safe in both directions: under-detecting only
-/// means codeg stays quiet about resources pi would ignore anyway (pi's own
-/// non-interactive default is "don't load"), and over-detecting only costs one
-/// extra prompt. Neither direction can load a resource without the user's word.
-const PI_TRUST_REQUIRING_CONFIG_RESOURCES: [&str; 7] = [
+/// adds a resource kind, and the drift is not harmless. Over-detecting only
+/// costs one extra prompt, but a kind missing here lets a repository that ships
+/// only that kind past the launch gate under a grant nobody confirmed — and pi
+/// loads it, since the grant is in force.
+const PI_TRUST_REQUIRING_CONFIG_RESOURCES: [&str; 8] = [
     "settings.json",
+    "mcp.json",
     "extensions",
     "skills",
     "prompts",
@@ -6134,9 +6136,10 @@ pub struct PiProjectResource {
     pub kind: String,
     /// Whether loading this resource means executing repo-controlled code at pi
     /// startup, as opposed to feeding it repo-controlled text. `.pi/extensions`
-    /// are JS/TS modules whose top level runs immediately, and `.pi/settings.json`
-    /// can make pi install project packages — the approval UI must say so plainly
-    /// rather than describing all of these as "config".
+    /// are JS/TS modules whose top level runs immediately, `.pi/settings.json`
+    /// can make pi install project packages, and `.pi/mcp.json` names commands
+    /// pi starts as MCP servers — the approval UI must say so plainly rather
+    /// than describing all of these as "config".
     pub executes_code: bool,
 }
 
@@ -6178,8 +6181,9 @@ fn pi_project_trust_resources_with_home(cwd: &Path, home: &Path) -> Vec<PiProjec
                 path: path.to_string_lossy().to_string(),
                 kind: format!(".pi/{entry}"),
                 // Extensions are modules pi imports (top-level code runs); project
-                // settings can pull in and install project packages.
-                executes_code: matches!(entry, "extensions" | "settings.json"),
+                // settings can pull in and install project packages; a project
+                // MCP server is a command pi starts.
+                executes_code: matches!(entry, "extensions" | "settings.json" | "mcp.json"),
             });
         }
     }
@@ -16067,6 +16071,26 @@ base_url = \"https://example.test/v1\"
         assert_eq!(by_kind.get(".pi/extensions"), Some(&true));
         assert_eq!(by_kind.get(".pi/settings.json"), Some(&true));
         assert_eq!(by_kind.get(".pi/prompts"), Some(&false));
+    }
+
+    /// pi 1.x starts a trusted project's `.pi/mcp.json` servers, and a stdio
+    /// server is a command it runs: a repo shipping only that file is gated.
+    #[test]
+    fn pi_trust_gates_a_project_mcp_config_that_runs_commands() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join("ws");
+        touch(&ws.join(".pi").join("mcp.json"));
+
+        let resources = pi_project_trust_resources(&ws);
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].kind, ".pi/mcp.json");
+        assert!(resources[0].executes_code);
+
+        let agent_dir = tmp.path().join("agent");
+        let mut map = serde_json::Map::new();
+        map.insert(canonical_key(&ws), serde_json::Value::Bool(true));
+        write_json_object_pretty(&agent_dir.join("trust.json"), &map).unwrap();
+        assert!(launch_block_for(&agent_dir, &tmp.path().join("codeg-home"), &ws).is_some());
     }
 
     /// A bare `.pi/` directory is not a project resource for pi, so codeg must not
