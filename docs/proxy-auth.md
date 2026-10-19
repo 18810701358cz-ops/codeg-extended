@@ -26,8 +26,8 @@ Everything fails closed:
   audience or by another issuer, signed with an unknown key or an algorithm
   other than RS256 / ES256 gets a 401. So does every request without the token
   while no keys could be fetched.
-- A request with a valid assertion that another site's page sent gets a 403
-  (see below).
+- A request with a valid assertion that a page on another origin sent gets a
+  403 (see below).
 
 ### Who gets in
 
@@ -39,18 +39,27 @@ your own address or one group, and never `Everyone`. The audience check ties an
 assertion to this application, so a sign-in to another application of the same
 proxy does not get in.
 
-### Requests from other sites
+### Requests from other origins
 
 The assertion rides on the proxy's session cookie, and the browser attaches
-that cookie to requests other sites' pages make as well (Cloudflare sets its
-application cookie `SameSite=None` unless you change it). Without a further
-check, any page the signed-in user opens could use Codeg's WebSockets or upload
-endpoints in their name. So a request admitted by an assertion must come from
-Codeg's own page: the server refuses it when the browser marks it as sent by
-another site (`Sec-Fetch-Site`), or, in a browser that does not send that
-header, when its `Origin` names a host other than the one the request was sent
-to (`Host`, or `X-Forwarded-Host` from a proxy that rewrites `Host`). The
-token is not affected: another site's page cannot send it.
+that cookie to requests that pages on other origins make as well (Cloudflare
+sets its application cookie `SameSite=None` unless you change it). Without a
+further check, any page the signed-in user opens could use Codeg's WebSockets
+or upload endpoints in their name. So a request admitted by an assertion must
+come from Codeg's own page: the server refuses it when the browser marks it as
+sent from another origin (`Sec-Fetch-Site`), or, in a browser that does not
+send that header, when its `Origin` names a host other than the one the
+request was sent to (`Host`, or `X-Forwarded-Host` from a proxy that rewrites
+`Host`). The token is not affected: a page on another origin cannot send it.
+
+`SameSite` does not make this check optional. Browsers apply it by site, which
+means the scheme and the registrable domain (`https://example.com`), not by
+origin. A page on `wiki.example.com` is same-site with Codeg on
+`codeg.example.com`, so its requests carry the cookie even when the cookie is
+`Lax` or `Strict`.
+Setting `Lax` still keeps the cookie off requests from unrelated sites, but
+when anything else is served on a subdomain of the same domain, this check is
+what turns its pages away.
 
 Chrome sends no `Sec-Fetch-Site` on a WebSocket handshake, so for the event
 socket the `Origin` always decides. A proxy between the browser and Codeg must
@@ -90,9 +99,11 @@ CODEG_PROXY_AUTH_AUDIENCE=<AUD tag>
 
 Bind the server to loopback (`CODEG_HOST=127.0.0.1`) and reach it only through
 the tunnel, so every browser request passes Access. In the application's
-cookie settings, setting **SameSite Attribute** to `Lax` stops the browser from
-attaching the cookie to other sites' requests in the first place, apart from a
-link the user follows into Codeg.
+cookie settings, setting **SameSite Attribute** to `Lax` keeps the cookie off
+requests from unrelated sites, apart from top-level `GET` navigations such as a
+link the user follows into Codeg. It does not hold back pages on other
+subdomains of the same domain; see
+[Requests from other origins](#requests-from-other-origins).
 
 ## In the browser
 
