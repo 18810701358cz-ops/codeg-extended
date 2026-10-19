@@ -403,6 +403,10 @@ impl AcpAgent {
                         cmd.env(&env_var.name, &env_var.value);
                     }
                 }
+                // The session's environment, not the one an AppImage's
+                // launcher set up for codeg itself. After the launch env,
+                // whose PATH is built from codeg's own.
+                crate::appimage_env::restore_tokio(&mut cmd);
                 if let Some(dir) = &self.current_dir {
                     // The `pushd` detour already owns the cwd for this launch,
                     // and handing the same UNC path to `CreateProcess` is the

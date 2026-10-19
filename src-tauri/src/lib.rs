@@ -22,6 +22,7 @@ mod app_error;
 #[cfg(all(feature = "tauri-runtime", target_os = "macos"))]
 mod app_menu;
 pub mod app_state;
+pub mod appimage_env;
 pub mod automation;
 pub mod backgrounds;
 /// Built-in browser. Only its wire types and its grant rules compile in server

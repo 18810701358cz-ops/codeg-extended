@@ -7540,10 +7540,10 @@ pub(crate) fn acp_validate_pi_command_core(command: String) -> PiCommandValidati
 /// and never blocks indefinitely (`Command::output` waits for the short-lived
 /// `--version` child to exit on its own).
 fn probe_pi_version(resolved: &Path) -> Option<String> {
-    let output = std::process::Command::new(resolved)
-        .arg("--version")
-        .output()
-        .ok()?;
+    let mut probe = std::process::Command::new(resolved);
+    probe.arg("--version");
+    crate::appimage_env::restore(&mut probe);
+    let output = probe.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -13200,10 +13200,10 @@ fn open_external_terminal_impl(command: &str, cwd: Option<&str>) -> Result<(), A
         ];
         for (term, args) in candidates {
             if resolve_command_on_path(term).is_some() {
-                return Command::new(term)
-                    .args(args)
-                    .arg(&keep_open)
-                    .current_dir(&dir)
+                let mut terminal = Command::new(term);
+                terminal.args(args).arg(&keep_open).current_dir(&dir);
+                crate::appimage_env::restore(&mut terminal);
+                return terminal
                     .spawn()
                     .map(|_| ())
                     .map_err(|e| AcpError::protocol(format!("open {term} failed: {e}")));
