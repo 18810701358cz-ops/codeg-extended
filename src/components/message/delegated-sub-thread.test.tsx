@@ -832,18 +832,50 @@ describe("DelegatedSubThread — expanding the task", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true")
     expect(toggle).toHaveAttribute("aria-controls", panel()!.id)
     // All of it, verbatim — line breaks included, nothing rendered as
-    // Markdown — the way the sub-agent's own transcript shows its kickoff…
+    // Markdown — the way the sub-agent's own transcript shows its kickoff.
     expect(panel()!.textContent).toBe(TASK)
     expect(panel()!.firstElementChild).toHaveClass("whitespace-pre-wrap")
-    // …and only there: the row gives up its clamped copy while open.
-    expect(toggle).not.toHaveTextContent("Audit the sidebar")
+    // The row keeps its clamped first line above it (see the next test).
     expect(toggle).toHaveTextContent("Codex")
+    expect(toggle).toHaveTextContent("Audit the sidebar width logic.")
 
     fireEvent.click(toggle)
     expect(toggle).toHaveAttribute("aria-expanded", "false")
     expect(toggle).not.toHaveAttribute("aria-controls")
     expect(panel()).not.toBeInTheDocument()
     expect(toggle).toHaveTextContent("Audit the sidebar width logic.")
+  })
+
+  it("leaves the row as it was while the panel is open, so nothing on it moves", () => {
+    // Dropping the task's first line while open took a line off the row: the
+    // avatar, name, badge and open button all shifted each time the panel
+    // opened or closed.
+    mockedHook.mockReturnValue({
+      binding: bindingOf({ status: "running", task: TASK }),
+      detail: null,
+      loading: false,
+      error: null,
+    })
+    renderWithIntl(<DelegatedSubThread parentToolUseId="pt-1" />)
+    const toggle = screen.getByRole("button", { expanded: false })
+    const open = screen.getByRole("button", { name: "Open conversation" })
+    // Everything on the row but the chevron: its own and the toggle's classes
+    // (an open-only class there could hide the line too), the avatar, then the
+    // name, task id, badge and the task's first line, then the open button.
+    const row = () => [
+      toggle.parentElement!.className,
+      toggle.className,
+      ...Array.from(toggle.children, (el) => el.outerHTML).slice(0, -1),
+      open.outerHTML,
+    ]
+    const closed = row()
+    expect(closed.join("")).toContain("Audit the sidebar width logic.")
+
+    fireEvent.click(toggle)
+    expect(panel()).toBeInTheDocument()
+    expect(row()).toEqual(closed)
+    // Only the chevron turns, in a box of the same size.
+    expect(toggle.lastElementChild).toHaveClass("h-3.5", "w-3.5", "shrink-0")
   })
 
   it("keeps expanding the task and opening the conversation apart", () => {

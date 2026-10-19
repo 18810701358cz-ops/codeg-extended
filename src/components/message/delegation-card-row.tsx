@@ -104,9 +104,11 @@ export function DelegationCardRow({
           )}
           <StatusBadge status={status} errorCode={errorCode} />
         </span>
-        {/* Open, the whole task is in the panel below, so its first line
-            leaves the row rather than sit over its own copy. */}
-        {hasTask && !open && (
+        {/* Stays while open, though the panel repeats it in full: without
+            it the row is a line shorter, and the avatar, name, badge and
+            the open button beside them would all shift as the panel opens
+            and closes. */}
+        {hasTask && (
           // No `block`: `line-clamp-1` sets its own display (-webkit-box), and
           // a competing display utility could silently undo the clamp.
           //
