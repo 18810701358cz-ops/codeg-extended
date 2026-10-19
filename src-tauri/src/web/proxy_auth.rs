@@ -124,13 +124,17 @@ impl ProxyAuthConfig {
 fn jwks_url_allowed(url: &reqwest::Url) -> bool {
     match url.scheme() {
         "https" => url.host().is_some(),
-        "http" => match url.host() {
-            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
-            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-            None => false,
-        },
+        "http" => is_loopback(url),
         _ => false,
+    }
+}
+
+fn is_loopback(url: &reqwest::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
     }
 }
 
@@ -429,11 +433,16 @@ pub struct ProxyJwtAuth {
 
 impl ProxyJwtAuth {
     pub fn new(config: ProxyAuthConfig) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
+        let mut client = reqwest::Client::builder()
             .timeout(JWKS_FETCH_TIMEOUT)
             // A redirect could lead off the configured (https) origin.
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none());
+        // A key server on this machine is not reached through HTTP(S)_PROXY:
+        // a proxy on another host would dial its own loopback.
+        if is_loopback(&config.jwks_url) {
+            client = client.no_proxy();
+        }
+        let client = client.build()?;
         Ok(Self {
             config,
             client,
