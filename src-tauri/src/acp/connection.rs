@@ -3915,8 +3915,8 @@ fn pi_minimatch_may_match(path: &str, glob: &str) -> bool {
 
 /// One advertised model row, split the way pi names the model behind it:
 /// pi-acp publishes each of pi's models as value `provider/id` and label
-/// `provider/name`. Lowercased once, because every comparison pi makes here is
-/// case-insensitive.
+/// `provider/name`. Provider, id and name are lowercased once, because every
+/// comparison pi makes on them is case-insensitive.
 struct PiModelRow {
     value: String,
     provider: String,
@@ -3971,7 +3971,8 @@ enum PiScopeEntry {
     /// No row pi could pick: pi skips such an entry too (a retired id, a typo).
     Dead,
     /// pi decides this entry by a rule codeg does not mirror — a fuzzy id/name
-    /// match, or glob syntax beyond `*` and `?` — so its rows are unknown here.
+    /// match, glob syntax beyond ASCII `*` and `?`, or a row minimatch reads
+    /// its own way — so its rows are unknown here.
     Unknown,
 }
 
@@ -4039,9 +4040,10 @@ fn pi_model_glob_is_supported(glob: &str) -> bool {
 /// Classify one `enabledModels` entry the way pi 1.x resolves a scope pattern
 /// (`resolveModelScopeFromModels` in pi's `core/model-resolver.js`, checked
 /// against 1.3.0): a pattern with `*`, `?` or `[` is a glob after an optional
-/// thinking suffix, anything else a model reference. The one older rule left
-/// out: pi 0.81 settled a bare id that several providers list with a single
-/// fuzzy pick, where 1.x keeps all of them, as this does.
+/// thinking suffix, anything else a model reference. Two corners of older pi
+/// are left out: 0.81 settled a bare id that several providers list with one
+/// fuzzy pick (1.x keeps them all, as this does), and read a glob that spells
+/// a model id (`model[1m]`) only as a glob.
 fn pi_scope_entry(pattern: &str, rows: &[PiModelRow]) -> PiScopeEntry {
     if pattern.contains(['*', '?', '[']) {
         let glob = pi_model_pattern_without_thinking_level(pattern);
