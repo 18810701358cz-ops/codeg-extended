@@ -3726,7 +3726,6 @@
         "unknownAgent": "Subagente",
         "openDetail": "Ver conversa",
         "resumed": "Retomado",
-        "resumeDetail": "Detalhes da retomada",
         "resumeReasonLabel": "Motivo da retomada",
         "detailTitle": "Conversa do subagente",
         "detailDescription": "Visualização somente leitura da conversa do subagente delegado.",

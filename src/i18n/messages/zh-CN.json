@@ -3726,7 +3726,6 @@
         "unknownAgent": "子智能体",
         "openDetail": "查看会话",
         "resumed": "已恢复",
-        "resumeDetail": "恢复详情",
         "resumeReasonLabel": "恢复原因",
         "detailTitle": "子智能体会话",
         "detailDescription": "只读查看委托给子智能体的会话内容。",

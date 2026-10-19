@@ -3726,7 +3726,6 @@
         "unknownAgent": "サブエージェント",
         "openDetail": "会話を表示",
         "resumed": "再開済み",
-        "resumeDetail": "再開の詳細",
         "resumeReasonLabel": "再開理由",
         "detailTitle": "サブエージェントの会話",
         "detailDescription": "委任されたサブエージェントの会話を読み取り専用で表示します。",

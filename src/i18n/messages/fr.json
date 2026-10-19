@@ -3726,7 +3726,6 @@
         "unknownAgent": "Sous-agent",
         "openDetail": "Voir la conversation",
         "resumed": "Repris",
-        "resumeDetail": "Détails de la reprise",
         "resumeReasonLabel": "Motif de la reprise",
         "detailTitle": "Conversation du sous-agent",
         "detailDescription": "Vue en lecture seule de la conversation du sous-agent délégué.",

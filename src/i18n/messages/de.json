@@ -3726,7 +3726,6 @@
         "unknownAgent": "Sub-Agent",
         "openDetail": "Konversation anzeigen",
         "resumed": "Fortgesetzt",
-        "resumeDetail": "Details zur Fortsetzung",
         "resumeReasonLabel": "Grund der Fortsetzung",
         "detailTitle": "Unteragent-Konversation",
         "detailDescription": "Schreibgeschützte Ansicht der delegierten Unteragent-Konversation.",

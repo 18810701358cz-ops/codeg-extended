@@ -3726,7 +3726,6 @@
         "unknownAgent": "Sub-agent",
         "openDetail": "Open conversation",
         "resumed": "Resumed",
-        "resumeDetail": "Resume details",
         "resumeReasonLabel": "Resume reason",
         "detailTitle": "Sub-agent conversation",
         "detailDescription": "Read-only view of the delegated sub-agent's conversation.",
