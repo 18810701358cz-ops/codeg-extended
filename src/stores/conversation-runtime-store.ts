@@ -3357,18 +3357,26 @@ function cancelUnseenTurnResync(conversationId: number): void {
 }
 
 /**
- * Whether a fresh read of the transcript holds the reply of a turn that ended
- * while this client was away. That reply is the last turn before any prompt the
- * backend reports as still running — a queued follow-up can start one the
- * moment the turn is promoted — and a user turn there means the agent has not
- * written the reply yet. Where the batch's start is known, the reply must also
- * lie inside the batch: a transcript that has not recorded this round at all
- * ends on the PREVIOUS round's reply, and loading it would take the round's
- * prompt and partial reply off the screen.
+ * Whether a fresh read of the transcript holds everything `promoted` (what the
+ * promotion left in `localTurns`, all of which the read replaces) stood for,
+ * down to the reply of the turn that ended while this client was away.
+ *
+ * That reply is the last turn before any prompt the backend reports as still
+ * running — a queued follow-up can start one the moment the turn is promoted —
+ * and a user turn there means the agent has not written it yet. A reply there
+ * is not enough on its own: a transcript that has not recorded the ended round
+ * at all ends on an EARLIER round's reply, and loading it would take this
+ * round's prompt and partial reply off the screen. So every prompt the batch
+ * holds must be on disk too: counted from the batch's start where this window
+ * contains it; otherwise (start unknown, or the window was reset past it) the
+ * last prompt on disk must be the ended round's own. A batch holding no prompt
+ * is a reply whose prompt was already history — a viewer that attached
+ * mid-turn — and the reply follows it.
  */
 function holdsUnseenTurnReply(
   detail: DbConversationDetail,
-  batchBoundaryIndex: number | null
+  batchBoundaryIndex: number | null,
+  promoted: MessageTurn[]
 ): boolean {
   const turns = detail.turns
   const inFlightId = detail.in_flight_user_turn_id ?? null
@@ -3376,12 +3384,26 @@ function holdsUnseenTurnReply(
     inFlightId === null
       ? turns.length
       : turns.findIndex((t) => t.role === "user" && t.id === inFlightId)
-  const reply = end > 0 ? turns[end - 1] : undefined
-  if (!reply || reply.role === "user") return false
-  return (
-    batchBoundaryIndex === null ||
-    turnsOffsetOf(detail) + end - 1 > batchBoundaryIndex
-  )
+  if (end <= 0 || turns[end - 1].role === "user") return false
+  const prompts = promoted.filter((t) => t.role === "user")
+  const endedPrompt = prompts[prompts.length - 1]
+  if (!endedPrompt) return true
+  const start =
+    batchBoundaryIndex === null
+      ? -1
+      : batchBoundaryIndex - turnsOffsetOf(detail)
+  if (start >= 0) {
+    let onDisk = 0
+    for (let i = start; i < end; i++) {
+      if (turns[i].role === "user") onDisk++
+    }
+    return onDisk >= prompts.length
+  }
+  for (let i = end - 1; i >= 0; i--) {
+    if (turns[i].role !== "user") continue
+    return userTurnContentKey(turns[i]) === userTurnContentKey(endedPrompt)
+  }
+  return false
 }
 
 function holdsExactlyTurns(
@@ -4560,21 +4582,22 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
 
   // Replace what `completeTurn` just promoted for a turn that ended while this
   // client was away (see `unseenTurnEnds`) with the reply read from the
-  // transcript. Commits only a read that holds that reply, so the screen never
-  // shows less than the head it already had; gives up (keeping that head, as
-  // before) when the transcript never catches up. Never sets `detailLoading`:
+  // transcript. Commits only a read that holds every round the promotion left,
+  // down to that reply (`holdsUnseenTurnReply`); gives up, keeping the head as
+  // before, when the transcript never gets there. Never sets `detailLoading`:
   // the head of the reply stays on screen while this reads.
   const resyncUnseenTurnEnd = (conversationId: number): void => {
     cancelUnseenTurnResync(conversationId)
     const session = get().byConversationId.get(conversationId)
     if (!session) return
 
-    // Everything the promotion left in `localTurns` — this reply's head and any
-    // earlier reply of the batch — is on disk once the reply is, and the read
-    // replaces all of it, so all of it goes. A turn of a NEW prompt (a queued
-    // follow-up sent the moment this one settled) is in `optimisticTurns` /
-    // `liveMessage`, and the commit keeps those.
-    const staleIds = new Set(session.localTurns.map((t) => t.id))
+    // Everything the promotion left in `localTurns` — this reply's head and the
+    // earlier rounds of the batch — is on disk once the read holds them all, and
+    // the read replaces all of it, so all of it goes. A turn of a NEW prompt (a
+    // queued follow-up sent the moment this one settled) is in
+    // `optimisticTurns` / `liveMessage`, and the commit keeps those.
+    const promoted = session.localTurns
+    const staleIds = new Set(promoted.map((t) => t.id))
     const batchBoundaryIndex = session.batchBoundaryIndex
 
     let cancelled = false
@@ -4642,7 +4665,7 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
           // A later read owns the detail; this one may predate it.
           if (
             !isLatestGeneration(conversationId, generation) ||
-            !holdsUnseenTurnReply(detail, batchBoundaryIndex)
+            !holdsUnseenTurnReply(detail, batchBoundaryIndex, promoted)
           ) {
             retry(n)
             return

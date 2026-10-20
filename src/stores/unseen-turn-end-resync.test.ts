@@ -247,6 +247,91 @@ describe("a turn that ended while this client was away", () => {
     expect(texts()).toEqual(["hi", "hello", "write it", FULL_REPLY])
   })
 
+  it("does not take a read that has an earlier round of the batch but not the one that ended", async () => {
+    // Round one ended while this client watched it and is still in
+    // `localTurns`; round two ended while it was away. The batch starts at 0.
+    seedStreamingOwner({
+      localTurns: [
+        userTurn("local-u1", "first"),
+        assistantTurn("local-a1", "reply one"),
+      ],
+      optimisticTurns: [userTurn("local-u2", "second")],
+      liveMessage: live("lm-2", "Two 1. "),
+    })
+    mockGet
+      .mockResolvedValueOnce(
+        detail([userTurn("p-u1", "first"), assistantTurn("p-a1", "reply one")])
+      )
+      .mockResolvedValueOnce(
+        detail([
+          userTurn("p-u1", "first"),
+          assistantTurn("p-a1", "reply one"),
+          userTurn("p-u2", "second"),
+          assistantTurn("p-a2", "Two 1. Two 2. END"),
+        ])
+      )
+
+    actions().markTurnEndUnseen(SESSION)
+    actions().completeTurn(CID)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Ends on a reply inside the batch, but round one's: taking it would drop
+    // round two's prompt and head.
+    expect(texts()).toEqual(["first", "reply one", "second", "Two 1. "])
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(texts()).toEqual([
+      "first",
+      "reply one",
+      "second",
+      "Two 1. Two 2. END",
+    ])
+  })
+
+  it("takes the reply of a viewer that attached mid-turn, whose prompt was already history", async () => {
+    // The prompt was on disk when this viewer attached, so its batch starts
+    // AFTER it (index 1) and holds the reply alone.
+    seedStreamingOwner({
+      detail: detail([userTurn("p-u1", "write it")], "p-u1"),
+      batchBoundaryIndex: 1,
+      optimisticTurns: [],
+      syncState: "idle",
+    })
+    mockGet.mockResolvedValue(persisted())
+
+    actions().markTurnEndUnseen(SESSION)
+    actions().completeTurn(CID)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(texts()).toEqual(["write it", FULL_REPLY])
+    expect(mockGet).toHaveBeenCalledTimes(1)
+  })
+
+  it("with no batch start known, waits for the ended round's own prompt", async () => {
+    seedStreamingOwner({ batchBoundaryIndex: null })
+    mockGet
+      // An older round's reply ends this read: not the round that ended.
+      .mockResolvedValueOnce(
+        detail([userTurn("p-u0", "hi"), assistantTurn("p-a0", "hello")])
+      )
+      .mockResolvedValueOnce(
+        detail([
+          userTurn("p-u0", "hi"),
+          assistantTurn("p-a0", "hello"),
+          userTurn("p-u1", "write it"),
+          assistantTurn("p-a1", FULL_REPLY),
+        ])
+      )
+
+    actions().markTurnEndUnseen(SESSION)
+    actions().completeTurn(CID)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(texts()).toEqual(["write it", "Line 1. Line 2. "])
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(texts()).toEqual(["hi", "hello", "write it", FULL_REPLY])
+  })
+
   it("keeps the head when the transcript never catches up", async () => {
     seedStreamingOwner()
     mockGet.mockResolvedValue(detail([userTurn("p-u1", "write it")]))
