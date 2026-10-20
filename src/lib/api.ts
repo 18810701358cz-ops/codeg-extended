@@ -6,7 +6,11 @@ import {
   isRemoteDesktopMode,
   notifyRemoteDesktopUnauthorized,
 } from "./transport"
-import { getCodegToken } from "./transport/web-auth"
+import {
+  codegAuthHeaders,
+  getCodegToken,
+  unauthorizedSource,
+} from "./transport/web-auth"
 import { notifyWebUnauthorized } from "./transport/web-connection-store"
 import { getCurrentEffectiveAppLocale } from "./i18n"
 import {
@@ -4390,11 +4394,13 @@ export async function uploadAttachment(
 
   const res = await fetch(`${window.location.origin}/api/upload_attachment`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: codegAuthHeaders(token),
     body: form,
   })
   if (res.status === 401) {
-    notifyWebUnauthorized()
+    notifyWebUnauthorized(
+      unauthorizedSource(res.headers.get("www-authenticate"))
+    )
     throw new Error("Unauthorized")
   }
   if (!res.ok) {
@@ -4484,9 +4490,7 @@ async function workspaceFileFetch(
   isMultipart: boolean
 ): Promise<Response> {
   const token = getCodegToken()
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-  }
+  const headers = codegAuthHeaders(token)
   if (!isMultipart) {
     headers["Content-Type"] = "application/json"
   }
@@ -4496,7 +4500,9 @@ async function workspaceFileFetch(
     body,
   })
   if (res.status === 401) {
-    notifyWebUnauthorized()
+    notifyWebUnauthorized(
+      unauthorizedSource(res.headers.get("www-authenticate"))
+    )
     throw new Error("Unauthorized")
   }
   if (!res.ok) {
@@ -4554,7 +4560,9 @@ export async function uploadWorkspaceFile(
     const token = getCodegToken()
     const xhr = new XMLHttpRequest()
     xhr.open("POST", `${window.location.origin}/api/upload_workspace_file`)
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`)
+    for (const [name, value] of Object.entries(codegAuthHeaders(token))) {
+      xhr.setRequestHeader(name, value)
+    }
 
     if (args.onProgress) {
       const onProgress = args.onProgress
@@ -4567,7 +4575,9 @@ export async function uploadWorkspaceFile(
 
     xhr.onload = () => {
       if (xhr.status === 401) {
-        notifyWebUnauthorized()
+        notifyWebUnauthorized(
+          unauthorizedSource(xhr.getResponseHeader("www-authenticate"))
+        )
         reject(new Error("Unauthorized"))
         return
       }
@@ -5893,7 +5903,9 @@ export async function uploadBackupWeb(
     const token = getCodegToken()
     const xhr = new XMLHttpRequest()
     xhr.open("POST", `${window.location.origin}/api/backup_upload`)
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`)
+    for (const [name, value] of Object.entries(codegAuthHeaders(token))) {
+      xhr.setRequestHeader(name, value)
+    }
     if (onProgress) {
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) onProgress(event.loaded, event.total)
@@ -5901,7 +5913,9 @@ export async function uploadBackupWeb(
     }
     xhr.onload = () => {
       if (xhr.status === 401) {
-        notifyWebUnauthorized()
+        notifyWebUnauthorized(
+          unauthorizedSource(xhr.getResponseHeader("www-authenticate"))
+        )
         reject(new Error("Unauthorized"))
         return
       }

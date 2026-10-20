@@ -5385,6 +5385,8 @@
     "reconnectNow": "Jetzt neu verbinden",
     "sessionExpiredTitle": "Sitzung abgelaufen",
     "sessionExpiredDescription": "Deine Sitzung ist nicht mehr gültig. Bitte melde dich erneut an, um fortzufahren.",
+    "proxySignInTitle": "Anmeldung abgelaufen",
+    "proxySignInDescription": "Deine Anmeldung beim Proxy vor diesem Server ist abgelaufen. Lade die Seite neu, um dich erneut anzumelden; dein Zugriffstoken bleibt erhalten.",
     "goToLogin": "Zur Anmeldung",
     "versionChangedTitle": "Auf dem Server läuft jetzt Codeg {version}",
     "versionChangedDescription": "Diese Seite läuft noch mit {version}. Lade sie neu, um die Version des Servers zu verwenden.",

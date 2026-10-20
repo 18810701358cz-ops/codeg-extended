@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { isDesktop } from "@/lib/platform"
+import { codegAuthHeaders, unauthorizedSource } from "@/lib/transport/web-auth"
 
 export default function Page() {
   const router = useRouter()
@@ -22,7 +23,7 @@ export default function Page() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        ...codegAuthHeaders(token),
       },
       body: "{}",
     })
@@ -31,14 +32,18 @@ export default function Page() {
           router.replace("/workspace")
           return
         }
-        if (res.status === 401) {
+        if (
+          res.status === 401 &&
+          unauthorizedSource(res.headers.get("www-authenticate")) === "codeg"
+        ) {
           // Token genuinely rejected → clear it and re-authenticate.
           localStorage.removeItem("codeg_token")
           router.replace("/login")
           return
         }
-        // Server reachable but unhealthy (5xx / proxy error). Keep the token
-        // and enter the app; the in-app reconnect dialog handles recovery
+        // Server reachable but unhealthy (5xx / proxy error), or a proxy in
+        // front of Codeg refused (its own session expired). Keep the token
+        // and enter the app; the in-app connection dialog handles recovery
         // instead of bouncing a valid session to /login.
         router.replace("/workspace")
       })
