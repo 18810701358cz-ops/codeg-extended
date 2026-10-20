@@ -57,3 +57,22 @@ describe("root page token check", () => {
     expect(localStorage.getItem("codeg_token")).toBe("tok")
   })
 })
+
+describe("root page without a token", () => {
+  beforeEach(() => localStorage.removeItem("codeg_token"))
+
+  it("enters the workspace when a proxy in front of Codeg admits the browser", async () => {
+    fetchMock.mockResolvedValue(reply(200))
+    render(<Page />)
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/workspace")
+    )
+    expect(localStorage.getItem("codeg_proxy_auth")).toBe("1")
+  })
+
+  it("asks for the token when the server wants one", async () => {
+    fetchMock.mockResolvedValue(reply(401, 'Bearer realm="codeg"'))
+    render(<Page />)
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"))
+  })
+})

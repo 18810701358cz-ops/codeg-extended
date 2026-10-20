@@ -5386,7 +5386,7 @@
     "sessionExpiredTitle": "Session expired",
     "sessionExpiredDescription": "Your session is no longer valid. Please sign in again to continue.",
     "proxySignInTitle": "Sign-in expired",
-    "proxySignInDescription": "Your sign-in to the proxy in front of this server has expired. Reload the page to sign in again; your access token is kept.",
+    "proxySignInDescription": "Your sign-in to the proxy in front of this server has expired. Reload the page to sign in again.",
     "goToLogin": "Go to login",
     "versionChangedTitle": "The server is now running Codeg {version}",
     "versionChangedDescription": "This page is still on {version}. Reload it to use the server's version.",

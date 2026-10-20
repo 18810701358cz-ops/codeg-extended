@@ -5,6 +5,7 @@ pub mod compression;
 pub mod event_bridge;
 pub mod handlers;
 pub mod port_probe;
+pub mod proxy_auth;
 pub mod router;
 pub mod shutdown;
 pub mod socket_inherit;

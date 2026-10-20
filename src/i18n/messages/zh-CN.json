@@ -5386,7 +5386,7 @@
     "sessionExpiredTitle": "会话已过期",
     "sessionExpiredDescription": "登录状态已失效，请重新登录以继续。",
     "proxySignInTitle": "登录已过期",
-    "proxySignInDescription": "此服务器前置代理的登录已过期。请重新加载页面以再次登录；你的访问令牌会被保留。",
+    "proxySignInDescription": "此服务器前置代理的登录已过期。请重新加载页面以再次登录。",
     "goToLogin": "前往登录",
     "versionChangedTitle": "服务器已运行 Codeg {version}",
     "versionChangedDescription": "此页面仍是 {version}，刷新后即可使用服务器上的版本。",

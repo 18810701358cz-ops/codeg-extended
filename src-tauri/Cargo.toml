@@ -252,6 +252,9 @@ sha2 = "0.10"
 # HMAC-SHA256 over a forge webhook's body (GitHub / Gitea signatures) with a
 # constant-time check. Already in the lock tree as a transitive dependency.
 hmac = "0.12"
+# RS256 / ES256 signature checks for the opt-in proxy-JWT authentication
+# (`web/proxy_auth.rs`). Already in the lock tree through rustls.
+ring = "0.17"
 aes-gcm = { version = "0.10", features = ["stream"] }
 argon2 = "0.5"
 tempfile = "3"

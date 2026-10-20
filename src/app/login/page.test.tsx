@@ -42,10 +42,14 @@ function submit(token: string) {
 
 describe("login page", () => {
   it("asks a proxy for a 401 instead of a redirect", async () => {
-    fetchMock.mockResolvedValue(reply(200))
+    // The page first asks whether a proxy signed the browser in (no token);
+    // this server wants one. The form's request follows.
+    fetchMock
+      .mockResolvedValueOnce(reply(401, 'Bearer realm="codeg"'))
+      .mockResolvedValue(reply(200))
     submit("tok")
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalled())
-    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+    expect(fetchMock.mock.calls[1][1].headers).toMatchObject({
       Authorization: "Bearer tok",
       "X-Requested-With": "XMLHttpRequest",
     })
@@ -70,5 +74,20 @@ describe("login page", () => {
     expect(
       screen.queryByText("Invalid token. Please check and try again.")
     ).not.toBeInTheDocument()
+  })
+})
+
+describe("login page behind a proxy", () => {
+  it("goes straight to the workspace when the proxy already admits the browser", async () => {
+    fetchMock.mockResolvedValue(reply(200))
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <LoginPage />
+      </NextIntlClientProvider>
+    )
+    await vi.waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/workspace")
+    )
+    expect(localStorage.getItem("codeg_proxy_auth")).toBe("1")
   })
 })

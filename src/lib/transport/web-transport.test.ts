@@ -381,3 +381,127 @@ describe("WebTransport.call", () => {
     expect(proxied.getConnectionSnapshot()).toBe("proxyUnauthorized")
   })
 })
+
+describe("WebTransport signed in through a proxy (no token)", () => {
+  beforeEach(() => {
+    localStorage.removeItem("codeg_token")
+    localStorage.setItem("codeg_proxy_auth", "1")
+  })
+
+  it("opens the event socket without a token protocol", () => {
+    const t = new WebTransport("http://localhost")
+    t.eventStream()
+    expect(MockWebSocket.instances).toHaveLength(1)
+    expect(lastWs().protocols).toEqual(["codeg-events"])
+  })
+
+  it("calls the API without an Authorization header", async () => {
+    const t = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => "{}",
+    })
+    await t.call("list_things")
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.headers).not.toHaveProperty("Authorization")
+  })
+
+  it("probes health after a drop instead of declaring the session gone", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(fetchMock).toHaveBeenCalled()
+    expect(t.getConnectionSnapshot()).toBe("reconnecting")
+  })
+
+  it("treats any 401 as the proxy's: a reload is the only way back in", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(resp401())
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(t.getConnectionSnapshot()).toBe("proxyUnauthorized")
+  })
+})
+
+// A browser that opens the workspace directly (a bookmark, a restored tab)
+// holds neither a token nor the proxy mark, though a proxy in front of the
+// server may already vouch for it: HTTP calls then succeed without either,
+// so only asking the server can tell whether to open the event socket.
+describe("WebTransport opened without any credential", () => {
+  beforeEach(() => {
+    localStorage.removeItem("codeg_token")
+    localStorage.removeItem("codeg_proxy_auth")
+  })
+
+  it("asks the server, and opens the socket once a proxy admits the browser", async () => {
+    fetchMock.mockResolvedValue(ok200())
+    const t = new WebTransport("http://localhost")
+    const handler = vi.fn()
+    let resolved = false
+    const subscribed = t.subscribe("folders", handler).then(() => {
+      resolved = true
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe("/api/health")
+    expect(init.headers).not.toHaveProperty("Authorization")
+    expect(localStorage.getItem("codeg_proxy_auth")).toBe("1")
+    expect(MockWebSocket.instances).toHaveLength(1)
+    expect(lastWs().protocols).toEqual(["codeg-events"])
+
+    // subscribe() still resolves only once the server-side receiver is in.
+    lastWs().open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolved).toBe(false)
+    lastWs().ready()
+    await subscribed
+    expect(resolved).toBe(true)
+    lastWs().onmessage?.({
+      data: JSON.stringify({ channel: "folders", payload: 1 }),
+    })
+    expect(handler).toHaveBeenCalledWith(1)
+  })
+
+  it("changes nothing when the server wants a token, and asks only once", async () => {
+    fetchMock.mockResolvedValue(resp401())
+    const t = new WebTransport("http://localhost")
+    t.eventStream()
+    await vi.advanceTimersByTimeAsync(0)
+    await t.subscribe("folders", () => {})
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(MockWebSocket.instances).toHaveLength(0)
+    // No dialog: on the login page there is nothing to sign back in to.
+    expect(t.getConnectionSnapshot()).toBe("connected")
+    expect(localStorage.getItem("codeg_proxy_auth")).toBeNull()
+  })
+
+  it("asks again, quietly, while the server cannot be reached", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValue(ok200())
+    const t = new WebTransport("http://localhost")
+    t.eventStream()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(MockWebSocket.instances).toHaveLength(0)
+    expect(t.getConnectionSnapshot()).toBe("connected")
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(MockWebSocket.instances).toHaveLength(1)
+  })
+
+  it("stops asking once destroyed", async () => {
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"))
+    const t = new WebTransport("http://localhost")
+    t.eventStream()
+    await vi.advanceTimersByTimeAsync(0)
+    t.destroy()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
