@@ -6968,13 +6968,21 @@ mod tests {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
-    /// Point the repository at a pre-commit hook running `script`, whatever
-    /// hooks path the user's own config names: the repository's setting wins.
+    /// What the hook `refusing_hook` installs writes to stderr as it refuses.
+    const HOOK_REFUSAL: &str = "refused by the test pre-commit hook";
+
+    /// Point the repository at a pre-commit hook that runs `script` and then
+    /// refuses the commit, whatever hooks path the user's own config names:
+    /// the repository's setting wins.
     fn refusing_hook(root: &std::path::Path, script: &str) {
         let hooks = root.join(".test-hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let hook = hooks.join("pre-commit");
-        std::fs::write(&hook, format!("#!/bin/sh\n{script}\nexit 1\n")).unwrap();
+        std::fs::write(
+            &hook,
+            format!("#!/bin/sh\n{script}\necho '{HOOK_REFUSAL}' >&2\nexit 1\n"),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -6983,10 +6991,17 @@ mod tests {
         git_run(root, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
     }
 
-    async fn commit_files(path: &std::path::Path, files: &[&str]) -> bool {
+    /// Commit `files` as the app does and return git's stderr from the
+    /// refusal. `git_commit_core` runs git with this process's environment,
+    /// not `git_run`'s, and git looks for an author before it runs pre-commit:
+    /// without one in the repository's own config, a machine that has none
+    /// configured (a CI runner) would refuse every commit before the hook ran.
+    async fn refused_commit(path: &std::path::Path, files: &[&str]) -> String {
+        git_run(path, &["config", "user.name", "t"]);
+        git_run(path, &["config", "user.email", "t@example.com"]);
         let db = fresh_in_memory_db().await;
         let files: Vec<String> = files.iter().map(|f| f.to_string()).collect();
-        git_commit_core(
+        match git_commit_core(
             &EventEmitter::Noop,
             None,
             &db.conn,
@@ -6995,7 +7010,10 @@ mod tests {
             &files,
         )
         .await
-        .is_ok()
+        {
+            Ok(_) => panic!("the commit went through"),
+            Err(err) => err.detail.unwrap_or(err.message),
+        }
     }
 
     /// A commit refused after its `git add` gives back the files that add
@@ -7027,7 +7045,8 @@ mod tests {
             "staged.txt",
             "tracked.txt",
         ];
-        assert!(!commit_files(root, &files).await, "the hook refuses it");
+        let refusal = refused_commit(root, &files).await;
+        assert!(refusal.contains(HOOK_REFUSAL), "{refusal}");
 
         let status = git_capture(root, &["status", "--porcelain=v1", "-uall"]);
         let lines: Vec<&str> = status.lines().collect();
@@ -7076,7 +7095,8 @@ mod tests {
         std::fs::write(folder.join("src/new.txt"), "new\n").unwrap();
         refusing_hook(root, ":");
 
-        assert!(!commit_files(&folder, &["src/new.txt"]).await);
+        let refusal = refused_commit(&folder, &["src/new.txt"]).await;
+        assert!(refusal.contains(HOOK_REFUSAL), "{refusal}");
         let status = git_capture(root, &["status", "--porcelain=v1", "-uall"]);
         assert!(
             status.lines().any(|l| l == "?? pkg/src/new.txt"),
