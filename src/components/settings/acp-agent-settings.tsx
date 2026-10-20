@@ -274,6 +274,11 @@ interface AgentDraft {
   grokCustomApiKey: string
   grokCustomApiBackend: string
   grokCustomContextWindow: string
+  // [model.<id>].reasoning_efforts levels (see toggleGrokReasoningEffort for
+  // how the chips edit them), and the list as read when the draft was built:
+  // the levels are sent only once the chips moved off it.
+  grokCustomReasoningEfforts: string[]
+  grokCustomReasoningEffortsBaseline: string[]
   grokAutoCompactThreshold: string
   openCodeAuthJsonText: string
   openClawGatewayUrl: string
@@ -738,6 +743,54 @@ const GROK_UNSET = "__grok_unset__"
  * what Grok's own build models use; a BYO OpenAI-compatible proxy would pick
  * `chat_completions`, an Anthropic-format endpoint `messages`. */
 const GROK_DEFAULT_API_BACKEND = "responses"
+
+/**
+ * Reasoning-effort levels offered as chips for a Grok custom model's
+ * `reasoning_efforts`. Each is one of Grok's canonical levels and reaches the
+ * provider exactly as written. Unlike Kimi there is no free-text level: Grok
+ * rejects an unknown one, and drops the model's WHOLE list with it (verified
+ * against 1.0.62). `none` is left out because next to real levels it reads as
+ * "declare none"; a hand-written one still shows as an extra chip.
+ */
+export const GROK_REASONING_EFFORT_LEVELS = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]
+
+/** The chips to render: the canonical levels plus any other level the draft
+ * holds (hand-written in config.toml), so it stays visible and removable
+ * instead of silently riding along. */
+export function grokReasoningEffortChoices(levels: string[]): string[] {
+  const extra = levels.filter(
+    (level, index) =>
+      !GROK_REASONING_EFFORT_LEVELS.includes(level) &&
+      levels.indexOf(level) === index
+  )
+  return [...GROK_REASONING_EFFORT_LEVELS, ...extra]
+}
+
+/** Whether two level lists are the same, entry for entry. */
+function sameGrokReasoningEfforts(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((level, i) => level === b[i])
+}
+
+/** Toggle one chip. Turning a level off drops every copy of it; turning one on
+ * rebuilds the list in chip order (low→high, extras last), so the written list
+ * reads like Grok's own — and its first level is where a session starts when
+ * no default reasoning effort is set. */
+export function toggleGrokReasoningEffort(
+  levels: string[],
+  level: string
+): string[] {
+  if (levels.includes(level)) return levels.filter((l) => l !== level)
+  return grokReasoningEffortChoices(levels).filter(
+    (l) => l === level || levels.includes(l)
+  )
+}
 
 /** Grok's real credential env var (mirrors the backend `agent_env_keys(Grok)`
  * and `importantEnvKeysByAgent`). */
@@ -3337,6 +3390,8 @@ export function buildGrokStructuredConfig(draft: {
   grokCustomApiKey: string
   grokCustomApiBackend: string
   grokCustomContextWindow: string
+  grokCustomReasoningEfforts: string[]
+  grokCustomReasoningEffortsBaseline: string[]
   grokAutoCompactThreshold: string
 }): GrokStructuredConfig {
   // The custom-model group applies only in the `custom` auth method; the
@@ -3370,6 +3425,19 @@ export function buildGrokStructuredConfig(draft: {
     customContextWindow: modelId
       ? positiveInt(draft.grokCustomContextWindow)
       : null,
+    // Only once the chips moved off the list they were read as (an empty list
+    // then removes the key). Otherwise null — "leave it as it is" — like the
+    // Codex sandbox patch: the raw editor's text is the merge base and the
+    // structured values land on top, so re-sending what was read would revert
+    // levels the user typed there.
+    customReasoningEfforts:
+      modelId &&
+      !sameGrokReasoningEfforts(
+        draft.grokCustomReasoningEfforts,
+        draft.grokCustomReasoningEffortsBaseline
+      )
+        ? draft.grokCustomReasoningEfforts
+        : null,
     // Compaction is session-global, independent of the custom model.
     autoCompactThresholdPercent: percent(draft.grokAutoCompactThreshold),
   }
@@ -3393,6 +3461,8 @@ export function buildGrokSaveOptions(
     grokCustomApiKey: string
     grokCustomApiBackend: string
     grokCustomContextWindow: string
+    grokCustomReasoningEfforts: string[]
+    grokCustomReasoningEffortsBaseline: string[]
     grokAutoCompactThreshold: string
     grokConfigTomlText: string
   },
@@ -3904,6 +3974,10 @@ function buildAgentDraft(agent: AcpAgentInfo): AgentDraft {
       agent.grok_settings?.custom_context_window != null
         ? String(agent.grok_settings.custom_context_window)
         : "",
+    grokCustomReasoningEfforts:
+      agent.grok_settings?.custom_reasoning_efforts ?? [],
+    grokCustomReasoningEffortsBaseline:
+      agent.grok_settings?.custom_reasoning_efforts ?? [],
     grokAutoCompactThreshold:
       agent.grok_settings?.auto_compact_threshold_percent != null
         ? String(agent.grok_settings.auto_compact_threshold_percent)
@@ -5301,6 +5375,13 @@ export function AcpAgentSettings() {
                           options.grokStructured.customApiBackend,
                         custom_context_window:
                           options.grokStructured.customContextWindow,
+                        // null = levels left as they were.
+                        custom_reasoning_efforts: options.grokStructured
+                          .customModelId
+                          ? (options.grokStructured.customReasoningEfforts ??
+                            agent.grok_settings?.custom_reasoning_efforts ??
+                            [])
+                          : [],
                         auto_compact_threshold_percent:
                           options.grokStructured.autoCompactThresholdPercent,
                       }
@@ -11803,6 +11884,66 @@ base_url = "https://api.openai.com/v1"`}
                             {t("grok.customContextWindowHint")}
                           </p>
                         </div>
+
+                        {/* [model.<id>].reasoning_efforts — without levels from
+                            here or from Grok's own model catalog (it never asks
+                            the custom base_url), Grok reports no effort support
+                            and the composer has no effort selector for this
+                            model. */}
+                        <div className="space-y-1.5">
+                          <label
+                            id="grok-custom-reasoning-efforts-label"
+                            className="text-2xs text-muted-foreground"
+                          >
+                            {t("grok.customReasoningEffortsLabel")}
+                          </label>
+                          <div
+                            role="group"
+                            aria-labelledby="grok-custom-reasoning-efforts-label"
+                            className="flex flex-wrap gap-1.5"
+                          >
+                            {grokReasoningEffortChoices(
+                              selectedDraft.grokCustomReasoningEfforts
+                            ).map((level) => {
+                              const active =
+                                selectedDraft.grokCustomReasoningEfforts.includes(
+                                  level
+                                )
+                              return (
+                                <button
+                                  key={level}
+                                  type="button"
+                                  disabled={grokSaving}
+                                  onClick={() =>
+                                    updateSelectedDraft((current) => ({
+                                      ...current,
+                                      grokCustomReasoningEfforts:
+                                        toggleGrokReasoningEffort(
+                                          current.grokCustomReasoningEfforts,
+                                          level
+                                        ),
+                                    }))
+                                  }
+                                  aria-pressed={active}
+                                  className={cn(
+                                    "rounded-full border px-2 py-0.5 font-mono text-2xs transition-colors",
+                                    active
+                                      ? "border-primary/40 bg-primary/10 text-foreground"
+                                      : "border-border text-muted-foreground hover:bg-muted"
+                                  )}
+                                >
+                                  {level}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <p className="text-2xs text-muted-foreground">
+                            {selectedDraft.grokCustomReasoningEfforts.length ===
+                            0
+                              ? t("grok.customReasoningEffortsEmptyHint")
+                              : t("grok.customReasoningEffortsHint")}
+                          </p>
+                        </div>
                       </div>
                     ) : null}
 
@@ -11895,14 +12036,28 @@ base_url = "https://api.openai.com/v1"`}
                             // the API key is touched. buildGrokSaveOptions sends
                             // the raw text only when the user actually edited it
                             // (else the merge runs against fresh on-disk config).
+                            const grokSave = buildGrokSaveOptions(
+                              selectedDraft,
+                              selectedAgent.grok_config_toml
+                            )
                             await persistConfig(
                               selectedAgent.agent_type,
                               selectedDraft.configText,
-                              buildGrokSaveOptions(
-                                selectedDraft,
-                                selectedAgent.grok_config_toml
-                              )
+                              grokSave
                             )
+                            // The levels just written are what the chips now
+                            // start from, even if the re-read below fails:
+                            // moving them back to the old baseline would
+                            // otherwise send null and leave this list on disk.
+                            const writtenLevels =
+                              grokSave.grokStructured.customReasoningEfforts
+                            if (writtenLevels) {
+                              updateSelectedDraft((current) => ({
+                                ...current,
+                                grokCustomReasoningEffortsBaseline:
+                                  writtenLevels,
+                              }))
+                            }
                             // Independent second write (the API key lives in env).
                             // If it fails after config committed, report that
                             // partial outcome honestly rather than a blanket fail.

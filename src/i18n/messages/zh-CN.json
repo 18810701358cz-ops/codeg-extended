@@ -974,6 +974,9 @@
       "customApiKeyHint": "内联存储于 `[model.*].api_key`，仅作用于该端点。",
       "customContextWindowLabel": "上下文窗口（tokens）",
       "customContextWindowHint": "可选。用于自动压缩计时；留空则使用端点默认值。",
+      "customReasoningEffortsLabel": "可选推理级别",
+      "customReasoningEffortsEmptyHint": "未声明级别。除非 Grok 自己的模型列表里已有这个模型 ID 的描述，否则输入框不会为它显示推理级别选择器。选上你的端点支持的级别即可加上。",
+      "customReasoningEffortsHint": "写入 `[model.*].reasoning_efforts`。每个级别都会原样发送给你的端点，请只选它支持的。新会话从上方选择的「推理级别」开始；那里为「使用默认」时，从这里的第一个级别开始。",
       "autoCompactLabel": "自动压缩阈值（%）",
       "autoCompactHint": "当上下文使用率达到该百分比时压缩对话（Grok 默认 85）。写入 `[session]`。"
     },

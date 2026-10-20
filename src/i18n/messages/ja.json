@@ -974,6 +974,9 @@
       "customApiKeyHint": "`[model.*].api_key` にインラインで保存され、このエンドポイントにのみ適用されます。",
       "customContextWindowLabel": "コンテキストウィンドウ（トークン）",
       "customContextWindowHint": "任意。自動圧縮のタイミングに使われます。空欄の場合はエンドポイントの既定値を使用します。",
+      "customReasoningEffortsLabel": "選択できる推論レベル",
+      "customReasoningEffortsEmptyHint": "レベルが宣言されていません。Grok 自身のモデル一覧にこのモデル ID の情報がない限り、入力欄にこのモデルの推論レベル選択は表示されません。エンドポイントが受け付けるレベルを選ぶと表示されます。",
+      "customReasoningEffortsHint": "`[model.*].reasoning_efforts` に書き込まれます。各レベルはそのままエンドポイントへ送られるので、受け付けるものだけを選んでください。新しいセッションは上で選んだ「推論レベル」から始まり、それが「デフォルトを使用」のときはここの最初のレベルから始まります。",
       "autoCompactLabel": "自動圧縮のしきい値（%）",
       "autoCompactHint": "コンテキスト使用率がこの割合に達したら会話を圧縮します（Grok の既定は 85）。`[session]` に書き込まれます。"
     },

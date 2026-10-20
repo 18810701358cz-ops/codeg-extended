@@ -4465,6 +4465,29 @@ fn parse_grok_settings(raw_toml: &str) -> GrokSettings {
             ),
             None => (None, None, None, None),
         };
+    let custom_reasoning_efforts = custom_model_id
+        .as_deref()
+        .and_then(|id| {
+            table
+                .as_ref()?
+                .get("model")?
+                .as_table()?
+                .get(id)?
+                .as_table()?
+                .get(GROK_REASONING_EFFORTS_KEY)?
+                .as_array()
+        })
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    toml::Value::String(level) => grok_effort_level(level),
+                    toml::Value::Table(t) => grok_effort_level(t.get("value")?.as_str()?),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let auto_compact_threshold_percent = table
         .as_ref()
@@ -4482,8 +4505,25 @@ fn parse_grok_settings(raw_toml: &str) -> GrokSettings {
         custom_api_key,
         custom_api_backend,
         custom_context_window,
+        custom_reasoning_efforts,
         auto_compact_threshold_percent,
     }
+}
+
+/// `[model.<id>].reasoning_efforts` — the per-model reasoning-effort levels
+/// (Grok's config reference: "Allowed reasoning-effort values for this model.
+/// When omitted, the menu comes from the endpoint's `/v1/models` row"). That
+/// endpoint is Grok's model catalog (xAI's, or `[endpoints].models_base_url`),
+/// matched by model id: grok 1.0.62 never fetches the list of a model's own
+/// `base_url`, so a custom model the catalog lacks has levels only from here.
+const GROK_REASONING_EFFORTS_KEY: &str = "reasoning_efforts";
+
+/// One `reasoning_efforts` level as the panel compares it: trimmed and
+/// lowercased, since Grok parses levels case-insensitively. `None` for an empty
+/// string, which no level can be.
+fn grok_effort_level(raw: &str) -> Option<String> {
+    let level = raw.trim().to_ascii_lowercase();
+    (!level.is_empty()).then_some(level)
 }
 
 /// grok's real `--permission-mode` enum (docs.x.ai / verified against the
@@ -4749,7 +4789,9 @@ fn apply_grok_structured_config(
 ///
 /// Within an active block `model = "<id>"` is always set and each empty sub-field
 /// OMITS its key (empty `base_url` ⇒ Grok's official endpoint). Unmanaged keys the
-/// user hand-added to the block are preserved; a rename starts a fresh block.
+/// user hand-added to the block are preserved; a rename starts a fresh block,
+/// into which a `reasoning_efforts` the panel left alone (`None`) moves along.
+/// How the levels are written otherwise: [`grok_tbl_set_reasoning_efforts`].
 fn apply_grok_custom_model(
     doc: &mut toml_edit::Document,
     settings: &GrokStructuredConfig,
@@ -4773,9 +4815,16 @@ fn apply_grok_custom_model(
 
     match target_id {
         Some(id) => {
-            // A rename removes the stale block before writing the new one.
+            // A rename removes the stale block before writing the new one. Levels
+            // the panel left alone (`None`) move to the new block instead of
+            // going with the old one.
+            let mut carried_efforts = None;
             if let Some(prev) = prev_id.as_deref() {
                 if prev != id {
+                    if settings.custom_reasoning_efforts.is_none() {
+                        carried_efforts =
+                            grok_model_block_value(doc, prev, GROK_REASONING_EFFORTS_KEY);
+                    }
                     remove_grok_model_block(doc, prev);
                 }
             }
@@ -4795,6 +4844,13 @@ fn apply_grok_custom_model(
                     "context_window",
                     settings.custom_context_window.filter(|n| *n > 0),
                 );
+                grok_tbl_set_reasoning_efforts(tbl, settings.custom_reasoning_efforts.as_deref());
+                // A block renamed onto keeps a list of its own.
+                if let Some(levels) = carried_efforts {
+                    if tbl.get(GROK_REASONING_EFFORTS_KEY).is_none() {
+                        tbl.insert(GROK_REASONING_EFFORTS_KEY, levels);
+                    }
+                }
             }
             // Make the managed model the default for new sessions.
             set_or_remove_grok_key(doc, "models", "default", Some(id))?;
@@ -4816,6 +4872,23 @@ fn apply_grok_custom_model(
         }
     }
     Ok(())
+}
+
+/// `[model.<id>].<key>` as a plain value item (an array of tables becomes an
+/// inline array), so it can move into another block whatever its layout.
+fn grok_model_block_value(
+    doc: &toml_edit::Document,
+    id: &str,
+    key: &str,
+) -> Option<toml_edit::Item> {
+    let item = doc
+        .get("model")?
+        .as_table_like()?
+        .get(id)?
+        .as_table_like()?
+        .get(key)?
+        .clone();
+    item.into_value().ok().map(toml_edit::Item::Value)
 }
 
 /// True when `[model.<id>]` exists as a table (standard or inline).
@@ -4891,6 +4964,86 @@ fn grok_tbl_set_int(tbl: &mut dyn toml_edit::TableLike, key: &str, value: Option
             tbl.remove(key);
         }
     }
+}
+
+/// Write the custom model's `reasoning_efforts` from the panel's level list.
+/// Without it a model Grok's catalog doesn't describe advertises no effort
+/// support over ACP, so the composer offers no effort selector for it.
+///
+///  - `None` leaves the key as it is (see `GrokStructuredConfig`; a rename
+///    carries it over in [`apply_grok_custom_model`]);
+///  - an empty list removes it, handing the levels back to Grok's catalog (see
+///    [`GROK_REASONING_EFFORTS_KEY`]);
+///  - a list that already matches the file level for level is left exactly as
+///    written, so a save that never touched the levels cannot reformat a
+///    hand-written `reasoning_efforts`;
+///  - otherwise the key becomes one inline array in which each level still
+///    listed keeps its existing entry verbatim (a table with its own `id` /
+///    `label` / `description` / `default` stays that table), and each new level
+///    is a bare string, which Grok gives its own id and label.
+///
+/// No per-entry `default` is written: `[models].default_reasoning_effort`, which
+/// the panel already sets, outranks it for the default model, and this managed
+/// model always is the default. Left unset, Grok starts on the first level.
+fn grok_tbl_set_reasoning_efforts(tbl: &mut dyn toml_edit::TableLike, levels: Option<&[String]>) {
+    let Some(levels) = levels else {
+        return;
+    };
+    let wanted: Vec<String> = levels
+        .iter()
+        .filter_map(|level| grok_effort_level(level))
+        .collect();
+    if wanted.is_empty() {
+        tbl.remove(GROK_REASONING_EFFORTS_KEY);
+        return;
+    }
+    // The current entries, each paired with the level it declares (`None` when
+    // unreadable — such an entry is never kept by a rewrite).
+    let mut existing: Vec<(Option<String>, Option<toml_edit::Value>)> =
+        match tbl.get(GROK_REASONING_EFFORTS_KEY) {
+            Some(toml_edit::Item::Value(toml_edit::Value::Array(entries))) => entries
+                .iter()
+                .map(|entry| (grok_edit_effort_level(entry), Some(entry.clone())))
+                .collect(),
+            Some(toml_edit::Item::ArrayOfTables(entries)) => entries
+                .iter()
+                .map(|entry| {
+                    let entry = toml_edit::Value::InlineTable(entry.clone().into_inline_table());
+                    (grok_edit_effort_level(&entry), Some(entry))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+    if existing
+        .iter()
+        .filter_map(|(level, _)| level.as_deref())
+        .eq(wanted.iter().map(String::as_str))
+    {
+        return;
+    }
+    let mut entries = toml_edit::Array::new();
+    for level in &wanted {
+        let kept = existing
+            .iter_mut()
+            .find(|(existing_level, entry)| {
+                entry.is_some() && existing_level.as_deref() == Some(level.as_str())
+            })
+            .and_then(|(_, entry)| entry.take());
+        match kept {
+            Some(entry) => entries.push(entry),
+            None => entries.push(level.as_str()),
+        }
+    }
+    tbl.insert(GROK_REASONING_EFFORTS_KEY, toml_edit::value(entries));
+}
+
+/// The level one `reasoning_efforts` entry declares, read the way Grok does: a
+/// bare string is its own level, a table declares its `value`.
+fn grok_edit_effort_level(entry: &toml_edit::Value) -> Option<String> {
+    if let Some(level) = entry.as_str() {
+        return grok_effort_level(level);
+    }
+    grok_effort_level(entry.as_inline_table()?.get("value")?.as_str()?)
 }
 
 /// `Some(trimmed)` only when non-empty after trimming, else `None` (so an empty
@@ -16093,6 +16246,257 @@ base_url = \"https://example.test/v1\"
         assert!(!merged.contains("[model."), "managed block removed");
         let back = parse_grok_settings(&merged);
         assert!(back.custom_model_id.is_none());
+    }
+
+    /// The `reasoning_efforts` value of `[model.<id>]` in `merged`, as TOML text.
+    fn grok_efforts_text(merged: &str, id: &str) -> Option<String> {
+        let doc = merged.parse::<toml_edit::Document>().unwrap();
+        doc.get("model")?
+            .as_table_like()?
+            .get(id)?
+            .as_table_like()?
+            .get("reasoning_efforts")
+            .map(|item| item.to_string().trim().to_string())
+    }
+
+    #[test]
+    fn parse_grok_settings_reads_reasoning_efforts_in_every_form() {
+        // Bare strings, inline tables (their `value`, not their `id`) and mixed
+        // case all read as the lowercased level Grok sends; an entry with no
+        // readable level is skipped.
+        let inline = "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n\
+                      reasoning_efforts = [\"Low\", { id = \"deep\", value = \"high\", label = \"Deep\" }, \
+                      { id = \"broken\" }, 7]\n";
+        assert_eq!(
+            parse_grok_settings(inline).custom_reasoning_efforts,
+            vec!["low", "high"]
+        );
+        // An array of tables reads the same.
+        let aot = "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n\n\
+                   [[model.foo.reasoning_efforts]]\nvalue = \"medium\"\n\n\
+                   [[model.foo.reasoning_efforts]]\nvalue = \"xhigh\"\ndefault = true\n";
+        assert_eq!(
+            parse_grok_settings(aot).custom_reasoning_efforts,
+            vec!["medium", "xhigh"]
+        );
+        // Absent key, or a block that is not the managed model ⇒ nothing declared.
+        for body in [
+            "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n",
+            "[models]\ndefault = \"grok-4.5\"\n\n[model.foo]\nreasoning_efforts = [\"low\"]\n",
+        ] {
+            let levels = parse_grok_settings(body).custom_reasoning_efforts;
+            assert!(levels.is_empty(), "{body}");
+        }
+    }
+
+    #[test]
+    fn apply_grok_reasoning_efforts_writes_bare_levels_and_round_trips() {
+        let merged = apply_grok_structured_config(
+            "",
+            &GrokStructuredConfig {
+                custom_model_id: Some("grok-4.7".into()),
+                custom_reasoning_efforts: Some(vec![
+                    "low".into(),
+                    "medium".into(),
+                    " High ".into(),
+                    "xhigh".into(),
+                    "".into(),
+                ]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // The shape verified against grok 1.0.62: bare levels make it advertise
+        // `supportsReasoningEffort` with exactly these `reasoningEfforts`.
+        assert_eq!(
+            grok_efforts_text(&merged, "grok-4.7").as_deref(),
+            Some("[\"low\", \"medium\", \"high\", \"xhigh\"]")
+        );
+        assert_eq!(
+            parse_grok_settings(&merged).custom_reasoning_efforts,
+            vec!["low", "medium", "high", "xhigh"]
+        );
+    }
+
+    #[test]
+    fn apply_grok_reasoning_efforts_none_leaves_a_hand_written_list() {
+        // No levels sent — the panel's chips were untouched, or the client
+        // predates the field: the hand-written list must survive, even though
+        // every other field is managed.
+        let base = "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n\
+                    reasoning_efforts = [{ id = \"deep\", value = \"high\", label = \"Deep\" }]\n";
+        let merged = apply_grok_structured_config(
+            base,
+            &GrokStructuredConfig {
+                custom_model_id: Some("foo".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(merged.contains(
+            "reasoning_efforts = [{ id = \"deep\", value = \"high\", label = \"Deep\" }]"
+        ));
+    }
+
+    #[test]
+    fn apply_grok_reasoning_efforts_unchanged_list_is_left_as_written() {
+        // Saving other fields sends the levels the panel read back. Matching the
+        // file (case-insensitively, skipping unreadable entries) leaves the
+        // user's layout, comments and extra fields alone — in both TOML forms.
+        let inline = "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n\
+                      reasoning_efforts = [\n  \"Low\", # cheap\n  { value = \"high\", default = true },\n  { id = \"broken\" },\n]\n";
+        let aot = "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n\n\
+                   [[model.foo.reasoning_efforts]]\nvalue = \"low\" # cheap\n\n\
+                   [[model.foo.reasoning_efforts]]\nvalue = \"high\"\ndefault = true\n";
+        for base in [inline, aot] {
+            let merged = apply_grok_structured_config(
+                base,
+                &GrokStructuredConfig {
+                    custom_model_id: Some("foo".into()),
+                    custom_base_url: Some("https://gw/v1".into()),
+                    custom_reasoning_efforts: Some(vec!["low".into(), "high".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            // Untouched: the comment and the per-entry default are still there.
+            assert!(merged.contains("# cheap"), "{merged}");
+            assert!(merged.contains("default = true"), "{merged}");
+            assert_eq!(
+                parse_grok_settings(&merged).custom_base_url.as_deref(),
+                Some("https://gw/v1")
+            );
+        }
+    }
+
+    #[test]
+    fn apply_grok_reasoning_efforts_change_keeps_the_entries_still_listed() {
+        // A changed list keeps each surviving level's own entry (its id, label
+        // and default stay), adds new levels as bare strings, drops the removed
+        // ones — including an AoT, which becomes one inline array.
+        let inline = "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n\
+                      reasoning_efforts = [\"low\", { id = \"deep\", value = \"high\", label = \"Deep\" }, \"xhigh\"]\n";
+        let aot = "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n\n\
+                   [[model.foo.reasoning_efforts]]\nvalue = \"low\"\n\n\
+                   [[model.foo.reasoning_efforts]]\nid = \"deep\"\nvalue = \"high\"\nlabel = \"Deep\"\n\n\
+                   [[model.foo.reasoning_efforts]]\nvalue = \"xhigh\"\n";
+        for (base, kept_low) in [(inline, "\"low\""), (aot, "{ value = \"low\" }")] {
+            let merged = apply_grok_structured_config(
+                base,
+                &GrokStructuredConfig {
+                    custom_model_id: Some("foo".into()),
+                    custom_reasoning_efforts: Some(vec![
+                        "low".into(),
+                        "medium".into(),
+                        "high".into(),
+                    ]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                grok_efforts_text(&merged, "foo"),
+                Some(format!(
+                    "[{kept_low}, \"medium\", {{ id = \"deep\", value = \"high\", label = \"Deep\" }}]"
+                )),
+                "{merged}"
+            );
+            assert!(!merged.contains("[[model.foo.reasoning_efforts]]"));
+            assert_eq!(
+                parse_grok_settings(&merged).custom_reasoning_efforts,
+                vec!["low", "medium", "high"]
+            );
+        }
+    }
+
+    #[test]
+    fn apply_grok_reasoning_efforts_empty_hands_levels_back_to_the_endpoint() {
+        let base = "[models]\ndefault = \"foo\"\n\n[model.foo]\nmodel = \"foo\"\n\
+                    reasoning_efforts = [\"low\", \"high\"]\n";
+        let merged = apply_grok_structured_config(
+            base,
+            &GrokStructuredConfig {
+                custom_model_id: Some("foo".into()),
+                custom_reasoning_efforts: Some(vec!["  ".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!merged.contains("reasoning_efforts"), "{merged}");
+        assert_eq!(
+            parse_grok_settings(&merged).custom_model_id.as_deref(),
+            Some("foo")
+        );
+    }
+
+    #[test]
+    fn apply_grok_reasoning_efforts_follow_a_rename() {
+        // A rename starts a fresh block; the levels the panel holds land in it.
+        let base = "[models]\ndefault = \"old\"\n\n[model.old]\nmodel = \"old\"\n\
+                    reasoning_efforts = [\"low\", \"high\"]\n";
+        let merged = apply_grok_structured_config(
+            base,
+            &GrokStructuredConfig {
+                custom_model_id: Some("new".into()),
+                custom_reasoning_efforts: Some(vec!["low".into(), "high".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!merged.contains("old"), "{merged}");
+        let back = parse_grok_settings(&merged);
+        assert_eq!(back.custom_model_id.as_deref(), Some("new"));
+        assert_eq!(back.custom_reasoning_efforts, vec!["low", "high"]);
+    }
+
+    #[test]
+    fn apply_grok_reasoning_efforts_left_alone_move_with_a_rename() {
+        // The panel sends no levels while its chips are untouched; a rename must
+        // not drop the list with the old block. An array of tables arrives as
+        // one inline array, and a block renamed onto keeps a list of its own.
+        let rename = |base: &str| {
+            apply_grok_structured_config(
+                base,
+                &GrokStructuredConfig {
+                    custom_model_id: Some("new".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let inline = rename(
+            "[models]\ndefault = \"old\"\n\n[model.old]\nmodel = \"old\"\n\
+             reasoning_efforts = [\"low\", { id = \"deep\", value = \"high\" }]\n",
+        );
+        assert!(!inline.contains("old"), "{inline}");
+        assert_eq!(
+            grok_efforts_text(&inline, "new").as_deref(),
+            Some("[\"low\", { id = \"deep\", value = \"high\" }]")
+        );
+
+        let aot = rename(
+            "[models]\ndefault = \"old\"\n\n[model.old]\nmodel = \"old\"\n\n\
+             [[model.old.reasoning_efforts]]\nvalue = \"low\"\n\n\
+             [[model.old.reasoning_efforts]]\nvalue = \"xhigh\"\ndefault = true\n",
+        );
+        assert!(!aot.contains("[[model."), "{aot}");
+        assert_eq!(
+            grok_efforts_text(&aot, "new").as_deref(),
+            Some("[{ value = \"low\" }, { value = \"xhigh\", default = true }]")
+        );
+        assert_eq!(
+            parse_grok_settings(&aot).custom_reasoning_efforts,
+            vec!["low", "xhigh"]
+        );
+
+        let onto = rename(
+            "[models]\ndefault = \"old\"\n\n[model.old]\nreasoning_efforts = [\"low\"]\n\n\
+             [model.new]\nreasoning_efforts = [\"max\"]\n",
+        );
+        assert_eq!(
+            parse_grok_settings(&onto).custom_reasoning_efforts,
+            vec!["max"]
+        );
     }
 
     #[test]

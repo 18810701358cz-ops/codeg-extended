@@ -31749,6 +31749,91 @@ mod tests {
     }
 
     #[test]
+    fn grok_custom_model_effort_selector_follows_its_declared_levels() {
+        // #993, both `session/new` replies captured from grok 1.0.62 for a
+        // custom `[model."grok-4.7"]` whose endpoint lists no levels: before and
+        // after the settings panel wrote `reasoning_efforts = ["low", "medium",
+        // "high", "xhigh"]` (with `[models].default_reasoning_effort = "high"`).
+        let session = |custom_meta: serde_json::Value, effort_rows: serde_json::Value| {
+            let mut rows = vec![
+                serde_json::json!({"id": "grok-4.5", "category": "model", "label": "Grok 4.5", "selected": false}),
+                serde_json::json!({"id": "grok-4.7", "category": "model", "label": "Grok 4.7 (custom endpoint)", "selected": true}),
+            ];
+            rows.extend(effort_rows.as_array().cloned().unwrap_or_default());
+            let meta: serde_json::Map<String, serde_json::Value> = serde_json::from_value(
+                serde_json::json!({"x.ai/sessionConfig": {"options": rows}}),
+            )
+            .unwrap();
+            let models = serde_json::json!({
+                "currentModelId": "grok-4.7",
+                "availableModels": [{
+                    "modelId": "grok-4.7",
+                    "name": "Grok 4.7 (custom endpoint)",
+                    "_meta": custom_meta
+                }]
+            });
+            synthesize_grok_config_options(Some(&meta), &parse_grok_model_specs(Some(&models)))
+                .expect("synthesize")
+        };
+
+        let before = session(
+            serde_json::json!({"totalContextTokens": 500000, "agentType": "grok-build-plan"}),
+            serde_json::json!([]),
+        );
+        assert!(
+            before.iter().all(|o| o.id != GROK_EFFORT_OPTION_ID),
+            "no declared levels ⇒ no effort selector"
+        );
+
+        let level = |id: &str, label: &str| -> serde_json::Value {
+            serde_json::json!({"id": id, "value": id, "label": label, "description": null})
+        };
+        let after = session(
+            serde_json::json!({
+                "totalContextTokens": 500000,
+                "agentType": "grok-build-plan",
+                "supportsReasoningEffort": true,
+                "reasoningEffort": "high",
+                "reasoningEfforts": [
+                    level("low", "Low"),
+                    level("medium", "Medium"),
+                    level("high", "High"),
+                    level("xhigh", "X-High")
+                ]
+            }),
+            serde_json::json!([
+                {"id": "low", "category": "mode", "label": "Low", "selected": false},
+                {"id": "medium", "category": "mode", "label": "Medium", "selected": false},
+                {"id": "high", "category": "mode", "label": "High", "selected": true},
+                {"id": "xhigh", "category": "mode", "label": "X-High", "selected": false}
+            ]),
+        );
+        let effort = after
+            .iter()
+            .find(|o| o.id == GROK_EFFORT_OPTION_ID)
+            .expect("declared levels ⇒ an effort selector");
+        let sel = expect_select(&effort.kind);
+        assert_eq!(sel.current_value, "high");
+        let rows: Vec<(&str, &str)> = sel
+            .options
+            .iter()
+            .map(|o| (o.value.as_str(), o.name.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("low", "Low"),
+                ("medium", "Medium"),
+                ("high", "High"),
+                ("xhigh", "Max")
+            ]
+        );
+        // Grok sends `description: null` for declared levels; every row still
+        // gets the canonical sub-text.
+        assert!(sel.options.iter().all(|o| o.description.is_some()));
+    }
+
+    #[test]
     fn synthesize_grok_config_options_model_reactive_effort_for_4_5() {
         // Flat sessionConfig marks grok-4.5 current; per-model specs drive effort.
         let meta: serde_json::Map<String, serde_json::Value> = serde_json::from_value(
