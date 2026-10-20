@@ -3816,6 +3816,7 @@ export async function updateFolderCommand(
     command: command ?? null,
     sortOrder: sortOrder ?? null,
     runLocal: runLocal ?? null,
+    includeLocal: true,
   })
 }
 

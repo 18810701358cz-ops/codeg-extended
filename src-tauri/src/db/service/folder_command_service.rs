@@ -109,6 +109,15 @@ pub async fn create_many(
     Ok(())
 }
 
+/// Whether command `id` runs on the desktop's own machine; false when there is
+/// no such command.
+pub async fn is_run_local(conn: &DatabaseConnection, id: i32) -> Result<bool, DbError> {
+    Ok(folder_command::Entity::find_by_id(id)
+        .one(conn)
+        .await?
+        .is_some_and(|m| m.run_local))
+}
+
 pub async fn update(
     conn: &DatabaseConnection,
     id: i32,

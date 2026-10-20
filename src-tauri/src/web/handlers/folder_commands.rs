@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use axum::{extract::Extension, Json};
+use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 
 use crate::app_error::AppCommandError;
 use crate::app_state::AppState;
+use crate::db::error::DbError;
 use crate::db::service::folder_command_service;
 use crate::models::*;
 
@@ -38,6 +40,9 @@ pub struct UpdateFolderCommandParams {
     pub command: Option<String>,
     pub sort_order: Option<i32>,
     pub run_local: Option<bool>,
+    /// See [`visible_to_client`].
+    #[serde(default)]
+    pub include_local: bool,
 }
 
 #[derive(Deserialize)]
@@ -102,9 +107,23 @@ pub async fn update_folder_command(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<UpdateFolderCommandParams>,
 ) -> Result<Json<FolderCommandInfo>, AppCommandError> {
-    let db = &state.db;
-    let result = folder_command_service::update(
-        &db.conn,
+    let result = update_for_client(&state.db.conn, params)
+        .await
+        .map_err(AppCommandError::from)?;
+    Ok(Json(result))
+}
+
+async fn update_for_client(
+    conn: &DatabaseConnection,
+    params: UpdateFolderCommandParams,
+) -> Result<FolderCommandInfo, DbError> {
+    // A client that isn't shown a local command (see `visible_to_client`) can
+    // only hold its id from before it became one: to that client it is gone.
+    if !params.include_local && folder_command_service::is_run_local(conn, params.id).await? {
+        return Err(DbError::NotFound(format!("FolderCommand {}", params.id)));
+    }
+    folder_command_service::update(
+        conn,
         params.id,
         params.name,
         params.command,
@@ -112,8 +131,6 @@ pub async fn update_folder_command(
         params.run_local,
     )
     .await
-    .map_err(AppCommandError::from)?;
-    Ok(Json(result))
 }
 
 pub async fn delete_folder_command(
@@ -211,6 +228,43 @@ mod tests {
         assert!(!params.include_local);
         let shown = visible_to_client(vec![command(1, false), command(2, true)], false);
         assert_eq!(shown.iter().map(|c| c.id).collect::<Vec<_>>(), [1]);
+    }
+
+    #[tokio::test]
+    async fn a_client_that_does_not_know_local_commands_cannot_edit_one() {
+        use crate::db::test_helpers::{fresh_in_memory_db, seed_folder};
+
+        let db = fresh_in_memory_db().await;
+        let folder_id = seed_folder(&db, "/repo").await;
+        let local = folder_command_service::create(&db.conn, folder_id, "zed", "zed .", true)
+            .await
+            .unwrap();
+        let terminal =
+            folder_command_service::create(&db.conn, folder_id, "dev", "pnpm dev", false)
+                .await
+                .unwrap();
+        let rename = |id: i32, include_local: bool| -> UpdateFolderCommandParams {
+            serde_json::from_value(serde_json::json!({
+                "id": id,
+                "name": "renamed",
+                "includeLocal": include_local,
+            }))
+            .unwrap()
+        };
+
+        let refused = update_for_client(&db.conn, rename(local.id, false)).await;
+        assert!(matches!(refused, Err(DbError::NotFound(_))), "{refused:?}");
+        let renamed = update_for_client(&db.conn, rename(terminal.id, false))
+            .await
+            .unwrap();
+        assert_eq!(renamed.name, "renamed");
+        let renamed = update_for_client(&db.conn, rename(local.id, true))
+            .await
+            .unwrap();
+        assert_eq!(
+            (renamed.name.as_str(), renamed.run_local),
+            ("renamed", true)
+        );
     }
 
     #[test]

@@ -455,8 +455,12 @@ export function CommandManageDialog({
             await createFolderCommand(folderId, name, command, runLocal)
           )
           if (runLocal && !isLocalCommand(created)) {
-            // Take it back out, so the save adds nothing.
-            await deleteFolderCommand(created.id).catch(() => {})
+            // Take it back out, so the save adds nothing — or, when that
+            // fails too, show the copy the host kept.
+            await deleteFolderCommand(created.id).catch(() => {
+              setCommands((prev) => groupByScope([...prev, created]))
+              onChanged()
+            })
             throw notKept()
           }
           saved = created

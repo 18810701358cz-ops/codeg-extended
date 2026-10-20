@@ -238,6 +238,23 @@ describe("CommandManageDialog", () => {
     expect(screen.queryByText("zed .")).not.toBeInTheDocument()
   })
 
+  it("shows the copy an older host kept when taking it back fails", async () => {
+    h.create.mockResolvedValue(hostCommand(7, "zed", "zed ."))
+    h.remove.mockRejectedValue(new Error("host down"))
+    const { onChanged } = renderDialog()
+    await startNewCommand("zed", "zed .")
+    fireEvent.click(runLocalSwitch())
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(await screen.findByText(notKept)).toBeInTheDocument()
+    expect(h.remove).toHaveBeenCalledWith(7)
+    expect(
+      document.querySelector('[data-folder-command-id="7"]')
+    ).not.toBeNull()
+    expect(onChanged).toHaveBeenCalled()
+    // The form still holds what was asked for.
+    expect(runLocalSwitch()).toBeChecked()
+  })
+
   it("keeps this computer's command when an older host can't take it", async () => {
     createGlobalCommand("zed", "zed .", true)
     h.create.mockResolvedValue(hostCommand(7, "zed", "zed ."))
