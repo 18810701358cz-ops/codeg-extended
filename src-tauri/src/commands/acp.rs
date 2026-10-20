@@ -6018,6 +6018,45 @@ fn account_home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
+/// Read the launch's agent-directory `enabledModels` preference. Missing,
+/// malformed or empty settings leave the model selector unrestricted.
+///
+/// So does a workspace that sets its own: a trusted project's
+/// `.pi/settings.json` replaces the agent dir's list outright, and whether pi
+/// trusts the project is settled inside pi at startup (`trust.json`, an
+/// extension, `defaultProjectTrust` or a prompt). codeg cannot tell which list
+/// that pi runs with, and the wrong one would hide models it offers. A project
+/// file pi loads nothing from — unreadable, or JSON other than an object —
+/// leaves the agent dir's list in force, as in pi; one codeg cannot parse
+/// counts as setting its own, since pi's parser may still read it.
+pub(crate) fn pi_enabled_model_patterns_for_env(
+    runtime_env: &BTreeMap<String, String>,
+    workspace: &Path,
+) -> Option<Vec<String>> {
+    if let Ok(raw) = fs::read_to_string(workspace.join(".pi").join("settings.json")) {
+        match serde_json::from_str::<serde_json::Value>(without_bom(&raw)) {
+            Ok(serde_json::Value::Object(project)) if project.contains_key("enabledModels") => {
+                return None
+            }
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    let settings = read_json_object_or_empty(
+        &pi_agent_dir_in_workspace(runtime_env, workspace).join("settings.json"),
+    );
+    let patterns = settings
+        .get("enabledModels")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    (!patterns.is_empty()).then_some(patterns)
+}
+
 /// Pi's agent dir as the pi CHILD of a launch with `runtime_env` resolves it —
 /// before a relative value is anchored (see [`pi_agent_dir_in_workspace`]).
 ///
@@ -6068,15 +6107,17 @@ fn pi_agent_dir_in_workspace(runtime_env: &BTreeMap<String, String>, workspace: 
 
 /// The `<cwd>/.pi/` entries whose mere presence makes a project "trust-requiring"
 /// for pi. Mirrors pi's own `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`
-/// (`core/trust-manager.js`, verified against pi 0.80.2).
+/// (`core/trust-manager.js`, verified against pi 1.3.0, whose native MCP added
+/// `mcp.json`).
 ///
 /// This list is a mirror of another project's constant, so it can drift if pi
-/// adds a resource kind. It fails safe in both directions: under-detecting only
-/// means codeg stays quiet about resources pi would ignore anyway (pi's own
-/// non-interactive default is "don't load"), and over-detecting only costs one
-/// extra prompt. Neither direction can load a resource without the user's word.
-const PI_TRUST_REQUIRING_CONFIG_RESOURCES: [&str; 7] = [
+/// adds a resource kind, and the drift is not harmless. Over-detecting only
+/// costs one extra prompt, but a kind missing here lets a repository that ships
+/// only that kind past the launch gate under a grant nobody confirmed — and pi
+/// loads it, since the grant is in force.
+const PI_TRUST_REQUIRING_CONFIG_RESOURCES: [&str; 8] = [
     "settings.json",
+    "mcp.json",
     "extensions",
     "skills",
     "prompts",
@@ -6095,9 +6136,10 @@ pub struct PiProjectResource {
     pub kind: String,
     /// Whether loading this resource means executing repo-controlled code at pi
     /// startup, as opposed to feeding it repo-controlled text. `.pi/extensions`
-    /// are JS/TS modules whose top level runs immediately, and `.pi/settings.json`
-    /// can make pi install project packages — the approval UI must say so plainly
-    /// rather than describing all of these as "config".
+    /// are JS/TS modules whose top level runs immediately, `.pi/settings.json`
+    /// can make pi install project packages, and `.pi/mcp.json` names commands
+    /// pi starts as MCP servers — the approval UI must say so plainly rather
+    /// than describing all of these as "config".
     pub executes_code: bool,
 }
 
@@ -6139,8 +6181,9 @@ fn pi_project_trust_resources_with_home(cwd: &Path, home: &Path) -> Vec<PiProjec
                 path: path.to_string_lossy().to_string(),
                 kind: format!(".pi/{entry}"),
                 // Extensions are modules pi imports (top-level code runs); project
-                // settings can pull in and install project packages.
-                executes_code: matches!(entry, "extensions" | "settings.json"),
+                // settings can pull in and install project packages; a project
+                // MCP server is a command pi starts.
+                executes_code: matches!(entry, "extensions" | "settings.json" | "mcp.json"),
             });
         }
     }
@@ -6700,7 +6743,7 @@ fn pi_write_trust_decision_at(
     // and doesn't parse as a JSON object must NOT be rewritten from scratch.
     // Surface that rather than silently doing nothing, so the user can go fix it.
     let mut obj = match fs::read_to_string(path) {
-        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(without_bom(&text)) {
             Ok(serde_json::Value::Object(map)) => map,
             _ => {
                 return Err(AcpError::protocol(format!(
@@ -6808,14 +6851,21 @@ pub struct PiModelReasoningSpec {
 /// no picker will ever offer.
 const PI_THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
+/// `raw` past a leading UTF-8 byte-order mark, which pi strips from its files
+/// before parsing them and serde_json rejects.
+fn without_bom(raw: &str) -> &str {
+    raw.strip_prefix('\u{feff}').unwrap_or(raw)
+}
+
 /// Read a JSON file into an owned object map, returning an empty map when the
 /// file is absent, unreadable, or does not parse to a JSON object. Pi's native
 /// files are small and codeg-owned; corruption shouldn't abort a save (we
-/// re-author the managed keys and preserve whatever else parses).
+/// re-author the managed keys and preserve whatever else parses). A leading
+/// byte-order mark is not corruption: pi reads past it, and so does this.
 fn read_json_object_or_empty(path: &Path) -> serde_json::Map<String, serde_json::Value> {
     fs::read_to_string(path)
         .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(without_bom(&raw)).ok())
         .and_then(|value| match value {
             serde_json::Value::Object(map) => Some(map),
             _ => None,
@@ -16173,6 +16223,26 @@ base_url = \"https://example.test/v1\"
         assert_eq!(by_kind.get(".pi/prompts"), Some(&false));
     }
 
+    /// pi 1.x starts a trusted project's `.pi/mcp.json` servers, and a stdio
+    /// server is a command it runs: a repo shipping only that file is gated.
+    #[test]
+    fn pi_trust_gates_a_project_mcp_config_that_runs_commands() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join("ws");
+        touch(&ws.join(".pi").join("mcp.json"));
+
+        let resources = pi_project_trust_resources(&ws);
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].kind, ".pi/mcp.json");
+        assert!(resources[0].executes_code);
+
+        let agent_dir = tmp.path().join("agent");
+        let mut map = serde_json::Map::new();
+        map.insert(canonical_key(&ws), serde_json::Value::Bool(true));
+        write_json_object_pretty(&agent_dir.join("trust.json"), &map).unwrap();
+        assert!(launch_block_for(&agent_dir, &tmp.path().join("codeg-home"), &ws).is_some());
+    }
+
     /// A bare `.pi/` directory is not a project resource for pi, so codeg must not
     /// prompt about it (`hasTrustRequiringProjectResources` ignores it too).
     #[test]
@@ -16587,6 +16657,34 @@ base_url = \"https://example.test/v1\"
 
     /// `trust.json` holds decisions the user made inside pi. If codeg can't parse
     /// it, it must refuse loudly rather than rewrite the file from scratch.
+    /// pi reads `trust.json` past a byte-order mark, so a grant behind one is in
+    /// force for pi and must stop the launch here too.
+    #[test]
+    fn pi_launch_is_blocked_by_a_grant_behind_a_byte_order_mark() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (ws, agent_dir, home) = gated_workspace(tmp.path(), Some(true));
+        let trust = agent_dir.join("trust.json");
+        let text = fs::read_to_string(&trust).unwrap();
+        fs::write(&trust, format!("\u{feff}{text}")).unwrap();
+
+        assert!(launch_block_for(&agent_dir, &home, &ws).is_some());
+    }
+
+    #[test]
+    fn pi_set_project_trust_reads_past_a_byte_order_mark() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join("ws");
+        fs::create_dir_all(&ws).unwrap();
+        let trust = tmp.path().join("trust.json");
+        fs::write(&trust, "\u{feff}{\"/elsewhere\":false}").unwrap();
+
+        pi_write_trust_decision_at(&trust, &ws, Some(true)).unwrap();
+
+        let map = read_json_object_or_empty(&trust);
+        assert_eq!(map.get("/elsewhere"), Some(&serde_json::json!(false)));
+        assert_eq!(map.get(&canonical_key(&ws)), Some(&serde_json::json!(true)));
+    }
+
     #[test]
     fn pi_set_project_trust_never_clobbers_an_unparseable_file() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -17323,6 +17421,132 @@ echo {"id":"codeg-models","type":"response","command":"get_available_models","su
                 Some("xhigh".to_string())
             );
         });
+    }
+
+    #[test]
+    fn pi_enabled_model_patterns_read_from_the_launch_agent_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            tmp.path().join("settings.json"),
+            r#"{"enabledModels":["openai/*"," anthropic/claude-opus:high ",42,"  "]}"#,
+        )
+        .unwrap();
+        let env = BTreeMap::from([(
+            String::from("PI_CODING_AGENT_DIR"),
+            tmp.path().to_string_lossy().into_owned(),
+        )]);
+
+        assert_eq!(
+            pi_enabled_model_patterns_for_env(&env, tmp.path()),
+            Some(vec![
+                "openai/*".to_string(),
+                "anthropic/claude-opus:high".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn pi_enabled_model_patterns_treat_missing_or_empty_as_unscoped() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let env = BTreeMap::from([(
+            String::from("PI_CODING_AGENT_DIR"),
+            tmp.path().to_string_lossy().into_owned(),
+        )]);
+
+        assert_eq!(pi_enabled_model_patterns_for_env(&env, tmp.path()), None);
+
+        fs::write(tmp.path().join("settings.json"), r#"{"enabledModels":[]}"#).unwrap();
+        assert_eq!(pi_enabled_model_patterns_for_env(&env, tmp.path()), None);
+        fs::write(tmp.path().join("settings.json"), "invalid json").unwrap();
+        assert_eq!(pi_enabled_model_patterns_for_env(&env, tmp.path()), None);
+    }
+
+    #[test]
+    fn pi_enabled_model_patterns_resolve_relative_agent_dir_in_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let agent_dir = tmp.path().join("agent");
+        fs::create_dir(&agent_dir).unwrap();
+        fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"enabledModels":["openai/*"]}"#,
+        )
+        .unwrap();
+        let env = BTreeMap::from([("PI_CODING_AGENT_DIR".into(), "agent".into())]);
+
+        assert_eq!(
+            pi_enabled_model_patterns_for_env(&env, tmp.path()),
+            Some(vec!["openai/*".into()])
+        );
+    }
+
+    #[test]
+    fn pi_files_are_read_past_a_byte_order_mark() {
+        // pi strips a UTF-8 byte-order mark before parsing its files. Read as
+        // corrupt instead, the settings merge-write would replace every key
+        // the user had with codeg's three.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let settings = tmp.path().join("settings.json");
+        fs::write(
+            &settings,
+            "\u{feff}{\"enabledModels\":[\"openai/*\"],\"sessionDir\":\"/s\"}",
+        )
+        .unwrap();
+
+        let map = read_json_object_or_empty(&settings);
+        assert_eq!(map.get("sessionDir"), Some(&serde_json::json!("/s")));
+        let env = BTreeMap::from([(
+            String::from("PI_CODING_AGENT_DIR"),
+            tmp.path().to_string_lossy().into_owned(),
+        )]);
+        assert_eq!(
+            pi_enabled_model_patterns_for_env(&env, tmp.path()),
+            Some(vec!["openai/*".to_string()])
+        );
+    }
+
+    #[test]
+    fn pi_enabled_model_patterns_yield_to_a_project_that_sets_its_own() {
+        let agent_dir = tempfile::tempdir().expect("agent dir");
+        fs::write(
+            agent_dir.path().join("settings.json"),
+            r#"{"enabledModels":["openai/*"]}"#,
+        )
+        .unwrap();
+        let env = BTreeMap::from([(
+            String::from("PI_CODING_AGENT_DIR"),
+            agent_dir.path().to_string_lossy().into_owned(),
+        )]);
+        let workspace = tempfile::tempdir().expect("workspace");
+        let project = workspace.path().join(".pi");
+        fs::create_dir(&project).unwrap();
+        let global = Some(vec!["openai/*".to_string()]);
+
+        // A trusted project's list replaces the agent dir's — and an empty one
+        // unscopes pi — so whether pi trusts the project decides; codeg can't.
+        // A file codeg cannot parse might be one of those for pi's parser.
+        for own in [
+            r#"{"enabledModels":["anthropic/*"]}"#,
+            r#"{"enabledModels":[]}"#,
+            "\u{feff}{\"enabledModels\":[\"anthropic/*\"]}",
+            "not json",
+        ] {
+            fs::write(project.join("settings.json"), own).unwrap();
+            assert_eq!(
+                pi_enabled_model_patterns_for_env(&env, workspace.path()),
+                None,
+                "{own}"
+            );
+        }
+        // A project file without the key, or JSON pi loads nothing from,
+        // leaves the agent dir's list in force.
+        for other in [r#"{"theme":"dark"}"#, "[]", "null"] {
+            fs::write(project.join("settings.json"), other).unwrap();
+            assert_eq!(
+                pi_enabled_model_patterns_for_env(&env, workspace.path()),
+                global,
+                "{other}"
+            );
+        }
     }
 
     #[test]
