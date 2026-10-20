@@ -211,12 +211,12 @@ interface AgentDraft {
   codexAuthMode: CodexAuthMode
   codexModelProvider: string
   codexProviderOptions: string[]
+  /** `[model_providers.<active>].supports_websockets` — see
+   * {@link codexWebsocketSwitchApplies}. */
   codexSupportsWebsockets: boolean
-  codexSkills: boolean
   /** `[features].default_mode_request_user_input` — see
    * {@link CODEX_DEFAULT_MODE_REQUEST_USER_INPUT_KEY}. */
   codexDefaultModeRequestUserInput: boolean
-  codexServiceTierFast: boolean
   /** Sandbox / approval group — the thread defaults codex applies to turns it
    * starts itself (`/goal`, `/review`, `/compact`). Held as plain draft state
    * (not derived from `codexConfigTomlText`) and merged into config.toml
@@ -1895,10 +1895,7 @@ interface CodexTomlImportantValues {
   providerNames: string[]
   providerBaseUrls: Record<string, string>
   providerSupportsWebsockets: Record<string, boolean>
-  featureResponsesWebsocketsV2: boolean
-  featureSkills: boolean
   featureDefaultModeRequestUserInput: boolean
-  serviceTierFast: boolean
 }
 
 interface CodexImportantValues {
@@ -1908,12 +1905,54 @@ interface CodexImportantValues {
   modelProvider: string
   providerOptions: string[]
   supportsWebsockets: boolean
-  skills: boolean
   defaultModeRequestUserInput: boolean
-  serviceTierFast: boolean
 }
 
 const CODEX_DEFAULT_MODEL_PROVIDER = "codeg"
+
+/**
+ * Provider ids codex builds in (codex 0.160.1, `built_in_model_providers` in
+ * the `model-provider-info` crate); `openai` is the one an Official
+ * Subscription (ChatGPT login) session runs on. A `[model_providers.<id>]`
+ * table for one of them does not change it: `merge_configured_model_providers`
+ * keeps the built-in entry, except that the two Bedrock ids accept a few
+ * fields — and reject the whole config if any other field,
+ * `supports_websockets` included, is set.
+ */
+const CODEX_BUILT_IN_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  "openai",
+  "amazon-bedrock",
+  "amazon-bedrock-runtime",
+  "ollama",
+  "lmstudio",
+])
+
+/**
+ * Whether the panel's WebSocket switch means anything for this auth mode and
+ * active provider.
+ *
+ * Since codex 0.116.0 the Responses-over-WebSocket transport is decided by the
+ * active provider's `supports_websockets` alone (the `responses_websockets*`
+ * feature flags are `Stage::Removed` no-ops). The switch writes that key onto
+ * `[model_providers.<active>]`, which only a configured provider reads.
+ *
+ * Official Subscription runs on the built-in OpenAI provider, which already
+ * declares `supports_websockets: true` and cannot be overridden. Worse, the
+ * write path pins `model_provider` before it writes, so the switch used to
+ * move a subscription onto a `[model_providers.codeg]` with an empty
+ * `base_url` — after which every turn failed with "builder error". A
+ * hand-written `model_provider` naming another built-in provider is the same
+ * dead end (see {@link CODEX_BUILT_IN_PROVIDER_IDS}).
+ */
+export function codexWebsocketSwitchApplies(
+  authMode: CodexAuthMode,
+  activeProvider: string
+): boolean {
+  return (
+    authMode !== "chatgpt_subscription" &&
+    !CODEX_BUILT_IN_PROVIDER_IDS.has(activeProvider.trim())
+  )
+}
 
 /**
  * `[features]` flag that lets codex call its `request_user_input` tool in the
@@ -2288,19 +2327,18 @@ function extractCodexTomlImportantValues(
   const providerNames = new Set<string>()
   let model = ""
   let modelProvider = ""
-  let featureResponsesWebsocketsV2 = false
-  let featureSkills = false
   let featureDefaultModeRequestUserInput = false
-  let serviceTierFast = false
   let currentProviderSection: string | null = null
   let inFeaturesSection = false
   // Still above the first section header, i.e. in the implicit root table —
   // the only place a dotted `features.x` key actually means `[features].x`.
   let inRootTable = true
 
-  for (const rawLine of configTomlText.split(/\r?\n/)) {
+  const lines = configTomlText.split(/\r?\n/)
+  const inString = tomlLinesInsideMultilineString(lines)
+  for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim()
-    if (!line || line.startsWith("#")) continue
+    if (!line || line.startsWith("#") || inString[index]) continue
 
     // Section tracking goes through the same header predicate the writer uses,
     // so the two never disagree about where a table begins. A header carrying
@@ -2323,21 +2361,19 @@ function extractCodexTomlImportantValues(
     }
 
     const assignment = parseTomlStringAssignment(rawLine)
-    if (assignment) {
+    // Root table only, which is where the writers put these two. The same keys
+    // inside `[profiles.<name>]` apply to that profile alone, yet a later
+    // profile used to override the root value here. Every patch writes the
+    // model it reads back to the root, and the WebSocket switch and the API
+    // URL field write back the provider, so one edit copied the profile's
+    // values over the user's root keys.
+    if (assignment && inRootTable) {
       if (assignment.key === "model") {
         model = assignment.value
         continue
       }
       if (assignment.key === "model_provider") {
         modelProvider = assignment.value
-        continue
-      }
-      if (
-        !currentProviderSection &&
-        !inFeaturesSection &&
-        assignment.key === "service_tier"
-      ) {
-        serviceTierFast = assignment.value.toLowerCase() === "fast"
         continue
       }
     }
@@ -2351,17 +2387,6 @@ function extractCodexTomlImportantValues(
         providerSupportsWebsockets[currentProviderSection] =
           boolAssignment.value
         providerNames.add(currentProviderSection.trim())
-        continue
-      }
-      if (
-        inFeaturesSection &&
-        boolAssignment.key === "responses_websockets_v2"
-      ) {
-        featureResponsesWebsocketsV2 = boolAssignment.value
-        continue
-      }
-      if (inFeaturesSection && boolAssignment.key === "skills") {
-        featureSkills = boolAssignment.value
         continue
       }
       if (
@@ -2380,29 +2405,18 @@ function extractCodexTomlImportantValues(
         providerSupportsWebsockets[providerName] = boolAssignment.value
         continue
       }
-      // The three dotted `features.*` spellings below are ROOT-scoped on
-      // purpose. Inside `[model_providers.codeg]` the same text means
+      // The dotted `features.*` spelling is ROOT-scoped on purpose. Inside
+      // `[model_providers.codeg]` the same text means
       // `model_providers.codeg.features.…` — a key codex ignores — and the
       // writer only ever touches the root spelling. Reading a nested one would
-      // show a value no save could clear, and (for the websocket flag, which
-      // the writer re-derives on every patch) would promote a provider-local
-      // key into a global `[features]` flag behind the user's back.
-      if (inRootTable) {
-        if (boolAssignment.key === "features.responses_websockets_v2") {
-          featureResponsesWebsocketsV2 = boolAssignment.value
-          continue
-        }
-        if (boolAssignment.key === "features.skills") {
-          featureSkills = boolAssignment.value
-          continue
-        }
-        if (
-          boolAssignment.key ===
+      // show a value no save could clear.
+      if (
+        inRootTable &&
+        boolAssignment.key ===
           `features.${CODEX_DEFAULT_MODE_REQUEST_USER_INPUT_KEY}`
-        ) {
-          featureDefaultModeRequestUserInput = boolAssignment.value
-          continue
-        }
+      ) {
+        featureDefaultModeRequestUserInput = boolAssignment.value
+        continue
       }
     }
 
@@ -2448,10 +2462,7 @@ function extractCodexTomlImportantValues(
     providerNames: Array.from(providerNames),
     providerBaseUrls,
     providerSupportsWebsockets,
-    featureResponsesWebsocketsV2,
-    featureSkills,
     featureDefaultModeRequestUserInput,
-    serviceTierFast,
   }
 }
 
@@ -2538,11 +2549,12 @@ export function extractCodexImportantValues(
     : (toml.providerBaseUrls[CODEX_DEFAULT_MODEL_PROVIDER] ??
       toml.providerBaseUrls.openai ??
       "")
+  // The provider key alone, exactly as codex resolves it (`serde(default)`
+  // false). A leftover `[features].responses_websockets_v2` is NOT a
+  // fallback: that flag has been a no-op since codex 0.116.0, so reading it
+  // here would show the switch on while codex talks HTTPS.
   const providerSupportsWebsockets =
-    toml.providerSupportsWebsockets[activeProvider] ??
-    (activeProvider === CODEX_DEFAULT_MODEL_PROVIDER
-      ? toml.featureResponsesWebsocketsV2
-      : false)
+    toml.providerSupportsWebsockets[activeProvider] ?? false
   return {
     apiBaseUrl: providerBaseUrl,
     apiKey:
@@ -2560,14 +2572,8 @@ export function extractCodexImportantValues(
       toml.providerNames
     ),
     supportsWebsockets: providerSupportsWebsockets,
-    skills: toml.featureSkills,
     defaultModeRequestUserInput: toml.featureDefaultModeRequestUserInput,
-    serviceTierFast: toml.serviceTierFast,
   }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 /**
@@ -2593,16 +2599,86 @@ function tomlSectionHeaderName(rawLine: string): string | null {
   return match ? match[1].trim() : null
 }
 
+/**
+ * For each line, whether it begins inside a multi-line string — a `"""` or
+ * `'''` value opened on an earlier line — and so is string content rather than
+ * TOML structure. Exported for tests.
+ *
+ * Every line scanner in this file must skip such lines. codex's config.toml
+ * takes multi-line values (`developer_instructions`, `compact_prompt`), and a
+ * line inside one that looks like `[model_providers.x]` or `key = value` is
+ * neither a header nor an assignment. Treating it as one makes a writer edit
+ * the user's text, or delete a closing delimiter and break the document.
+ *
+ * A lexer, not a parser: it tracks basic and literal strings (single- and
+ * multi-line) and comments, which is all it takes to know where a multi-line
+ * string starts and ends.
+ */
+export function tomlLinesInsideMultilineString(lines: string[]): boolean[] {
+  const inside: boolean[] = []
+  let open: '"""' | "'''" | null = null
+  for (const line of lines) {
+    inside.push(open !== null)
+    let i = 0
+    while (i < line.length) {
+      if (open !== null) {
+        // A backslash escapes the next character in a basic string only.
+        if (open === '"""' && line[i] === "\\") {
+          i += 2
+          continue
+        }
+        if (line.startsWith(open, i)) {
+          // Up to two more quotes may sit just inside the closing delimiter.
+          let end = i + 3
+          for (let extra = 0; extra < 2 && line[end] === open[0]; extra += 1) {
+            end += 1
+          }
+          i = end
+          open = null
+          continue
+        }
+        i += 1
+        continue
+      }
+      const ch = line[i]
+      if (ch === "#") break
+      if (line.startsWith('"""', i) || line.startsWith("'''", i)) {
+        open = ch === '"' ? '"""' : "'''"
+        i += 3
+        continue
+      }
+      if (ch === '"') {
+        i += 1
+        while (i < line.length && line[i] !== '"') {
+          i += line[i] === "\\" ? 2 : 1
+        }
+        i += 1
+        continue
+      }
+      if (ch === "'") {
+        const end = line.indexOf("'", i + 1)
+        i = end < 0 ? line.length : end + 1
+        continue
+      }
+      i += 1
+    }
+  }
+  return inside
+}
+
 function findTomlRootEndIndex(lines: string[]): number {
+  const inString = tomlLinesInsideMultilineString(lines)
   for (let i = 0; i < lines.length; i += 1) {
-    if (isTomlSectionHeader(lines[i])) return i
+    if (!inString[i] && isTomlSectionHeader(lines[i])) return i
   }
   return lines.length
 }
 
 function findTomlRootAssignmentIndex(lines: string[], key: string): number {
   const rootEnd = findTomlRootEndIndex(lines)
+  const inString = tomlLinesInsideMultilineString(lines)
   for (let i = 0; i < rootEnd; i += 1) {
+    if (inString[i]) continue
     const assignmentKey = parseTomlAssignmentKey(lines[i])
     if (assignmentKey === key) return i
   }
@@ -2647,29 +2723,15 @@ function updateTomlRootStringKey(
   return lines.join("\n").trim()
 }
 
-function updateTomlRootBooleanKey(
-  configTomlText: string,
-  key: string,
-  value: boolean
-): string {
-  const lineText = `${key} = ${value ? "true" : "false"}`
-  const lines = configTomlText.split(/\r?\n/)
-  const assignmentIndex = findTomlRootAssignmentIndex(lines, key)
-  if (assignmentIndex >= 0) {
-    lines[assignmentIndex] = lineText
-  } else {
-    lines.splice(0, 0, lineText)
-  }
-  return lines.join("\n").trim()
-}
-
 function findTomlSectionRange(
   lines: string[],
   sectionName: string
 ): { start: number; end: number } | null {
+  const inString = tomlLinesInsideMultilineString(lines)
   let sectionStart = -1
   let sectionEnd = lines.length
   for (let i = 0; i < lines.length; i += 1) {
+    if (inString[i]) continue
     if (sectionStart < 0) {
       if (tomlSectionHeaderName(lines[i]) === sectionName) {
         sectionStart = i
@@ -2683,6 +2745,23 @@ function findTomlSectionRange(
   }
   if (sectionStart < 0) return null
   return { start: sectionStart, end: sectionEnd }
+}
+
+/**
+ * Index of the first line in `[start, end)` that assigns `key`, skipping
+ * string content (see {@link tomlLinesInsideMultilineString}); -1 if none.
+ */
+function findTomlKeyInRange(
+  lines: string[],
+  start: number,
+  end: number,
+  key: string
+): number {
+  const inString = tomlLinesInsideMultilineString(lines)
+  for (let i = start; i < end; i += 1) {
+    if (!inString[i] && parseTomlAssignmentKey(lines[i]) === key) return i
+  }
+  return -1
 }
 
 function removeTomlSection(
@@ -2723,12 +2802,12 @@ function stripRootDottedKey(
   key: string
 ): void {
   const dotted = `${sectionName}.${key}`
-  for (let i = 0; i < lines.length; i += 1) {
-    if (isTomlSectionHeader(lines[i])) return
-    if (parseTomlAssignmentKey(lines[i]) === dotted) {
-      lines.splice(i, 1)
-      i -= 1
-    }
+  for (
+    let index = findTomlRootAssignmentIndex(lines, dotted);
+    index >= 0;
+    index = findTomlRootAssignmentIndex(lines, dotted)
+  ) {
+    lines.splice(index, 1)
   }
 }
 
@@ -2745,9 +2824,11 @@ function lastRootDottedSiblingIndex(
   sectionName: string
 ): number {
   const prefix = `${sectionName}.`
+  const rootEnd = findTomlRootEndIndex(lines)
+  const inString = tomlLinesInsideMultilineString(lines)
   let last = -1
-  for (let i = 0; i < lines.length; i += 1) {
-    if (isTomlSectionHeader(lines[i])) break
+  for (let i = 0; i < rootEnd; i += 1) {
+    if (inString[i]) continue
     if (parseTomlAssignmentKey(lines[i])?.startsWith(prefix)) last = i
   }
   return last
@@ -2764,14 +2845,12 @@ function upsertTomlSectionBooleanKey(
   const section = findTomlSectionRange(lines, sectionName)
 
   if (section) {
-    let assignmentIndex = -1
-    for (let i = section.start + 1; i < section.end; i += 1) {
-      const assignmentKey = parseTomlAssignmentKey(lines[i])
-      if (assignmentKey === key) {
-        assignmentIndex = i
-        break
-      }
-    }
+    const assignmentIndex = findTomlKeyInRange(
+      lines,
+      section.start + 1,
+      section.end,
+      key
+    )
 
     if (value === null) {
       if (assignmentIndex >= 0) {
@@ -2865,33 +2944,16 @@ function patchCodexProviderBaseUrl(
 
   const nextApiBaseUrl = apiBaseUrl.trim()
   const lines = configTomlText.split(/\r?\n/)
-  const sectionPattern = new RegExp(
-    `^\\[\\s*model_providers\\.${escapeRegExp(trimmedProvider)}\\s*\\]$`
-  )
-  let sectionStart = -1
-  let sectionEnd = lines.length
-  for (let i = 0; i < lines.length; i += 1) {
-    const trimmed = lines[i].trim()
-    if (sectionStart < 0) {
-      if (sectionPattern.test(trimmed)) {
-        sectionStart = i
-      }
-      continue
-    }
-    if (/^\[.*\]$/.test(trimmed)) {
-      sectionEnd = i
-      break
-    }
-  }
+  const section = findCodexProviderSectionRange(lines, trimmedProvider)
 
-  if (sectionStart >= 0) {
-    let baseUrlIndex = -1
-    for (let i = sectionStart + 1; i < sectionEnd; i += 1) {
-      const assignment = parseTomlStringAssignment(lines[i])
-      if (!assignment || assignment.key !== "base_url") continue
-      baseUrlIndex = i
-      break
-    }
+  if (section) {
+    const { start: sectionStart, end: sectionEnd } = section
+    const baseUrlIndex = findTomlKeyInRange(
+      lines,
+      sectionStart + 1,
+      sectionEnd,
+      "base_url"
+    )
     if (!nextApiBaseUrl) {
       if (baseUrlIndex >= 0) {
         lines.splice(baseUrlIndex, 1)
@@ -2916,6 +2978,24 @@ function patchCodexProviderBaseUrl(
   return `${appended}\n\n${sectionText}`.trim()
 }
 
+/**
+ * Line range of `[model_providers.<provider>]`, found with the same header
+ * predicates every other table scan in this file uses — so a header carrying
+ * a trailing comment is still a header, and a header-shaped line inside a
+ * multi-line string is not one. The exact-match regexes the provider writers
+ * used before missed a commented provider header
+ * (`[model_providers.codeg] # gateway`), so the writer appended a second
+ * `[model_providers.codeg]` — a TOML redefinition the backend refuses to save
+ * — and missed a commented NEXT header (`[features] # flags`) as the end, so
+ * the key landed in that other table.
+ */
+function findCodexProviderSectionRange(
+  lines: string[],
+  provider: string
+): { start: number; end: number } | null {
+  return findTomlSectionRange(lines, `model_providers.${provider}`)
+}
+
 function patchCodexProviderField(
   configTomlText: string,
   provider: string,
@@ -2926,33 +3006,16 @@ function patchCodexProviderField(
   if (!trimmedProvider) return configTomlText.trim()
 
   const lines = configTomlText.split(/\r?\n/)
-  const sectionPattern = new RegExp(
-    `^\\[\\s*model_providers\\.${escapeRegExp(trimmedProvider)}\\s*\\]$`
-  )
-  let sectionStart = -1
-  let sectionEnd = lines.length
-  for (let i = 0; i < lines.length; i += 1) {
-    const trimmed = lines[i].trim()
-    if (sectionStart < 0) {
-      if (sectionPattern.test(trimmed)) {
-        sectionStart = i
-      }
-      continue
-    }
-    if (/^\[.*\]$/.test(trimmed)) {
-      sectionEnd = i
-      break
-    }
-  }
+  const section = findCodexProviderSectionRange(lines, trimmedProvider)
 
-  if (sectionStart >= 0) {
-    let fieldIndex = -1
-    for (let i = sectionStart + 1; i < sectionEnd; i += 1) {
-      const assignmentKey = parseTomlAssignmentKey(lines[i])
-      if (assignmentKey !== key) continue
-      fieldIndex = i
-      break
-    }
+  if (section) {
+    const { start: sectionStart, end: sectionEnd } = section
+    const fieldIndex = findTomlKeyInRange(
+      lines,
+      sectionStart + 1,
+      sectionEnd,
+      key
+    )
     if (fieldIndex >= 0) {
       lines[fieldIndex] = lineText
     } else {
@@ -2969,6 +3032,23 @@ function patchCodexProviderField(
   const sectionText = `[model_providers.${trimmedProvider}]\n${lineText}`
   if (!appended) return sectionText
   return `${appended}\n\n${sectionText}`.trim()
+}
+
+/** Drop `key` from `[model_providers.<provider>]`; a no-op when either the
+ * table or the key is absent. */
+function removeCodexProviderField(
+  configTomlText: string,
+  provider: string,
+  key: string
+): string {
+  const trimmedProvider = provider.trim()
+  if (!trimmedProvider) return configTomlText.trim()
+  const lines = configTomlText.split(/\r?\n/)
+  const section = findCodexProviderSectionRange(lines, trimmedProvider)
+  if (!section) return configTomlText.trim()
+  const index = findTomlKeyInRange(lines, section.start + 1, section.end, key)
+  if (index >= 0) lines.splice(index, 1)
+  return lines.join("\n").trim()
 }
 
 /**
@@ -3132,6 +3212,16 @@ function patchCodexAuthJsonText(
   }
 }
 
+/**
+ * Apply the panel's structured Codex controls to a config.toml draft.
+ *
+ * Touches only the keys a patch names (plus the provider defaults
+ * `ensureCodexProviderDefaults` supplies). It deliberately writes nothing on
+ * its own initiative: the panel used to force `disable_response_storage =
+ * true` and re-derive `[features].responses_websockets_v2` on every patch,
+ * and current codex reads neither (the first was removed in 0.30.0, the
+ * second has been a no-op since 0.116.0).
+ */
 export function patchCodexConfigTomlText(
   configTomlText: string,
   patch: {
@@ -3139,9 +3229,7 @@ export function patchCodexConfigTomlText(
     model?: string
     modelProvider?: string
     supportsWebsockets?: boolean
-    skills?: boolean
     defaultModeRequestUserInput?: boolean
-    serviceTierFast?: boolean
   }
 ): string {
   let nextTomlText = configTomlText
@@ -3192,12 +3280,22 @@ export function patchCodexConfigTomlText(
         modelProvider
       )
     }
-    nextTomlText = patchCodexProviderField(
-      nextTomlText,
-      modelProvider,
-      "supports_websockets",
-      `supports_websockets = ${patch.supportsWebsockets ? "true" : "false"}`
-    )
+    // The provider key is the whole switch: codex 0.116.0 retired the
+    // `responses_websockets*` feature flags, and a provider's
+    // `supports_websockets` defaults to false. So "off" removes the key —
+    // the same contract as the other switches — rather than writing `= false`.
+    nextTomlText = patch.supportsWebsockets
+      ? patchCodexProviderField(
+          nextTomlText,
+          modelProvider,
+          "supports_websockets",
+          "supports_websockets = true"
+        )
+      : removeCodexProviderField(
+          nextTomlText,
+          modelProvider,
+          "supports_websockets"
+        )
     nextTomlText = ensureCodexProviderDefaults(nextTomlText, modelProvider)
   }
   const normalizedTomlValues = extractCodexTomlImportantValues(nextTomlText)
@@ -3208,39 +3306,10 @@ export function patchCodexConfigTomlText(
       normalizedTomlValues.model
     )
   }
-  const activeProvider =
-    normalizedTomlValues.modelProvider.trim() || CODEX_DEFAULT_MODEL_PROVIDER
-  // This key is rewritten on EVERY patch, including ones that have nothing to
-  // do with WebSockets, so it must resolve the flag exactly the way
-  // `extractCodexImportantValues` does — including its fallback to the feature
-  // key itself when the provider declares no `supports_websockets`. Reading
-  // only the provider field would treat "declared solely as a feature flag" as
-  // "off" and delete the user's setting the next time any other control moved.
-  // `??` and not `||`: an explicit `false` on the provider must win over the
-  // fallback, which is how the WebSocket switch turns itself off.
-  const shouldEnableFeature =
-    normalizedTomlValues.providerSupportsWebsockets[activeProvider] ??
-    (activeProvider === CODEX_DEFAULT_MODEL_PROVIDER
-      ? normalizedTomlValues.featureResponsesWebsocketsV2
-      : false)
-  nextTomlText = upsertTomlSectionBooleanKey(
-    nextTomlText,
-    "features",
-    "responses_websockets_v2",
-    shouldEnableFeature ? true : null
-  )
-  if (typeof patch.skills === "boolean") {
-    nextTomlText = upsertTomlSectionBooleanKey(
-      nextTomlText,
-      "features",
-      "skills",
-      patch.skills ? true : null
-    )
-  }
   if (typeof patch.defaultModeRequestUserInput === "boolean") {
     // Upstream default is false, so "off" removes the key instead of writing
-    // `= false` — same contract as `skills` above, and it keeps config.toml
-    // free of a flag the user never opted into.
+    // `= false`, which keeps config.toml free of a flag the user never opted
+    // into.
     nextTomlText = upsertTomlSectionBooleanKey(
       nextTomlText,
       "features",
@@ -3248,18 +3317,6 @@ export function patchCodexConfigTomlText(
       patch.defaultModeRequestUserInput ? true : null
     )
   }
-  if (typeof patch.serviceTierFast === "boolean") {
-    nextTomlText = updateTomlRootStringKey(
-      nextTomlText,
-      "service_tier",
-      patch.serviceTierFast ? "fast" : ""
-    )
-  }
-  nextTomlText = updateTomlRootBooleanKey(
-    nextTomlText,
-    "disable_response_storage",
-    true
-  )
   const trimmed = nextTomlText.trim()
   return trimmed ? `${trimmed}\n` : ""
 }
@@ -3679,14 +3736,11 @@ function buildAgentDraft(agent: AcpAgentInfo): AgentDraft {
     agent.agent_type === "hermes" ? parseHermesConfig(configText) : null
   const openCodeAuthJsonText = agent.opencode_auth_json ?? ""
   const codexAuthJsonText = agent.codex_auth_json ?? ""
-  const codexConfigTomlText =
-    agent.agent_type === "codex"
-      ? updateTomlRootBooleanKey(
-          agent.codex_config_toml ?? "",
-          "disable_response_storage",
-          true
-        )
-      : (agent.codex_config_toml ?? "")
+  // Exactly what is on disk. The draft used to force
+  // `disable_response_storage = true` in here, so every save wrote it back.
+  // codex removed that key in 0.30.0 (openai/codex#3212) and sends every
+  // request with `store: false`; current codex reports it as unrecognized.
+  const codexConfigTomlText = agent.codex_config_toml ?? ""
   const codexSandbox = agent.codex_sandbox_settings ?? null
   // Seeded once, then fingerprinted, so a save can tell a real control change
   // from "untouched, still whatever config.toml says".
@@ -3813,10 +3867,8 @@ function buildAgentDraft(agent: AcpAgentInfo): AgentDraft {
     codexModelProvider: codexImportant.modelProvider,
     codexProviderOptions: codexImportant.providerOptions,
     codexSupportsWebsockets: codexImportant.supportsWebsockets,
-    codexSkills: codexImportant.skills,
     codexDefaultModeRequestUserInput:
       codexImportant.defaultModeRequestUserInput,
-    codexServiceTierFast: codexImportant.serviceTierFast,
     ...codexSandboxFields,
     codexSandboxBaseline: codexSandboxBaselineOf(codexSandboxFields),
     codexSandboxShadowed:
@@ -7760,9 +7812,7 @@ export function AcpAgentSettings() {
         codexModelProvider: important.modelProvider,
         codexProviderOptions: important.providerOptions,
         codexSupportsWebsockets: important.supportsWebsockets,
-        codexSkills: important.skills,
         codexDefaultModeRequestUserInput: important.defaultModeRequestUserInput,
-        codexServiceTierFast: important.serviceTierFast,
       }))
     },
     [selectedAgent, selectedDraft, updateSelectedDraft]
@@ -7813,9 +7863,7 @@ export function AcpAgentSettings() {
           codexModelProvider: synced.modelProvider,
           codexProviderOptions: synced.providerOptions,
           codexSupportsWebsockets: synced.supportsWebsockets,
-          codexSkills: synced.skills,
           codexDefaultModeRequestUserInput: synced.defaultModeRequestUserInput,
-          codexServiceTierFast: synced.serviceTierFast,
         }))
         return
       }
@@ -7847,9 +7895,7 @@ export function AcpAgentSettings() {
         codexModelProvider: CODEX_DEFAULT_MODEL_PROVIDER,
         codexProviderOptions: synced.providerOptions,
         codexSupportsWebsockets: synced.supportsWebsockets,
-        codexSkills: synced.skills,
         codexDefaultModeRequestUserInput: synced.defaultModeRequestUserInput,
-        codexServiceTierFast: synced.serviceTierFast,
       }))
     },
     [selectedAgent, selectedDraft, updateSelectedDraft]
@@ -7928,9 +7974,7 @@ export function AcpAgentSettings() {
         codexModelProvider: synced.modelProvider,
         codexProviderOptions: synced.providerOptions,
         codexSupportsWebsockets: synced.supportsWebsockets,
-        codexSkills: synced.skills,
         codexDefaultModeRequestUserInput: synced.defaultModeRequestUserInput,
-        codexServiceTierFast: synced.serviceTierFast,
         codexAuthJsonText: nextAuth.authJsonText,
         codexConfigTomlText: nextToml,
       }))
@@ -7943,7 +7987,13 @@ export function AcpAgentSettings() {
       if (
         !selectedAgent ||
         !selectedDraft ||
-        selectedAgent.agent_type !== "codex"
+        selectedAgent.agent_type !== "codex" ||
+        // The switch is not rendered then; the guard keeps any other caller
+        // from pinning a subscription onto an empty codeg provider.
+        !codexWebsocketSwitchApplies(
+          selectedDraft.codexAuthMode,
+          selectedDraft.codexModelProvider
+        )
       )
         return
       const nextToml = patchCodexConfigTomlText(
@@ -7965,42 +8015,7 @@ export function AcpAgentSettings() {
         codexModelProvider: synced.modelProvider,
         codexProviderOptions: synced.providerOptions,
         codexSupportsWebsockets: synced.supportsWebsockets,
-        codexSkills: synced.skills,
         codexDefaultModeRequestUserInput: synced.defaultModeRequestUserInput,
-        codexServiceTierFast: synced.serviceTierFast,
-        codexConfigTomlText: nextToml,
-      }))
-    },
-    [selectedAgent, selectedDraft, updateSelectedDraft]
-  )
-
-  const handleCodexSkillsChange = useCallback(
-    (enabled: boolean) => {
-      if (
-        !selectedAgent ||
-        !selectedDraft ||
-        selectedAgent.agent_type !== "codex"
-      )
-        return
-      const nextToml = patchCodexConfigTomlText(
-        selectedDraft.codexConfigTomlText,
-        { skills: enabled }
-      )
-      const synced = extractCodexImportantValues(
-        selectedDraft.codexAuthJsonText,
-        nextToml
-      )
-      updateSelectedDraft((current) => ({
-        ...current,
-        apiBaseUrl: synced.apiBaseUrl,
-        apiKey: synced.apiKey ?? current.apiKey,
-        model: synced.model,
-        codexModelProvider: synced.modelProvider,
-        codexProviderOptions: synced.providerOptions,
-        codexSupportsWebsockets: synced.supportsWebsockets,
-        codexSkills: synced.skills,
-        codexDefaultModeRequestUserInput: synced.defaultModeRequestUserInput,
-        codexServiceTierFast: synced.serviceTierFast,
         codexConfigTomlText: nextToml,
       }))
     },
@@ -8031,42 +8046,7 @@ export function AcpAgentSettings() {
         codexModelProvider: synced.modelProvider,
         codexProviderOptions: synced.providerOptions,
         codexSupportsWebsockets: synced.supportsWebsockets,
-        codexSkills: synced.skills,
         codexDefaultModeRequestUserInput: synced.defaultModeRequestUserInput,
-        codexServiceTierFast: synced.serviceTierFast,
-        codexConfigTomlText: nextToml,
-      }))
-    },
-    [selectedAgent, selectedDraft, updateSelectedDraft]
-  )
-
-  const handleCodexServiceTierFastChange = useCallback(
-    (enabled: boolean) => {
-      if (
-        !selectedAgent ||
-        !selectedDraft ||
-        selectedAgent.agent_type !== "codex"
-      )
-        return
-      const nextToml = patchCodexConfigTomlText(
-        selectedDraft.codexConfigTomlText,
-        { serviceTierFast: enabled }
-      )
-      const synced = extractCodexImportantValues(
-        selectedDraft.codexAuthJsonText,
-        nextToml
-      )
-      updateSelectedDraft((current) => ({
-        ...current,
-        apiBaseUrl: synced.apiBaseUrl,
-        apiKey: synced.apiKey ?? current.apiKey,
-        model: synced.model,
-        codexModelProvider: synced.modelProvider,
-        codexProviderOptions: synced.providerOptions,
-        codexSupportsWebsockets: synced.supportsWebsockets,
-        codexSkills: synced.skills,
-        codexDefaultModeRequestUserInput: synced.defaultModeRequestUserInput,
-        codexServiceTierFast: synced.serviceTierFast,
         codexConfigTomlText: nextToml,
       }))
     },
@@ -8945,31 +8925,33 @@ export function AcpAgentSettings() {
                       </div>
                     )}
 
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                        <label className="text-2xs text-muted-foreground">
-                          {t("codex.enableWebsocket")}
-                        </label>
-                        <Switch
-                          checked={selectedDraft.codexSupportsWebsockets}
-                          onCheckedChange={handleCodexSupportsWebsocketsChange}
-                          aria-label={t("codex.enableWebsocketAria")}
-                        />
+                    {/* `supports_websockets` on the configured provider — the
+                        only WebSocket knob since codex 0.116.0. Official
+                        Subscription runs on the built-in OpenAI provider,
+                        which already uses WebSockets and cannot be
+                        reconfigured; see codexWebsocketSwitchApplies. */}
+                    {codexWebsocketSwitchApplies(
+                      selectedDraft.codexAuthMode,
+                      selectedDraft.codexModelProvider
+                    ) ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                          <label className="text-2xs text-muted-foreground">
+                            {t("codex.enableWebsocket")}
+                          </label>
+                          <Switch
+                            checked={selectedDraft.codexSupportsWebsockets}
+                            onCheckedChange={
+                              handleCodexSupportsWebsocketsChange
+                            }
+                            aria-label={t("codex.enableWebsocketAria")}
+                          />
+                        </div>
+                        <p className="text-3xs text-muted-foreground">
+                          {t("codex.enableWebsocketHint")}
+                        </p>
                       </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                        <label className="text-2xs text-muted-foreground">
-                          {t("codex.enableSkills")}
-                        </label>
-                        <Switch
-                          checked={selectedDraft.codexSkills}
-                          onCheckedChange={handleCodexSkillsChange}
-                          aria-label={t("codex.enableSkillsAria")}
-                        />
-                      </div>
-                    </div>
+                    ) : null}
 
                     {/* `[features].default_mode_request_user_input` — without
                         it codex refuses its own `request_user_input` tool
@@ -8995,19 +8977,6 @@ export function AcpAgentSettings() {
                       <p className="text-3xs text-muted-foreground">
                         {t("codex.enableDefaultModeRequestUserInputHint")}
                       </p>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                        <label className="text-2xs text-muted-foreground">
-                          {t("codex.enableFast")}
-                        </label>
-                        <Switch
-                          checked={selectedDraft.codexServiceTierFast}
-                          onCheckedChange={handleCodexServiceTierFastChange}
-                          aria-label={t("codex.enableFastAria")}
-                        />
-                      </div>
                     </div>
 
                     {/* ---- Sandbox & approvals (config.toml thread defaults) ----
@@ -9267,17 +9236,12 @@ export function AcpAgentSettings() {
                         onChange={(event) => {
                           handleCodexConfigTomlTextChange(event.target.value)
                         }}
-                        placeholder={`disable_response_storage = true
-model = "gpt-6-astra"
+                        placeholder={`model = "gpt-6-astra"
 model_reasoning_effort = "high"
 model_provider = "codeg"
 
-[features]
-responses_websockets_v2 = true
-
 [model_providers.codeg]
-base_url = "https://api.openai.com/v1"
-supports_websockets = true`}
+base_url = "https://api.openai.com/v1"`}
                         className="min-h-40 max-h-80 font-mono text-xs"
                       />
                     </div>

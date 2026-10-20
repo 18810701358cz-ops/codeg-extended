@@ -1941,9 +1941,7 @@ describe("codex model_reasoning_effort is not managed by the panel", () => {
       { model: "gpt-5" },
       { apiBaseUrl: "https://api.example/v1" },
       { supportsWebsockets: true },
-      { skills: true },
       { defaultModeRequestUserInput: true },
-      { serviceTierFast: true },
     ]) {
       expect(patchCodexConfigTomlText("", patch)).not.toContain(KEY)
     }
@@ -2056,18 +2054,15 @@ describe("codex [features].default_mode_request_user_input toggle", () => {
   describe("headers carrying a trailing comment are still headers", () => {
     it("reuses a commented [features] instead of duplicating it", () => {
       const src = `model = "gpt-5"\n\n[features] # flags\nskills = true\n`
-      for (const patch of [
-        { defaultModeRequestUserInput: true },
-        { skills: true },
-      ]) {
-        const out = patchCodexConfigTomlText(src, patch)
-        expect(() => parseTomlDocument(out)).not.toThrow()
-        // Exactly one header line, and it is still the user's commented one.
-        const headers = out
-          .split("\n")
-          .filter((line) => /^\s*\[features\]/.test(line))
-        expect(headers).toEqual(["[features] # flags"])
-      }
+      const out = patchCodexConfigTomlText(src, {
+        defaultModeRequestUserInput: true,
+      })
+      expect(() => parseTomlDocument(out)).not.toThrow()
+      // Exactly one header line, and it is still the user's commented one.
+      const headers = out
+        .split("\n")
+        .filter((line) => /^\s*\[features\]/.test(line))
+      expect(headers).toEqual(["[features] # flags"])
     })
 
     it("does not reach past one into another table's keys", () => {
@@ -2097,8 +2092,8 @@ describe("codex [features].default_mode_request_user_input toggle", () => {
     expect(readsBackAs(off)).toBe(false)
   })
 
-  it("shares [features] with skills without disturbing it", () => {
-    const withSkills = patchCodexConfigTomlText("", { skills: true })
+  it("shares [features] with another key without disturbing it", () => {
+    const withSkills = "[features]\nskills = true\n"
     const both = patchCodexConfigTomlText(withSkills, {
       defaultModeRequestUserInput: true,
     })
@@ -2117,11 +2112,11 @@ describe("codex [features].default_mode_request_user_input toggle", () => {
     ).toEqual({ skills: true })
   })
 
-  // The flag lives in the same `[features]` table the WebSocket toggle writes
-  // `responses_websockets_v2` into, and that key is rewritten on EVERY patch
-  // from the active provider's `supports_websockets`. A user who turns on
-  // questions must not lose their WebSocket setting as a side effect.
-  it("survives — and preserves — the websocket feature key", () => {
+  // `[features].responses_websockets_v2` shares this table, but codex retired
+  // it in 0.116.0 and the panel no longer manages it: turning on questions
+  // must neither conjure it from the provider's `supports_websockets` (as the
+  // writer once did on every patch) nor drop one the user still has.
+  it("neither adds nor drops the retired websocket feature key", () => {
     const toml = [
       'model_provider = "codeg"',
       "",
@@ -2132,90 +2127,169 @@ describe("codex [features].default_mode_request_user_input toggle", () => {
     const result = patchCodexConfigTomlText(toml, {
       defaultModeRequestUserInput: true,
     })
-    const features = (
-      parseTomlDocument(result) as { features?: Record<string, unknown> }
-    ).features
-    expect(features).toMatchObject({
-      responses_websockets_v2: true,
-      [KEY]: true,
-    })
+    expect(
+      (parseTomlDocument(result) as { features?: Record<string, unknown> })
+        .features
+    ).toEqual({ [KEY]: true })
     expect(readsBackAs(result)).toBe(true)
+
+    const handWritten = `${toml}\n\n[features]\nresponses_websockets_v2 = true\n`
+    const kept = patchCodexConfigTomlText(handWritten, {
+      defaultModeRequestUserInput: true,
+    })
+    expect(
+      (parseTomlDocument(kept) as { features?: Record<string, unknown> })
+        .features
+    ).toEqual({ responses_websockets_v2: true, [KEY]: true })
   })
 })
 
-// `responses_websockets_v2` is rewritten on EVERY patch from the resolved
-// WebSocket state, so any control — this one, skills, service tier, the model
-// field — can destroy it if the writer resolves it differently from the reader.
-describe("codex WebSocket feature key survives unrelated toggles", () => {
-  const KEY = "default_mode_request_user_input"
-
+// Since codex 0.116.0 the WebSocket transport follows the active provider's
+// `supports_websockets` alone; `[features].responses_websockets_v2` is a
+// `Stage::Removed` no-op. The switch must read and write exactly that key.
+describe("codex WebSocket switch follows supports_websockets alone", () => {
   function websocketsOf(configTomlText: string): boolean {
     return extractCodexImportantValues("", configTomlText).supportsWebsockets
   }
 
-  // A config that declares WebSockets ONLY through the feature key: the reader
-  // falls back to it for the codeg provider, so the panel shows the switch on.
-  const FEATURE_ONLY = [
-    'model = "gpt-5"',
+  const BOUND = [
+    'model_provider = "codeg"',
     "",
-    "[features]",
-    "responses_websockets_v2 = true",
+    "[model_providers.codeg]",
+    'base_url = "https://example.test/v1"',
   ].join("\n")
 
-  it("is shown as enabled when only the feature key declares it", () => {
-    expect(websocketsOf(FEATURE_ONLY)).toBe(true)
+  // The panel used to fall back to the feature key and show the switch on,
+  // while codex — which ignores that key — kept talking HTTPS.
+  it("reads off when only the retired feature key is set", () => {
+    expect(
+      websocketsOf(`${BOUND}\n\n[features]\nresponses_websockets_v2 = true\n`)
+    ).toBe(false)
+    expect(
+      websocketsOf(
+        'model = "gpt-5"\n\n[features]\nresponses_websockets_v2 = true\n'
+      )
+    ).toBe(false)
+  })
+
+  it("reads the active provider's key", () => {
+    expect(websocketsOf(`${BOUND}\nsupports_websockets = true\n`)).toBe(true)
+    expect(websocketsOf(`${BOUND}\nsupports_websockets = false\n`)).toBe(false)
+    // Another provider's key is not the active one's.
+    expect(
+      websocketsOf(
+        `${BOUND}\n\n[model_providers.other]\nsupports_websockets = true\n`
+      )
+    ).toBe(false)
+  })
+
+  it("writes only the provider key when switched on", () => {
+    const on = patchCodexConfigTomlText(BOUND, {
+      modelProvider: "codeg",
+      supportsWebsockets: true,
+    })
+    expect(websocketsOf(on)).toBe(true)
+    const parsed = parseTomlDocument(on) as {
+      features?: unknown
+      model_providers?: Record<string, Record<string, unknown>>
+    }
+    expect(parsed.model_providers?.codeg?.supports_websockets).toBe(true)
+    expect(parsed.features).toBeUndefined()
+  })
+
+  // Absent is codex's default (`serde(default)` false), so "off" removes the
+  // key like the other switches instead of pinning `= false`.
+  it("removes the provider key when switched off", () => {
+    const on = `${BOUND}\nsupports_websockets = true\n`
+    const off = patchCodexConfigTomlText(on, {
+      modelProvider: "codeg",
+      supportsWebsockets: false,
+    })
+    expect(websocketsOf(off)).toBe(false)
+    expect(off).not.toContain("supports_websockets")
+  })
+
+  // Cleaning the retired key is the obsolete-keys notice's job, not a side
+  // effect of the switch.
+  it("leaves a hand-written feature key alone in either direction", () => {
+    const src = `${BOUND}\n\n[features]\nresponses_websockets_v2 = true\n`
+    for (const supportsWebsockets of [true, false]) {
+      const out = patchCodexConfigTomlText(src, {
+        modelProvider: "codeg",
+        supportsWebsockets,
+      })
+      expect(out).toContain("responses_websockets_v2 = true")
+    }
   })
 
   for (const [label, patch] of [
     ["the questions toggle", { defaultModeRequestUserInput: true }],
-    ["the skills toggle", { skills: true }],
-    ["the fast service tier", { serviceTierFast: true }],
+    ["the model field", { model: "gpt-5.5" }],
+    ["the base URL field", { apiBaseUrl: "https://other.test/v1" }],
   ] as const) {
-    it(`is not silently cleared by ${label}`, () => {
-      const after = patchCodexConfigTomlText(FEATURE_ONLY, patch)
+    it(`is not touched by ${label}`, () => {
+      const src = `${BOUND}\nsupports_websockets = true\n`
+      const after = patchCodexConfigTomlText(src, patch)
       expect(websocketsOf(after)).toBe(true)
-      expect(after).toContain("responses_websockets_v2 = true")
+      expect(after).not.toContain("responses_websockets_v2")
     })
   }
 
-  // The fallback reads the feature key, so a nested `features.…` line — which
-  // is really `model_providers.codeg.features.…` and means nothing to codex —
-  // must not reach it. Otherwise any unrelated toggle would quietly promote a
-  // provider-local key into a global WebSocket flag.
-  it("is not conjured out of a nested dotted key", () => {
-    const nested = [
+  // A header may carry a trailing comment. The provider writers matched
+  // headers exactly, so they missed a commented provider header (and appended
+  // a second `[model_providers.codeg]`, which TOML rejects) and a commented
+  // NEXT header (and wrote the key into that other table).
+  it("finds a provider header that carries a comment", () => {
+    const src = [
       'model_provider = "codeg"',
       "",
-      "[model_providers.codeg]",
+      "[model_providers.codeg] # my gateway",
       'base_url = "https://example.test/v1"',
-      "features.responses_websockets_v2 = true",
     ].join("\n")
-    expect(websocketsOf(nested)).toBe(false)
-    const after = patchCodexConfigTomlText(nested, {
-      defaultModeRequestUserInput: true,
+    const on = patchCodexConfigTomlText(src, {
+      modelProvider: "codeg",
+      supportsWebsockets: true,
     })
-    const features = (
-      parseTomlDocument(after) as { features?: Record<string, unknown> }
-    ).features
-    expect(features).toEqual({ [KEY]: true })
+    expect(() => parseTomlDocument(on)).not.toThrow()
+    expect(on.match(/\[model_providers\.codeg\]/g)).toHaveLength(1)
+    expect(websocketsOf(on)).toBe(true)
   })
 
-  // The fallback must not outrank an explicit provider `false`, or the
-  // WebSocket switch itself could never be turned off.
-  it("still lets the WebSocket switch turn itself off", () => {
-    const bound = [
+  it("stops at a following header that carries a comment", () => {
+    const src = [
       'model_provider = "codeg"',
       "",
       "[model_providers.codeg]",
       'base_url = "https://example.test/v1"',
-      "supports_websockets = true",
       "",
-      "[features]",
-      "responses_websockets_v2 = true",
+      "[features] # flags",
+      "default_mode_request_user_input = true",
     ].join("\n")
-    const off = patchCodexConfigTomlText(bound, { supportsWebsockets: false })
-    expect(websocketsOf(off)).toBe(false)
-    expect(off).not.toContain("responses_websockets_v2")
+    const on = patchCodexConfigTomlText(src, {
+      modelProvider: "codeg",
+      supportsWebsockets: true,
+    })
+    const parsed = parseTomlDocument(on) as {
+      features?: Record<string, unknown>
+      model_providers?: Record<string, Record<string, unknown>>
+    }
+    expect(parsed.model_providers?.codeg?.supports_websockets).toBe(true)
+    expect(parsed.features).toEqual({ default_mode_request_user_input: true })
+
+    const moved = patchCodexConfigTomlText(src, {
+      modelProvider: "codeg",
+      apiBaseUrl: "https://moved.test/v1",
+    })
+    const movedParsed = parseTomlDocument(moved) as {
+      features?: Record<string, unknown>
+      model_providers?: Record<string, Record<string, unknown>>
+    }
+    expect(movedParsed.model_providers?.codeg?.base_url).toBe(
+      "https://moved.test/v1"
+    )
+    expect(movedParsed.features).toEqual({
+      default_mode_request_user_input: true,
+    })
   })
 })
 
