@@ -154,7 +154,7 @@ fn reject_cmd_syntax(name: &str, value: &str) -> Result<(), AppCommandError> {
 fn reject_unsafe_cmd_variable(command: &str, name: &str) -> Result<(), AppCommandError> {
     let refuse = |why: &str| -> Result<(), AppCommandError> {
         Err(AppCommandError::invalid_input(format!(
-            "a `local:` command cmd.exe runs from a remote window {why}, \
+            "a command cmd.exe runs on this computer from a remote window {why}, \
              so the remote server's %{name}% can't be read as quoted; \
              write it as plain `\"%{name}%\"`"
         )))
@@ -354,6 +354,8 @@ mod tests {
                 && err.message.contains("%CODEG_FOLDER_PATH%"),
             "{err:?}"
         );
+        // Where a command runs is a switch now; there is no prefix to name.
+        assert!(!err.message.contains("local:"), "{err:?}");
     }
 
     #[test]
