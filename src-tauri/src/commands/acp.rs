@@ -13642,22 +13642,37 @@ pub(crate) async fn acp_detect_agent_local_version_core(
         return Ok(Some(version));
     }
 
-    // Binary agents detect their version purely from the on-disk cache, so a
-    // `None` here means the binary is genuinely absent (cleared cache, or a
-    // failed custom/upgrade install). Return `None` authoritatively rather than
-    // falling back to the DB, which would resurrect a removed version as a
-    // phantom that can no longer be launched. The returned value does NOT depend
-    // on the mirror write below, so a swallowed write cannot reintroduce the
-    // phantom. (NPX detection runs `npm list`, which can fail transiently, so
-    // for npx we keep the DB value as a best-effort fallback.) A system agent
-    // is the same case: its one install either resolves or does not exist.
-    if matches!(
-        registry::get_agent_meta(agent_type).distribution,
-        registry::AgentDistribution::Binary { .. } | registry::AgentDistribution::System { .. }
-    ) {
+    // Nothing detected. When that means the agent is not installed, return
+    // `None` authoritatively rather than falling back to the DB, which would
+    // resurrect a removed version as a phantom that can no longer be launched.
+    // The returned value does NOT depend on the mirror write below, so a
+    // swallowed write cannot reintroduce the phantom.
+    let not_installed = match registry::get_agent_meta(agent_type).distribution {
+        // Binary agents detect their version purely from the on-disk cache, so
+        // a `None` means the binary is genuinely absent (cleared cache, or a
+        // failed custom/upgrade install). A system agent is the same case: its
+        // one install either resolves or does not exist.
+        registry::AgentDistribution::Binary { .. } | registry::AgentDistribution::System { .. } => {
+            true
+        }
+        // An npx agent whose command does not resolve cannot be launched: it is
+        // the very check `verify_agent_installed` refuses a connect on. The
+        // package was removed outside codeg, or the npm global prefix moved (a
+        // switch to another Node version, an npm `prefix` change) and left the
+        // install behind. Only a command that still resolves keeps the stored
+        // version as a best-effort fallback, since then it is `npm list` and
+        // `--version` that failed to read the version, which can be transient.
+        // `detect_local_version` already resolved the command once; with no
+        // stored version there is nothing to clear, so skip resolving again.
+        registry::AgentDistribution::Npx { cmd, .. } => {
+            previous.is_some() && !is_cmd_available(cmd).await
+        }
+        registry::AgentDistribution::Uvx { .. } => false,
+    };
+    if not_installed {
         let _ = agent_setting_service::set_installed_version(conn, agent_type, None).await;
-        // Mirror the heal in the clearing direction: a binary that vanished from
-        // disk must flip the composer back to "not installed".
+        // Mirror the heal in the clearing direction: an agent that can no
+        // longer be launched must flip the composer back to "not installed".
         if previous.is_some() {
             emit_acp_agents_updated(emitter, "local_version_cleared", Some(agent_type));
         }
@@ -14812,6 +14827,141 @@ mod tests {
         )
         .await;
         assert_eq!(version.as_deref(), Some("3.2.1"));
+    }
+
+    /// Register an npx agent for the detection tests below. The caller holds
+    /// the registry lock. Its command and package are unique to the test, so
+    /// whether the command resolves is up to the test's own HOME
+    /// (`~/.local/bin`), never to what this machine has installed.
+    fn register_npx_detection_agent(id: &str) -> AgentType {
+        use crate::acp::custom_registry::{
+            CustomAgentDef, CustomAgentSpec, CustomDistributionKind, NpxSpec,
+        };
+        let def = CustomAgentDef {
+            registry_id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            version: "0.0.34".into(),
+            distribution_kind: CustomDistributionKind::Npx,
+            spec: CustomAgentSpec {
+                npx: Some(NpxSpec {
+                    package: format!("{id}@0.0.34"),
+                    args: Vec::new(),
+                    env: BTreeMap::new(),
+                    cmd: Some(id.to_string()),
+                    node_required: None,
+                }),
+                ..Default::default()
+            },
+            icon_url: None,
+            skills_shared_store: false,
+            skills_dir: None,
+            source: Default::default(),
+            version_probe: None,
+            supports_mcp: true,
+        };
+        assert!(
+            custom_registry::hydrate(&[def]).is_empty(),
+            "the definition registers"
+        );
+        AgentType::custom(id).expect("a valid custom id")
+    }
+
+    /// A settings row for `agent` that records `version` as installed.
+    async fn db_recording_installed_version(agent: AgentType, version: &str) -> AppDatabase {
+        let db = crate::db::test_helpers::fresh_in_memory_db().await;
+        agent_setting_service::ensure_defaults(
+            &db.conn,
+            &[agent_setting_service::AgentDefaultInput {
+                agent_type: agent,
+                registry_id: registry::registry_id_for(agent).to_string(),
+                default_sort_order: 0,
+            }],
+        )
+        .await
+        .expect("settings row");
+        agent_setting_service::set_installed_version(&db.conn, agent, Some(version.to_string()))
+            .await
+            .expect("installed version");
+        db
+    }
+
+    async fn stored_installed_version(db: &AppDatabase, agent: AgentType) -> Option<String> {
+        agent_setting_service::get_by_agent_type(&db.conn, agent)
+            .await
+            .expect("settings row")
+            .and_then(|m| m.installed_version)
+    }
+
+    // An npx agent recorded as installed whose command no longer resolves (the
+    // package was removed outside codeg, or the npm global prefix moved on a
+    // Node version switch) cannot be launched, so detection must say so. It
+    // used to hand the stored version back, and Settings showed the agent as
+    // installed and up to date while every connect refused it as not installed.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn detection_clears_a_stored_npx_version_whose_command_no_longer_resolves() {
+        let _registry = custom_registry::hydrate_test_guard();
+        let agent = register_npx_detection_agent("detect-gone-npx-agent");
+        let db = db_recording_installed_version(agent, "0.0.34").await;
+        let broadcaster = std::sync::Arc::new(crate::web::event_bridge::WebEventBroadcaster::new());
+        let mut events = broadcaster.subscribe();
+        let emitter = EventEmitter::test_web_only(broadcaster.clone());
+        let home = tempfile::tempdir().expect("tempdir");
+
+        let (gate, detected) = temp_env::async_with_vars([("HOME", Some(home.path()))], async {
+            let gate = verify_agent_installed(agent).await;
+            let detected = acp_detect_agent_local_version_core(agent, &db.conn, &emitter)
+                .await
+                .expect("detection runs");
+            (gate, detected)
+        })
+        .await;
+        custom_registry::hydrate(&[]);
+
+        assert!(gate.is_err(), "the connect gate refuses the agent");
+        assert_eq!(detected, None, "detection agrees with the connect gate");
+        assert_eq!(stored_installed_version(&db, agent).await, None);
+        let event = events.try_recv().expect("the composer is told to reload");
+        assert_eq!(event.channel, ACP_AGENTS_UPDATED_EVENT);
+        assert_eq!(event.payload["reason"], "local_version_cleared");
+    }
+
+    // The stored version still stands in when the command resolves and only
+    // its version could not be read this time (`npm list` failing, a
+    // `--version` that prints nothing): the agent is launchable.
+    #[cfg(unix)]
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn detection_keeps_a_stored_npx_version_whose_command_resolves_without_a_version() {
+        let _registry = custom_registry::hydrate_test_guard();
+        let agent = register_npx_detection_agent("detect-quiet-npx-agent");
+        let db = db_recording_installed_version(agent, "0.0.34").await;
+        let home = tempfile::tempdir().expect("tempdir");
+        let bin_dir = home.path().join(".local").join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+        crate::process::write_test_script(&bin_dir.join("detect-quiet-npx-agent"), "#!/bin/sh\n");
+
+        let (gate, detected) = temp_env::async_with_vars([("HOME", Some(home.path()))], async {
+            let gate = verify_agent_installed(agent).await;
+            let detected =
+                acp_detect_agent_local_version_core(agent, &db.conn, &EventEmitter::Noop)
+                    .await
+                    .expect("detection runs");
+            (gate, detected)
+        })
+        .await;
+        custom_registry::hydrate(&[]);
+
+        assert!(
+            gate.is_ok(),
+            "the command resolves in ~/.local/bin: {gate:?}"
+        );
+        assert_eq!(detected.as_deref(), Some("0.0.34"));
+        assert_eq!(
+            stored_installed_version(&db, agent).await.as_deref(),
+            Some("0.0.34")
+        );
     }
 
     #[test]
