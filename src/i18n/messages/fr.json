@@ -3420,6 +3420,7 @@
         "steerIntoTurn": "Insérer dans le tour en cours",
         "steerAsNote": "Envoyer une note pour la prochaine vérification",
         "steerQueuedInstead": "Mis en file d'attente — il sera envoyé au tour suivant.",
+        "heldWhileResponding": "Réponse en cours — votre message reste dans la zone de saisie. Envoyez-le une fois la réponse terminée.",
         "steerFailed": "Impossible d'insérer dans le tour en cours",
         "steerNoteFailed": "Impossible d'envoyer votre note",
         "slashCommands": "Commandes slash",

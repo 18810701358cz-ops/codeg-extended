@@ -3420,6 +3420,7 @@
         "steerIntoTurn": "插入目前回合",
         "steerAsNote": "傳送留言，供下次檢查時讀取",
         "steerQueuedInstead": "已轉入佇列——將隨下一回合傳送。",
+        "heldWhileResponding": "仍在回應中——訊息已留在輸入框裡，等回應結束後再傳送。",
         "steerFailed": "無法插入目前回合",
         "steerNoteFailed": "留言送出失敗",
         "slashCommands": "斜線命令",

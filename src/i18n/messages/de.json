@@ -3420,6 +3420,7 @@
         "steerIntoTurn": "In laufenden Turn einfügen",
         "steerAsNote": "Notiz für die nächste Prüfung senden",
         "steerQueuedInstead": "Stattdessen in die Warteschlange gestellt – wird mit dem nächsten Turn gesendet.",
+        "heldWhileResponding": "Antwortet noch – deine Nachricht bleibt im Eingabefeld. Sende sie, sobald die Antwort fertig ist.",
         "steerFailed": "Konnte nicht in den laufenden Turn eingefügt werden",
         "steerNoteFailed": "Deine Notiz konnte nicht gesendet werden",
         "slashCommands": "Slash-Befehle",
