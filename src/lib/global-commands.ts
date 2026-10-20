@@ -17,6 +17,7 @@ interface StoredGlobalCommand {
   id: number
   name: string
   command: string
+  run_local: boolean
 }
 
 interface StoredGlobalCommands {
@@ -53,13 +54,14 @@ export function requireHostCommand(command: FolderCommand): FolderCommand {
 }
 
 /** One stored entry, or null when it isn't `{id<0, name, command}` — the
- *  storage is shared with older and newer builds, so it is untrusted input. */
+ *  storage is shared with older and newer builds, so it is untrusted input.
+ *  Only an explicit `run_local: true` runs a command on this computer. */
 function parseEntry(value: unknown): StoredGlobalCommand | null {
   if (!value || typeof value !== "object") return null
-  const { id, name, command } = value as Record<string, unknown>
+  const { id, name, command, run_local } = value as Record<string, unknown>
   if (!Number.isSafeInteger(id) || !isGlobalCommandId(id as number)) return null
   if (typeof name !== "string" || typeof command !== "string") return null
-  return { id: id as number, name, command }
+  return { id: id as number, name, command, run_local: run_local === true }
 }
 
 function readStored(): StoredGlobalCommands {
@@ -109,6 +111,7 @@ function toFolderCommand(
     name: entry.name,
     command: entry.command,
     sort_order: index,
+    run_local: entry.run_local,
     created_at: "",
     updated_at: "",
   }
@@ -120,13 +123,14 @@ export function listGlobalCommands(): FolderCommand[] {
 
 export function createGlobalCommand(
   name: string,
-  command: string
+  command: string,
+  runLocal: boolean
 ): FolderCommand {
   const { lastId, commands } = readStored()
   const id = lastId - 1
   // Past the last safe integer an id no longer reads back as one.
   if (!Number.isSafeInteger(id)) throw new Error("No command ids left")
-  const next = [...commands, { id, name, command }]
+  const next = [...commands, { id, name, command, run_local: runLocal }]
   writeStored({ lastId: id, commands: next })
   return toFolderCommand(next[next.length - 1], next.length - 1)
 }
@@ -134,12 +138,13 @@ export function createGlobalCommand(
 export function updateGlobalCommand(
   id: number,
   name: string,
-  command: string
+  command: string,
+  runLocal: boolean
 ): FolderCommand {
   const { lastId, commands } = readStored()
   const index = commands.findIndex((entry) => entry.id === id)
   if (index < 0) throw new Error("Command not found")
-  commands[index] = { id, name, command }
+  commands[index] = { id, name, command, run_local: runLocal }
   writeStored({ lastId, commands })
   return toFolderCommand(commands[index], index)
 }

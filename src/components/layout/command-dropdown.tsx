@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { Globe, Play, Plus, Square, Terminal } from "lucide-react"
+import { Globe, Monitor, Play, Plus, Square, Terminal } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -27,7 +27,7 @@ import {
   listGlobalCommands,
   withoutGlobalIds,
 } from "@/lib/global-commands"
-import { getRemoteHostName, parseLocalCommand } from "@/lib/local-command"
+import { getRemoteHostName, isLocalCommand } from "@/lib/local-command"
 import { isDesktop, isRemoteDesktopMode } from "@/lib/transport"
 import type { FolderCommand } from "@/lib/types"
 import {
@@ -198,10 +198,9 @@ export function CommandDropdown() {
     async (cmd: FolderCommand) => {
       if (!folderPath) return
 
-      // `local:` commands launch on this machine, detached — no terminal tab
-      // and no running state to track.
-      const localCommand = parseLocalCommand(cmd.command)
-      if (localCommand !== null) {
+      // A command set to run on this computer launches detached — no terminal
+      // tab and no running state to track.
+      if (isLocalCommand(cmd)) {
         selectCommand(cmd.id)
         if (!isDesktop()) {
           toast.error(t("localUnavailable"))
@@ -210,7 +209,7 @@ export function CommandDropdown() {
         const remote = isRemoteDesktopMode()
         try {
           await runLocalCommand(
-            localCommand,
+            cmd.command,
             folderPath,
             // Set in, and only in, a remote window, even if its host's name
             // can't be read: it tells the backend `folderPath` is the server's.
@@ -365,6 +364,12 @@ export function CommandDropdown() {
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span className="truncate">{cmd.name}</span>
+                    {isLocalCommand(cmd) ? (
+                      <Monitor
+                        className="h-3 w-3 shrink-0 text-muted-foreground"
+                        aria-label={t("localCommand")}
+                      />
+                    ) : null}
                     {isGlobalCommandId(cmd.id) ? (
                       <Globe
                         className="h-3 w-3 shrink-0 text-muted-foreground"

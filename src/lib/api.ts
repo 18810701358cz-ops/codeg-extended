@@ -3781,18 +3781,25 @@ export async function deleteConversation(
 export async function listFolderCommands(
   folderId: number
 ): Promise<FolderCommand[]> {
-  return getTransport().call("list_folder_commands", { folderId })
+  // `includeLocal` tells the host this client knows `run_local`; it withholds
+  // such commands from older clients, which would run them in its terminal.
+  return getTransport().call("list_folder_commands", {
+    folderId,
+    includeLocal: true,
+  })
 }
 
 export async function createFolderCommand(
   folderId: number,
   name: string,
-  command: string
+  command: string,
+  runLocal: boolean
 ): Promise<FolderCommand> {
   return getTransport().call("create_folder_command", {
     folderId,
     name,
     command,
+    runLocal,
   })
 }
 
@@ -3800,13 +3807,15 @@ export async function updateFolderCommand(
   id: number,
   name?: string,
   command?: string,
-  sortOrder?: number
+  sortOrder?: number,
+  runLocal?: boolean
 ): Promise<FolderCommand> {
   return getTransport().call("update_folder_command", {
     id,
     name: name ?? null,
     command: command ?? null,
     sortOrder: sortOrder ?? null,
+    runLocal: runLocal ?? null,
   })
 }
 
@@ -3828,6 +3837,7 @@ export async function bootstrapFolderCommandsFromPackageJson(
   return getTransport().call("bootstrap_folder_commands_from_package_json", {
     folderId,
     folderPath,
+    includeLocal: true,
   })
 }
 

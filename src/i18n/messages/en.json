@@ -3243,6 +3243,7 @@
       "localUnavailable": "Local commands are only available in the desktop app",
       "localRunFailed": "Failed to run local command",
       "globalCommand": "Shown in all folders",
+      "localCommand": "Runs on this computer",
       "manageDialog": {
         "title": "Manage Commands",
         "empty": "No commands yet",
@@ -3251,7 +3252,8 @@
         "newCommand": "New command",
         "nameLabel": "Name",
         "commandLabel": "Command",
-        "localCommandHint": "Prefix with <code>local:</code> to run on this computer instead of the project host; <code>{folderVar}</code> is the folder's absolute path and <code>{hostVar}</code> the remote host name, e.g. <code>{example}</code>",
+        "runLocalLabel": "Run on this computer",
+        "runLocalHint": "Runs on this computer instead of the project host, without a terminal; <code>{folderVar}</code> is the folder's absolute path and <code>{hostVar}</code> the remote host name, e.g. <code>{example}</code>",
         "globalLabel": "Show in all folders",
         "globalHint": "Available in every folder, worktree and remote connection; saved on this computer",
         "dragSort": "Drag to sort",
@@ -3259,6 +3261,7 @@
         "orderFailed": "Failed to save command order",
         "loadFailed": "Failed to load commands",
         "saveFailed": "Failed to save command",
+        "runLocalNotKept": "the folder's host can't save \"Run on this computer\" — update it, or turn on \"Show in all folders\" to keep the command on this computer",
         "deleteFailed": "Failed to delete command",
         "confirmDelete": {
           "title": "Delete command?",

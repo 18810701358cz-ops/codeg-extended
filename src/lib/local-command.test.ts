@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import type { FolderCommand } from "@/lib/types"
 
 const h = vi.hoisted(() => ({
   remote: true,
@@ -10,21 +11,33 @@ vi.mock("@/lib/transport", () => ({
   getServerBaseUrl: () => h.baseUrl,
 }))
 
-import { getRemoteHostName, parseLocalCommand } from "./local-command"
+import { getRemoteHostName, isLocalCommand } from "./local-command"
 
-describe("parseLocalCommand", () => {
-  it("strips the local: prefix", () => {
-    expect(parseLocalCommand("local: zed .")).toBe("zed .")
-    expect(parseLocalCommand("  LOCAL:open -a Zed")).toBe("open -a Zed")
+function command(command: string, runLocal?: boolean): FolderCommand {
+  return {
+    id: 1,
+    folder_id: 1,
+    name: "x",
+    command,
+    sort_order: 0,
+    ...(runLocal === undefined ? {} : { run_local: runLocal }),
+    created_at: "",
+    updated_at: "",
+  }
+}
+
+describe("isLocalCommand", () => {
+  it("follows the command's flag", () => {
+    expect(isLocalCommand(command("zed .", true))).toBe(true)
+    expect(isLocalCommand(command("pnpm dev", false))).toBe(false)
   })
 
-  it("leaves ordinary commands alone", () => {
-    expect(parseLocalCommand("pnpm dev")).toBeNull()
-    expect(parseLocalCommand("echo local: x")).toBeNull()
+  it("runs an older server's command, which has no flag, in a terminal", () => {
+    expect(isLocalCommand(command("pnpm dev"))).toBe(false)
   })
 
-  it("treats a bare prefix as no command", () => {
-    expect(parseLocalCommand("local:   ")).toBeNull()
+  it("reads nothing into the command's text", () => {
+    expect(isLocalCommand(command("local: zed ."))).toBe(false)
   })
 })
 

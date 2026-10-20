@@ -3243,6 +3243,7 @@
       "localUnavailable": "Los comandos locales solo están disponibles en la aplicación de escritorio",
       "localRunFailed": "No se pudo ejecutar el comando local",
       "globalCommand": "Disponible en todas las carpetas",
+      "localCommand": "Se ejecuta en este equipo",
       "manageDialog": {
         "title": "Gestionar comandos",
         "empty": "Aún no hay comandos",
@@ -3251,7 +3252,8 @@
         "newCommand": "Nuevo comando",
         "nameLabel": "Nombre",
         "commandLabel": "Comando",
-        "localCommandHint": "Usa el prefijo <code>local:</code> para ejecutarlo en este equipo en lugar del host del proyecto; <code>{folderVar}</code> es la ruta absoluta de la carpeta y <code>{hostVar}</code> el nombre del host remoto, p. ej. <code>{example}</code>",
+        "runLocalLabel": "Ejecutar en este equipo",
+        "runLocalHint": "Se ejecuta en este equipo en lugar del host del proyecto, sin terminal; <code>{folderVar}</code> es la ruta absoluta de la carpeta y <code>{hostVar}</code> el nombre del host remoto, p. ej. <code>{example}</code>",
         "globalLabel": "Mostrar en todas las carpetas",
         "globalHint": "Disponible en cada carpeta, worktree y conexión remota; se guarda en este equipo",
         "dragSort": "Arrastra para ordenar",
@@ -3259,6 +3261,7 @@
         "orderFailed": "No se pudo guardar el orden de los comandos",
         "loadFailed": "No se pudieron cargar los comandos",
         "saveFailed": "No se pudo guardar el comando",
+        "runLocalNotKept": "el host de la carpeta no puede guardar \"Ejecutar en este equipo\"; actualízalo o activa \"Mostrar en todas las carpetas\" para guardar el comando en este equipo",
         "deleteFailed": "No se pudo eliminar el comando",
         "confirmDelete": {
           "title": "¿Eliminar comando?",

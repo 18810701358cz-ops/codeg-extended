@@ -9,7 +9,15 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react"
-import { GripVertical, Globe, Loader2, Plus, Save, Trash2 } from "lucide-react"
+import {
+  GripVertical,
+  Globe,
+  Loader2,
+  Monitor,
+  Plus,
+  Save,
+  Trash2,
+} from "lucide-react"
 import { Reorder, useDragControls } from "motion/react"
 import { useTranslations } from "next-intl"
 import { detectPlatform } from "@/hooks/use-platform"
@@ -31,6 +39,7 @@ import {
   updateGlobalCommand,
   withoutGlobalIds,
 } from "@/lib/global-commands"
+import { isLocalCommand } from "@/lib/local-command"
 import { isDesktop } from "@/lib/transport"
 import type { FolderCommand } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -71,8 +80,8 @@ const hintLiteral = (chunks: ReactNode) => (
   </code>
 )
 
-/** The variables a `local:` command reads, spelled the way the shell it runs
- *  in on this machine expects: cmd.exe on Windows, a POSIX shell elsewhere. */
+/** The variables a command run on this computer reads, spelled the way the
+ *  shell it runs in here expects: cmd.exe on Windows, a POSIX shell elsewhere. */
 function localCommandHintValues() {
   const windows = detectPlatform() === "windows"
   const variable = (name: string) => (windows ? `%${name}%` : `$${name}`)
@@ -81,7 +90,7 @@ function localCommandHintValues() {
   return {
     folderVar,
     hostVar,
-    example: `local: zed "ssh://user@${hostVar}${folderVar}"`,
+    example: `zed "ssh://user@${hostVar}${folderVar}"`,
   }
 }
 
@@ -98,6 +107,9 @@ interface Draft {
   command: string
   /** Shown in every folder (stored on this client) rather than this one. */
   global: boolean
+  /** Run on this computer, detached, rather than in a terminal on the
+   *  folder's host. */
+  runLocal: boolean
 }
 
 interface CommandReorderItemProps {
@@ -116,6 +128,7 @@ const EMPTY_DRAFT: Draft = {
   name: "",
   command: "",
   global: false,
+  runLocal: false,
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -309,6 +322,7 @@ export function CommandManageDialog({
       name: selected.name,
       command: selected.command,
       global: isGlobalCommandId(selected.id),
+      runLocal: isLocalCommand(selected),
     })
   }, [selected])
 
@@ -403,21 +417,50 @@ export function CommandManageDialog({
     try {
       const name = draft.name.trim()
       const command = draft.command.trim()
+      const { runLocal } = draft
+      // An older folder host doesn't know "run on this computer": it stores
+      // the command without it, to run in its own terminal.
+      const notKept = () => new Error(t("runLocalNotKept"))
       let saved: FolderCommand
       if (previousId !== null && !scopeChanged) {
-        saved = isGlobalCommandId(previousId)
-          ? updateGlobalCommand(previousId, name, command)
-          : requireHostCommand(
-              await updateFolderCommand(previousId, name, command)
+        if (isGlobalCommandId(previousId)) {
+          saved = updateGlobalCommand(previousId, name, command, runLocal)
+        } else {
+          const updated = requireHostCommand(
+            await updateFolderCommand(
+              previousId,
+              name,
+              command,
+              undefined,
+              runLocal
             )
+          )
+          if (runLocal && !isLocalCommand(updated)) {
+            // It kept the rest of the edit: show what it stored.
+            setCommands((prev) =>
+              prev.map((item) => (item.id === updated.id ? updated : item))
+            )
+            onChanged()
+            throw notKept()
+          }
+          saved = updated
+        }
       } else {
         // New, or moving between this folder and every folder: create it in
         // its new home first, so a failure there loses nothing.
-        saved = draft.global
-          ? createGlobalCommand(name, command)
-          : requireHostCommand(
-              await createFolderCommand(folderId, name, command)
-            )
+        if (draft.global) {
+          saved = createGlobalCommand(name, command, runLocal)
+        } else {
+          const created = requireHostCommand(
+            await createFolderCommand(folderId, name, command, runLocal)
+          )
+          if (runLocal && !isLocalCommand(created)) {
+            // Take it back out, so the save adds nothing.
+            await deleteFolderCommand(created.id).catch(() => {})
+            throw notKept()
+          }
+          saved = created
+        }
         if (previousId !== null) {
           if (isGlobalCommandId(previousId)) deleteGlobalCommand(previousId)
           else await deleteFolderCommand(previousId)
@@ -439,6 +482,7 @@ export function CommandManageDialog({
         name: saved.name,
         command: saved.command,
         global: isGlobalCommandId(saved.id),
+        runLocal: isLocalCommand(saved),
       })
       onChanged()
     } catch (err) {
@@ -580,6 +624,12 @@ export function CommandManageDialog({
                                     <span className="truncate text-sm font-medium">
                                       {command.name}
                                     </span>
+                                    {isLocalCommand(command) ? (
+                                      <Monitor
+                                        className="h-3 w-3 shrink-0 text-muted-foreground"
+                                        aria-label={t("runLocalLabel")}
+                                      />
+                                    ) : null}
                                     {isGlobalCommandId(command.id) ? (
                                       <Globe
                                         className="h-3 w-3 shrink-0 text-muted-foreground"
@@ -634,16 +684,33 @@ export function CommandManageDialog({
                           updateDraft({ command: event.target.value })
                         }
                       />
-                      {/* Local commands run only from the desktop app. */}
-                      {isDesktop() ? (
-                        <p className="text-xs text-muted-foreground">
-                          {t.rich("localCommandHint", {
-                            ...localHintValues,
-                            code: hintLiteral,
-                          })}
-                        </p>
-                      ) : null}
                     </div>
+                    {/* Only the desktop app runs a command on its own machine. */}
+                    {isDesktop() ? (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <Label
+                            htmlFor="folder-command-run-local"
+                            className="text-xs"
+                          >
+                            {t("runLocalLabel")}
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            {t.rich("runLocalHint", {
+                              ...localHintValues,
+                              code: hintLiteral,
+                            })}
+                          </p>
+                        </div>
+                        <Switch
+                          id="folder-command-run-local"
+                          checked={draft.runLocal}
+                          onCheckedChange={(checked) =>
+                            updateDraft({ runLocal: checked })
+                          }
+                        />
+                      </div>
+                    ) : null}
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-0.5">
                         <Label

@@ -1,19 +1,14 @@
 import { getServerBaseUrl, isRemoteDesktopMode } from "@/lib/transport"
+import type { FolderCommand } from "@/lib/types"
 
 /**
- * Folder commands written as `local: <command>` run on the desktop's own
- * machine instead of the folder's host — the way to reach local tools (e.g.
- * `local: zed "ssh://host$CODEG_FOLDER_PATH"`) from a remote project. Kept as
- * a prefix on the stored command so it needs nothing from the server.
+ * Whether `command` runs on the desktop's own machine instead of in a terminal
+ * on the folder's host — the way to reach local tools (e.g.
+ * `zed "ssh://host$CODEG_FOLDER_PATH"`) from a remote project. Rows from a
+ * server older than the flag don't carry it: those run in a terminal.
  */
-const LOCAL_COMMAND_PREFIX = /^\s*local:\s*/i
-
-/** The command to run locally, or `null` when `command` isn't a local one. */
-export function parseLocalCommand(command: string): string | null {
-  const match = LOCAL_COMMAND_PREFIX.exec(command)
-  if (!match) return null
-  const rest = command.slice(match[0].length).trim()
-  return rest || null
+export function isLocalCommand(command: FolderCommand): boolean {
+  return command.run_local === true
 }
 
 /** Host name of the remote codeg-server this window is bound to, if any. */

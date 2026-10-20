@@ -52,6 +52,7 @@ mod m20261015_000001_kiro_builtin_agent;
 mod m20261015_000001_work_task_deferred_at;
 mod m20261016_000001_assistant;
 mod m20261016_000002_conversation_assistant;
+mod m20261020_000001_folder_command_run_local;
 mod m20261017_000002_conversation_source;
 pub struct Migrator;
 
@@ -111,6 +112,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261015_000001_work_task_deferred_at::Migration),
             Box::new(m20261016_000001_assistant::Migration),
             Box::new(m20261016_000002_conversation_assistant::Migration),
+            Box::new(m20261020_000001_folder_command_run_local::Migration),
             Box::new(m20261017_000002_conversation_source::Migration),
         ]
     }

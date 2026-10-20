@@ -18,8 +18,8 @@ describe("global commands", () => {
   beforeEach(() => localStorage.clear())
 
   it("hands out negative ids, apart from folder commands' primary keys", () => {
-    const a = createGlobalCommand("zed", "local: zed .")
-    const b = createGlobalCommand("open", "local: open .")
+    const a = createGlobalCommand("zed", "zed .", true)
+    const b = createGlobalCommand("open", "open .", true)
     expect(a.id).toBe(-1)
     expect(b.id).toBe(-2)
     expect(isGlobalCommandId(a.id)).toBe(true)
@@ -27,22 +27,22 @@ describe("global commands", () => {
   })
 
   it("does not reuse the id of a deleted command", () => {
-    createGlobalCommand("a", "a")
-    const b = createGlobalCommand("b", "b")
+    createGlobalCommand("a", "a", false)
+    const b = createGlobalCommand("b", "b", false)
     deleteGlobalCommand(-1)
-    expect(createGlobalCommand("c", "c").id).toBe(b.id - 1)
+    expect(createGlobalCommand("c", "c", false).id).toBe(b.id - 1)
   })
 
   it("does not reuse the id of the newest command once it is deleted", () => {
     // A folder's remembered selection, or a terminal it still runs in, would
     // otherwise pass to the next command created.
-    createGlobalCommand("a", "a")
-    const b = createGlobalCommand("b", "b")
+    createGlobalCommand("a", "a", false)
+    const b = createGlobalCommand("b", "b", false)
     deleteGlobalCommand(b.id)
-    expect(createGlobalCommand("c", "c").id).toBe(b.id - 1)
+    expect(createGlobalCommand("c", "c", false).id).toBe(b.id - 1)
     deleteGlobalCommand(-1)
     deleteGlobalCommand(-3)
-    expect(createGlobalCommand("d", "d").id).toBe(-4)
+    expect(createGlobalCommand("d", "d", false).id).toBe(-4)
   })
 
   it("refuses to hand out an id past the last safe integer", () => {
@@ -53,7 +53,7 @@ describe("global commands", () => {
         commands: [{ id: Number.MIN_SAFE_INTEGER, name: "a", command: "a" }],
       })
     )
-    expect(() => createGlobalCommand("b", "b")).toThrow()
+    expect(() => createGlobalCommand("b", "b", false)).toThrow()
     expect(summary().map((c) => c.name)).toEqual(["a"])
   })
 
@@ -63,7 +63,7 @@ describe("global commands", () => {
       JSON.stringify([{ id: -4, name: "old", command: "x" }])
     )
     expect(summary()).toEqual([{ id: -4, name: "old", command: "x" }])
-    expect(createGlobalCommand("new", "y").id).toBe(-5)
+    expect(createGlobalCommand("new", "y", false).id).toBe(-5)
   })
 
   it("never hands out an id at or above one in use, whatever the mark says", () => {
@@ -74,14 +74,14 @@ describe("global commands", () => {
         commands: [{ id: -5, name: "a", command: "a" }],
       })
     )
-    expect(createGlobalCommand("b", "b").id).toBe(-6)
+    expect(createGlobalCommand("b", "b", false).id).toBe(-6)
   })
 
   it("updates, deletes and reorders", () => {
-    createGlobalCommand("a", "a")
-    createGlobalCommand("b", "b")
-    createGlobalCommand("c", "c")
-    updateGlobalCommand(-2, "B", "bb")
+    createGlobalCommand("a", "a", false)
+    createGlobalCommand("b", "b", false)
+    createGlobalCommand("c", "c", false)
+    updateGlobalCommand(-2, "B", "bb", false)
     reorderGlobalCommands([-3, -1])
     expect(summary()).toEqual([
       { id: -3, name: "c", command: "c" },
@@ -92,8 +92,41 @@ describe("global commands", () => {
     expect(summary().map((c) => c.id)).toEqual([-1, -2])
   })
 
+  it("keeps whether a command runs on this computer", () => {
+    createGlobalCommand("zed", "zed .", true)
+    createGlobalCommand("dev", "pnpm dev", false)
+    expect(listGlobalCommands().map((c) => [c.name, c.run_local])).toEqual([
+      ["zed", true],
+      ["dev", false],
+    ])
+    updateGlobalCommand(-1, "zed", "zed .", false)
+    updateGlobalCommand(-2, "dev", "pnpm dev", true)
+    expect(listGlobalCommands().map((c) => [c.name, c.run_local])).toEqual([
+      ["zed", false],
+      ["dev", true],
+    ])
+  })
+
+  it("runs a stored command on this computer only when it says so", () => {
+    // Entries from builds before the flag have none; whatever else a newer
+    // build might store there doesn't count either.
+    localStorage.setItem(
+      GLOBAL_COMMANDS_STORAGE_KEY,
+      JSON.stringify([
+        { id: -1, name: "older", command: "local: zed ." },
+        { id: -2, name: "odd", command: "zed .", run_local: "yes" },
+        { id: -3, name: "local", command: "zed .", run_local: true },
+      ])
+    )
+    expect(listGlobalCommands().map((c) => [c.name, c.run_local])).toEqual([
+      ["older", false],
+      ["odd", false],
+      ["local", true],
+    ])
+  })
+
   it("throws when updating a command that is gone", () => {
-    expect(() => updateGlobalCommand(-9, "x", "x")).toThrow()
+    expect(() => updateGlobalCommand(-9, "x", "x", false)).toThrow()
   })
 
   it("ignores malformed storage", () => {

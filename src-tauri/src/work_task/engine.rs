@@ -3372,7 +3372,7 @@ impl TaskEngine {
             .map(str::trim)
             .filter(|c| !c.is_empty());
         let (display_name, command_line) = match custom {
-            Some(cmd) => (cmd.to_string(), cmd.to_string()),
+            Some(cmd) => (cmd.to_string(), Ok(cmd.to_string())),
             None => {
                 let Some(command_id) = settings.preflight_command_id else {
                     return;
@@ -3386,7 +3386,14 @@ impl TaskEngine {
                 if command.folder_id != task.folder_id {
                     return;
                 }
-                (command.name, command.command)
+                // One the desktop app runs on its own machine is never run
+                // here, on the folder's host: its light goes red saying so.
+                let line = if command.run_local {
+                    Err("it is set to run on the desktop's own computer".to_string())
+                } else {
+                    Ok(command.command)
+                };
+                (command.name, line)
             }
         };
         let Some(wt_id) = task.worktree_folder_id else {
@@ -3410,7 +3417,11 @@ impl TaskEngine {
             _ => return, // task already moved on
         }
 
-        match run_shell_capture(&command_line, &wt.path).await {
+        let outcome = match command_line {
+            Ok(line) => run_shell_capture(&line, &wt.path).await,
+            Err(why) => Err(why),
+        };
+        match outcome {
             Ok((code, tail)) => {
                 let passed = code == Some(0);
                 light.status = if passed { "passed" } else { "failed" }.to_string();
@@ -8029,6 +8040,84 @@ mod tests {
             preflight_command_id: Some(4),
             ..Default::default()
         }));
+    }
+
+    /// A legacy preflight that names a folder command runs it in the worktree —
+    /// unless the desktop app runs that command on its own machine, which this
+    /// host is not.
+    #[tokio::test]
+    async fn a_legacy_preflight_never_runs_a_local_command_on_the_host() {
+        use crate::db::service::folder_command_service;
+        use crate::db::test_helpers::{fresh_in_memory_db, seed_folder};
+        use sea_orm::{ActiveModelTrait, Set};
+
+        for run_local in [false, true] {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let db = fresh_in_memory_db().await;
+            let project = seed_folder(&db, "/repo").await;
+            let worktree = seed_folder(&db, &dir.path().to_string_lossy()).await;
+            let command = folder_command_service::create(
+                &db.conn,
+                project,
+                "check",
+                "echo ran > ran-here",
+                run_local,
+            )
+            .await
+            .expect("command");
+            work_task_service::settings_set(
+                &db.conn,
+                project,
+                &WorkTaskFolderSettings {
+                    preflight_command_id: Some(command.id),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("settings");
+            let now = chrono::Utc::now();
+            let task_id = crate::db::entities::work_task::ActiveModel {
+                folder_id: Set(project),
+                title: Set("Fix the login flow".to_string()),
+                config: Set("{}".to_string()),
+                status: Set(WorkTaskStatus::Review),
+                run_seq: Set(1),
+                worktree_folder_id: Set(Some(worktree)),
+                sort_order: Set(0),
+                created_at: Set(now),
+                updated_at: Set(now),
+                ..Default::default()
+            }
+            .insert(&db.conn)
+            .await
+            .expect("insert task")
+            .id;
+
+            let engine = test_engine(db);
+            engine.run_preflight(task_id, 1).await;
+
+            let light: WorkTaskPreflight = serde_json::from_str(
+                &work_task_service::get_model(&engine.db.conn, task_id)
+                    .await
+                    .expect("task row")
+                    .preflight
+                    .expect("a light"),
+            )
+            .expect("light json");
+            let ran = dir.path().join("ran-here").exists();
+            if run_local {
+                assert!(!ran, "a local command ran on the host");
+                assert_eq!(light.status, "failed");
+                let tail = light.output_tail.unwrap_or_default();
+                assert!(
+                    tail.ends_with("run on the desktop's own computer"),
+                    "{tail}"
+                );
+            } else {
+                assert!(ran, "the folder command didn't run in the worktree");
+                assert_eq!(light.status, "passed");
+            }
+        }
     }
 
     /// The refusal wordings that mean "lost a race" are skipped silently by

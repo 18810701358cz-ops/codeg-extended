@@ -3243,6 +3243,7 @@
       "localUnavailable": "本地命令仅在桌面应用中可用",
       "localRunFailed": "运行本地命令失败",
       "globalCommand": "所有文件夹可用",
+      "localCommand": "在本机运行",
       "manageDialog": {
         "title": "管理命令",
         "empty": "暂无命令",
@@ -3251,7 +3252,8 @@
         "newCommand": "新建命令",
         "nameLabel": "名称",
         "commandLabel": "命令",
-        "localCommandHint": "以 <code>local:</code> 开头的命令会在本机而不是项目所在主机上运行；<code>{folderVar}</code> 为目录的绝对路径，<code>{hostVar}</code> 为远程主机名，例如 <code>{example}</code>",
+        "runLocalLabel": "在本机运行",
+        "runLocalHint": "在本机而不是项目所在主机上运行，不打开终端；<code>{folderVar}</code> 为目录的绝对路径，<code>{hostVar}</code> 为远程主机名，例如 <code>{example}</code>",
         "globalLabel": "在所有文件夹中显示",
         "globalHint": "在所有文件夹、worktree 和远程连接中都可用，保存在本机",
         "dragSort": "拖拽排序",
@@ -3259,6 +3261,7 @@
         "orderFailed": "保存命令排序失败",
         "loadFailed": "加载命令失败",
         "saveFailed": "保存命令失败",
+        "runLocalNotKept": "文件夹所在主机无法保存“在本机运行”，请更新该主机，或打开“在所有文件夹中显示”把命令保存在本机",
         "deleteFailed": "删除命令失败",
         "confirmDelete": {
           "title": "删除命令？",

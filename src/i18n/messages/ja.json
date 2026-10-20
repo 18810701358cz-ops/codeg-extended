@@ -3243,6 +3243,7 @@
       "localUnavailable": "ローカルコマンドはデスクトップアプリでのみ利用できます",
       "localRunFailed": "ローカルコマンドの実行に失敗しました",
       "globalCommand": "すべてのフォルダーで利用可能",
+      "localCommand": "このコンピューターで実行",
       "manageDialog": {
         "title": "コマンド管理",
         "empty": "コマンドはまだありません",
@@ -3251,7 +3252,8 @@
         "newCommand": "新しいコマンド",
         "nameLabel": "名前",
         "commandLabel": "コマンド",
-        "localCommandHint": "<code>local:</code> で始めると、プロジェクトのホストではなくこのコンピューターで実行します。<code>{folderVar}</code> はフォルダーの絶対パス、<code>{hostVar}</code> はリモートホスト名です。例: <code>{example}</code>",
+        "runLocalLabel": "このコンピューターで実行",
+        "runLocalHint": "プロジェクトのホストではなく、このコンピューターでターミナルを使わずに実行します。<code>{folderVar}</code> はフォルダーの絶対パス、<code>{hostVar}</code> はリモートホスト名です。例: <code>{example}</code>",
         "globalLabel": "すべてのフォルダーに表示",
         "globalHint": "すべてのフォルダー、worktree、リモート接続で利用できます。このコンピューターに保存されます",
         "dragSort": "ドラッグして並び替え",
@@ -3259,6 +3261,7 @@
         "orderFailed": "コマンドの並び順の保存に失敗しました",
         "loadFailed": "コマンドの読み込みに失敗しました",
         "saveFailed": "コマンドの保存に失敗しました",
+        "runLocalNotKept": "フォルダーのホストが「このコンピューターで実行」を保存できません。ホストを更新するか、「すべてのフォルダーに表示」をオンにしてコマンドをこのコンピューターに保存してください",
         "deleteFailed": "コマンドの削除に失敗しました",
         "confirmDelete": {
           "title": "コマンドを削除しますか？",

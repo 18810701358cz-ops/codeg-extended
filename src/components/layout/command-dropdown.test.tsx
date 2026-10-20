@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   baseUrl: "https://devbox.example:3080",
   folder: { id: 1, path: "/repo" },
   command: "pnpm dev",
+  isLocal: false,
   // What the folder's host lists; null for its one "dev" command (`command`).
   hostCommands: null as unknown[] | null,
   tabs: [] as { id: string }[],
@@ -55,6 +56,7 @@ vi.mock("@/lib/api", () => ({
           name: "dev",
           command: h.command,
           sort_order: 0,
+          run_local: h.isLocal,
           created_at: "",
           updated_at: "",
         },
@@ -67,13 +69,18 @@ vi.mock("@/lib/api", () => ({
 }))
 vi.mock("./command-manage-dialog", () => ({ CommandManageDialog: () => null }))
 
-function hostCommand(id: number, command: string): FolderCommand {
+function hostCommand(
+  id: number,
+  command: string,
+  runLocal = false
+): FolderCommand {
   return {
     id,
     folder_id: 1,
     name: `host-${id}`,
     command,
     sort_order: 0,
+    run_local: runLocal,
     created_at: "",
     updated_at: "",
   }
@@ -92,6 +99,7 @@ describe("CommandDropdown", () => {
     h.baseUrl = "https://devbox.example:3080"
     h.folder = { id: 1, path: "/repo" }
     h.command = "pnpm dev"
+    h.isLocal = false
     h.hostCommands = null
     h.tabs = []
     useCommandTerminalLinkStore.setState({ links: {} })
@@ -123,9 +131,10 @@ describe("CommandDropdown", () => {
     expect(useCommandTerminalLinkStore.getState().links).toEqual({})
   })
 
-  it("runs a local window's local: command on this machine, in the folder", async () => {
+  it("runs a local window's command on this machine, in the folder", async () => {
     h.remote = false
-    h.command = 'local: open -a Zed "$CODEG_FOLDER_PATH"'
+    h.command = 'open -a Zed "$CODEG_FOLDER_PATH"'
+    h.isLocal = true
     render(<CommandDropdown />)
     fireEvent.click(await screen.findByTitle("runCommandTitle"))
     await waitFor(() =>
@@ -140,8 +149,19 @@ describe("CommandDropdown", () => {
     expect(useCommandTerminalLinkStore.getState().links).toEqual({})
   })
 
-  it("runs a remote server's local: command on this machine like any other", async () => {
-    h.command = 'local: zed "ssh://$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH"'
+  it("runs a command that merely starts with local: in a terminal", async () => {
+    h.command = "local: zed ."
+    render(<CommandDropdown />)
+    fireEvent.click(await screen.findByTitle("runCommandTitle"))
+    await waitFor(() =>
+      expect(h.create).toHaveBeenCalledWith("dev", "local: zed .", 5)
+    )
+    expect(h.runLocal).not.toHaveBeenCalled()
+  })
+
+  it("runs a remote server's command on this machine like any other", async () => {
+    h.command = 'zed "ssh://$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH"'
+    h.isLocal = true
     render(<CommandDropdown />)
     fireEvent.click(await screen.findByTitle("runCommandTitle"))
     await waitFor(() =>
@@ -156,11 +176,12 @@ describe("CommandDropdown", () => {
     expect(h.create).not.toHaveBeenCalled()
   })
 
-  it("runs a global local: command from a remote window, outside any folder", async () => {
+  it("runs a global command from a remote window on this machine, outside any folder", async () => {
     h.hostCommands = []
     createGlobalCommand(
       "zed",
-      'local: zed "ssh://$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH"'
+      'zed "ssh://$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH"',
+      true
     )
     render(<CommandDropdown />)
     fireEvent.click(await screen.findByTitle("runCommandTitle"))
@@ -180,7 +201,7 @@ describe("CommandDropdown", () => {
     // The backend checks a remote folder's path before cmd.exe splices it in.
     h.baseUrl = "not a url"
     h.hostCommands = []
-    createGlobalCommand("open", "local: echo %CODEG_FOLDER_PATH%")
+    createGlobalCommand("open", "echo %CODEG_FOLDER_PATH%", true)
     render(<CommandDropdown />)
     fireEvent.click(await screen.findByTitle("runCommandTitle"))
     await waitFor(() =>
@@ -193,10 +214,11 @@ describe("CommandDropdown", () => {
     )
   })
 
-  it("refuses a local: command outside the desktop app", async () => {
+  it("refuses a command set to run on this computer outside the desktop app", async () => {
     h.desktop = false
     h.remote = false
-    h.command = "local: zed ."
+    h.command = "zed ."
+    h.isLocal = true
     render(<CommandDropdown />)
     fireEvent.click(await screen.findByTitle("runCommandTitle"))
     await waitFor(() =>
@@ -208,8 +230,8 @@ describe("CommandDropdown", () => {
 
   it("doesn't let the host pass a command off as one kept on this computer", async () => {
     // Global commands have negative ids; the host's database never does.
-    h.hostCommands = [hostCommand(-1, "local: echo from-the-host")]
-    createGlobalCommand("mine", "local: echo mine")
+    h.hostCommands = [hostCommand(-1, "echo from-the-host", true)]
+    createGlobalCommand("mine", "echo mine", true)
     render(<CommandDropdown />)
     fireEvent.click(await screen.findByTitle("runCommandTitle"))
     await waitFor(() => expect(h.runLocal).toHaveBeenCalledTimes(1))
@@ -223,7 +245,7 @@ describe("CommandDropdown", () => {
 
   it("keeps a global command's run in one folder out of the others", async () => {
     h.hostCommands = []
-    createGlobalCommand("dev", "pnpm dev")
+    createGlobalCommand("dev", "pnpm dev", false)
     h.create.mockImplementationOnce(async () => "terminal-a")
     const { rerender } = render(<CommandDropdown />)
     fireEvent.click(await screen.findByTitle("runCommandTitle"))
@@ -255,7 +277,7 @@ describe("CommandDropdown", () => {
     await screen.findByText("addCommand")
 
     // Another window writes the store; this one only hears the event.
-    createGlobalCommand("zed", "local: zed .")
+    createGlobalCommand("zed", "zed .", true)
     act(() => {
       window.dispatchEvent(
         new StorageEvent("storage", { key: GLOBAL_COMMANDS_STORAGE_KEY })
@@ -274,7 +296,7 @@ describe("CommandDropdown", () => {
 
   it("drops global commands when another window clears the storage", async () => {
     h.hostCommands = []
-    createGlobalCommand("zed", "local: zed .")
+    createGlobalCommand("zed", "zed .", true)
     render(<CommandDropdown />)
     await screen.findByTitle("runCommandTitle")
 

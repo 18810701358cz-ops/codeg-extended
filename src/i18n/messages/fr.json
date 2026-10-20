@@ -3243,6 +3243,7 @@
       "localUnavailable": "Les commandes locales ne sont disponibles que dans l'application de bureau",
       "localRunFailed": "Échec de l'exécution de la commande locale",
       "globalCommand": "Disponible dans tous les dossiers",
+      "localCommand": "S'exécute sur cet ordinateur",
       "manageDialog": {
         "title": "Gérer les commandes",
         "empty": "Aucune commande pour le moment",
@@ -3251,7 +3252,8 @@
         "newCommand": "Nouvelle commande",
         "nameLabel": "Nom",
         "commandLabel": "Commande",
-        "localCommandHint": "Préfixez par <code>local:</code> pour exécuter sur cet ordinateur plutôt que sur l'hôte du projet ; <code>{folderVar}</code> est le chemin absolu du dossier et <code>{hostVar}</code> le nom de l'hôte distant, par ex. <code>{example}</code>",
+        "runLocalLabel": "Exécuter sur cet ordinateur",
+        "runLocalHint": "S'exécute sur cet ordinateur plutôt que sur l'hôte du projet, sans terminal ; <code>{folderVar}</code> est le chemin absolu du dossier et <code>{hostVar}</code> le nom de l'hôte distant, par ex. <code>{example}</code>",
         "globalLabel": "Afficher dans tous les dossiers",
         "globalHint": "Disponible dans chaque dossier, worktree et connexion distante ; enregistré sur cet ordinateur",
         "dragSort": "Glisser pour trier",
@@ -3259,6 +3261,7 @@
         "orderFailed": "Échec de l'enregistrement de l'ordre des commandes",
         "loadFailed": "Échec du chargement des commandes",
         "saveFailed": "Échec de l'enregistrement de la commande",
+        "runLocalNotKept": "l'hôte du dossier ne peut pas enregistrer \"Exécuter sur cet ordinateur\" ; mettez-le à jour ou activez \"Afficher dans tous les dossiers\" pour garder la commande sur cet ordinateur",
         "deleteFailed": "Échec de la suppression de la commande",
         "confirmDelete": {
           "title": "Supprimer la commande ?",

@@ -14,8 +14,11 @@ use crate::models::*;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FolderIdParams {
+pub struct ListFolderCommandsParams {
     pub folder_id: i32,
+    /// See [`visible_to_client`].
+    #[serde(default)]
+    pub include_local: bool,
 }
 
 #[derive(Deserialize)]
@@ -24,6 +27,7 @@ pub struct CreateFolderCommandParams {
     pub folder_id: i32,
     pub name: String,
     pub command: String,
+    pub run_local: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +37,7 @@ pub struct UpdateFolderCommandParams {
     pub name: Option<String>,
     pub command: Option<String>,
     pub sort_order: Option<i32>,
+    pub run_local: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -52,15 +57,28 @@ pub struct ReorderFolderCommandsParams {
 // Handlers
 // ---------------------------------------------------------------------------
 
+/// The commands a client is shown. One the desktop app runs on its own
+/// machine goes only to a client that says it knows that flag: an older one
+/// would run the command's text in a terminal here, on the wrong machine.
+fn visible_to_client(
+    commands: Vec<FolderCommandInfo>,
+    include_local: bool,
+) -> Vec<FolderCommandInfo> {
+    if include_local {
+        return commands;
+    }
+    commands.into_iter().filter(|c| !c.run_local).collect()
+}
+
 pub async fn list_folder_commands(
     Extension(state): Extension<Arc<AppState>>,
-    Json(params): Json<FolderIdParams>,
+    Json(params): Json<ListFolderCommandsParams>,
 ) -> Result<Json<Vec<FolderCommandInfo>>, AppCommandError> {
     let db = &state.db;
     let result = folder_command_service::list_by_folder(&db.conn, params.folder_id)
         .await
         .map_err(AppCommandError::from)?;
-    Ok(Json(result))
+    Ok(Json(visible_to_client(result, params.include_local)))
 }
 
 pub async fn create_folder_command(
@@ -68,10 +86,15 @@ pub async fn create_folder_command(
     Json(params): Json<CreateFolderCommandParams>,
 ) -> Result<Json<FolderCommandInfo>, AppCommandError> {
     let db = &state.db;
-    let result =
-        folder_command_service::create(&db.conn, params.folder_id, &params.name, &params.command)
-            .await
-            .map_err(AppCommandError::from)?;
+    let result = folder_command_service::create(
+        &db.conn,
+        params.folder_id,
+        &params.name,
+        &params.command,
+        params.run_local.unwrap_or(false),
+    )
+    .await
+    .map_err(AppCommandError::from)?;
     Ok(Json(result))
 }
 
@@ -86,6 +109,7 @@ pub async fn update_folder_command(
         params.name,
         params.command,
         params.sort_order,
+        params.run_local,
     )
     .await
     .map_err(AppCommandError::from)?;
@@ -119,6 +143,9 @@ pub async fn reorder_folder_commands(
 pub struct BootstrapFolderCommandsParams {
     pub folder_id: i32,
     pub folder_path: String,
+    /// See [`visible_to_client`].
+    #[serde(default)]
+    pub include_local: bool,
 }
 
 pub async fn bootstrap_folder_commands_from_package_json(
@@ -127,11 +154,12 @@ pub async fn bootstrap_folder_commands_from_package_json(
 ) -> Result<Json<Vec<FolderCommandInfo>>, AppCommandError> {
     let db = &state.db;
 
+    let include_local = params.include_local;
     let existing = folder_command_service::list_by_folder(&db.conn, params.folder_id)
         .await
         .map_err(AppCommandError::from)?;
     if !existing.is_empty() {
-        return Ok(Json(existing));
+        return Ok(Json(visible_to_client(existing, include_local)));
     }
 
     let commands_to_create = tokio::task::spawn_blocking(move || {
@@ -156,5 +184,43 @@ pub async fn bootstrap_folder_commands_from_package_json(
     let result = folder_command_service::list_by_folder(&db.conn, params.folder_id)
         .await
         .map_err(AppCommandError::from)?;
-    Ok(Json(result))
+    Ok(Json(visible_to_client(result, include_local)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(id: i32, run_local: bool) -> FolderCommandInfo {
+        FolderCommandInfo {
+            id,
+            folder_id: 1,
+            name: format!("c{id}"),
+            command: "x".to_string(),
+            sort_order: 0,
+            run_local,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn a_client_that_does_not_know_local_commands_is_not_shown_them() {
+        let params: ListFolderCommandsParams =
+            serde_json::from_value(serde_json::json!({ "folderId": 1 })).unwrap();
+        assert!(!params.include_local);
+        let shown = visible_to_client(vec![command(1, false), command(2, true)], false);
+        assert_eq!(shown.iter().map(|c| c.id).collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
+    fn a_client_that_knows_local_commands_is_shown_them_all() {
+        let params: BootstrapFolderCommandsParams = serde_json::from_value(
+            serde_json::json!({ "folderId": 1, "folderPath": "/repo", "includeLocal": true }),
+        )
+        .unwrap();
+        assert!(params.include_local);
+        let shown = visible_to_client(vec![command(1, false), command(2, true)], true);
+        assert_eq!(shown.iter().map(|c| c.id).collect::<Vec<_>>(), [1, 2]);
+    }
 }
