@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Settings2,
   Undo2,
+  X,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
@@ -73,6 +74,7 @@ import {
 import { AuxPanelNoFolderEmpty } from "@/components/layout/aux-panel-no-folder-empty"
 import { CommitMessageGenerateButton } from "@/components/layout/commit-message-generate-button"
 import { CommitMessageSettingsDialog } from "@/components/layout/commit-message-settings-dialog"
+import { CommitUntrackedFilesDialog } from "@/components/layout/commit-untracked-files-dialog"
 import { GIT_TOOLBAR_ICON_BUTTON_CLASS } from "@/components/layout/git-toolbar-controls"
 import { WorkspaceDegradedBanner } from "@/components/layout/workspace-degraded-banner"
 import {
@@ -475,6 +477,13 @@ function ChangeTreeOverflowRow({
   )
 }
 
+// The first few paths, for a tooltip or a toast.
+function listPaths(paths: string[], max: number, separator: string): string {
+  const shown = paths.slice(0, max)
+  if (paths.length > max) shown.push("…")
+  return shown.join(separator)
+}
+
 function isUntrackedStatus(status: string): boolean {
   return status.trim().toUpperCase() === UNTRACKED_STATUS
 }
@@ -795,15 +804,38 @@ export function GitChangesTab() {
     },
   })
 
-  // Quick commit takes every TRACKED change — untracked files are never staged
-  // implicitly, so an unignored build directory can't ride along.
+  // Quick commit takes every TRACKED change, plus the untracked files the user
+  // kept checked when the ✨ asked — an untracked file is never staged without
+  // being shown, so an unignored build directory can't ride along unseen.
   const trackedPaths = useMemo(
     () => trackedChanges.map((change) => change.path),
     [trackedChanges]
   )
+  const untrackedPaths = useMemo(
+    () => untrackedChanges.map((change) => change.path),
+    [untrackedChanges]
+  )
+  // The untracked files on offer while the ✨'s dialog is open.
+  const [untrackedOffer, setUntrackedOffer] = useState<string[] | null>(null)
+  // Checked there: they wait to be committed with the message.
+  const [includedUntracked, setIncludedUntracked] = useState<string[]>([])
+  // Left unchecked there: they start unchecked the next time it asks.
+  const [excludedUntracked, setExcludedUntracked] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
+  const commitPaths = useMemo(() => {
+    if (includedUntracked.length === 0) return trackedPaths
+    // One deleted since drops out; one staged since is a tracked change now.
+    const untracked = new Set(untrackedPaths)
+    return [
+      ...trackedPaths,
+      ...includedUntracked.filter((path) => untracked.has(path)),
+    ]
+  }, [includedUntracked, trackedPaths, untrackedPaths])
+  const includedUntrackedCount = commitPaths.length - trackedPaths.length
   // The latest list, for a commit that follows a generation on its own.
-  const trackedPathsRef = useRef(trackedPaths)
-  trackedPathsRef.current = trackedPaths
+  const commitPathsRef = useRef(commitPaths)
+  commitPathsRef.current = commitPaths
   const generation = useCommitMessageGeneration({
     path: folder?.path ?? null,
     folderId: folder?.id ?? null,
@@ -815,13 +847,13 @@ export function GitChangesTab() {
   } = generation
   const canQuickCommit =
     commitMessage.trim().length > 0 &&
-    trackedPaths.length > 0 &&
+    commitPaths.length > 0 &&
     !committing &&
     !generating
   // The same files Enter would commit, so the message describes the commit.
   const generateDisabledReason = committing
     ? tGenerate("busyCommitting")
-    : trackedPaths.length === 0
+    : trackedPaths.length === 0 && untrackedPaths.length === 0
       ? tGenerate("noChanges")
       : null
 
@@ -846,6 +878,9 @@ export function GitChangesTab() {
       try {
         const result = await gitCommit(folder.path, message, files, folder.id)
         setCommitMessage("")
+        // The next commit is asked about its untracked files afresh.
+        setIncludedUntracked([])
+        setExcludedUntracked(new Set())
         // `git_commit_core` also broadcasts `folder://git-commit-succeeded`,
         // and every mounted BranchDropdown (one per conversation tile) toasts
         // on it. Keying all of them to the same folder-scoped id makes sonner
@@ -871,34 +906,79 @@ export function GitChangesTab() {
   )
   const handleQuickCommit = useCallback(async () => {
     if (committing) return
-    await commitFiles(commitMessage, trackedPaths)
-  }, [commitFiles, commitMessage, committing, trackedPaths])
+    await commitFiles(commitMessage, commitPaths)
+  }, [commitFiles, commitMessage, commitPaths, committing])
 
-  const handleGenerate = useCallback(async () => {
-    const files = trackedPaths
-    const generated = await generateCommitMessage({
-      files,
-      draft: commitMessage,
-      fallbackAgent: activeAgentType,
-    })
-    if (generated === null) return
-    setCommitMessage(generated.message)
-    if (!generated.autoCommit) return
-    // Only ever the files the message was written for: if the changes moved
-    // meanwhile, the message waits in the box for the user to check.
-    if (!sameFiles(files, trackedPathsRef.current)) {
-      toast.info(tGenerate("toasts.autoCommitSkipped"))
+  const generateFor = useCallback(
+    async (files: string[]) => {
+      const generated = await generateCommitMessage({
+        files,
+        draft: commitMessage,
+        fallbackAgent: activeAgentType,
+      })
+      if (generated === null) return
+      setCommitMessage(generated.message)
+      if (!generated.autoCommit) return
+      // Only ever the files the message was written for: if the changes moved
+      // meanwhile, the message waits in the box for the user to check.
+      if (!sameFiles(files, commitPathsRef.current)) {
+        toast.info(tGenerate("toasts.autoCommitSkipped"))
+        return
+      }
+      await commitFiles(generated.message, files)
+    },
+    [
+      activeAgentType,
+      commitFiles,
+      commitMessage,
+      generateCommitMessage,
+      tGenerate,
+    ]
+  )
+  const handleGenerate = useCallback(() => {
+    // Untracked files are offered first: the message describes, and the
+    // commit takes, only the ones kept checked.
+    if (untrackedPaths.length > 0) {
+      setUntrackedOffer(untrackedPaths)
       return
     }
-    await commitFiles(generated.message, files)
-  }, [
-    activeAgentType,
-    commitFiles,
-    commitMessage,
-    generateCommitMessage,
-    tGenerate,
-    trackedPaths,
-  ])
+    void generateFor(trackedPaths)
+  }, [generateFor, trackedPaths, untrackedPaths])
+  const handleUntrackedPicked = useCallback(
+    (picked: string[]) => {
+      const offered = untrackedOffer ?? []
+      const offeredSet = new Set(offered)
+      const pickedSet = new Set(picked)
+      setExcludedUntracked((prev) => {
+        // Still left out when off the list this time (ignored for a while).
+        const next = new Set([...prev].filter((path) => !offeredSet.has(path)))
+        for (const path of offered) if (!pickedSet.has(path)) next.add(path)
+        return next
+      })
+      setUntrackedOffer(null)
+      // Left unchecked but staged since (by an agent, say): the commit takes
+      // everything staged, so it goes along all the same — and is said to.
+      const tracked = new Set(trackedPaths)
+      const stagedMeanwhile = offered.filter(
+        (path) => !pickedSet.has(path) && tracked.has(path)
+      )
+      if (stagedMeanwhile.length > 0) {
+        toast.info(tGenerate("untracked.stagedMeanwhile"), {
+          description: listPaths(stagedMeanwhile, 5, ", "),
+        })
+      }
+      // Not one deleted while the dialog was open: `git add` would fail on it.
+      const untracked = new Set(untrackedPaths)
+      const included = picked.filter((path) => untracked.has(path))
+      setIncludedUntracked(included)
+      void generateFor([...trackedPaths, ...included])
+    },
+    [generateFor, tGenerate, trackedPaths, untrackedOffer, untrackedPaths]
+  )
+  const handleDropIncludedUntracked = useCallback(() => {
+    setExcludedUntracked((prev) => new Set([...prev, ...includedUntracked]))
+    setIncludedUntracked([])
+  }, [includedUntracked])
   const handleAttachToSession = useCallback(
     (relativePath: string) => {
       if (!activeSessionTabId || !folder?.path) return
@@ -1160,12 +1240,16 @@ export function GitChangesTab() {
   // previous folder can't act (delete / rollback / batch) against the new one
   // after the deferred render settles and the dialog re-mounts. The draft commit
   // message is dropped for the same reason: it describes the PREVIOUS folder's
-  // changes and must not be committable against the new one.
+  // changes and must not be committable against the new one — and so are the
+  // untracked files picked to go with it.
   useEffect(() => {
     loadGenRef.current++
     setRollbackTarget(null)
     setDeleteTarget(null)
     setCommitMessage("")
+    setUntrackedOffer(null)
+    setIncludedUntracked([])
+    setExcludedUntracked(new Set())
     // A message being written describes the previous folder too. The hook
     // stops it once the deferred folder catches up; stopping here as well
     // leaves no frame in which its answer could land in the cleared box.
@@ -1574,7 +1658,7 @@ export function GitChangesTab() {
           folder — there is nothing to commit to (the body shows the "not a
           repo" hint). */}
       {workspaceState.isGitRepo && (
-        <div className="flex min-h-10 shrink-0 items-start gap-1 border-b border-border/50 px-2 py-1">
+        <div className="flex min-h-10 shrink-0 flex-wrap items-start gap-1 border-b border-border/50 px-2 py-1">
           {/* Multi-line, because a message is: Enter commits, Shift+Enter
               starts a new line, and the box grows to about six lines before it
               scrolls. Read-only while a message is being written into it. */}
@@ -1614,7 +1698,7 @@ export function GitChangesTab() {
             generating={generating}
             elapsedSeconds={generation.elapsedSeconds}
             disabledReason={generateDisabledReason}
-            onGenerate={() => void handleGenerate()}
+            onGenerate={handleGenerate}
             onStop={stopGeneration}
             className={GIT_TOOLBAR_ICON_BUTTON_CLASS}
           />
@@ -1714,12 +1798,48 @@ export function GitChangesTab() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* Enter commits more than the tracked changes once untracked files
+              were picked for the message, so that is said here — on a line of
+              its own under the box, where the panel's whole width fits it. */}
+          {includedUntrackedCount > 0 && (
+            <div className="-mt-1 flex min-w-0 basis-full items-center gap-1 px-1.5 pb-1 text-2xs text-muted-foreground">
+              <span
+                className="truncate"
+                title={listPaths(
+                  commitPaths.slice(trackedPaths.length),
+                  20,
+                  "\n"
+                )}
+              >
+                {tGenerate("untracked.included", {
+                  count: includedUntrackedCount,
+                })}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 rounded-sm p-0.5 hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                onClick={handleDropIncludedUntracked}
+                disabled={committing || generating}
+                title={tGenerate("untracked.drop")}
+                aria-label={tGenerate("untracked.drop")}
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          )}
         </div>
       )}
       <CommitMessageSettingsDialog
         open={generation.settingsOpen}
         onOpenChange={generation.setSettingsOpen}
         folderId={folder ? (folder.parent_id ?? folder.id) : null}
+      />
+      <CommitUntrackedFilesDialog
+        files={untrackedOffer}
+        excluded={excludedUntracked}
+        hasTrackedChanges={trackedPaths.length > 0}
+        onConfirm={handleUntrackedPicked}
+        onCancel={() => setUntrackedOffer(null)}
       />
       {workspaceState.degraded && (
         <WorkspaceDegradedBanner onRetry={workspaceState.restart} />
