@@ -431,6 +431,9 @@ pub fn acp_adapter_relation(agent_type: AgentType) -> Option<AcpAdapterRelation>
 ///
 /// Probed after PATH and `~/.local/bin`, so a codeg-managed copy and anything
 /// genuinely on PATH still win.
+///
+/// Npx agents are not listed here: their native-installer fallback (Grok's
+/// `~/.grok/bin`) is `npx_native_install` in `commands/acp.rs`.
 pub fn binary_system_dirs(agent_type: AgentType) -> &'static [&'static str] {
     match agent_type {
         AgentType::OpenCode => &[".opencode/bin"],

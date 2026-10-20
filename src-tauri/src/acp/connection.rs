@@ -2098,7 +2098,7 @@ async fn build_agent(
             for (k, v) in &merged_env {
                 parts.push(format!("{k}={v}"));
             }
-            let bridge_command = crate::commands::acp::resolve_npx_command(cmd)
+            let bridge_command = crate::commands::acp::resolve_npx_command_for(agent_type, cmd)
                 .await
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| {

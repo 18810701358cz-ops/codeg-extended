@@ -195,12 +195,12 @@ pub(crate) fn apply_custom_version_to_url(
     url.replace(registry_version, custom_version)
 }
 
-/// Check whether an NPX agent command is spawnable, by the same lookup as
-/// [`resolve_npx_command`]: PATH, then `~/.local/bin`, then the current npm
-/// global prefix. The fallbacks handle GUI environments that don't inherit the
-/// user's shell PATH.
-pub(crate) async fn is_cmd_available(cmd: &str) -> bool {
-    resolve_npx_command(cmd).await.is_some()
+/// Check whether an NPX agent's command is spawnable, by the same lookup as
+/// [`resolve_npx_command_for`]: PATH, then `~/.local/bin`, then the current npm
+/// global prefix, then the agent vendor's own native install. The fallbacks
+/// handle GUI environments that don't inherit the user's shell PATH.
+pub(crate) async fn is_cmd_available(agent_type: AgentType, cmd: &str) -> bool {
+    resolve_npx_command_for(agent_type, cmd).await.is_some()
 }
 
 pub(crate) fn resolve_command_on_path(cmd: &str) -> Option<PathBuf> {
@@ -399,22 +399,86 @@ async fn prewarm_uvx_agent(
     Ok(())
 }
 
-/// Resolve an npx agent's command the way connect, launch, status and
-/// diagnostics all see it: PATH, then `~/.local/bin` (both via
-/// [`resolve_system_agent_binary`]), then the current npm global prefix.
+/// Resolve a command the way an npx agent's command resolves, short of the
+/// agent-specific last step [`resolve_npx_command_for`] adds: PATH, then
+/// `~/.local/bin` (both via [`resolve_system_agent_binary`]), then the current
+/// npm global prefix.
 ///
 /// Both fallbacks cover an app PATH that lacks the user's shell PATH.
 /// `~/.local/bin` goes first on purpose: when neither copy is on the app's
 /// PATH, a vendor's official installer copy (which targets `~/.local/bin`)
 /// beats an npm copy, as it typically does in a terminal where the installer
 /// put `~/.local/bin` first on PATH. See the Hermes "Launch preference" note
-/// in `acp/registry.rs`. [`NpxCommandResolver::resolve_for_list`] must keep
-/// the same order.
+/// in `acp/registry.rs`. [`NpxCommandResolver::resolve_cmd`] must keep the
+/// same order.
 pub(crate) async fn resolve_npx_command(cmd: &str) -> Option<PathBuf> {
     if let Some(path) = resolve_system_agent_binary(cmd) {
         return Some(path);
     }
     resolve_npx_command_from_current_npm_prefix(cmd).await
+}
+
+/// [`resolve_npx_command`] plus the copy the agent vendor's own native
+/// installer keeps in a directory of its own (see [`npx_native_install`]).
+///
+/// Connect, launch, status, list, diagnostics and version detection all take
+/// an npx agent's command from here, so they agree on whether it is installed.
+/// Ordered last, so anything on PATH, an official-installer copy in
+/// `~/.local/bin` and the npm copy codeg manages all still win.
+pub(crate) async fn resolve_npx_command_for(agent_type: AgentType, cmd: &str) -> Option<PathBuf> {
+    if let Some(path) = resolve_npx_command(cmd).await {
+        return Some(path);
+    }
+    npx_native_install(agent_type, cmd)
+}
+
+/// The native-installer copy of an npx agent's command, for the agents whose
+/// vendor also ships an installer of its own that puts the command where no
+/// other probe looks.
+fn npx_native_install(agent_type: AgentType, cmd: &str) -> Option<PathBuf> {
+    match agent_type {
+        AgentType::Grok => grok_native_install(&home_dir_or_default(), cmd),
+        _ => None,
+    }
+}
+
+/// `grok` as Grok's own installers leave it: `x.ai/cli/install.sh` and
+/// `install.ps1` put it in `~/.grok/bin`, then only add that directory to the
+/// shell rc or the Windows user PATH. An app that was already running, or that
+/// a launcher started with the environment from before the install, never sees
+/// that PATH, and on Windows nothing lands in `~/.local/bin` either, so without
+/// this a working native install reads as not installed.
+///
+/// `@xai-official/grok`'s npm postinstall writes its binary to the same place,
+/// and `npm uninstall -g` leaves that copy behind. Grok records which installer
+/// owns `~/.grok/bin` as `[cli].installer` in the `config.toml` beside it:
+/// `"internal"` from its own installers, `"npm"` from the npm package. A copy
+/// recorded as npm's does not count here. An npm-installed Grok resolves
+/// through the npm prefix like every other npx agent, and counting its copy
+/// would keep Grok installed after codeg uninstalls it.
+///
+/// Only the default location is probed. A `GROK_BIN_DIR` or `GROK_HOME`
+/// relocation is not followed.
+fn grok_native_install(home: &Path, cmd: &str) -> Option<PathBuf> {
+    let grok_dir = home.join(".grok");
+    let cand = grok_dir
+        .join("bin")
+        .join(binary_cache::executable_file_name(cmd));
+    if !cand.is_file() {
+        return None;
+    }
+    let installer = fs::read_to_string(grok_dir.join("config.toml"))
+        .ok()
+        .and_then(|raw| raw.parse::<toml::Table>().ok())
+        .and_then(|table| {
+            table
+                .get("cli")?
+                .as_table()?
+                .get("installer")?
+                .as_str()
+                .map(str::to_string)
+        });
+    (installer.as_deref() != Some("npm")).then_some(cand)
 }
 
 #[derive(Default)]
@@ -424,7 +488,18 @@ struct NpxCommandResolver {
 }
 
 impl NpxCommandResolver {
-    async fn resolve_for_list(&mut self, cmd: &str) -> Option<PathBuf> {
+    /// [`resolve_npx_command_for`] for the list path, which asks about every
+    /// npx agent at once: the npm prefix is probed at most once per request,
+    /// and each command is resolved at most once.
+    async fn resolve_for_list(&mut self, agent_type: AgentType, cmd: &str) -> Option<PathBuf> {
+        // Outside the per-command cache, which is keyed by the command alone:
+        // whether a native-installer copy counts depends on the agent asking.
+        self.resolve_cmd(cmd)
+            .await
+            .or_else(|| npx_native_install(agent_type, cmd))
+    }
+
+    async fn resolve_cmd(&mut self, cmd: &str) -> Option<PathBuf> {
         if let Some(cached) = self.per_cmd_cache.get(cmd) {
             return cached.clone();
         }
@@ -566,7 +641,7 @@ pub(crate) async fn verify_agent_installed(agent_type: AgentType) -> Result<(), 
     let meta = registry::get_agent_meta(agent_type);
     match meta.distribution {
         registry::AgentDistribution::Npx { cmd, .. } => {
-            if !is_cmd_available(cmd).await {
+            if !is_cmd_available(agent_type, cmd).await {
                 // INVARIANT: the substring "is not installed" is matched
                 // verbatim by the frontend catch block in
                 // `src/contexts/acp-connections-context.tsx` to surface a
@@ -695,7 +770,7 @@ async fn detect_local_version(agent_type: AgentType) -> Option<String> {
     let meta = registry::get_agent_meta(agent_type);
     match meta.distribution {
         registry::AgentDistribution::Npx { cmd, package, .. } => {
-            let resolved = resolve_npx_command(cmd).await?;
+            let resolved = resolve_npx_command_for(agent_type, cmd).await?;
             // Try `npm list -g <package_name> --json` to get the real installed version.
             let pkg_name = package_name_from_spec(package);
             let mut version = detect_npm_global_version(&pkg_name).await;
@@ -1033,7 +1108,7 @@ async fn collect_agent_diag(
             diag.package = Some(package.to_string());
             diag.node_required = node_required.map(str::to_string);
 
-            let resolve_npx = resolve_npx_command(cmd)
+            let resolve_npx = resolve_npx_command_for(agent_type, cmd)
                 .await
                 .map(|p| p.to_string_lossy().to_string());
             diag.launchable = resolve_npx.clone();
@@ -12013,7 +12088,7 @@ pub(crate) async fn acp_get_agent_status_core(
 
     let (available, installed_version) = match &meta.distribution {
         registry::AgentDistribution::Npx { cmd, package, .. } => {
-            let resolved = resolve_npx_command(cmd).await;
+            let resolved = resolve_npx_command_for(agent_type, cmd).await;
             let mut version = resolved
                 .as_ref()
                 .and_then(|_| setting.as_ref().and_then(|m| m.installed_version.clone()));
@@ -12125,7 +12200,7 @@ pub(crate) async fn acp_list_agents_core(db: &AppDatabase) -> Result<Vec<AcpAgen
                 // Keep the list path bounded: each list request probes npm
                 // global prefix at most once, then reuses the result across
                 // all NPX agents in the loop.
-                let resolved = npx_resolver.resolve_for_list(cmd).await;
+                let resolved = npx_resolver.resolve_for_list(agent_type, cmd).await;
                 let mut version = resolved
                     .as_ref()
                     .and_then(|_| setting.and_then(|m| m.installed_version.clone()));
@@ -13868,7 +13943,7 @@ pub(crate) async fn acp_detect_agent_local_version_core(
         // `detect_local_version` already resolved the command once; with no
         // stored version there is nothing to clear, so skip resolving again.
         registry::AgentDistribution::Npx { cmd, .. } => {
-            previous.is_some() && !is_cmd_available(cmd).await
+            previous.is_some() && !is_cmd_available(agent_type, cmd).await
         }
         registry::AgentDistribution::Uvx { .. } => false,
     };
@@ -13998,7 +14073,7 @@ pub(crate) async fn acp_prepare_npx_agent_core(
                     AgentInstallEventKind::Log,
                     format!("Verifying the {} runtime...", meta.name),
                 );
-                let runtime_ok = match resolve_npx_command(cmd).await {
+                let runtime_ok = match resolve_npx_command_for(agent_type, cmd).await {
                     Some(bin) => system_probed_version(agent_type, &bin, None)
                         .await
                         .is_some(),
@@ -19475,8 +19550,10 @@ wire_api = "chat"
                     request_npm_prefix: Some(Some(prefix.clone())),
                     ..Default::default()
                 };
-                let listed = resolver.resolve_for_list(cmd).await;
-                let listed_prefix_only = resolver.resolve_for_list(prefix_only_cmd).await;
+                let listed = resolver.resolve_for_list(AgentType::Hermes, cmd).await;
+                let listed_prefix_only = resolver
+                    .resolve_for_list(AgentType::Hermes, prefix_only_cmd)
+                    .await;
                 (direct, listed, listed_prefix_only)
             })
             .await;
@@ -19486,6 +19563,122 @@ wire_api = "chat"
         assert_eq!(
             listed_prefix_only.as_deref(),
             Some(prefix_only_path.as_path())
+        );
+    }
+
+    /// A `grok` in `~/.grok/bin` (`grok.exe` on Windows) counts as Grok's
+    /// native install unless Grok recorded it as the npm package's copy, the
+    /// one `npm uninstall -g` leaves behind.
+    #[test]
+    fn grok_native_install_counts_any_copy_but_the_npm_packages() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let grok_dir = home.path().join(".grok");
+        let bin = grok_dir
+            .join("bin")
+            .join(binary_cache::executable_file_name("grok"));
+        let config = grok_dir.join("config.toml");
+        let found = || grok_native_install(home.path(), "grok");
+
+        std::fs::create_dir_all(&grok_dir).expect("create grok dir");
+        std::fs::write(&config, "[cli]\r\ninstaller = \"internal\"\r\n").expect("write config");
+        assert_eq!(found(), None, "an installer record alone is not an install");
+
+        std::fs::create_dir_all(bin.parent().expect("bin dir")).expect("create bin dir");
+        std::fs::write(&bin, "").expect("write grok");
+        // The record as `install.ps1` writes it, with CRLF line endings.
+        assert_eq!(found().as_deref(), Some(bin.as_path()));
+
+        // Only an explicit npm record excludes the copy.
+        for other in ["", "[cli]\nauto_update = false\n", "not = [toml"] {
+            std::fs::write(&config, other).expect("write config");
+            assert_eq!(found().as_deref(), Some(bin.as_path()), "config: {other:?}");
+        }
+        std::fs::remove_file(&config).expect("remove config");
+        assert_eq!(found().as_deref(), Some(bin.as_path()), "no config");
+
+        // What `@xai-official/grok`'s postinstall writes; its copy outlives
+        // `npm uninstall -g`.
+        std::fs::write(&config, "[cli]\ninstaller = \"npm\"\nauto_update = true\n")
+            .expect("write config");
+        assert_eq!(found(), None);
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn grok_native_install_is_the_last_npx_fallback() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let grok_dir = home.path().join(".grok");
+        let native_bin = grok_dir.join("bin");
+        let local_bin = home.path().join(".local").join("bin");
+        let prefix = home.path().join("npm-prefix");
+        let prefix_bin = npm_prefix_bin_dir(&prefix);
+        // Names nothing on the real PATH or npm prefix can answer.
+        let native_only = "codeg-test-grok-native-only";
+        let with_local_bin = "codeg-test-grok-native-and-local-bin";
+        let with_npm = "codeg-test-grok-native-and-npm-prefix";
+        for path in [
+            native_bin.join(native_only),
+            native_bin.join(with_local_bin),
+            local_bin.join(with_local_bin),
+            native_bin.join(with_npm),
+            prefix_bin.join(with_npm),
+        ] {
+            std::fs::create_dir_all(path.parent().expect("bin directory"))
+                .expect("create bin directory");
+            std::fs::write(&path, "").expect("write command");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("mark command executable");
+        }
+        std::fs::write(
+            grok_dir.join("config.toml"),
+            "[cli]\ninstaller = \"internal\"\n",
+        )
+        .expect("write config");
+
+        let got = temp_env::async_with_vars([("HOME", Some(home.path()))], async {
+            let mut resolver = NpxCommandResolver {
+                request_npm_prefix: Some(Some(prefix.clone())),
+                ..Default::default()
+            };
+            (
+                resolve_npx_command(native_only).await,
+                resolve_npx_command_for(AgentType::Grok, native_only).await,
+                resolve_npx_command_for(AgentType::Hermes, native_only).await,
+                is_cmd_available(AgentType::Grok, native_only).await,
+                resolver
+                    .resolve_for_list(AgentType::Grok, native_only)
+                    .await,
+                // Asked after Grok's lookup cached the command.
+                resolver
+                    .resolve_for_list(AgentType::Hermes, native_only)
+                    .await,
+                resolve_npx_command_for(AgentType::Grok, with_local_bin).await,
+                resolver.resolve_for_list(AgentType::Grok, with_npm).await,
+            )
+        })
+        .await;
+
+        let native = native_bin.join(native_only);
+        assert_eq!(got.0, None);
+        assert_eq!(got.1.as_deref(), Some(native.as_path()));
+        assert_eq!(got.2, None, "only Grok looks in ~/.grok/bin");
+        assert!(got.3, "the connect guard agrees");
+        assert_eq!(got.4.as_deref(), Some(native.as_path()), "the list agrees");
+        assert_eq!(
+            got.5, None,
+            "the list cache does not leak it to another agent"
+        );
+        assert_eq!(
+            got.6.as_deref(),
+            Some(local_bin.join(with_local_bin).as_path()),
+            "~/.local/bin still wins"
+        );
+        assert_eq!(
+            got.7.as_deref(),
+            Some(prefix_bin.join(with_npm).as_path()),
+            "the npm copy still wins"
         );
     }
 
