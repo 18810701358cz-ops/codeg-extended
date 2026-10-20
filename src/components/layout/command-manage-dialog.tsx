@@ -31,8 +31,7 @@ import {
   updateGlobalCommand,
   withoutGlobalIds,
 } from "@/lib/global-commands"
-import { parseLocalCommand } from "@/lib/local-command"
-import { isDesktop, isRemoteDesktopMode } from "@/lib/transport"
+import { isDesktop } from "@/lib/transport"
 import type { FolderCommand } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -325,12 +324,6 @@ export function CommandManageDialog({
 
   const searchActive = searchQuery.trim().length > 0
   const localHintValues = useMemo(localCommandHintValues, [])
-  // A remote-desktop window keeps this folder's commands on the remote
-  // server, and the launcher won't run a `local:` one from there.
-  const localNeedsGlobal =
-    isRemoteDesktopMode() &&
-    !draft.global &&
-    parseLocalCommand(draft.command) !== null
   const safeContainerWidth = panelContainerWidth > 0 ? panelContainerWidth : 900
   const leftMinSize = clamp(
     toPercent(LEFT_MIN_WIDTH, safeContainerWidth),
@@ -671,11 +664,6 @@ export function CommandManageDialog({
                         }
                       />
                     </div>
-                    {localNeedsGlobal ? (
-                      <p className="text-xs text-amber-600 dark:text-amber-400">
-                        {t("localNeedsGlobal")}
-                      </p>
-                    ) : null}
                   </div>
 
                   <div className="space-y-3 border-t px-4 py-3">

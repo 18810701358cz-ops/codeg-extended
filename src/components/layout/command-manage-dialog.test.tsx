@@ -8,7 +8,6 @@ import { CommandManageDialog } from "./command-manage-dialog"
 
 const h = vi.hoisted(() => ({
   desktop: true,
-  remote: true,
   platform: "macos",
   hostCommands: [] as unknown[],
   create: vi.fn(),
@@ -17,11 +16,7 @@ const h = vi.hoisted(() => ({
   reorder: vi.fn(async () => {}),
 }))
 
-vi.mock("@/lib/transport", () => ({
-  isDesktop: () => h.desktop,
-  isRemoteDesktopMode: () => h.remote,
-  getServerBaseUrl: () => "https://devbox.example:3080",
-}))
+vi.mock("@/lib/transport", () => ({ isDesktop: () => h.desktop }))
 vi.mock("@/hooks/use-platform", () => ({ detectPlatform: () => h.platform }))
 vi.mock("@/lib/api", () => ({
   listFolderCommands: vi.fn(async () => h.hostCommands),
@@ -96,7 +91,6 @@ describe("CommandManageDialog", () => {
   beforeEach(() => {
     localStorage.clear()
     h.desktop = true
-    h.remote = true
     h.platform = "macos"
     h.hostCommands = []
     h.create.mockReset()
@@ -117,21 +111,6 @@ describe("CommandManageDialog", () => {
     expect(await screen.findByText("build")).toBeInTheDocument()
     expect(screen.getByText("mine")).toBeInTheDocument()
     expect(screen.queryByText("impostor")).not.toBeInTheDocument()
-  })
-
-  it("warns in a remote window that a folder's local: command won't run here", async () => {
-    renderDialog()
-    await startNewCommand("zed", "local: zed .")
-    expect(screen.getByText(md.localNeedsGlobal)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("switch"))
-    expect(screen.queryByText(md.localNeedsGlobal)).not.toBeInTheDocument()
-  })
-
-  it("doesn't warn in a local window, whose folders are this computer's", async () => {
-    h.remote = false
-    renderDialog()
-    await startNewCommand("zed", "local: zed .")
-    expect(screen.queryByText(md.localNeedsGlobal)).not.toBeInTheDocument()
   })
 
   it("shows the hint's values as code, spelled for this machine's shell", async () => {
@@ -157,7 +136,6 @@ describe("CommandManageDialog", () => {
 
   it("leaves out the local-command hint outside the desktop app", async () => {
     h.desktop = false
-    h.remote = false
     renderDialog()
     await screen.findByRole("button", { name: md.newCommand })
     expect(screen.queryByText("$CODEG_FOLDER_PATH")).not.toBeInTheDocument()

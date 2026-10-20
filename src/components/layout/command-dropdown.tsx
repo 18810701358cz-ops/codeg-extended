@@ -207,14 +207,7 @@ export function CommandDropdown() {
           toast.error(t("localUnavailable"))
           return
         }
-        // A remote-desktop window lists the remote server's folder commands,
-        // which anything on that host can rewrite. From such a window only the
-        // commands kept on this computer — the global ones — may run on it.
         const remote = isRemoteDesktopMode()
-        if (remote && !isGlobalCommandId(cmd.id)) {
-          toast.error(t("localRemoteFolderCommand"))
-          return
-        }
         try {
           await runLocalCommand(
             localCommand,

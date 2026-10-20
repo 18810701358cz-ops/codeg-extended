@@ -3242,7 +3242,6 @@
       "stopCommandTitle": "Stop: {command}",
       "localUnavailable": "Local commands are only available in the desktop app",
       "localRunFailed": "Failed to run local command",
-      "localRemoteFolderCommand": "This local command is saved on the remote server, so it can't run on this computer. Turn on “Show in all folders” to keep it on this computer.",
       "globalCommand": "Shown in all folders",
       "manageDialog": {
         "title": "Manage Commands",
@@ -3253,7 +3252,6 @@
         "nameLabel": "Name",
         "commandLabel": "Command",
         "localCommandHint": "Prefix with <code>local:</code> to run on this computer instead of the project host; <code>{folderVar}</code> is the folder's absolute path and <code>{hostVar}</code> the remote host name, e.g. <code>{example}</code>",
-        "localNeedsGlobal": "Saved on the remote server, a local command won't run on this computer. Turn on “Show in all folders” to keep it on this computer.",
         "globalLabel": "Show in all folders",
         "globalHint": "Available in every folder, worktree and remote connection; saved on this computer",
         "dragSort": "Drag to sort",

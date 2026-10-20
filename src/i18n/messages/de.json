@@ -3242,7 +3242,6 @@
       "stopCommandTitle": "Stoppen: {command}",
       "localUnavailable": "Lokale Befehle sind nur in der Desktop-App verfügbar",
       "localRunFailed": "Lokaler Befehl konnte nicht ausgeführt werden",
-      "localRemoteFolderCommand": "Dieser lokale Befehl ist auf dem Remote-Server gespeichert und kann daher nicht auf diesem Computer laufen. Aktivieren Sie „In allen Ordnern anzeigen“, um ihn auf diesem Computer zu speichern.",
       "globalCommand": "In allen Ordnern verfügbar",
       "manageDialog": {
         "title": "Befehle verwalten",
@@ -3253,7 +3252,6 @@
         "nameLabel": "Bezeichnung",
         "commandLabel": "Befehl",
         "localCommandHint": "Mit dem Präfix <code>local:</code> läuft der Befehl auf diesem Computer statt auf dem Projekt-Host; <code>{folderVar}</code> ist der absolute Pfad des Ordners, <code>{hostVar}</code> der Name des Remote-Hosts, z. B. <code>{example}</code>",
-        "localNeedsGlobal": "Auf dem Remote-Server gespeichert, läuft ein lokaler Befehl nicht auf diesem Computer. Aktivieren Sie „In allen Ordnern anzeigen“, um ihn auf diesem Computer zu speichern.",
         "globalLabel": "In allen Ordnern anzeigen",
         "globalHint": "In jedem Ordner, Worktree und jeder Remote-Verbindung verfügbar; auf diesem Computer gespeichert",
         "dragSort": "Zum Sortieren ziehen",
