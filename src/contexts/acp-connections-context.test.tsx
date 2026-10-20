@@ -207,6 +207,7 @@ beforeEach(() => {
   h.denormalizeSnapshot.mockReturnValue({
     connectionId: "owner-conn",
     status: "connected",
+    hasPrompted: false,
     sessionId: null,
     modes: null,
     configOptions: null,
@@ -289,6 +290,7 @@ function snapshotBase() {
   return {
     connectionId: "spawned-conn",
     status: "connected",
+    hasPrompted: false,
     sessionId: null,
     modes: null,
     configOptions: null,
@@ -8440,5 +8442,135 @@ describe("taskbar / Dock attention rides along with every desktop alert", () => 
       questions: [],
     })
     expect(h.requestWindowAttention).toHaveBeenCalledWith("question_request")
+  })
+})
+
+describe("hasPrompted: whether a turn has run on the connection", () => {
+  // A new conversation's draft: an owner spawn with no session to resume.
+  async function connectDraft(): Promise<AttachHandlers> {
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "codex", "/tmp/x")
+    })
+    return latestAttachHandlers()
+  }
+
+  const hasPrompted = () => h.store!.getConnection(TAB)!.hasPrompted
+
+  it("stays false through start-up output and latches at the first turn", async () => {
+    const handlers = await connectDraft()
+    expect(hasPrompted()).toBe(false)
+
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "connected",
+    })
+    // What codex-acp sends for a codeg-mcp that could not start, while the
+    // conversation still shows its welcome screen. Not a turn.
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "tool_call",
+      tool_call_id: "mcp_startup.codeg-mcp.1",
+      title: "mcp__codeg-mcp__startup",
+      kind: "other",
+      status: "failed",
+      content: null,
+      raw_input: null,
+      raw_output: null,
+    })
+    expect(hasPrompted()).toBe(false)
+
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    expect(hasPrompted()).toBe(true)
+
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "connected",
+    })
+    expect(hasPrompted()).toBe(true)
+  })
+
+  it("adopts a turn a snapshot reports and never unlearns it", async () => {
+    const handlers = await connectDraft()
+
+    // A client attaching to a connection whose first prompt already ran.
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      hasPrompted: true,
+      eventSeq: 5,
+    })
+    hydrateSnapshot(handlers, { event_seq: 5 } as LiveSessionSnapshot)
+    expect(hasPrompted()).toBe(true)
+
+    // Neither an older snapshot (the stale branch) nor a newer one that says
+    // otherwise takes it back: a turn that ran stays run.
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      hasPrompted: false,
+      eventSeq: 3,
+    })
+    hydrateSnapshot(handlers, { event_seq: 3 } as LiveSessionSnapshot)
+    expect(hasPrompted()).toBe(true)
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      hasPrompted: false,
+      eventSeq: 9,
+    })
+    hydrateSnapshot(handlers, { event_seq: 9 } as LiveSessionSnapshot)
+    expect(hasPrompted()).toBe(true)
+  })
+
+  it("adopts a turn even from a snapshot older than the events applied", async () => {
+    const handlers = await connectDraft()
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "connected",
+    })
+    expect(hasPrompted()).toBe(false)
+
+    // Stale by event_seq, so its current-state fields are ignored — but a turn
+    // it saw has run all the same.
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      hasPrompted: true,
+      eventSeq: 2,
+    })
+    hydrateSnapshot(handlers, { event_seq: 2 } as LiveSessionSnapshot)
+    expect(hasPrompted()).toBe(true)
+    expect(h.store!.getConnection(TAB)!.lastAppliedSeq).toBe(4)
+  })
+
+  it("starts over for a new connection on the same tab", async () => {
+    const handlers = await connectDraft()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    expect(hasPrompted()).toBe(true)
+
+    // The agent is restarted under the same tab: its first turn is still ahead.
+    await act(async () => {
+      await h.actions!.disconnect(TAB)
+    })
+    h.acpConnect.mockResolvedValue("respawned-conn")
+    await act(async () => {
+      await h.actions!.connect(TAB, "codex", "/tmp/x")
+    })
+    expect(h.store!.getConnection(TAB)!.connectionId).toBe("respawned-conn")
+    expect(hasPrompted()).toBe(false)
   })
 })

@@ -170,6 +170,9 @@ const CONN_NON_RENDER_KEYS = new Set<keyof ConnectionState>([
   // enrichment); no useConnection consumer renders it, and it can churn per
   // background tool event.
   "outOfTurnToolCalls",
+  // Read from the store at event time by the out-of-turn notice; never
+  // rendered.
+  "hasPrompted",
   // A stopped turn with its late reports folded in: handed to the runtime
   // store by the connection dispatch, never rendered from here.
   "cancelledTurn",
