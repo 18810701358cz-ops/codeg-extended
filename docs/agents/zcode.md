@@ -21,7 +21,7 @@ ZCode Start Plan accounts cannot run through the bridge. Their model requests ne
 
 Images and embedded resources follow the bridge's negotiated ACP capabilities. Pasted, dropped and uploaded images are sent as image blocks, including uploads hydrated by the Codeg server. Embedded PDFs retain their bytes even when their URI has no local file. File links remain references for native tools; remote links are not downloaded. Audio transcription is not supported.
 
-The bridge accepts up to 100 content blocks and 50 MiB of decoded content per prompt, with a 10 MiB limit per image. Unsupported image formats, invalid base64 and oversized prompts return an error. Pause any native goal loop before sending binary attachments; queued goal prompts accept only text.
+The bridge accepts up to 100 content blocks and 50 MiB of decoded content per prompt, with a 10 MiB limit per image. Image attachments must be PNG, JPEG, WebP, GIF, BMP or SVG. Other image formats, invalid base64 and oversized prompts return an error. Pause any native goal loop before sending binary attachments; queued goal prompts accept only text.
 
 ## Sessions and tools
 

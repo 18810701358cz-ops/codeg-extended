@@ -6116,6 +6116,8 @@ fn effective_prompt_capabilities(
 ) -> PromptCapabilitiesInfo {
     PromptCapabilitiesInfo {
         image: capabilities.image || agent_type == AgentType::Grok,
+        // The ZCode bridge rejects audio blocks (it has no transcription), so
+        // audio stays off for it even if a release starts advertising it.
         audio: agent_type != AgentType::ZCode && capabilities.audio,
         embedded_context: capabilities.embedded_context,
     }
