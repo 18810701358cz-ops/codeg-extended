@@ -3463,6 +3463,30 @@ export async function openInCode(path: string): Promise<void> {
 }
 
 /**
+ * Run a shell command detached on THIS desktop machine, even from a
+ * remote-desktop window — hence the shell transport. `folderPath` (the folder's
+ * path on its own host) and `remoteHost` reach the command as
+ * `$CODEG_FOLDER_PATH` / `$CODEG_REMOTE_HOST`. `remoteHost` is non-null exactly
+ * in a remote-desktop window (empty when its host's name can't be read): the
+ * backend then treats `folderPath` as the remote server's, not this machine's.
+ * It runs in `workingDir` when that is a directory on this machine, else in
+ * the home directory. Desktop only.
+ */
+export async function runLocalCommand(
+  command: string,
+  folderPath: string,
+  remoteHost: string | null,
+  workingDir: string | null
+): Promise<void> {
+  return getShellTransport().call("run_local_command", {
+    command,
+    folderPath,
+    remoteHost,
+    workingDir,
+  })
+}
+
+/**
  * Open a freshly created git worktree directory as a folder, recording the root
  * folder it descends from (`sourceFolderId` is the folder the worktree was
  * created from; the backend flattens to the root). Lets the worktree folder be
@@ -3757,18 +3781,25 @@ export async function deleteConversation(
 export async function listFolderCommands(
   folderId: number
 ): Promise<FolderCommand[]> {
-  return getTransport().call("list_folder_commands", { folderId })
+  // `includeLocal` tells the host this client knows `run_local`; it withholds
+  // such commands from older clients, which would run them in its terminal.
+  return getTransport().call("list_folder_commands", {
+    folderId,
+    includeLocal: true,
+  })
 }
 
 export async function createFolderCommand(
   folderId: number,
   name: string,
-  command: string
+  command: string,
+  runLocal: boolean
 ): Promise<FolderCommand> {
   return getTransport().call("create_folder_command", {
     folderId,
     name,
     command,
+    runLocal,
   })
 }
 
@@ -3776,13 +3807,16 @@ export async function updateFolderCommand(
   id: number,
   name?: string,
   command?: string,
-  sortOrder?: number
+  sortOrder?: number,
+  runLocal?: boolean
 ): Promise<FolderCommand> {
   return getTransport().call("update_folder_command", {
     id,
     name: name ?? null,
     command: command ?? null,
     sortOrder: sortOrder ?? null,
+    runLocal: runLocal ?? null,
+    includeLocal: true,
   })
 }
 
@@ -3804,6 +3838,7 @@ export async function bootstrapFolderCommandsFromPackageJson(
   return getTransport().call("bootstrap_folder_commands_from_package_json", {
     folderId,
     folderPath,
+    includeLocal: true,
   })
 }
 

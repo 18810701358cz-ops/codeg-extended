@@ -4648,6 +4648,10 @@ export interface FolderCommand {
   name: string
   command: string
   sort_order: number
+  /** Run by the desktop app on its own machine, detached, instead of in a
+   *  terminal on the folder's host. Absent from older servers' rows (then
+   *  treated as `false`). */
+  run_local?: boolean
   created_at: string
   updated_at: string
 }
