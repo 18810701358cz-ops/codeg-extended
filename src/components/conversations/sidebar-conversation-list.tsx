@@ -118,6 +118,7 @@ import {
   locateEntry,
   reconcileLayout,
   computeStickyState,
+  conversationRowTimestamp,
   flatIndexOfConversation,
   folderHeaderFlatIndices,
   formatRelative,
@@ -1407,22 +1408,24 @@ export function SidebarConversationList({
   )
 
   // Flat "Recent" bucket: every reachable conversation — folder-bound and chat
-  // alike — newest first, gated on the folder still being open so closing a
-  // folder also removes its sessions here. Reference reuse keeps an unrelated
-  // status event from rebuilding it and defeating the section's card memos.
+  // alike — most recently active first, gated on the folder still being open so
+  // closing a folder also removes its sessions here. Always ordered by
+  // `updated_at`, never by the sidebar's created/updated `sortMode`: "Recent"
+  // means last activity, and a session created long ago but used this morning
+  // belongs at the top. Reference reuse keeps an unrelated status event from
+  // rebuilding it and defeating the section's card memos.
   const recentConvsRef = useRef<DbConversationSummary[]>([])
   const recentConversations = useMemo(() => {
     const next = selectRecentConversationsWithReuse(
       shownConversations,
       showCompleted,
-      sortMode,
       openFolderIds,
       recentConvsRef.current,
       recentFilter
     )
     recentConvsRef.current = next
     return next
-  }, [shownConversations, showCompleted, sortMode, openFolderIds, recentFilter])
+  }, [shownConversations, showCompleted, openFolderIds, recentFilter])
 
   // Maps each open worktree child folder → its (open) root folder. A child is
   // only redirected when its parent is also open, so a worktree whose root was
@@ -3183,10 +3186,11 @@ export function SidebarConversationList({
           selectedConversation?.id === conv.id
         }
         isOpenInTab={openTabKeys.has(`${conv.agent_type}:${conv.id}`)}
-        timeLabel={formatRelative(
-          sortMode === "updated" ? conv.updated_at : conv.created_at,
-          now
-        )}
+        // The stamp the row is ordered by, so the label explains its position:
+        // Recent's and Chat's own rows read their last activity even while the
+        // rest of the sidebar is sorted by creation time, and sub-sessions
+        // their creation time even while it is sorted by activity.
+        timeLabel={formatRelative(conversationRowTimestamp(row, sortMode), now)}
         onSelect={handleSelect}
         onDoubleClick={handleDoubleClick}
         onRename={handleRename}
