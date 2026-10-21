@@ -8,8 +8,10 @@
 #![recursion_limit = "256"]
 // The unoptimized lib test binary trips the same harmless macOS
 // "__eh_frame section too large" linker warning as the `codeg` binary; see the
-// note at the top of `main.rs`.
-#![cfg_attr(debug_assertions, allow(linker_messages))]
+// note at the top of `main.rs`. Only under `cfg(test)`: elsewhere the crate is
+// built as an rlib only, which is not the root of any link, so rustc flags the
+// allow there as an unused attribute (an error under clippy's -D warnings).
+#![cfg_attr(all(test, debug_assertions), allow(linker_messages))]
 
 pub mod acp;
 pub mod acp_transcript;
@@ -537,7 +539,6 @@ mod tauri_app {
         unsafe { std::env::remove_var(RENDERING_OVERRIDE_OWNED_ENV) };
     }
 
-    #[cfg_attr(mobile, tauri::mobile_entry_point)]
     pub fn run() {
         // Ahead of the logging init, which is otherwise the first statement
         // here: `init_desktop` builds a `tracing_appender::non_blocking` file
