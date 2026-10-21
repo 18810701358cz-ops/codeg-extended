@@ -278,9 +278,9 @@ export function selectChatConversationsWithReuse(
 
 /**
  * Select the flat "Recent" bucket: every conversation the sidebar can reach,
- * folder-bound and chat alike, newest first — the whole point of the section is
- * that it does NOT distinguish the two. Reference reuse as in
- * {@link selectPinnedWithReuse}.
+ * folder-bound and chat alike, most recently active first — the whole point
+ * of the section is that it does NOT distinguish the two. Reference reuse as
+ * in {@link selectPinnedWithReuse}.
  *
  * Deliberate inclusions / exclusions:
  * - Pinned conversations are excluded. They already have a dedicated top
@@ -295,8 +295,12 @@ export function selectChatConversationsWithReuse(
  *   screen (with no folder entry to theme or resolve them). Chat conversations
  *   live in a hidden folder that is never in the open set, so they are admitted
  *   by `kind` instead.
- * - Sorted by `sortMode` (not always `updated_at`) so the row order agrees with
- *   the timestamp each card actually shows.
+ * - Sorted by the last activity (`updated_at`) ALWAYS, never by the sidebar's
+ *   created/updated `sortMode` preference. A section called "Recent" that
+ *   ordered by `created_at` would bury a session created last month but used
+ *   this morning, which is exactly what the section exists to surface. The
+ *   renderer shows the same timestamp on the row (see the list's `timeLabel`),
+ *   so the order and the label can never disagree.
  * - `filter` optionally narrows the mix to chats only, folder sessions only,
  *   or the conversations `codeg-cli` started; the default (`"all"`) is the
  *   section's whole point.
@@ -306,7 +310,6 @@ export function selectChatConversationsWithReuse(
 export function selectRecentConversationsWithReuse(
   conversations: readonly DbConversationSummary[],
   showCompleted: boolean,
-  sortMode: SidebarSortMode,
   openFolderIds: ReadonlySet<number>,
   prev: DbConversationSummary[],
   filter: SidebarRecentFilter = "all"
@@ -324,9 +327,7 @@ export function selectRecentConversationsWithReuse(
     if (filter === "cli" && conv.source !== "cli") continue
     next.push(conv)
   }
-  next.sort(
-    sortMode === "updated" ? compareByUpdatedAtDesc : compareByCreatedAtDesc
-  )
+  next.sort(compareByUpdatedAtDesc)
   return arraysShallowEqual(prev, next) ? prev : next
 }
 
@@ -1219,8 +1220,9 @@ export function buildRows(args: {
   chatConversations: readonly DbConversationSummary[]
   chatsExpanded: boolean
   /** The flat "Recent" bucket — every reachable conversation, folder-bound and
-   *  chat alike (or just one kind, under the user's filter), newest first (see
-   *  {@link selectRecentConversationsWithReuse}). Only read when `showRecent`.
+   *  chat alike (or just one kind, under the user's filter), most recently
+   *  active first (see {@link selectRecentConversationsWithReuse}). Only read
+   *  when `showRecent`.
    *  Optional — defaults to empty. */
   recentConversations?: readonly DbConversationSummary[]
   /** Whether the Recent section's rows are shown (its own collapse toggle).

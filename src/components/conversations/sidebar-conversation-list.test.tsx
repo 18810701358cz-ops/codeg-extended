@@ -1197,6 +1197,45 @@ describe("SidebarConversationList — Recent section", () => {
     ).toHaveLength(2)
   })
 
+  it("orders by last activity even though the sidebar sorts by creation time", () => {
+    // The list under test is `sortMode="created"`. conv-11 was created first
+    // but touched last; conv-12 is newer but idle. A section called "Recent"
+    // must lead with conv-11 and show its activity stamp, not its birth date.
+    // Timestamps hang off the real clock: this suite runs on real timers.
+    const t0 = Date.now()
+    // The collapse test above persists `{recent: true}` into
+    // `workspace:sidebar-section-collapsed`, and the list hydrates from it.
+    localStorage.clear()
+    useAppWorkspaceStore.setState({
+      conversations: [
+        conv(11, 1, {
+          created_at: new Date(t0 - 5 * MINUTE).toISOString(),
+          updated_at: new Date(t0 - 30_000).toISOString(),
+        }),
+        conv(12, 1, {
+          created_at: new Date(t0 - MINUTE).toISOString(),
+          updated_at: new Date(t0 - 3 * MINUTE).toISOString(),
+        }),
+      ],
+    })
+    render(recentTree(true))
+
+    // The Folders section emits the canonical copies first (creation order:
+    // conv-12 is newer); everything after them is the Recent duplicate, in
+    // activity order (conv-11 was touched last).
+    const rows = Array.from(document.querySelectorAll("[data-conv-key]"))
+    expect(rows.map((el) => el.textContent)).toEqual([
+      expect.stringContaining("conv-12"),
+      expect.stringContaining("conv-11"),
+      expect.stringContaining("conv-11"),
+      expect.stringContaining("conv-12"),
+    ])
+    // The Recent copy of conv-11 carries "now" (30s ago), not its creation
+    // label ("5m"), so the row's position is explained by what it shows.
+    expect(rows[2].textContent).toContain("conv-11")
+    expect(rows[2].textContent).toContain("now")
+  })
+
   describe("paging", () => {
     // `recentLimit` starts at RECENT_PAGE_SIZE and only ever grew, so a list
     // expanded a few pages deep stayed that way for the rest of the session.

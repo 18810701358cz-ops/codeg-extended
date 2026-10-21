@@ -1407,22 +1407,24 @@ export function SidebarConversationList({
   )
 
   // Flat "Recent" bucket: every reachable conversation — folder-bound and chat
-  // alike — newest first, gated on the folder still being open so closing a
-  // folder also removes its sessions here. Reference reuse keeps an unrelated
-  // status event from rebuilding it and defeating the section's card memos.
+  // alike — most recently active first, gated on the folder still being open so
+  // closing a folder also removes its sessions here. Always ordered by
+  // `updated_at`, never by the sidebar's created/updated `sortMode`: "Recent"
+  // means last activity, and a session created long ago but used this morning
+  // belongs at the top. Reference reuse keeps an unrelated status event from
+  // rebuilding it and defeating the section's card memos.
   const recentConvsRef = useRef<DbConversationSummary[]>([])
   const recentConversations = useMemo(() => {
     const next = selectRecentConversationsWithReuse(
       shownConversations,
       showCompleted,
-      sortMode,
       openFolderIds,
       recentConvsRef.current,
       recentFilter
     )
     recentConvsRef.current = next
     return next
-  }, [shownConversations, showCompleted, sortMode, openFolderIds, recentFilter])
+  }, [shownConversations, showCompleted, openFolderIds, recentFilter])
 
   // Maps each open worktree child folder → its (open) root folder. A child is
   // only redirected when its parent is also open, so a worktree whose root was
@@ -3183,8 +3185,14 @@ export function SidebarConversationList({
           selectedConversation?.id === conv.id
         }
         isOpenInTab={openTabKeys.has(`${conv.agent_type}:${conv.id}`)}
+        // Recent is ordered by last activity (see
+        // `selectRecentConversationsWithReuse`), so its rows must show the
+        // activity stamp even when the rest of the sidebar is sorted by
+        // creation time — the label always explains the position above it.
         timeLabel={formatRelative(
-          sortMode === "updated" ? conv.updated_at : conv.created_at,
+          row.recent || sortMode === "updated"
+            ? conv.updated_at
+            : conv.created_at,
           now
         )}
         onSelect={handleSelect}

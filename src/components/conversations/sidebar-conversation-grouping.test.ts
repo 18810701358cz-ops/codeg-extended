@@ -1331,7 +1331,6 @@ describe("selectRecentConversationsWithReuse", () => {
       selectRecentConversationsWithReuse(
         [folderConv, chatConv],
         true,
-        "created",
         open,
         [],
         filter
@@ -1350,7 +1349,6 @@ describe("selectRecentConversationsWithReuse", () => {
       selectRecentConversationsWithReuse(
         [fromCli, fromWindow, chat, closedCli],
         true,
-        "created",
         open,
         [],
         "cli"
@@ -1362,7 +1360,6 @@ describe("selectRecentConversationsWithReuse", () => {
     const out = selectRecentConversationsWithReuse(
       [conv(2, 77)],
       true,
-      "created",
       open,
       [],
       "folders"
@@ -1377,7 +1374,6 @@ describe("selectRecentConversationsWithReuse", () => {
     const out = selectRecentConversationsWithReuse(
       [folderConv, chatConv, pinned],
       true,
-      "created",
       open,
       []
     )
@@ -1392,7 +1388,6 @@ describe("selectRecentConversationsWithReuse", () => {
     const out = selectRecentConversationsWithReuse(
       [inOpen, inClosed, chatConv],
       true,
-      "created",
       open,
       []
     )
@@ -1406,43 +1401,32 @@ describe("selectRecentConversationsWithReuse", () => {
     const done = conv(1, 10, { status: "completed" })
     const active = conv(2, 10)
     expect(
-      selectRecentConversationsWithReuse(
-        [done, active],
-        false,
-        "created",
-        open,
-        []
-      ).map((c) => c.id)
+      selectRecentConversationsWithReuse([done, active], false, open, []).map(
+        (c) => c.id
+      )
     ).toEqual([2])
     expect(
-      selectRecentConversationsWithReuse(
-        [done, active],
-        true,
-        "created",
-        open,
-        []
-      ).map((c) => c.id)
+      selectRecentConversationsWithReuse([done, active], true, open, []).map(
+        (c) => c.id
+      )
     ).toEqual([2, 1])
   })
 
-  it("sorts by the active sort mode so the order matches each card's label", () => {
-    const older = conv(1, 10, { updated_at: new Date(9_000_000).toISOString() })
-    const newer = conv(2, 10, { updated_at: new Date(1_000).toISOString() })
-    // Created-at descending puts the higher id first; updated-at flips them.
+  it("orders by last activity, not by creation time", () => {
+    // A session created long ago but touched this morning must outrank one
+    // created moments ago and left alone: that is what "Recent" means.
+    const longRunning = conv(1, 10, {
+      created_at: new Date(1_000).toISOString(),
+      updated_at: new Date(9_000_000).toISOString(),
+    })
+    const brandNew = conv(2, 10, {
+      created_at: new Date(9_000_000).toISOString(),
+      updated_at: new Date(1_000).toISOString(),
+    })
     expect(
       selectRecentConversationsWithReuse(
-        [older, newer],
+        [longRunning, brandNew],
         true,
-        "created",
-        open,
-        []
-      ).map((c) => c.id)
-    ).toEqual([2, 1])
-    expect(
-      selectRecentConversationsWithReuse(
-        [older, newer],
-        true,
-        "updated",
         open,
         []
       ).map((c) => c.id)
@@ -1451,20 +1435,8 @@ describe("selectRecentConversationsWithReuse", () => {
 
   it("returns the prev array when membership is referentially unchanged", () => {
     const a = conv(1, 10)
-    const first = selectRecentConversationsWithReuse(
-      [a],
-      true,
-      "created",
-      open,
-      []
-    )
-    const second = selectRecentConversationsWithReuse(
-      [a],
-      true,
-      "created",
-      open,
-      first
-    )
+    const first = selectRecentConversationsWithReuse([a], true, open, [])
+    const second = selectRecentConversationsWithReuse([a], true, open, first)
     expect(second).toBe(first)
   })
 })
