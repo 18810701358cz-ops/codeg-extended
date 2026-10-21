@@ -12,12 +12,14 @@ import {
   markThreadTail,
   mergeConsecutiveAssistantTurns,
   singletonSourceTurns,
+  threadDelegationStatusTasks,
   type MergedAssistantRunCache,
   type ReplyFoldState,
   type ResolvedMessageGroup,
   type ThreadRenderItem,
 } from "./message-list-view"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
+import { buildDelegationStatusIndex } from "@/lib/delegation-status-index"
 import type { MessageTurn } from "@/lib/types"
 
 function turn(id: string): MessageTurn {
@@ -783,6 +785,61 @@ describe("extractMessageDelegationSources", () => {
         "u1"
       )?.[0]
     ).toBe(first[0])
+  })
+})
+
+describe("threadDelegationStatusTasks", () => {
+  function statusPoll(
+    id: string,
+    taskId: string
+  ): Extract<AdaptedContentPart, { type: "tool-call" }> {
+    const report = { task_id: taskId, status: "running", message: "Running." }
+    return {
+      type: "tool-call",
+      toolCallId: id,
+      toolName: "mcp__codeg-mcp__get_delegation_status",
+      input: JSON.stringify({ task_ids: [taskId] }),
+      state: "output-available",
+      output: JSON.stringify({
+        content: [{ type: "text", text: "Running." }],
+        isError: false,
+        structuredContent: { tasks: [report] },
+      }),
+    }
+  }
+
+  it("reads the status rows of every turn, so a task's newest row is the thread's last", () => {
+    const first = assistantItem("a1", {
+      parts: [
+        {
+          type: "delegation-status-group",
+          polls: [statusPoll("p1", "t1")],
+        },
+        { type: "text", text: "Still waiting." },
+        statusPoll("p2", "t1"),
+      ],
+    })
+    const compaction: ThreadItem = {
+      key: "compaction-c1",
+      kind: "compaction",
+      meta: null,
+    }
+    const second = assistantItem("a2", {
+      parts: [
+        {
+          type: "delegation-status-group",
+          polls: [statusPoll("p3", "t1")],
+        },
+      ],
+    })
+    const tasks = threadDelegationStatusTasks([first, compaction, second])
+    expect(tasks.map((refs) => refs.map((r) => r.latestPollId))).toEqual([
+      ["p1", "p2"],
+      ["p3"],
+    ])
+    expect(buildDelegationStatusIndex(tasks).get("t1")?.latestPollId).toBe("p3")
+    // A group that keeps its identity is read once.
+    expect(threadDelegationStatusTasks([first])[0]).toBe(tasks[0])
   })
 })
 

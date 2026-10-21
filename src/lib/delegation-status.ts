@@ -629,6 +629,11 @@ export interface DelegationTaskRow {
    * the row to reach the live sub-agent behind it (`useDelegationTaskLive`).
    */
   runningConfirmed: boolean
+  /** The tool call id of the latest poll behind the row — the one its report
+   *  and badge come from. Names the row across the transcript: the
+   *  transcript's newest row for a task is the one whose `latestPollId` is the
+   *  task's last poll (`@/lib/delegation-status-index`). */
+  latestPollId: string
 }
 
 interface ParsedPollReport {
@@ -730,6 +735,7 @@ export function buildDelegationTaskRows(
       badge,
       results,
       runningConfirmed,
+      latestPollId: latest.poll.toolCallId,
     }
   })
 }

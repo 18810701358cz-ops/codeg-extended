@@ -43,6 +43,7 @@ import { TurnStats } from "./turn-stats"
 import { LiveTurnStats } from "./live-turn-stats"
 import { ModelLabelProvider } from "./model-label-context"
 import { KnownInvocationsProvider } from "./known-invocations-context"
+import { DelegationStatusIndexProvider } from "./delegation-status-index-context"
 import { useTranscriptKnownInvocations } from "./use-transcript-known-invocations"
 import { ReplyArtifacts } from "./reply-artifacts"
 import { UserResourceLinks } from "./user-resource-links"
@@ -61,6 +62,11 @@ import {
   parseDelegateTaskId,
 } from "@/lib/delegation-card"
 import type { DelegationCardSource } from "@/hooks/use-delegation-card-model"
+import {
+  collectDelegationStatusTasks,
+  createDelegationStatusIndexer,
+  type DelegationStatusTaskRef,
+} from "@/lib/delegation-status-index"
 import {
   MessageThread,
   MessageThreadScrollButton,
@@ -574,6 +580,35 @@ export function groupDelegationSources(
     delegationSourcesByGroup.set(group, sources)
   }
   return sources
+}
+
+// Per group as well, for the status index below: the rows a historical
+// group's status cards draw are read once.
+const delegationStatusTasksByGroup = new WeakMap<
+  ResolvedMessageGroup,
+  readonly DelegationStatusTaskRef[]
+>()
+
+/**
+ * The `get_delegation_status` task rows the thread's turns draw, turn by turn
+ * and in thread order — what the transcript's status index is folded from
+ * (`@/lib/delegation-status-index`), so that only a task's newest row carries
+ * the decision its sub-agent is parked on.
+ */
+export function threadDelegationStatusTasks(
+  items: readonly ThreadRenderItem[]
+): (readonly DelegationStatusTaskRef[])[] {
+  const out: (readonly DelegationStatusTaskRef[])[] = []
+  for (const item of items) {
+    if (item.kind !== "turn") continue
+    let tasks = delegationStatusTasksByGroup.get(item.group)
+    if (!tasks) {
+      tasks = collectDelegationStatusTasks(item.group.parts)
+      delegationStatusTasksByGroup.set(item.group, tasks)
+    }
+    if (tasks.length > 0) out.push(tasks)
+  }
+  return out
 }
 
 /** The sub-agents one message's round lists, in order — see
@@ -1735,6 +1770,19 @@ export function MessageListView({
     ? `subagents-${lastAssistantGroup.id}`
     : `subagents-history-${conversationId}`
 
+  // Which status row of the thread speaks for each delegated task: only that
+  // one reaches the live sub-agent and carries the decision it is parked on,
+  // however many cards the agent's re-polls left. The indexer keeps its last
+  // result while no task's newest row changes, so a streaming batch that
+  // leaves them alone re-renders no row through the context.
+  const [indexDelegationStatus] = useState(() =>
+    createDelegationStatusIndexer()
+  )
+  const delegationStatusIndex = useMemo(
+    () => indexDelegationStatus(threadDelegationStatusTasks(threadItems)),
+    [indexDelegationStatus, threadItems]
+  )
+
   // --- Message navigator ------------------------------------------------------
   // Lifted scroll handle so the navigator — in the Session Details side panel,
   // outside the MessageScrollProvider subtree — can drive scrollToIndex.
@@ -2101,9 +2149,11 @@ export function MessageListView({
   return (
     <MarkdownImageProvider rootPath={resolvedImageRoot}>
       <ModelLabelProvider value={modelLabel}>
-        <KnownInvocationsProvider value={knownInvocations}>
-          {thread}
-        </KnownInvocationsProvider>
+        <DelegationStatusIndexProvider value={delegationStatusIndex}>
+          <KnownInvocationsProvider value={knownInvocations}>
+            {thread}
+          </KnownInvocationsProvider>
+        </DelegationStatusIndexProvider>
       </ModelLabelProvider>
     </MarkdownImageProvider>
   )

@@ -20,7 +20,7 @@
  * the row is exactly what the poll said.
  */
 
-import { useCallback, useSyncExternalStore } from "react"
+import { useCallback, useMemo, useSyncExternalStore } from "react"
 
 import {
   useOptionalConnectionStore,
@@ -72,8 +72,24 @@ export function useDelegationTaskLive(
 
   // Only a running delegation asks anything: once it has ended, whatever its
   // connection still holds in the moments before it is released is moot.
+  // Kept while the pending prompts are the same objects, as the store keeps
+  // them across the connection's other updates: a new value re-renders the
+  // prompt cards the row hands it to.
   const running = binding?.status === "running"
-  const prompts = running ? blockingPrompts(conn) : null
+  const pendingPermission = conn?.pendingPermission ?? null
+  const pendingAskQuestion = conn?.pendingAskQuestion ?? null
+  const pendingPlanApproval = conn?.pendingPlanApproval ?? null
+  const prompts = useMemo(
+    () =>
+      running
+        ? blockingPrompts({
+            pendingPermission,
+            pendingAskQuestion,
+            pendingPlanApproval,
+          })
+        : null,
+    [running, pendingPermission, pendingAskQuestion, pendingPlanApproval]
+  )
   return {
     childConnectionId,
     agentType: conn?.agentType ?? binding?.agentType ?? null,
