@@ -1213,7 +1213,7 @@ describe("SidebarConversationList — Recent section", () => {
           updated_at: new Date(t0 - 30_000).toISOString(),
         }),
         conv(12, 1, {
-          created_at: new Date(t0 - MINUTE).toISOString(),
+          created_at: new Date(t0 - 4 * MINUTE).toISOString(),
           updated_at: new Date(t0 - 3 * MINUTE).toISOString(),
         }),
       ],
@@ -1224,11 +1224,11 @@ describe("SidebarConversationList — Recent section", () => {
     // conv-12 is newer); everything after them is the Recent duplicate, in
     // activity order (conv-11 was touched last). Each row's text is its title
     // followed by its age label: the Folders copies keep their creation age
-    // ("1m", "5m"), while the Recent copies read their last activity ("now"
+    // ("4m", "5m"), while the Recent copies read their last activity ("now"
     // for 30s ago, "3m"), so each row's position is explained by what it shows.
     const rows = Array.from(document.querySelectorAll("[data-conv-key]"))
     expect(rows.map((el) => el.textContent)).toEqual([
-      "conv-121m",
+      "conv-124m",
       "conv-115m",
       "conv-11now",
       "conv-123m",

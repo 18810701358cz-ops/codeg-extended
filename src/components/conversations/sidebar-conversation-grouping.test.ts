@@ -1555,8 +1555,8 @@ describe("selectRecentConversationsWithReuse", () => {
       updated_at: new Date(9_000_000).toISOString(),
     })
     const brandNew = conv(2, 10, {
-      created_at: new Date(9_000_000).toISOString(),
-      updated_at: new Date(1_000).toISOString(),
+      created_at: new Date(5_000_000).toISOString(),
+      updated_at: new Date(5_000_000).toISOString(),
     })
     expect(
       selectRecentConversationsWithReuse(
