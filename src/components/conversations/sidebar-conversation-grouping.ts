@@ -1028,9 +1028,9 @@ export interface RecentMoreRow {
  * when there are pinned conversations) plus the three user-reorderable ones —
  * "folders" (wraps the whole folder list), "chats" (a flat list of folderless
  * chat-mode conversations), and "recent" (a flat, folder-agnostic list of the
- * newest conversations, shown only when the user keeps it enabled). All live in
- * the same flat row array so the single Virtualizer windows them like any other
- * row — there is no separate, un-virtualized list.
+ * most recently active conversations, shown only when the user keeps it
+ * enabled). All live in the same flat row array so the single Virtualizer
+ * windows them like any other row — there is no separate, un-virtualized list.
  */
 export interface SectionHeaderRow {
   kind: "section"
