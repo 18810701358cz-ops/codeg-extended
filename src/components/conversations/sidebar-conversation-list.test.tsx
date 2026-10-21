@@ -1477,6 +1477,68 @@ describe("SidebarConversationList — Recent section", () => {
   })
 })
 
+describe("SidebarConversationList — time labels", () => {
+  beforeEach(() => {
+    // Section collapse and folder expansion persist across tests otherwise.
+    localStorage.clear()
+    const folders = [folder(1, "Repo")]
+    store.activeTabId = null
+    store.tabSpec = []
+    useAppWorkspaceStore.setState({ folders, allFolders: folders })
+  })
+
+  it("labels Chat rows with the last activity they are ordered by", () => {
+    // The list under test is `sortMode="created"`, and Chat orders by last
+    // activity regardless. Timestamps hang off the real clock: this suite runs
+    // on real timers, and the list's `now` is read at mount.
+    const t0 = Date.now()
+    const HOUR = 60 * MINUTE
+    useAppWorkspaceStore.setState({
+      conversations: [
+        // Started two days ago, used 30s ago: Chat lists it first.
+        conv(21, 99, {
+          kind: "chat",
+          created_at: new Date(t0 - 48 * HOUR).toISOString(),
+          updated_at: new Date(t0 - 30_000).toISOString(),
+        }),
+        conv(22, 99, {
+          kind: "chat",
+          created_at: new Date(t0 - HOUR).toISOString(),
+          updated_at: new Date(t0 - HOUR).toISOString(),
+        }),
+        // Pinned (ordered by pin time) and Folders (ordered by creation here)
+        // keep the creation age.
+        conv(23, 99, {
+          kind: "chat",
+          created_at: new Date(t0 - 3 * HOUR).toISOString(),
+          updated_at: new Date(t0 - 30_000).toISOString(),
+          pinned_at: new Date(t0 - 30_000).toISOString(),
+        }),
+        conv(24, 1, {
+          created_at: new Date(t0 - 5 * MINUTE).toISOString(),
+          updated_at: new Date(t0 - 30_000).toISOString(),
+        }),
+      ],
+    })
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <SidebarConversationList showCompleted sortMode="created" />
+      </NextIntlClientProvider>
+    )
+
+    // Pinned, Folders, then Chat; each row's text is its title followed by
+    // its age label. Chat reads "now" above "1h" (its order), not "2d" above
+    // "1h".
+    const rows = Array.from(document.querySelectorAll("[data-conv-key]"))
+    expect(rows.map((el) => el.textContent)).toEqual([
+      "conv-233h",
+      "conv-245m",
+      "conv-21now",
+      "conv-221h",
+    ])
+  })
+})
+
 describe("SidebarConversationList — expand / collapse all", () => {
   const SECTION_COLLAPSED_KEY = "workspace:sidebar-section-collapsed"
   const FOLDER_EXPANDED_KEY = "workspace:sidebar-folder-expanded"

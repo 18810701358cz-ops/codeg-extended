@@ -150,6 +150,40 @@ describe("conversationRowTimestamp", () => {
       updated,
     ])
   })
+
+  it("reads the last activity on Chat rows, which are sorted by it", () => {
+    const chat = conv(3, 99, {
+      kind: "chat",
+      created_at: created,
+      updated_at: updated,
+    })
+    // Pinned chats leave the Chat bucket for Pinned, which is ordered by pin
+    // time, so they keep the sort mode's stamp like every other pinned row.
+    const pinnedChat = conv(4, 99, {
+      kind: "chat",
+      created_at: created,
+      updated_at: updated,
+      pinned_at: updated,
+    })
+    const chatRows = buildRows({
+      pinned: [pinnedChat],
+      pinnedExpanded: true,
+      orderedFolderIds: [],
+      byFolder: new Map(),
+      folderExpanded: {},
+      folderTotalCounts: new Map(),
+      foldersExpanded: true,
+      chatConversations: [chat],
+      chatsExpanded: true,
+    }).filter((r): r is ConversationRow => r.kind === "conversation")
+    expect(chatRows.map((r) => r.conversation.id)).toEqual([4, 3])
+    expect(chatRows.map((r) => conversationRowTimestamp(r, "created"))).toEqual(
+      [created, updated]
+    )
+    expect(chatRows.map((r) => conversationRowTimestamp(r, "updated"))).toEqual(
+      [updated, updated]
+    )
+  })
 })
 
 describe("groupByFolderWithReuse", () => {

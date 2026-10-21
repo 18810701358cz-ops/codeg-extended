@@ -3187,8 +3187,8 @@ export function SidebarConversationList({
         }
         isOpenInTab={openTabKeys.has(`${conv.agent_type}:${conv.id}`)}
         // The stamp the row's section orders it by, so the label explains its
-        // position: Recent's own rows read their last activity even while the
-        // rest of the sidebar is sorted by creation time.
+        // position: Recent's and Chat's own rows read their last activity even
+        // while the rest of the sidebar is sorted by creation time.
         timeLabel={formatRelative(conversationRowTimestamp(row, sortMode), now)}
         onSelect={handleSelect}
         onDoubleClick={handleDoubleClick}

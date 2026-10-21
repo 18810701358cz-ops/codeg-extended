@@ -121,21 +121,29 @@ export function formatRelative(iso: string, now: number): string {
 /**
  * The timestamp a conversation row's relative time label reads.
  *
- * The label has to explain where its row sits. The Recent section orders its
- * rows by last activity whatever the sidebar's `sortMode` says (see
- * {@link selectRecentConversationsWithReuse}), so they show `updated_at` even
- * while the rest of the sidebar is sorted, and labelled, by creation time.
- * Only the section's own top-level rows, though: the sub-sessions under an
- * expanded Recent parent keep the creation order they have under their folder
- * (see {@link mergeChildrenById}), so they follow `sortMode` and read the same
- * as their twins there.
+ * The label has to explain where its row sits. Two sections order their rows
+ * by last activity whatever the sidebar's `sortMode` says: Recent (see
+ * {@link selectRecentConversationsWithReuse}) and Chat (see
+ * {@link selectChatConversationsWithReuse}). Their rows show `updated_at` even
+ * while the rest of the sidebar is sorted, and labelled, by creation time. A
+ * Chat row is recognised by what that bucket admits: a top-level chat-kind
+ * conversation that is not pinned (a pinned one sits in Pinned instead).
+ *
+ * Every other row follows `sortMode`. That covers the Folders rows, which are
+ * sorted by it; the Pinned rows, which are ordered by pin time, a stamp no
+ * label shows; and the sub-sessions under an expanded parent, which keep the
+ * creation order they have under their folder (see {@link mergeChildrenById}),
+ * so the copies under a Recent parent read the same as their twins there.
  */
 export function conversationRowTimestamp(
   row: ConversationRow,
   sortMode: SidebarSortMode
 ): string {
   const conv = row.conversation
-  if (row.recent && row.depth === 0) return conv.updated_at
+  if (row.depth === 0) {
+    if (row.recent) return conv.updated_at
+    if (conv.kind === "chat" && conv.pinned_at == null) return conv.updated_at
+  }
   return sortMode === "updated" ? conv.updated_at : conv.created_at
 }
 
@@ -272,8 +280,10 @@ export function selectPinnedWithReuse(
 
 /**
  * Select the folderless "chat mode" conversations (`kind === "chat"`) for the
- * flat "Chat" sidebar section. Sorted most-recently-updated first, with
- * reference reuse (same motivation as {@link selectPinnedWithReuse}).
+ * flat "Chat" sidebar section. Sorted most-recently-updated first whatever the
+ * sidebar's `sortMode` says, and labelled with that same stamp (see
+ * {@link conversationRowTimestamp}), with reference reuse (same motivation as
+ * {@link selectPinnedWithReuse}).
  *
  * Excludes pinned conversations (they surface in the Pinned section, an explicit
  * override) and — unless `showCompleted` — completed ones, matching how
