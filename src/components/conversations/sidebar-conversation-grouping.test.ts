@@ -5,6 +5,7 @@ import {
   buildOwnerHeaderIndex,
   buildRows,
   computeStickyState,
+  conversationRowTimestamp,
   flatIndexOfConversation,
   folderHeaderFlatIndices,
   formatRelative,
@@ -21,6 +22,7 @@ import {
   selectRecentConversationsWithReuse,
   worktreeChildrenByParent,
   worktreeHeaderAlias,
+  type ConversationRow,
   type SidebarRow,
 } from "./sidebar-conversation-grouping"
 
@@ -86,6 +88,67 @@ describe("formatRelative", () => {
     const iso = new Date(now - 59 * MINUTE).toISOString()
     expect(formatRelative(iso, now)).toBe("59m")
     expect(formatRelative(iso, now + MINUTE)).toBe("1h")
+  })
+})
+
+describe("conversationRowTimestamp", () => {
+  // Created long ago, touched recently: the two stamps disagree, so every
+  // assertion pins which one a row's label reads.
+  const created = new Date(1_000).toISOString()
+  const updated = new Date(9_000_000).toISOString()
+  const parent = conv(1, 10, {
+    child_count: 1,
+    created_at: created,
+    updated_at: updated,
+  })
+  const kid = conv(2, 10, { created_at: created, updated_at: updated })
+  // The parent is listed under its folder and in Recent, expanded both times,
+  // so each conversation comes out twice: its canonical row, then its Recent
+  // copy.
+  const rows = buildRows({
+    pinned: [],
+    pinnedExpanded: true,
+    orderedFolderIds: [10],
+    byFolder: new Map([[10, [parent]]]),
+    folderExpanded: { 10: true },
+    folderTotalCounts: new Map([[10, 1]]),
+    foldersExpanded: true,
+    chatConversations: [],
+    chatsExpanded: true,
+    recentConversations: [parent],
+    showRecent: true,
+    conversationExpanded: new Set([1]),
+    childrenByParent: new Map([[1, [kid]]]),
+  }).filter((r): r is ConversationRow => r.kind === "conversation")
+  const parents = rows.filter((r) => r.conversation.id === 1)
+  const kids = rows.filter((r) => r.conversation.id === 2)
+
+  it("reads the last activity on Recent's own rows, whatever the sort mode", () => {
+    expect(parents.map((r) => r.recent ?? false)).toEqual([false, true])
+    expect(conversationRowTimestamp(parents[1], "created")).toBe(updated)
+    expect(conversationRowTimestamp(parents[1], "updated")).toBe(updated)
+  })
+
+  it("follows the sort mode under the folder", () => {
+    expect(conversationRowTimestamp(parents[0], "created")).toBe(created)
+    expect(conversationRowTimestamp(parents[0], "updated")).toBe(updated)
+  })
+
+  it("labels a Recent parent's sub-sessions like their twins under the folder", () => {
+    // Sub-sessions are creation-ordered in both places, so the Recent copy
+    // must not switch to the activity stamp its parent reads.
+    expect(kids.map((r) => [r.depth, r.recent ?? false])).toEqual([
+      [1, false],
+      [1, true],
+    ])
+    expect(kids.map((r) => conversationRowTimestamp(r, "created"))).toEqual([
+      created,
+      created,
+    ])
+    expect(kids.map((r) => conversationRowTimestamp(r, "updated"))).toEqual([
+      updated,
+      updated,
+    ])
   })
 })
 

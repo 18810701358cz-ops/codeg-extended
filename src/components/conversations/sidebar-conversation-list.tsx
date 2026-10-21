@@ -118,6 +118,7 @@ import {
   locateEntry,
   reconcileLayout,
   computeStickyState,
+  conversationRowTimestamp,
   flatIndexOfConversation,
   folderHeaderFlatIndices,
   formatRelative,
@@ -3185,16 +3186,10 @@ export function SidebarConversationList({
           selectedConversation?.id === conv.id
         }
         isOpenInTab={openTabKeys.has(`${conv.agent_type}:${conv.id}`)}
-        // Recent is ordered by last activity (see
-        // `selectRecentConversationsWithReuse`), so its rows must show the
-        // activity stamp even when the rest of the sidebar is sorted by
-        // creation time — the label always explains the position above it.
-        timeLabel={formatRelative(
-          row.recent || sortMode === "updated"
-            ? conv.updated_at
-            : conv.created_at,
-          now
-        )}
+        // The stamp the row's section orders it by, so the label explains its
+        // position: Recent's own rows read their last activity even while the
+        // rest of the sidebar is sorted by creation time.
+        timeLabel={formatRelative(conversationRowTimestamp(row, sortMode), now)}
         onSelect={handleSelect}
         onDoubleClick={handleDoubleClick}
         onRename={handleRename}

@@ -1222,18 +1222,17 @@ describe("SidebarConversationList — Recent section", () => {
 
     // The Folders section emits the canonical copies first (creation order:
     // conv-12 is newer); everything after them is the Recent duplicate, in
-    // activity order (conv-11 was touched last).
+    // activity order (conv-11 was touched last). Each row's text is its title
+    // followed by its age label: the Folders copies keep their creation age
+    // ("1m", "5m"), while the Recent copies read their last activity ("now"
+    // for 30s ago, "3m"), so each row's position is explained by what it shows.
     const rows = Array.from(document.querySelectorAll("[data-conv-key]"))
     expect(rows.map((el) => el.textContent)).toEqual([
-      expect.stringContaining("conv-12"),
-      expect.stringContaining("conv-11"),
-      expect.stringContaining("conv-11"),
-      expect.stringContaining("conv-12"),
+      "conv-121m",
+      "conv-115m",
+      "conv-11now",
+      "conv-123m",
     ])
-    // The Recent copy of conv-11 carries "now" (30s ago), not its creation
-    // label ("5m"), so the row's position is explained by what it shows.
-    expect(rows[2].textContent).toContain("conv-11")
-    expect(rows[2].textContent).toContain("now")
   })
 
   describe("paging", () => {

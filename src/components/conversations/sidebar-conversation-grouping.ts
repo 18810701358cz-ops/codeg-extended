@@ -118,6 +118,27 @@ export function formatRelative(iso: string, now: number): string {
   return `${y}y`
 }
 
+/**
+ * The timestamp a conversation row's relative time label reads.
+ *
+ * The label has to explain where its row sits. The Recent section orders its
+ * rows by last activity whatever the sidebar's `sortMode` says (see
+ * {@link selectRecentConversationsWithReuse}), so they show `updated_at` even
+ * while the rest of the sidebar is sorted, and labelled, by creation time.
+ * Only the section's own top-level rows, though: the sub-sessions under an
+ * expanded Recent parent keep the creation order they have under their folder
+ * (see {@link mergeChildrenById}), so they follow `sortMode` and read the same
+ * as their twins there.
+ */
+export function conversationRowTimestamp(
+  row: ConversationRow,
+  sortMode: SidebarSortMode
+): string {
+  const conv = row.conversation
+  if (row.recent && row.depth === 0) return conv.updated_at
+  return sortMode === "updated" ? conv.updated_at : conv.created_at
+}
+
 function arraysShallowEqual<T>(a: readonly T[], b: readonly T[]): boolean {
   if (a === b) return true
   if (a.length !== b.length) return false
@@ -298,9 +319,10 @@ export function selectChatConversationsWithReuse(
  * - Sorted by the last activity (`updated_at`) ALWAYS, never by the sidebar's
  *   created/updated `sortMode` preference. A section called "Recent" that
  *   ordered by `created_at` would bury a session created last month but used
- *   this morning, which is exactly what the section exists to surface. The
- *   renderer shows the same timestamp on the row (see the list's `timeLabel`),
- *   so the order and the label can never disagree.
+ *   this morning, which is exactly what the section exists to surface. Its
+ *   rows' time labels read the same stamp (see
+ *   {@link conversationRowTimestamp}), so the order and the label can never
+ *   disagree.
  * - `filter` optionally narrows the mix to chats only, folder sessions only,
  *   or the conversations `codeg-cli` started; the default (`"all"`) is the
  *   section's whole point.
