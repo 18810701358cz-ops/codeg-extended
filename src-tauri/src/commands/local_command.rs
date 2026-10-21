@@ -431,6 +431,8 @@ mod tests {
         assert!(err.message.contains("only on Windows"), "{err:?}");
     }
 
+    // On Windows a shell it does not recognize is taken for a cmd replacement.
+    #[cfg(not(windows))]
     #[test]
     fn unknown_posix_shells_get_the_command_verbatim() {
         assert_eq!(
