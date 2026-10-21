@@ -788,7 +788,8 @@ fn agent_root_slots(agent_type: AgentType) -> &'static [RootSlot] {
         // writes files itself rather than through `fs/*` (verified against
         // 0.209.1), so its `~/.trae` never needs to be a write root either.
         // Command Code is the same case: codeg's transcript is its history,
-        // and its tools never go through `fs/*` (verified against 1.84.0).
+        // and its tools never go through `fs/*` (verified against 1.84.0 and
+        // 1.86.3).
         AgentType::Custom(_) | AgentType::ZCode | AgentType::Trae | AgentType::CommandCode => &[],
     }
 }

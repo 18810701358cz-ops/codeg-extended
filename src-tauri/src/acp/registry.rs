@@ -4073,11 +4073,13 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // `function_call` named `REPL`, with `code` and `description` as
             // its arguments, and a result whose text is a `{result, stdout,
             // stderr}` JSON object; the tools that code called leave no records
-            // at all. The `session-meta` records keep saying
-            // `codebuddy.ai/mainAgent: "ptc"` after standard turns join the
-            // file; each record's `providerData.agent` (`ptc`, then `cli`) is
-            // what tells the turns apart. `parsers::codebuddy` shows each step
-            // as a `REPL` tool card and skips `session-meta`.
+            // of their own (2.171.0 adds a `replToolCalls` list of them to the
+            // result, which the parser does not read). The `session-meta`
+            // records keep saying `codebuddy.ai/mainAgent: "ptc"` after
+            // standard turns join the file; each record's `providerData.agent`
+            // (`ptc`, then `cli`) is what tells the turns apart.
+            // `parsers::codebuddy` shows each step as a `REPL` tool card and
+            // skips `session-meta`.
             //
             // 2.170.0, after 2.168.3 and 2.169.0, keeps `bin/codebuddy` and the
             // inlined ACP SDK byte for byte. It still answers `initialize` with
@@ -4100,9 +4102,27 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // itself: the auto-update scheduler, and the `autoUpdates` /
             // `DISABLE_AUTOUPDATER` gate on it, ship only in the interactive
             // `dist/codebuddy.js`, not in the headless bundle `--acp` runs.
+            //
+            // 2.171.0 keeps `bin/codebuddy` byte for byte, and its inlined ACP
+            // SDK is the same 1.7.0 copy apart from minified names;
+            // `package.json` changes only its version. `initialize` answers
+            // exactly as before (`protocolVersion: 1`), no `sessionUpdate`
+            // kind, `session/*` method or `_codebuddy.ai/*` notification came or
+            // went, and the recorded turns (2.170.0's set, plus an attached
+            // image and a sandboxed Bash) match 2.170.0 frame for frame apart
+            // from usage numbers. So do the transcripts and blob store the
+            // parser reads. The 33 MiB line still stalls stdin, the headless
+            // bundle still has no auto-update scheduler, and an install without
+            // optional dependencies still runs whole turns. A turn can now take
+            // longer: a model request that fails before generation starts is
+            // retried as the gateway's `retry_policy` allows or, without one,
+            // on 429, 408, 409 and 5xx other than 570–579, up to 8 times with
+            // waits from 1 s doubling to 32 s (longer when the server's
+            // `Retry-After` asks). Nothing new reaches the wire while it waits,
+            // and stopping the turn ends the wait.
             distribution: AgentDistribution::Npx {
-                version: "2.170.0",
-                package: "@tencent-ai/codebuddy-code@2.170.0",
+                version: "2.171.0",
+                package: "@tencent-ai/codebuddy-code@2.171.0",
                 cmd: "codebuddy",
                 args: &["--acp"],
                 env: &[],
@@ -4434,9 +4454,41 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // `update_panel` UI capability, which ACP never does. Tower mode,
             // `kimi app`, the TUI work and the opt-in
             // `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` do not touch `kimi acp`.
+            //
+            // 2.3.0 passes the mandated check verbatim (the same converter arm
+            // with `runtime_id: "local"`, the same three entry points,
+            // `session/fork` still ignoring `mcpServers`, neither
+            // `acpMcpServersToConfigs` nor the runtime-identity throw in the
+            // bundle), and `engines.node` stays at >=22.19.0. One runtime
+            // dependency is new: `chokidar`, which earlier releases bundled and
+            // `dist/main.mjs` now imports, so the package needs its
+            // dependencies installed, as npx does. `packages/acp-server` changes
+            // only to map two new session errors, and the sources of the rest
+            // of what codeg mirrors are unchanged: config.toml's provider and
+            // model schemas (bar two optional keys), `KIMI_MODEL_*`, the skill
+            // roots, the auth gate, the `mcp.json` schema, the prompt
+            // projection and title rule, the output cap and the `moonshotai`
+            // models.dev rows. The `wire.jsonl` writer adds one record type,
+            // `changeNotifier.snapshot`, which the parser skips like any record
+            // it does not read. A live A/B against 2.2.0, driven like the last
+            // one, matched on `initialize` (`protocolVersion: 1`),
+            // `session/new`, text and Bash turns, a stdio server handed over on
+            // `session/new`, and resuming and loading a session 2.2.0 wrote.
+            //
+            // What reaches codeg is a session lock: one process at a time holds
+            // a session, from opening it or starting a turn until 3 s after it
+            // goes idle. Opening a held session from another process fails, and
+            // codeg shows that as a busy session with Reload instead of
+            // replacing it with a new one (`classify_session_load_failure`). A
+            // prompt while another process holds the session answers
+            // `session.occupied`, which costs only that turn. Once another
+            // process has written the session, every prompt on a connection
+            // that opened it earlier answers `session.stale`, so codeg drops
+            // that connection and the next one loads the other process's turns
+            // (`kimi_session_stale`).
             distribution: AgentDistribution::Npx {
-                version: "2.2.0",
-                package: "@moonshot-ai/kimi-code@2.2.0",
+                version: "2.3.0",
+                package: "@moonshot-ai/kimi-code@2.3.0",
                 cmd: "kimi",
                 args: &["acp"],
                 env: &[],
@@ -4821,9 +4873,30 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // `messageId` field. The remaining changes (the remote hub, an
             // Opencode Go quota source read from `OPENCODE_GO_API_KEY`, a
             // CLIProxy User-Agent) are outside what codeg drives.
+            //
+            // Bridge 0.76.2, after 0.76.0 and 0.76.1, differs from 0.75.0 on the
+            // stdio path codeg launches by two lines. `package.json` changes only
+            // its version (the dependency tree resolves the same), `initialize`
+            // answers the same apart from the version (`protocolVersion: 1`),
+            // and against the stand-in backend `session/new`, the mode gate (the
+            // plan mirror still needs `set_mode` first) and stdio MCP forwarding
+            // produce the same client and backend frames as 0.75.0's. The two
+            // lines are 0.76.1's: the `_zcode/turnState` report that opens a
+            // prompt and the ones that close each of its rounds no longer name a
+            // target, so they reach every attached client. Over stdio the
+            // recipients stay the same, because the only `session/prompt`
+            // handler already passed the client registry's broadcast proxy as
+            // that target, and an untargeted report goes through the same proxy.
+            // codeg therefore still gets each start and end once under each
+            // name, with the `usage` and `turnMs` on the end that `zcode_turn`
+            // sums. The rest (a settings API that edits provider endpoints and
+            // probes model connectivity, the hub's Desktop Presence tier and
+            // heartbeat) runs only in the separate hub process or in the remote
+            // endpoint, which codeg's launch turns off with `ZCODE_ACP_REMOTE=0`
+            // unless the user's own bridge config turns it back on.
             distribution: AgentDistribution::Npx {
-                version: "0.75.0",
-                package: "zcode-acp-server@0.75.0",
+                version: "0.76.2",
+                package: "zcode-acp-server@0.76.2",
                 cmd: "zcode-acp-server",
                 args: &["server"],
                 env: &[],
@@ -5513,9 +5586,32 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // come from `~/.commandcode/mcp.json`, which the CLI loads itself and
             // codeg's MCP settings manage, so codeg does not forward the same
             // servers over `session/new` (see `load_mcp_servers_for_agent`).
+            //
+            // 1.86.3, after 1.85.0, 1.85.1 and 1.86.0–1.86.2, changes only its
+            // version in `package.json` (the same engines, bins and
+            // dependencies, still no install scripts), and `acp` is still on
+            // the updater's skip list. `initialize` and the signed-out
+            // `session/new` answer as 1.84.0 did apart from the version
+            // (`protocolVersion: 1`). Zero-cost turns (text, Shell behind a
+            // permission, Read and Edit, a question, MCP calls, the title and
+            // usage, a `session/load` replay in a new process) match 1.84.0
+            // frame for frame, still without a single `fs/*` or `terminal/*`
+            // request, and so do the MCP sources, skill roots and session
+            // store. One thing codeg sees is new: since 1.85.1 the `model`
+            // option, and `models.availableModels`, also list the user's
+            // own-key models from `providers.json` (as `<provider>/<model>`, or
+            // `<catalog id>@byok-<provider>` for a catalog model served that
+            // way), and selecting one over ACP works; the composer's generic
+            // model selector lists them like any other. 1.86.0's artifact
+            // tools, which publish a workspace HTML file to Command Code's
+            // service, load in every session that is not local-only unless
+            // `artifactsEnabled: false` turns them off, and would reach codeg as
+            // ordinary tool calls. The rest (new catalog models, IDE extension
+            // installs, two certificate authorities distrusted in its own TLS,
+            // terminal key bindings) is outside what codeg drives.
             distribution: AgentDistribution::Npx {
-                version: "1.84.0",
-                package: "command-code@1.84.0",
+                version: "1.86.3",
+                package: "command-code@1.86.3",
                 cmd: "command-code",
                 args: &["acp"],
                 env: &[],
@@ -5979,16 +6075,16 @@ mod tests {
         );
         assert_npx_version(
             AgentType::CodeBuddy,
-            "2.170.0",
-            "@tencent-ai/codebuddy-code@2.170.0",
+            "2.171.0",
+            "@tencent-ai/codebuddy-code@2.171.0",
             Some("22.0.0"),
         );
         // Kimi Code must never land on 0.37.0–0.38.0: every session in that
         // range dies on the codeg-mcp stdio entry (see the registry entry).
         assert_npx_version(
             AgentType::KimiCode,
-            "2.2.0",
-            "@moonshot-ai/kimi-code@2.2.0",
+            "2.3.0",
+            "@moonshot-ai/kimi-code@2.3.0",
             Some("22.19.0"),
         );
         assert_npx_version(
@@ -6018,8 +6114,8 @@ mod tests {
         );
         assert_npx_version(
             AgentType::CommandCode,
-            "1.84.0",
-            "command-code@1.84.0",
+            "1.86.3",
+            "command-code@1.86.3",
             Some("22.0.0"),
         );
         assert_binary_version(AgentType::OpenCode, "1.19.3", "/releases/download/v1.19.3/");

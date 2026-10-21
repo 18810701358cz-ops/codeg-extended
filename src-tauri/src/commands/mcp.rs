@@ -4171,12 +4171,17 @@ fn remove_trae_server_at(path: &Path, id: &str) -> Result<bool, AppCommandError>
 // `command-code mcp add --scope user` writes Claude-shaped entries keyed on a
 // `transport` discriminant — `{transport: "stdio", enabled, command, args,
 // env}` or `{transport: "http", enabled, url, headers}`, plus an `oauth` block
-// for a server that signs in. Its loader (`parseStoredMcpServer`, read against
-// 1.84.0) takes `transport` first, then `type` as an alias, and otherwise
-// infers stdio from `command` and http from `url`. It models no `cwd`, and an
-// entry with any other transport (`sse` included) or a non-boolean `enabled`
-// fails and is dropped while the rest of the file still loads. codeg reads
-// entries the same way and writes only what that loader models.
+// for a server that signs in. The loader behind its `mcp` commands
+// (`parseStoredMcpServer`, read against 1.84.0 and 1.86.3) takes `transport`
+// first, then `type` as an alias, and otherwise infers stdio from `command`
+// and http from `url`. It models no `cwd`, and an entry with any other
+// transport (`sse` included) or a non-boolean `enabled` fails and is dropped
+// while the rest of the file still loads. codeg reads entries the same way, so
+// its list matches `command-code mcp list`, and writes only what that loader
+// models. The loader that starts a session's servers is looser: it connects an
+// `sse` entry with its HTTP client and treats a non-boolean `enabled` as
+// unset, so such a hand-written entry still starts although neither list
+// shows it.
 //
 // `command-code acp` loads this file itself, so `CommandCode` is on the ACP
 // forward skip list in `connection.rs`; the codeg-mcp companion still arrives

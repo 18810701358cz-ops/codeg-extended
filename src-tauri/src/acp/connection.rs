@@ -6914,9 +6914,9 @@ fn load_mcp_servers_for_agent(agent_type: AgentType) -> Vec<McpServer> {
     //
     // Command Code joins it for the same reason: `command-code acp` loads
     // `~/.commandcode/mcp.json` and starts what `session/new` carries as well
-    // (verified against 1.84.0, a server from each source in one session's
-    // tool list), and its docs say a name on both sides keeps the file's copy.
-    // codeg's MCP settings UI manages that file.
+    // (verified against 1.84.0 and 1.86.3, a server from each source in one
+    // session's tool list), and its docs say a name on both sides keeps the
+    // file's copy. codeg's MCP settings UI manages that file.
     if agent_reads_own_mcp_config(agent_type) {
         return Vec::new();
     }
@@ -10901,7 +10901,7 @@ async fn set_session_config_option_inner(
 ) -> Result<Vec<SessionConfigOption>, agent_client_protocol::Error> {
     // Of the two ACP mode requests, only session/set_mode refreshes the
     // bridge's plan-enabled mirror; set_config_option("mode") keeps reporting
-    // "plan" while that mirror is set (bridge 0.69.2 through 0.75.0). Send
+    // "plan" while that mirror is set (bridge 0.69.2 through 0.76.2). Send
     // set_mode first for mode changes, then read the config response; the
     // initial-mode gate still requires an exact confirmation before prompt.
     if agent_type == AgentType::ZCode && config_id == "mode" {
@@ -12393,6 +12393,21 @@ fn classify_session_load_failure(
     if message.contains("already has an active writer") {
         return Some("session_busy");
     }
+    // Kimi Code 2.3.0 hands a session to one process at a time. The holder
+    // writes `<KIMI_CODE_HOME>/locks/sessions/<id>.lock` (pid, host, start
+    // time) when it opens the session or starts a turn, and gives it up 3 s
+    // after it goes idle; a lock whose process is gone is taken over. Opening
+    // the session from another process meanwhile, by `session/load` or
+    // `session/resume`, answers -32603 with Kimi's sentence in
+    // `data.details`: "This session is in use by another Kimi Code process.
+    // Stop the session in that process or exit it, then try again." The
+    // holder is another Kimi process on the same home, such as the user's
+    // `kimi` or `kimi web`, or another codeg. Busy for the same reason as
+    // codex's writer lock: the session is intact, and the `session/new`
+    // fallback would rebind the row to an empty one.
+    if message.contains("is in use by another Kimi Code process") {
+        return Some("session_busy");
+    }
     if SESSION_GONE_MARKERS.iter().any(|s| message.contains(s)) {
         return Some("session_unavailable");
     }
@@ -12509,9 +12524,13 @@ const SESSION_GONE_MARKERS: &[&str] =
 /// #659). Tearing the agent down for those is pure self-harm — the user waits
 /// out a full respawn for a turn that merely failed.
 ///
-/// Only four families stay terminal:
+/// Only five families stay terminal:
 ///  - `ResourceNotFound` — the agent has no record of the session id codeg
 ///    just prompted on, so the handle this connection holds is void.
+///  - [`kimi_session_stale`] — Kimi Code's word that another process wrote the
+///    session after this connection opened it. Every later prompt here fails
+///    the same way, and the remedy Kimi names ("Close and reopen the
+///    session") takes a new connection.
 ///  - [`SESSION_GONE_MARKERS`] — the agent answered to say its session or
 ///    process is gone. Keeping the connection would leave an entry whose every
 ///    future prompt fails the same way.
@@ -12537,6 +12556,9 @@ fn prompt_rejection_is_terminal(e: &agent_client_protocol::Error) -> bool {
     if matches!(e.code, agent_client_protocol::schema::v1::ErrorCode::ResourceNotFound) {
         return true;
     }
+    if kimi_session_stale(e) {
+        return true;
+    }
     if codex_app_server_lost(e) == Some(false) {
         return true;
     }
@@ -12545,6 +12567,26 @@ fn prompt_rejection_is_terminal(e: &agent_client_protocol::Error) -> bool {
     }
     let text = e.to_string();
     SESSION_GONE_MARKERS.iter().any(|s| text.contains(s))
+}
+
+/// Kimi Code 2.3.0's refusal of a prompt on a session another process wrote
+/// since this connection opened it: -32600 with `data.code: "session.stale"`
+/// and "Session was updated by another client. Close and reopen the session,
+/// then retry." Its error table marks the code not retryable, and every later
+/// prompt on the connection answers the same, while a new process loads the
+/// session with the other process's turns and prompts normally. The writer is
+/// whoever held the session lock in between (see
+/// [`classify_session_load_failure`]). Read from the structured code, which is
+/// Kimi's own error vocabulary, rather than from the sentence.
+///
+/// The lock's other prompt-time refusal, `session.occupied` (the other process
+/// holds the session right now), is retryable and stays turn-scoped.
+fn kimi_session_stale(e: &agent_client_protocol::Error) -> bool {
+    e.data
+        .as_ref()
+        .and_then(|data| data.get("code"))
+        .and_then(serde_json::Value::as_str)
+        == Some("session.stale")
 }
 
 /// Whether `e` is the runtime saying no answer can arrive on this connection
@@ -25351,6 +25393,32 @@ mod tests {
         assert_eq!(classify_session_load_error(&unclassified), None);
     }
 
+    /// Kimi Code 2.3.0's session lock, the body captured live: two `kimi acp`
+    /// processes on one `KIMI_CODE_HOME`, the second `session/load`ing a
+    /// session the first had just opened. 2.2.0 let the second load through,
+    /// so nothing classified this error and it took the `session/new`
+    /// fallback, rebinding the row to an empty session.
+    #[test]
+    fn classify_load_error_names_a_kimi_session_another_process_holds() {
+        let kimi_2_3_0: agent_client_protocol::Error = serde_json::from_value(serde_json::json!({
+            "code": -32603,
+            "message": "Internal error",
+            "data": {
+                "details": "This session is in use by another Kimi Code process. Stop the \
+                    session in that process or exit it, then try again."
+            }
+        }))
+        .expect("an ACP error body");
+        assert_eq!(
+            classify_session_load_error(&kimi_2_3_0),
+            Some("session_busy")
+        );
+        assert!(!recovers_load_failure_locally(
+            AgentType::KimiCode,
+            Some("session_busy")
+        ));
+    }
+
     /// codex-acp 2.2 answers an open the app-server died under with code 1001
     /// (bodies captured live off 2.2.1, the app-server SIGKILLed). Neither form
     /// may fall through to `session/new`, which 2.2 now lets succeed on the
@@ -29856,6 +29924,38 @@ mod tests {
             "data": { "exitCode": null, "signal": null, "restartable": true }
         }));
         assert!(!prompt_rejection_is_terminal(&restarting));
+    }
+
+    /// Kimi Code 2.3.0 refuses a prompt on a session another process wrote
+    /// since this connection opened it. The body is captured live (a second
+    /// `kimi acp` loaded the session and ran a turn while the first sat idle),
+    /// and the first process answered every later prompt the same way, retries
+    /// included, while a fresh process loaded the session and prompted
+    /// normally. So it ends the connection. The other process merely holding
+    /// the session is a different code (body as 2.3.0's ACP mapping builds it),
+    /// which clears once that process goes idle, so it costs the turn only.
+    #[test]
+    fn a_stale_kimi_session_ends_the_connection_but_a_held_one_costs_the_turn() {
+        let error = |body: serde_json::Value| -> agent_client_protocol::Error {
+            serde_json::from_value(body).expect("an ACP error body")
+        };
+        let stale = error(serde_json::json!({
+            "code": -32600,
+            "message": "Invalid request: Session was updated by another client. Close and \
+                reopen the session, then retry.",
+            "data": { "code": "session.stale" }
+        }));
+        assert!(kimi_session_stale(&stale));
+        assert!(prompt_rejection_is_terminal(&stale));
+
+        let occupied = error(serde_json::json!({
+            "code": -32600,
+            "message": "Invalid request: This session is in use by another Kimi Code \
+                process. Stop the session in that process or exit it, then try again.",
+            "data": { "code": "session.occupied" }
+        }));
+        assert!(!kimi_session_stale(&occupied));
+        assert!(!prompt_rejection_is_terminal(&occupied));
     }
 
     /// Plays an agent over the raw pipe: waits for codeg's first frame (the

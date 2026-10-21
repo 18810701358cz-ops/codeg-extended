@@ -10,8 +10,8 @@
 //! TRAE CLI and custom agents. `session/load` still replays a session the CLI
 //! stored, which is how a reopened conversation keeps its context.
 //!
-//! Everything here was verified against `command-code 1.84.0` with an isolated
-//! `HOME`:
+//! Everything here was verified against `command-code 1.84.0`, and again
+//! against 1.86.3, with an isolated `HOME`:
 //!
 //! * Everything lives in `.commandcode` under the home directory (`HOME`, else
 //!   `USERPROFILE`), with no variable to relocate it: `auth.json`,
@@ -20,10 +20,12 @@
 //!   of `transport` (`stdio` or `http`; `type` is accepted as an alias, and an
 //!   entry without either is inferred from `command` / `url`), `enabled`,
 //!   `command` / `args` / `env` and `url` / `headers`, plus an `oauth` block.
-//!   There is no `cwd`, and an `sse` entry is dropped. `command-code acp`
-//!   loads this file itself and ALSO starts the servers `session/new` carries
-//!   (both reach the model as deferred `mcp__<server>__<tool>` tools), which is
-//!   how the codeg-mcp companion gets in.
+//!   There is no `cwd`. Its `mcp` commands drop an `sse` entry, but a session
+//!   still connects one through its HTTP client (see the Command Code notes in
+//!   `commands/mcp.rs`). `command-code acp` loads this file itself and ALSO
+//!   starts the servers `session/new` carries (both reach the model as
+//!   deferred `mcp__<server>__<tool>` tools), which is how the codeg-mcp
+//!   companion gets in.
 //! * Skills are directory bundles (`<id>/SKILL.md`, found recursively; a flat
 //!   `<id>.md` is not loaded) from `.commandcode/skills` and the shared
 //!   `.agents/skills`, each in the project and under the home directory.
