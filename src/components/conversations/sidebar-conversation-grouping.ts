@@ -121,29 +121,32 @@ export function formatRelative(iso: string, now: number): string {
 /**
  * The timestamp a conversation row's relative time label reads.
  *
- * The label has to explain where its row sits. Two sections order their rows
- * by last activity whatever the sidebar's `sortMode` says: Recent (see
- * {@link selectRecentConversationsWithReuse}) and Chat (see
- * {@link selectChatConversationsWithReuse}). Their rows show `updated_at` even
- * while the rest of the sidebar is sorted, and labelled, by creation time. A
- * Chat row is recognised by what that bucket admits: a top-level chat-kind
- * conversation that is not pinned (a pinned one sits in Pinned instead).
- *
- * Every other row follows `sortMode`. That covers the Folders rows, which are
- * sorted by it; the Pinned rows, which are ordered by pin time, a stamp no
- * label shows; and the sub-sessions under an expanded parent, which keep the
- * creation order they have under their folder (see {@link mergeChildrenById}),
- * so the copies under a Recent parent read the same as their twins there.
+ * The label has to explain where its row sits, so it reads the stamp the row
+ * is ordered by:
+ * - Sub-sessions read `created_at`. They are creation-ordered under every
+ *   parent whatever the sidebar's `sortMode` says (see
+ *   {@link mergeChildrenById}), so the copies under a Recent parent also read
+ *   the same as their twins under the folder. Told apart by `parent_id`, the
+ *   card's own test, not by depth: a folder's own rows sit at depth 1 too
+ *   inside a folder group, and under Show worktrees.
+ * - Recent's and Chat's own rows read `updated_at`. Both sections order by
+ *   last activity whatever `sortMode` says (see
+ *   {@link selectRecentConversationsWithReuse} and
+ *   {@link selectChatConversationsWithReuse}). A Chat row is recognised by what
+ *   that bucket admits: a chat-kind conversation that is not pinned (a pinned
+ *   one sits in Pinned instead).
+ * - Every other row follows `sortMode`: the Folders rows, which are sorted by
+ *   it, and the Pinned rows, which are ordered by pin time, a stamp no label
+ *   shows.
  */
 export function conversationRowTimestamp(
   row: ConversationRow,
   sortMode: SidebarSortMode
 ): string {
   const conv = row.conversation
-  if (row.depth === 0) {
-    if (row.recent) return conv.updated_at
-    if (conv.kind === "chat" && conv.pinned_at == null) return conv.updated_at
-  }
+  if (conv.parent_id != null) return conv.created_at
+  if (row.recent) return conv.updated_at
+  if (conv.kind === "chat" && conv.pinned_at == null) return conv.updated_at
   return sortMode === "updated" ? conv.updated_at : conv.created_at
 }
 

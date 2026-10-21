@@ -101,7 +101,11 @@ describe("conversationRowTimestamp", () => {
     created_at: created,
     updated_at: updated,
   })
-  const kid = conv(2, 10, { created_at: created, updated_at: updated })
+  const kid = conv(2, 10, {
+    parent_id: 1,
+    created_at: created,
+    updated_at: updated,
+  })
   // The parent is listed under its folder and in Recent, expanded both times,
   // so each conversation comes out twice: its canonical row, then its Recent
   // copy.
@@ -134,9 +138,10 @@ describe("conversationRowTimestamp", () => {
     expect(conversationRowTimestamp(parents[0], "updated")).toBe(updated)
   })
 
-  it("labels a Recent parent's sub-sessions like their twins under the folder", () => {
-    // Sub-sessions are creation-ordered in both places, so the Recent copy
-    // must not switch to the activity stamp its parent reads.
+  it("reads the creation time on sub-sessions, which are sorted by it", () => {
+    // Creation-ordered under every parent and in either sort mode, so neither
+    // the activity stamp a Recent parent reads nor an activity sort moves
+    // their label off it, and the Recent copy matches its twin.
     expect(kids.map((r) => [r.depth, r.recent ?? false])).toEqual([
       [1, false],
       [1, true],
@@ -146,6 +151,39 @@ describe("conversationRowTimestamp", () => {
       created,
     ])
     expect(kids.map((r) => conversationRowTimestamp(r, "updated"))).toEqual([
+      created,
+      created,
+    ])
+  })
+
+  it("tells a sub-session apart by its parent, not by its indent", () => {
+    // Under Show worktrees a repo's own rows and its worktree's rows both sit
+    // at depth 1, yet they are top-level conversations sorted by `sortMode`.
+    const rootConv = conv(5, 10, { created_at: created, updated_at: updated })
+    const wtConv = conv(6, 11, { created_at: created, updated_at: updated })
+    const nested = buildRows({
+      pinned: [],
+      pinnedExpanded: true,
+      orderedFolderIds: [10],
+      byFolder: new Map([
+        [10, [rootConv]],
+        [11, [wtConv]],
+      ]),
+      folderExpanded: {},
+      folderTotalCounts: new Map([
+        [10, 1],
+        [11, 1],
+      ]),
+      foldersExpanded: true,
+      chatConversations: [],
+      chatsExpanded: true,
+      containerChildren: new Map([[10, [11]]]),
+    }).filter((r): r is ConversationRow => r.kind === "conversation")
+    expect(nested.map((r) => [r.conversation.id, r.depth])).toEqual([
+      [5, 1],
+      [6, 1],
+    ])
+    expect(nested.map((r) => conversationRowTimestamp(r, "updated"))).toEqual([
       updated,
       updated,
     ])
