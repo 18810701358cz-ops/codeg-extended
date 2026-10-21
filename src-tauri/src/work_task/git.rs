@@ -340,6 +340,20 @@ pub async fn diff_numstat(
     Ok(parse_numstat(&out.stdout))
 }
 
+/// `git diff --numstat <from> <to>` — the change between two commits, with
+/// nothing from the worktree in it.
+pub async fn diff_numstat_between(
+    path: &str,
+    from: &str,
+    to: &str,
+) -> Result<Vec<WorkTaskChangedFile>, AppCommandError> {
+    let out = run_git(path, &["diff", "--numstat", from, to]).await?;
+    if !out.status.success() {
+        return Err(git_command_error("diff --numstat", &out.stderr));
+    }
+    Ok(parse_numstat(&out.stdout))
+}
+
 fn parse_numstat(stdout: &[u8]) -> Vec<WorkTaskChangedFile> {
     let mut files = Vec::new();
     for line in String::from_utf8_lossy(stdout).lines() {

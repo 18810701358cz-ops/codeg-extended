@@ -1063,6 +1063,7 @@ pub async fn create_forge_task(
         head_sha: pull.as_ref().map(|p| p.head_sha.clone()),
         head_repo: pull.as_ref().map(|p| p.head_repo.clone()),
         result_pr: None,
+        pushed_onto: None,
         // Always stamped explicitly, both answers: the engine reads it as the
         // user's decision, and an absent field there means "an older row that
         // never had the choice" — a meaning a fresh task must not borrow.
@@ -2048,6 +2049,7 @@ mod tests {
                 head_sha: None,
                 head_repo: None,
                 result_pr: None,
+                pushed_onto: None,
                 writeback: stored,
             };
             let round: ForgeSourceMeta =

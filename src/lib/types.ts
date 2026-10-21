@@ -2058,6 +2058,9 @@ export interface ForgeSourceMeta {
   head_repo?: string | null
   /** URL of the PR created by the delivery acceptance path (P1). */
   result_pr?: string | null
+  /** PR head the task's last push-back went onto (where the PR ended below
+   *  the task's own work); absent until a push-back. */
+  pushed_onto?: string | null
   /** The trigger dialog's write-back answer, frozen at trigger time. Absent on
    *  rows minted before the choice lived here — those stay silent. */
   writeback?: boolean | null
