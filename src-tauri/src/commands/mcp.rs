@@ -4356,7 +4356,7 @@ fn remove_command_code_server_at(path: &Path, id: &str) -> Result<bool, AppComma
 //
 // Cursor's CLI (and IDE — the file is shared) reads its user-global MCP config
 // from `~/.cursor/mcp.json` — a JSON file with a top-level `mcpServers`
-// object. The CLI (checked against 2026.10.16-e3cb207) parses each entry with
+// object. The CLI (checked against 2026.10.19-6bbf2c4) parses each entry with
 // a Zod union: stdio when it has a `command` and its optional `type` is
 // `"stdio"`, otherwise remote when it has a `url` and its optional `type` is
 // `"http"` or `"sse"`. A remote entry tries streamable HTTP first and falls
@@ -4385,7 +4385,7 @@ fn remove_command_code_server_at(path: &Path, id: &str) -> Result<bool, AppComma
 fn cursor_mcp_json_path() -> PathBuf {
     // Deliberately NOT `resolve_cursor_config_dir()`: the CLI reads its
     // user-level MCP config from a hardcoded `~/.cursor/mcp.json` (every
-    // loader in the 2026.07.16 bundle joins `homedir()`, and 2026.10.16's
+    // loader in the 2026.07.16 bundle joins `homedir()`, and 2026.10.19's
     // still do), even when `CURSOR_CONFIG_DIR`/`XDG_CONFIG_HOME` relocate
     // chats + cli-config.json.
     dirs::home_dir().unwrap_or_default().join(".cursor").join("mcp.json")
