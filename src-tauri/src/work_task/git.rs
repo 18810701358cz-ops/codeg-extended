@@ -457,7 +457,19 @@ impl ScratchIndex {
         // racing an agent's own `git add` reads one whole version or the
         // other — never a half-written file.
         let index = git_dir.join("index");
-        if let Err(e) = std::fs::copy(&index, &scratch.path) {
+        let copied = std::fs::File::open(&index).and_then(|mut source| {
+            let metadata = source.metadata()?;
+            let mut destination = std::fs::File::create(&scratch.path)?;
+            std::io::copy(&mut source, &mut destination)?;
+            destination.set_permissions(metadata.permissions())?;
+            // Git rehashes an entry whose timestamp is at least the index's
+            // timestamp (a "racily clean" entry). A fresh mtime on the copy
+            // would disable that check and hide same-size edits made within
+            // the filesystem's timestamp resolution. Read both the contents
+            // and metadata from one handle, even if git replaces the source.
+            destination.set_modified(metadata.modified()?)
+        });
+        if let Err(e) = copied {
             match anchor {
                 Some(anchor) => {
                     let read =
@@ -862,6 +874,66 @@ mod tests {
         if args.first() == Some(&"init") {
             git_run(dir, &["config", "core.autocrlf", "false"]);
         }
+    }
+
+    /// Copying an index must keep Git's racy-clean check: a same-size edit
+    /// whose stat data still matches the cached entry needs to be rehashed.
+    #[tokio::test]
+    async fn a_copied_index_still_stages_a_racily_clean_edit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let path = root.to_str().expect("utf-8 path");
+        git_run(root, &["init", "-q"]);
+        git_run(root, &["config", "core.trustctime", "false"]);
+        git_run(root, &["config", "core.checkStat", "minimal"]);
+        let file = root.join("Cargo.lock");
+        // Whole seconds model a filesystem whose timestamp resolution cannot
+        // distinguish the two writes, independently of how fast this runs.
+        let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        std::fs::write(&file, "a\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(timestamp)
+            .unwrap();
+        git_run(root, &["add", "Cargo.lock"]);
+        git_run(root, &["commit", "-q", "-m", "base"]);
+
+        std::fs::write(&file, "b\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(timestamp)
+            .unwrap();
+        let index = root.join(".git/index");
+        std::fs::File::options()
+            .write(true)
+            .open(&index)
+            .unwrap()
+            .set_modified(timestamp)
+            .unwrap();
+        let original = std::fs::read(&index).unwrap();
+        let original_mtime = std::fs::metadata(&index).unwrap().modified().unwrap();
+
+        let scratch = ScratchIndex::copy_of(path, None).await.unwrap();
+        let add = run_git_with_index(path, &scratch.path, &["add", "--", "Cargo.lock"])
+            .await
+            .unwrap();
+        assert!(add.status.success(), "{:?}", add.stderr);
+        let diff = run_git_with_index(path, &scratch.path, &["diff", "--cached"])
+            .await
+            .unwrap();
+        assert!(diff.status.success(), "{:?}", diff.stderr);
+        let patch = String::from_utf8(diff.stdout).unwrap();
+        assert!(patch.contains("-a\n+b\n"), "same-size edit lost: {patch}");
+        assert_eq!(std::fs::read(&index).unwrap(), original);
+        assert_eq!(
+            std::fs::metadata(&index).unwrap().modified().unwrap(),
+            original_mtime,
+            "the real index's contents and timestamp stay untouched"
+        );
     }
 
     /// Why removing a task worktree has to consult BOTH probes: each is blind
