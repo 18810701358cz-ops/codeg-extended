@@ -13482,10 +13482,12 @@ async fn run_conversation_loop(
                             let runtime = terminal_runtime.clone();
                             let session_id = sid.clone();
                             let cwd_opt = Some(cwd);
-                            // Billing snapshots are per prompt, unlike the
-                            // standard context-occupancy usage_update channel.
-                            // Observe only this prompt's drain: load replay and
-                            // idle notifications cannot seed the next turn.
+                            // ZCode's billing reports are per busy window,
+                            // unlike the standard context-occupancy
+                            // usage_update channel, and this prompt's windows
+                            // add up (see `zcode_turn`). Observe only this
+                            // prompt's drain: load replay and idle
+                            // notifications cannot seed the next turn.
                             if agent_type == AgentType::ZCode {
                                 if let Dispatch::Notification(notification) = &dispatch {
                                     if crate::acp::zcode_turn::is_turn_state_method(
@@ -14177,23 +14179,16 @@ async fn run_conversation_loop(
                                         .release_all_for_session(sid.0.as_ref())
                                         .await;
                                     tracked_terminal_tool_calls.clear();
-                                    // This path deliberately does not await the
-                                    // agent's eventual response. Still close
-                                    // ZCode's recorded turn before the refetch
-                                    // trigger, with only measurements already
-                                    // received for THIS prompt. Late telemetry
-                                    // must not become the next prompt's bill.
-                                    if agent_type == AgentType::ZCode {
-                                        record_turn_end(
-                                            agent_type,
-                                            &sid.0,
-                                            "cancelled",
-                                            turn_started_at_ms,
-                                            current_session_model_id(state).await,
-                                            zcode_turn.metrics(),
-                                        )
-                                        .await;
-                                    }
+                                    // No turn end is recorded here, for ZCode
+                                    // as for every agent whose history is
+                                    // codeg's transcript: the agent's last
+                                    // frames are still on their way and land
+                                    // on the idle loop, and a turn end ahead of
+                                    // them would make the history parser read
+                                    // them as a reply of their own. This
+                                    // prompt's `zcode_turn` goes with the
+                                    // drain, so a late report never bills the
+                                    // next prompt either.
                                     // Also cancel any pending permission requests
                                     // (queued ones included), clearing the card
                                     // that was on screen, and immediately emit
@@ -40808,30 +40803,142 @@ mod tests {
         }).await;
     }
 
+    /// A local cancel lets go of the prompt without waiting for the agent, so
+    /// the cancelled reply's last frames land on the idle loop. No turn end is
+    /// recorded ahead of them (as for every agent whose history is codeg's
+    /// transcript): the late chunk stays part of the reply it ends, and the
+    /// bridge's late report for the cancelled work bills no other prompt.
     #[tokio::test]
-    async fn zcode_cancel_records_a_boundary_without_inheriting_the_previous_bill() {
+    async fn zcode_cancel_keeps_the_late_tail_in_its_reply_and_bills_no_other_prompt() {
+        use crate::parsers::AgentParser as _;
         let home = tempfile::tempdir().unwrap();
         let home_str = home.path().to_string_lossy().into_owned();
         temp_env::async_with_vars([("CODEG_HOME", Some(home_str.as_str()))], async {
-            let mut lp = CustomLoop::start_for(AgentType::ZCode, vec![
-                vec![("_zcode/turnState",serde_json::json!({"sessionId":"s1","running":true})),
-                    ("_zcode/turnState",serde_json::json!({"sessionId":"s1","running":false,"usage":{"inputTokens":30,"outputTokens":12},"turnMs":42})),custom_text("first")],
-                vec![("_zcode/turnState",serde_json::json!({"sessionId":"s1","running":true})),custom_text("working")],
-            ]).await;
-            lp.run_turn("one","first").await;
-            lp.open_turn("two","working").await;
+            let turn_state = |body: serde_json::Value| ("_zcode/turnState", body);
+            let start = || turn_state(serde_json::json!({"sessionId": "s1", "running": true}));
+            let end = |input: u64| {
+                turn_state(serde_json::json!({
+                    "sessionId": "s1", "running": false, "turnMs": 42,
+                    "usage": {"inputTokens": input, "outputTokens": 12}
+                }))
+            };
+            let mut lp = CustomLoop::start_for(
+                AgentType::ZCode,
+                vec![
+                    vec![start(), end(30), custom_text("first")],
+                    vec![start(), custom_text("working, ")],
+                    vec![start(), end(5), custom_text("third")],
+                ],
+            )
+            .await;
+            lp.run_turn("one", "first").await;
+            lp.open_turn("two", "working, ").await;
             lp.cmd_tx.send(ConnectionCommand::Cancel).await.unwrap();
-            lp.until("cancelled",|e|matches!(e,AcpEvent::TurnComplete{stop_reason,..} if stop_reason=="cancelled")).await;
-            let raw = crate::acp_transcript::read_transcript("codeg-zcode-acp","s1");
-            let ends: Vec<_> = raw.entries.iter().filter(|e|e.k==crate::acp_transcript::EntryKind::TurnEnd).collect();
-            assert_eq!(ends.len(),2);
-            assert_eq!(ends[0].p["usage"]["inputTokens"],30);
-            assert_eq!(ends[1].p["stopReason"],"cancelled");
-            assert!(ends[1].p.get("usage").is_none());
-            assert!(ends[1].p.get("durationMs").and_then(|v|v.as_u64()).is_some());
+            lp.until("cancelled", |e| {
+                matches!(e, AcpEvent::TurnComplete { stop_reason, .. } if stop_reason == "cancelled")
+            })
+            .await;
+            lp.agent_sends(vec![custom_text("late tail"), end(777), grok_barrier()]);
+            lp.until_barrier().await;
+            // The cancelled prompt's own response, which nothing waits on.
             lp.respond.notify_one();
+            lp.run_turn("three", "third").await;
+
+            let raw = crate::acp_transcript::read_transcript("codeg-zcode-acp", "s1");
+            let ends: Vec<_> = raw
+                .entries
+                .iter()
+                .filter(|e| e.k == crate::acp_transcript::EntryKind::TurnEnd)
+                .collect();
+            assert_eq!(ends.len(), 2, "a local cancel records no turn end");
+            assert_eq!(ends[0].p["usage"]["inputTokens"], 30);
+            assert_eq!(ends[1].p["usage"]["inputTokens"], 5);
+            let history = crate::parsers::acp_native::AcpNativeParser::new_in(
+                AgentType::ZCode,
+                crate::paths::codeg_acp_transcripts_root(),
+            )
+            .get_conversation("s1")
+            .unwrap();
+            assert_eq!(
+                turn_shape(&history.turns),
+                [
+                    "User: text \"one\"",
+                    "Assistant: text \"first\"",
+                    "User: text \"two\"",
+                    "Assistant: text \"working, late tail\"",
+                    "User: text \"three\"",
+                    "Assistant: text \"third\"",
+                ]
+            );
+            assert!(history.turns[3].usage.is_none());
             lp.shutdown().await;
-        }).await;
+        })
+        .await;
+    }
+
+    /// One prompt can hold several busy windows: a compaction it waited
+    /// behind (reported bare), then the rounds of an `/auto` loop. Each round
+    /// reports its own usage, so the reply carries their total; its duration
+    /// is codeg's own measurement of the prompt, not any round's clock.
+    #[tokio::test]
+    async fn zcode_a_prompt_held_over_several_windows_totals_them_on_codegs_clock() {
+        use crate::parsers::AgentParser as _;
+        let home = tempfile::tempdir().unwrap();
+        let home_str = home.path().to_string_lossy().into_owned();
+        temp_env::async_with_vars([("CODEG_HOME", Some(home_str.as_str()))], async {
+            let turn_state = |body: serde_json::Value| ("_zcode/turnState", body);
+            let start = || turn_state(serde_json::json!({"sessionId": "s1", "running": true}));
+            let end = |input: u64, ms: u64| {
+                turn_state(serde_json::json!({
+                    "sessionId": "s1", "running": false, "turnMs": ms,
+                    "usage": {"inputTokens": input, "outputTokens": 10, "cachedReadTokens": 100}
+                }))
+            };
+            let mut lp = CustomLoop::start_for(
+                AgentType::ZCode,
+                vec![vec![
+                    start(),
+                    turn_state(serde_json::json!({"sessionId": "s1", "running": false})),
+                    start(),
+                    custom_text("round one, "),
+                    end(40, 3_600_000),
+                    start(),
+                    end(2, 1_800_000),
+                    custom_text("round two"),
+                ]],
+            )
+            .await;
+            lp.run_turn("/auto ship it", "round two").await;
+
+            let history = crate::parsers::acp_native::AcpNativeParser::new_in(
+                AgentType::ZCode,
+                crate::paths::codeg_acp_transcripts_root(),
+            )
+            .get_conversation("s1")
+            .unwrap();
+            assert_eq!(
+                turn_shape(&history.turns),
+                [
+                    "User: text \"/auto ship it\"",
+                    "Assistant: text \"round one, round two\"",
+                ]
+            );
+            let reply = &history.turns[1];
+            let usage = reply.usage.as_ref().unwrap();
+            assert_eq!(
+                (
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.cache_read_input_tokens,
+                    usage.cache_creation_input_tokens
+                ),
+                (42, 20, 200, 0)
+            );
+            let duration = reply.duration_ms.unwrap();
+            assert!(duration < 1_800_000, "codeg's clock, got {duration}");
+            lp.shutdown().await;
+        })
+        .await;
     }
 
     /// A setter sent with a reply is answered from the agent's own response to

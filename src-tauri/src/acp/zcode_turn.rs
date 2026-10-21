@@ -3,6 +3,13 @@
 //! `usage_update` describes context occupancy, not a billable turn. These
 //! counters are already cache-exclusive ACP usage; never subtract the cache
 //! again or add the deprecated alias/standard context updates to them.
+//!
+//! The bridge reports each busy window as a running/ended pair, and the end
+//! carries that window's own usage. One prompt can hold several windows: an
+//! `/auto` or `/goal` loop runs every round inside the prompt that started it,
+//! a sandbox approval re-runs the prompt as a continuation round, and a
+//! compaction the prompt waited behind reports a window of its own. The bridge
+//! scopes each report to one backend turn, so the prompt's usage is their sum.
 
 pub(crate) const TURN_STATE_METHOD: &str = "_zcode/turnState";
 
@@ -17,9 +24,9 @@ pub(crate) struct TurnMetrics {
 }
 
 impl TurnMetrics {
-    /// Replace measurements on the ONE normal turn-end record, never append a
-    /// second end or merge token snapshots additively. Missing extras keep the
-    /// ordinary Codeg-measured duration and do not fabricate billing usage.
+    /// Replace the measurements on the ONE normal turn-end record rather than
+    /// append a second end. Missing extras keep the ordinary Codeg-measured
+    /// duration and do not fabricate billing usage.
     pub fn apply_to(&self, payload: &mut serde_json::Value) {
         if let Some(usage) = &self.usage {
             payload["usage"] = usage.clone();
@@ -31,13 +38,18 @@ impl TurnMetrics {
 }
 
 /// Constructed for each prompt, observed only inside its update drain, and
-/// discarded when Codeg ends that prompt. Load replay and idle notifications never enter
-/// this tracker. The protocol has no turn ID: its ordered running/ended pair
-/// and the sequential prompt boundary are the available correlation markers.
+/// discarded when Codeg ends that prompt. Load replay and idle notifications
+/// never enter this tracker. The protocol has no turn ID: its ordered
+/// running/ended pairs and the sequential prompt boundary are the available
+/// correlation markers. An end with no running report before it in this
+/// prompt (a repeated end, or a late end of an earlier prompt) closes nothing.
 #[derive(Debug, Default)]
 pub(crate) struct TurnTracker {
     running: bool,
-    ended: bool,
+    /// Busy windows that closed during this prompt.
+    windows: u32,
+    /// Set once the windows' total no longer fits; no later window revives it.
+    usage_unrepresentable: bool,
     metrics: Option<TurnMetrics>,
 }
 
@@ -45,7 +57,6 @@ impl TurnTracker {
     pub fn observe(&mut self, method: &str, params: &serde_json::Value, session_id: &str) {
         if method != TURN_STATE_METHOD
             || params.get("sessionId").and_then(|v| v.as_str()) != Some(session_id)
-            || self.ended
         {
             return;
         }
@@ -53,11 +64,25 @@ impl TurnTracker {
             Some(true) => self.running = true,
             Some(false) if self.running => {
                 self.running = false;
-                self.ended = true;
-                self.metrics = Some(TurnMetrics {
-                    usage: params.get("usage").and_then(valid_usage),
-                    duration_ms: params.get("turnMs").and_then(|v| v.as_u64()),
-                });
+                self.windows += 1;
+                let metrics = self.metrics.get_or_insert_with(TurnMetrics::default);
+                if let Some(report) = params.get("usage").and_then(valid_usage) {
+                    if !self.usage_unrepresentable {
+                        metrics.usage = match metrics.usage.take() {
+                            Some(total) => add_usage(&total, &report),
+                            None => Some(report),
+                        };
+                        self.usage_unrepresentable = metrics.usage.is_none();
+                    }
+                }
+                // One window's clock is the prompt's own. Several leave gaps
+                // between them (a compaction hold, judging the next round, a
+                // restart) that only Codeg's measurement of the prompt spans.
+                metrics.duration_ms = if self.windows == 1 {
+                    params.get("turnMs").and_then(|v| v.as_u64())
+                } else {
+                    None
+                };
             }
             _ => {}
         }
@@ -98,6 +123,21 @@ fn valid_usage(value: &serde_json::Value) -> Option<serde_json::Value> {
         counters.insert(key.to_string(), count.into());
     }
     billing_counter.then_some(serde_json::Value::Object(counters))
+}
+
+/// One more window's counters on top of the prompt's total, revalidated as a
+/// whole. `None` when the sum no longer fits: the usage is dropped rather than
+/// saturated into a number nobody reported.
+fn add_usage(total: &serde_json::Value, report: &serde_json::Value) -> Option<serde_json::Value> {
+    let mut sum = total.as_object()?.clone();
+    for (key, count) in report.as_object()? {
+        let prior = sum
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        sum.insert(key.clone(), prior.checked_add(count.as_u64()?)?.into());
+    }
+    valid_usage(&serde_json::Value::Object(sum))
 }
 
 #[cfg(test)]
@@ -155,24 +195,79 @@ mod tests {
     }
 
     #[test]
-    fn a_terminal_report_is_a_snapshot_and_is_consumed_once() {
+    fn a_repeated_end_counts_once_and_each_further_window_adds_its_report() {
         let mut tracker = TurnTracker::default();
         start(&mut tracker);
         tracker.observe(TURN_STATE_METHOD, &end(), "s");
-        let mut duplicate = end();
-        duplicate["usage"]["inputTokens"] = json!(9999);
-        tracker.observe("$/zcode/turnState", &duplicate, "s");
-        tracker.observe(TURN_STATE_METHOD, &duplicate, "s");
-        start(&mut tracker);
-        tracker.observe(TURN_STATE_METHOD, &duplicate, "s");
+        let mut second = end();
+        second["usage"]["inputTokens"] = json!(9999);
+        second["turnMs"] = json!(1700);
+        // The deprecated alias repeats the same transition, and an end with no
+        // running report before it closes no window: neither counts again.
+        tracker.observe("$/zcode/turnState", &second, "s");
+        tracker.observe(TURN_STATE_METHOD, &second, "s");
         assert_eq!(
-            tracker.metrics().unwrap().usage.as_ref().unwrap()["inputTokens"],
-            180
+            tracker.metrics().unwrap().usage.as_ref().unwrap(),
+            &end()["usage"]
         );
+        assert_eq!(tracker.metrics().unwrap().duration_ms, Some(4200));
+        // A second window (the next `/auto` round, a sandbox continuation) is
+        // another backend turn with its own report. It adds up, and the clock
+        // goes back to Codeg's measurement of the whole prompt.
+        start(&mut tracker);
+        tracker.observe(TURN_STATE_METHOD, &second, "s");
+        assert_eq!(
+            tracker.metrics().unwrap().usage.as_ref().unwrap(),
+            &json!({"inputTokens":10179,"outputTokens":700,"cachedReadTokens":1800,
+                "cachedWriteTokens":240,"totalTokens":3100,"thoughtTokens":400})
+        );
+        assert_eq!(tracker.metrics().unwrap().duration_ms, None);
         let next = TurnTracker::default();
         assert!(
             next.metrics().is_none(),
             "a cancelled or rejected next prompt inherits nothing"
+        );
+    }
+
+    #[test]
+    fn a_window_without_a_report_still_hands_the_clock_back_to_codeg() {
+        // A compaction the prompt waited behind settles its busy window bare;
+        // the prompt's own round follows with the real report.
+        let mut tracker = TurnTracker::default();
+        start(&mut tracker);
+        tracker.observe(
+            TURN_STATE_METHOD,
+            &json!({"sessionId":"s","running":false}),
+            "s",
+        );
+        start(&mut tracker);
+        tracker.observe(TURN_STATE_METHOD, &end(), "s");
+        assert_eq!(
+            tracker.metrics().unwrap().usage.as_ref().unwrap(),
+            &end()["usage"]
+        );
+        assert_eq!(tracker.metrics().unwrap().duration_ms, None);
+    }
+
+    #[test]
+    fn a_total_that_no_longer_fits_drops_the_usage_for_good() {
+        let window = |tracker: &mut TurnTracker, input: u64| {
+            start(tracker);
+            tracker.observe(
+                TURN_STATE_METHOD,
+                &json!({"sessionId":"s","running":false,"usage":{"inputTokens":input}}),
+                "s",
+            );
+        };
+        let mut tracker = TurnTracker::default();
+        window(&mut tracker, u64::MAX - 1);
+        window(&mut tracker, 2);
+        assert_eq!(tracker.metrics().unwrap().usage, None);
+        window(&mut tracker, 5);
+        assert_eq!(
+            tracker.metrics().unwrap().usage,
+            None,
+            "a later window does not stand in for the whole prompt"
         );
     }
 

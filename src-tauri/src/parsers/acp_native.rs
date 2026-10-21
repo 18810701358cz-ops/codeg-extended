@@ -387,8 +387,9 @@ pub fn is_recorded_update(update: &SessionUpdate) -> bool {
 /// not the per-turn input/output counts `MessageTurn::usage` holds — so it
 /// feeds the session footer's context-window trio, exactly like the built-in
 /// parsers derive it from their own stores, and never a turn's token usage.
-/// (A turn's usage stays `None` for custom agents: ACP has no channel for it,
-/// and inventing one from occupancy deltas would be a guess rendered as fact.)
+/// (A turn's usage comes only from what its turn end records, today ZCode's
+/// per-window reports, see `acp::zcode_turn`; otherwise it stays `None`.
+/// Inventing one from occupancy deltas would be a guess rendered as fact.)
 ///
 /// Matched on the raw payload rather than by deserializing: the answer is
 /// almost always in the last few entries, and a string compare per entry costs
