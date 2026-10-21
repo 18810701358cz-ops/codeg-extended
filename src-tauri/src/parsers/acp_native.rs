@@ -2448,6 +2448,97 @@ mod zcode_history_tests {
     use super::*;
 
     #[tokio::test]
+    async fn zcode_attachment_bytes_survive_recording_echo_and_cold_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = crate::acp::registry::registry_id_for(AgentType::ZCode);
+        let wire = crate::acp::connection::map_prompt_blocks(vec![
+            PromptInputBlock::Text {
+                text: "Read these attachments".into(),
+            },
+            PromptInputBlock::Image {
+                data: "cGl4ZWxz".into(),
+                mime_type: "image/png".into(),
+                uri: None,
+            },
+            PromptInputBlock::Resource {
+                uri: "clipboard:///report.pdf".into(),
+                mime_type: Some("application/pdf".into()),
+                text: None,
+                blob: Some("JVBERi0xLjQ=".into()),
+            },
+        ]);
+        let payload = serde_json::to_value(&wire).unwrap();
+        assert_eq!(payload[1]["data"], "cGl4ZWxz");
+        assert_eq!(payload[2]["resource"]["blob"], "JVBERi0xLjQ=");
+        acp_transcript::record_header_in(
+            dir.path(),
+            agent,
+            &acp_transcript::TranscriptHeader::new("zcode", "attachments", "/workspace", 1),
+        )
+        .await
+        .unwrap();
+        acp_transcript::record_entry_in(
+            dir.path(),
+            agent,
+            "attachments",
+            EntryKind::Prompt,
+            payload.clone(),
+        )
+        .await
+        .unwrap();
+        for content in payload.as_array().unwrap() {
+            acp_transcript::record_entry_in(
+                dir.path(),
+                agent,
+                "attachments",
+                EntryKind::Update,
+                serde_json::json!({"sessionUpdate":"user_message_chunk", "content":content}),
+            )
+            .await
+            .unwrap();
+        }
+        acp_transcript::record_entry_in(
+            dir.path(), agent, "attachments", EntryKind::Update,
+            serde_json::json!({"sessionUpdate":"agent_message_chunk", "content":{"type":"text","text":"Read both"}}),
+        ).await.unwrap();
+        acp_transcript::record_entry_in(
+            dir.path(),
+            agent,
+            "attachments",
+            EntryKind::TurnEnd,
+            serde_json::json!({"stopReason":"end_turn"}),
+        )
+        .await
+        .unwrap();
+        let parser = AcpNativeParser::new_in(AgentType::ZCode, dir.path().to_path_buf());
+        let cold = parser.get_conversation("attachments").unwrap();
+        assert_eq!(
+            cold.turns.len(),
+            2,
+            "the prompt echo must not duplicate attachments"
+        );
+        assert_eq!(cold.turns[0].blocks.len(), 3);
+        assert!(
+            matches!(&cold.turns[0].blocks[1], ContentBlock::Image { data, mime_type, uri }
+            if data == "cGl4ZWxz" && mime_type == "image/png" && uri.is_none())
+        );
+        assert!(
+            matches!(&cold.turns[0].blocks[2], ContentBlock::Text { text }
+            if text.contains("report.pdf") && !text.contains("JVBERi0xLjQ="))
+        );
+        let stored = acp_transcript::read_transcript_in(dir.path(), agent, "attachments");
+        assert_eq!(
+            stored
+                .entries
+                .iter()
+                .find(|e| e.k == EntryKind::Prompt)
+                .unwrap()
+                .p,
+            payload
+        );
+    }
+
+    #[tokio::test]
     async fn zcode_history_survives_reopen_and_keeps_tools_usage_and_continuations() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
