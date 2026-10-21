@@ -6179,15 +6179,12 @@ async fn converge_worktree_removal(
 ///   review-only task that committed nothing would report a full change set,
 ///   the board would offer to push it back (a delivery with nothing in it),
 ///   and "complete" — the acceptance that actually applies — would never
-///   appear. The head comes from the task's source snapshot, which is what the
-///   checkout used; it must still be a commit HERE, since a force-push can
-///   leave the row naming one this repository never had.
+///   appear. Where that head sits in the branch now is
+///   [`pull_head_in_branch`]'s question.
 /// - **The branch absorbing base content** (the agent merged the base branch
 ///   in, or rebased onto it) moves the merge base forward, and everything the
-///   base contributed would otherwise read as this task's work. Taken only
-///   when it moved FORWARD from the recorded base: a base branch that is
-///   behind locally, or a same-name branch of unrelated history, must not drag
-///   the anchor backwards and inflate the count it was meant to correct.
+///   base contributed would otherwise read as this task's work — see
+///   [`branch_base`].
 ///
 /// `wt_path` is the task's worktree — where every ref here is resolved.
 async fn own_work_anchor(
@@ -6195,18 +6192,87 @@ async fn own_work_anchor(
     task: &crate::db::entities::work_task::Model,
 ) -> Option<String> {
     if task.source_kind.as_deref() == Some(SOURCE_KIND_PR) {
-        let head = task
-            .source_meta
-            .as_deref()
-            .and_then(|s| serde_json::from_str::<ForgeSourceMeta>(s).ok())
-            .and_then(|m| m.head_sha)
-            .filter(|s| !s.trim().is_empty());
-        if let Some(head) = head {
-            if task_git::commit_present(wt_path, &head).await.unwrap_or(false) {
-                return Some(head);
+        if let Some(head) = pull_head_in_branch(wt_path, task).await {
+            return Some(head);
+        }
+    }
+    branch_base(wt_path, task).await
+}
+
+/// Where a pull-request task's pull request ends inside its branch, when the
+/// task's own work can be measured from there. That is the head the task was
+/// triggered on — the one its source snapshot records and the checkout used —
+/// or, once the pull request was force-pushed and the branch rebased onto the
+/// new head, that head's rebased copy. The recorded commit is still in the
+/// object store then, but no longer under the work: diffing against it would
+/// count everything between the old base and the new one as this task's work.
+///
+/// `None` hands [`own_work_anchor`] to the base-branch rule:
+///
+/// - the recorded head is not a commit here at all (a force-push can leave the
+///   row naming one this repository never had), or the branch holds neither
+///   it nor a copy of it;
+/// - the branch absorbed base content after the head (the agent merged the
+///   base branch in, say to settle a conflict). No single commit holds "the
+///   pull request plus that base", and measuring from the head would count the
+///   whole base as this task's work; the base's merge base counts the pull
+///   request's own files instead — an overcount the size of the pull request,
+///   not of how far the base moved.
+async fn pull_head_in_branch(
+    wt_path: &str,
+    task: &crate::db::entities::work_task::Model,
+) -> Option<String> {
+    let recorded = task
+        .source_meta
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<ForgeSourceMeta>(s).ok())
+        .and_then(|m| m.head_sha)
+        .filter(|s| !s.trim().is_empty())?;
+    if !task_git::commit_present(wt_path, &recorded).await.unwrap_or(false) {
+        return None;
+    }
+    let base_tip = match task.base_branch.as_deref() {
+        Some(branch) => task_git::local_branch_tip(wt_path, branch).await.ok().flatten(),
+        None => None,
+    };
+    let head = if task_git::is_ancestor(wt_path, &recorded, "HEAD").await.unwrap_or(false) {
+        recorded
+    } else {
+        let stop = base_tip.clone().or_else(|| task.base_sha.clone())?;
+        task_git::rebased_copy(wt_path, &recorded, "HEAD", &stop).await?
+    };
+    if let Some(tip) = base_tip {
+        if let Ok(merge_base) = task_git::merge_base(wt_path, &tip, "HEAD").await {
+            if !task_git::is_ancestor(wt_path, &merge_base, &head)
+                .await
+                .unwrap_or(false)
+            {
+                return None;
             }
         }
     }
+    Some(head)
+}
+
+/// The commit the task's branch sits on in its base branch: the recorded base,
+/// moved forward to the merge base with the local base branch once the branch
+/// absorbed base content (the agent merged the base branch in, or rebased onto
+/// it). Measuring from the recorded base after that would show everything the
+/// base contributed as this task's change.
+///
+/// Taken only when it moved FORWARD from the recorded base: a base branch that
+/// is behind locally, or a same-name branch of unrelated history, must not drag
+/// it backwards and inflate the count it was meant to correct. And it moves
+/// only with the BRANCH, never with the base branch advancing on its own, so
+/// the review diff measured from here stays put while the base moves on.
+///
+/// The own-work counters fall back to it and the review diff is taken from it,
+/// so the drawer's list and the row's counters agree on what the base
+/// contributed.
+pub(crate) async fn branch_base(
+    wt_path: &str,
+    task: &crate::db::entities::work_task::Model,
+) -> Option<String> {
     let recorded = task.base_sha.clone().or_else(|| task.base_branch.clone());
     let Some(base_branch) = task.base_branch.as_deref() else {
         return recorded;
@@ -12652,6 +12718,14 @@ mod tests {
                 .expect("landable probe"),
             "…and its own commit is still there to land"
         );
+        // The review drawer measures from the same place, so it does not list
+        // the merged-in base as the task's change either.
+        let listed =
+            crate::commands::work_task::work_task_changed_files_core(&f.engine.db, f.task_id)
+                .await
+                .expect("changed files");
+        let files: Vec<&str> = listed.iter().map(|c| c.file.as_str()).collect();
+        assert_eq!(files, ["a.txt"], "the drawer agrees with the counters");
     }
 
     // ── tasks that ARE a pull request ───────────────────────────────────────
@@ -13010,6 +13084,136 @@ mod tests {
             .has_landable_changes(&task, &wt.path)
             .await
             .expect("landable probe"));
+        drop(home);
+    }
+
+    /// A pull request can be force-pushed while its task is out — its author
+    /// rebased it onto a newer base — and the task's branch rebased onto the
+    /// new head. The head the task was triggered on is still in the object
+    /// store, but no longer under the work: measured from there, everything the
+    /// base gained in between read as this task's work (PR #974's task reported
+    /// 345 files for 37). The pull request now ends at that head's rebased copy.
+    #[tokio::test]
+    async fn a_pull_request_rebased_after_a_force_push_counts_from_its_new_head() {
+        let (engine, task_id, home, pull_head, _branch_point) =
+            pull_checkout_fixture(None, crate::forge::ForgeProvider::GitHub).await;
+        let task = row(&engine, task_id).await;
+        let root = get_folder_core(&engine.db, task.folder_id).await.expect("root");
+        let wt = engine
+            .ensure_worktree(&task, &root, &WorkTaskFolderSettings::default())
+            .await
+            .expect("worktree");
+        let task = row(&engine, task_id).await;
+        let wt_path = Path::new(&wt.path);
+
+        // The pull request moves onto the base as it is now (`main` has gained
+        // `b.txt`), and the task's branch follows it there.
+        git_run(wt_path, &["rebase", "-q", "main"]);
+        let new_head = task_git::rev_parse(&wt.path, "HEAD").await.expect("new head");
+        assert_ne!(new_head, pull_head, "the rebase gave the head a new sha");
+        assert!(
+            task_git::commit_present(&wt.path, &pull_head).await.expect("probe"),
+            "the recorded head is still in the object store"
+        );
+        assert_eq!(
+            engine.snapshot_diff_stats(task_id).await,
+            Some((0, 0, 0)),
+            "following the pull request onto a new base is not work of the task's own"
+        );
+        assert!(!engine
+            .has_landable_changes(&task, &wt.path)
+            .await
+            .expect("landable probe"));
+
+        std::fs::write(wt_path.join("fix.txt"), "the agent's work\n").expect("write");
+        git_run(wt_path, &["add", "-A"]);
+        git_run(wt_path, &["commit", "-qm", "the agent's fix"]);
+        assert_eq!(
+            engine.snapshot_diff_stats(task_id).await,
+            Some((1, 1, 0)),
+            "the agent's file, not the base's `b.txt`"
+        );
+        assert!(engine
+            .has_landable_changes(&task, &wt.path)
+            .await
+            .expect("landable probe"));
+
+        // The review still shows the pull request with the agent's work, from
+        // where the rebased branch now leaves the base.
+        let listed = crate::commands::work_task::work_task_changed_files_core(&engine.db, task_id)
+            .await
+            .expect("changed files");
+        let mut files: Vec<&str> = listed.iter().map(|c| c.file.as_str()).collect();
+        files.sort_unstable();
+        assert_eq!(
+            files,
+            ["feature.txt", "fix.txt"],
+            "the base's own progress is not under review"
+        );
+        drop(home);
+    }
+
+    /// A force-push that rewrote the pull request, not just rebased it, leaves
+    /// no copy of the recorded head to find. The count falls back to the base
+    /// the branch sits on, as any task's does: the pull request's own file is
+    /// counted then, the base's progress still is not.
+    #[tokio::test]
+    async fn a_rewritten_pull_request_head_falls_back_to_the_branch_base() {
+        let (engine, task_id, home, _pull_head, _branch_point) =
+            pull_checkout_fixture(None, crate::forge::ForgeProvider::GitHub).await;
+        let task = row(&engine, task_id).await;
+        let root = get_folder_core(&engine.db, task.folder_id).await.expect("root");
+        let wt = engine
+            .ensure_worktree(&task, &root, &WorkTaskFolderSettings::default())
+            .await
+            .expect("worktree");
+        let wt_path = Path::new(&wt.path);
+
+        git_run(wt_path, &["rebase", "-q", "main"]);
+        std::fs::write(wt_path.join("feature.txt"), "the contribution, reworked\n").expect("write");
+        git_run(wt_path, &["commit", "-qa", "--amend", "--no-edit"]);
+
+        assert_eq!(
+            engine.snapshot_diff_stats(task_id).await,
+            Some((1, 1, 0)),
+            "the pull request's file, not the base's `b.txt`"
+        );
+        drop(home);
+    }
+
+    /// The other way base content reaches a pull-request task's branch: the
+    /// agent merges the base branch in, say to settle a conflict. No single
+    /// commit holds "the pull request plus that base", so the count falls back
+    /// to the base the branch now sits on — the pull request's own file is
+    /// counted, everything the base gained is not.
+    #[tokio::test]
+    async fn a_pull_request_task_that_merged_its_base_does_not_count_the_base() {
+        let (engine, task_id, home, _pull_head, _branch_point) =
+            pull_checkout_fixture(None, crate::forge::ForgeProvider::GitHub).await;
+        let task = row(&engine, task_id).await;
+        let root = get_folder_core(&engine.db, task.folder_id).await.expect("root");
+        let wt = engine
+            .ensure_worktree(&task, &root, &WorkTaskFolderSettings::default())
+            .await
+            .expect("worktree");
+        let wt_path = Path::new(&wt.path);
+
+        // The base gains three more lines, and the agent merges it in on top
+        // of its own fix.
+        let root_path = Path::new(&root.path);
+        std::fs::write(root_path.join("later.txt"), "one\ntwo\nthree\n").expect("write");
+        git_run(root_path, &["add", "-A"]);
+        git_run(root_path, &["commit", "-qm", "the base moves on again"]);
+        std::fs::write(wt_path.join("fix.txt"), "the agent's work\n").expect("write");
+        git_run(wt_path, &["add", "-A"]);
+        git_run(wt_path, &["commit", "-qm", "the agent's fix"]);
+        git_run(wt_path, &["merge", "-q", "--no-edit", "main"]);
+
+        assert_eq!(
+            engine.snapshot_diff_stats(task_id).await,
+            Some((2, 2, 0)),
+            "the pull request's file and the agent's — not `b.txt` or `later.txt`"
+        );
         drop(home);
     }
 

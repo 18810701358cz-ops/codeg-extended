@@ -247,6 +247,37 @@ pub async fn commit_present(path: &str, rev: &str) -> Result<bool, AppCommandErr
     Ok(out.status.success())
 }
 
+/// The newest commit under `tip` (and not under `stop`) that carries the same
+/// change as one of `commit`'s own commits — where `commit` ended up after a
+/// rebase gave its changes new parents and new shas. "The same change" is
+/// git's patch-id equivalence (`--cherry-mark`, what `git cherry` and `rebase`
+/// use to skip a commit already applied). `None` when there is no such copy,
+/// and when git can't say.
+pub async fn rebased_copy(path: &str, commit: &str, tip: &str, stop: &str) -> Option<String> {
+    let range = format!("{commit}...{tip}");
+    let not_stop = format!("^{stop}");
+    let out = run_git(
+        path,
+        &[
+            "rev-list",
+            "--cherry-mark",
+            "--right-only",
+            "--no-merges",
+            "--topo-order",
+            &range,
+            &not_stop,
+        ],
+    )
+    .await
+    .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix('=').map(str::to_string))
+}
+
 /// `git fetch <remote> +<remote_ref>:<local_ref>` → the fetched tip.
 ///
 /// Two deliberate choices:
