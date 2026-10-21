@@ -1811,6 +1811,7 @@ async fn record_turn_end(
     stop_reason: &str,
     started_at_ms: u64,
     model: Option<String>,
+    metrics: Option<&crate::acp::zcode_turn::TurnMetrics>,
 ) {
     let Some(dir) = transcript_dir_for(agent_type) else {
         return;
@@ -1820,6 +1821,9 @@ async fn record_turn_end(
         "stopReason": stop_reason,
         "durationMs": now.saturating_sub(started_at_ms),
     });
+    if let Some(metrics) = metrics {
+        metrics.apply_to(&mut payload);
+    }
     // ACP puts no model on the prompt response, so the session's model selector
     // is the only honest answer at turn end — and it is the same value the
     // composer showed while the turn ran. Recorded per turn rather than once in
@@ -13388,6 +13392,7 @@ async fn run_conversation_loop(
                 // of a confusing `PendingReview` on a blank conversation — and
                 // the probe's other fields say *why* it looked empty.
                 let mut probe = TurnOutputProbe::new(stderr_mark);
+                let mut zcode_turn = crate::acp::zcode_turn::TurnTracker::default();
                 // A CodeBuddy native sub-agent's full lifecycle (Agent tool call
                 // open → completed) happens within one turn, so reset the
                 // suppression window at each turn start. This bounds the tracking
@@ -13477,6 +13482,24 @@ async fn run_conversation_loop(
                             let runtime = terminal_runtime.clone();
                             let session_id = sid.clone();
                             let cwd_opt = Some(cwd);
+                            // Billing snapshots are per prompt, unlike the
+                            // standard context-occupancy usage_update channel.
+                            // Observe only this prompt's drain: load replay and
+                            // idle notifications cannot seed the next turn.
+                            if agent_type == AgentType::ZCode {
+                                if let Dispatch::Notification(notification) = &dispatch {
+                                    if crate::acp::zcode_turn::is_turn_state_method(
+                                        notification.method(),
+                                    ) {
+                                        zcode_turn.observe(
+                                            notification.method(),
+                                            notification.params(),
+                                            &sid.0,
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
                             // grok reports `/compact` results on ext methods
                             // that bypass the typed pipeline below and emit a
                             // compaction card/error from `.otherwise`. Count
@@ -13729,6 +13752,7 @@ async fn run_conversation_loop(
                                         reason_str,
                                         turn_started_at_ms,
                                         current_session_model_id(state).await,
+                                        zcode_turn.metrics(),
                                     )
                                     .await;
                                     // Same wedge guard as the normal turn exit
@@ -13844,6 +13868,7 @@ async fn run_conversation_loop(
                                 reason_str,
                                 turn_started_at_ms,
                                 current_session_model_id(state).await,
+                                zcode_turn.metrics(),
                             )
                             .await;
                             // The turn is over, so any card still parked here
@@ -14152,6 +14177,23 @@ async fn run_conversation_loop(
                                         .release_all_for_session(sid.0.as_ref())
                                         .await;
                                     tracked_terminal_tool_calls.clear();
+                                    // This path deliberately does not await the
+                                    // agent's eventual response. Still close
+                                    // ZCode's recorded turn before the refetch
+                                    // trigger, with only measurements already
+                                    // received for THIS prompt. Late telemetry
+                                    // must not become the next prompt's bill.
+                                    if agent_type == AgentType::ZCode {
+                                        record_turn_end(
+                                            agent_type,
+                                            &sid.0,
+                                            "cancelled",
+                                            turn_started_at_ms,
+                                            current_session_model_id(state).await,
+                                            zcode_turn.metrics(),
+                                        )
+                                        .await;
+                                    }
                                     // Also cancel any pending permission requests
                                     // (queued ones included), clearing the card
                                     // that was on screen, and immediately emit
@@ -40495,9 +40537,12 @@ mod tests {
 
     impl CustomLoop {
         async fn start(turns: Vec<Vec<GrokFrame>>) -> Self {
-            use agent_client_protocol::schema::v1::PromptResponse;
-
             let agent_type = AgentType::custom(IDLE_PROBE_AGENT).expect("a valid custom id");
+            Self::start_for(agent_type, turns).await
+        }
+
+        async fn start_for(agent_type: AgentType, turns: Vec<Vec<GrokFrame>>) -> Self {
+            use agent_client_protocol::schema::v1::PromptResponse;
             let turns = Arc::new(std::sync::Mutex::new(VecDeque::from(turns)));
             let respond = Arc::new(tokio::sync::Notify::new());
             let agent_respond = Arc::clone(&respond);
@@ -40709,6 +40754,84 @@ mod tests {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.client).await;
             self.agent.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn zcode_terminal_metrics_reach_history_once_before_turn_complete() {
+        use crate::parsers::AgentParser as _;
+        let home = tempfile::tempdir().unwrap();
+        let home_str = home.path().to_string_lossy().into_owned();
+        temp_env::async_with_vars([("CODEG_HOME", Some(home_str.as_str()))], async {
+            let start = || ("_zcode/turnState", serde_json::json!({"sessionId":"s1","running":true}));
+            let end = |input: u64, ms: u64| serde_json::json!({
+                "sessionId":"s1","running":false,"turnMs":ms,
+                "usage":{"inputTokens":input,"outputTokens":350,"cachedReadTokens":900,"cachedWriteTokens":120,"totalTokens":input+1370}
+            });
+            let mut lp = CustomLoop::start_for(AgentType::ZCode, vec![
+                vec![start(),
+                    custom_update(serde_json::json!({"sessionUpdate":"usage_update","used":9999,"size":131072})),
+                    ("_zcode/turnState",end(180,4200)),
+                    ("$/zcode/turnState",end(9999,9999)),
+                    ("_zcode/turnState",end(9999,9999)), custom_text("first")],
+                vec![start(), ("_zcode/turnState",end(12,1700)), custom_text("second")],
+                // A late prior-turn end and idle/replay data have no opening
+                // marker in this prompt, so they cannot seed its metadata.
+                vec![("_zcode/turnState",end(9999,9999)),custom_text("third")],
+            ]).await;
+            lp.agent_sends(vec![start(),("_zcode/turnState",end(9999,9999)),grok_barrier()]);
+            lp.until_barrier().await;
+            let parser = || crate::parsers::acp_native::AcpNativeParser::new_in(
+                AgentType::ZCode, crate::paths::codeg_acp_transcripts_root(),
+            );
+            lp.run_turn("one", "first").await;
+            // TurnComplete is the refetch trigger: its footer must already be
+            // durable and readable, without a test-only flush after the event.
+            let first = parser().get_conversation("s1").unwrap();
+            let usage = first.turns[1].usage.as_ref().unwrap();
+            assert_eq!((usage.input_tokens,usage.output_tokens,usage.cache_read_input_tokens,usage.cache_creation_input_tokens),(180,350,900,120));
+            assert_eq!(first.turns[1].duration_ms,Some(4200));
+            let stats = first.session_stats.unwrap();
+            assert_eq!(stats.total_tokens,Some(1550));
+            assert_eq!(stats.context_window_used_tokens,Some(9999));
+            assert_eq!(stats.total_duration_ms,4200);
+            lp.run_turn("two", "second").await;
+            lp.run_turn("three", "third").await;
+            let cold = parser().get_conversation("s1").unwrap();
+            assert_eq!(cold.turns.len(),6);
+            assert_eq!(cold.turns[3].usage.as_ref().unwrap().input_tokens,12);
+            assert_eq!(cold.turns[3].duration_ms,Some(1700));
+            assert!(cold.turns[5].usage.is_none());
+            let raw = crate::acp_transcript::read_transcript("codeg-zcode-acp","s1");
+            assert_eq!(raw.entries.iter().filter(|e| e.k==crate::acp_transcript::EntryKind::TurnEnd).count(),3);
+            assert!(raw.entries.iter().rev().find(|e| e.k==crate::acp_transcript::EntryKind::TurnEnd).unwrap().p.get("usage").is_none());
+            lp.shutdown().await;
+        }).await;
+    }
+
+    #[tokio::test]
+    async fn zcode_cancel_records_a_boundary_without_inheriting_the_previous_bill() {
+        let home = tempfile::tempdir().unwrap();
+        let home_str = home.path().to_string_lossy().into_owned();
+        temp_env::async_with_vars([("CODEG_HOME", Some(home_str.as_str()))], async {
+            let mut lp = CustomLoop::start_for(AgentType::ZCode, vec![
+                vec![("_zcode/turnState",serde_json::json!({"sessionId":"s1","running":true})),
+                    ("_zcode/turnState",serde_json::json!({"sessionId":"s1","running":false,"usage":{"inputTokens":30,"outputTokens":12},"turnMs":42})),custom_text("first")],
+                vec![("_zcode/turnState",serde_json::json!({"sessionId":"s1","running":true})),custom_text("working")],
+            ]).await;
+            lp.run_turn("one","first").await;
+            lp.open_turn("two","working").await;
+            lp.cmd_tx.send(ConnectionCommand::Cancel).await.unwrap();
+            lp.until("cancelled",|e|matches!(e,AcpEvent::TurnComplete{stop_reason,..} if stop_reason=="cancelled")).await;
+            let raw = crate::acp_transcript::read_transcript("codeg-zcode-acp","s1");
+            let ends: Vec<_> = raw.entries.iter().filter(|e|e.k==crate::acp_transcript::EntryKind::TurnEnd).collect();
+            assert_eq!(ends.len(),2);
+            assert_eq!(ends[0].p["usage"]["inputTokens"],30);
+            assert_eq!(ends[1].p["stopReason"],"cancelled");
+            assert!(ends[1].p.get("usage").is_none());
+            assert!(ends[1].p.get("durationMs").and_then(|v|v.as_u64()).is_some());
+            lp.respond.notify_one();
+            lp.shutdown().await;
+        }).await;
     }
 
     /// A setter sent with a reply is answered from the agent's own response to

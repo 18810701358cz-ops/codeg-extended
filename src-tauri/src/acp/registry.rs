@@ -4745,7 +4745,8 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             // `ZCODE_ACP_MODE`, else `yolo`) where it reported `yolo`
             // regardless; codeg's gate confirms its own choice either way.
             // 0.72.0 adds `usage` and `turnMs` to the `_zcode/turnState`
-            // notification that ends a turn, which codeg does not read. The
+            // notification that ends a turn; codeg records these as per-turn
+            // metadata without adding context-occupancy usage updates. The
             // rest (quota cards, CLIProxy, sandbox pacing when a workspace arms
             // the sandbox) is opt-in and outside what codeg drives.
             distribution: AgentDistribution::Npx {
