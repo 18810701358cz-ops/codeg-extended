@@ -106,9 +106,14 @@ export function ActivityRow({
     </>
   )
 
+  // The line height goes after the font size: tailwind-merge drops a
+  // `leading-*` that a later `text-*` follows, and the rail's markers and the
+  // chevron are placed for a 1.5rem line.
   const headerClass = cn(
-    "group/row flex w-full min-w-0 items-start text-start leading-6",
-    variant === "main" ? "py-0.5 text-sm" : "text-[0.8125rem]",
+    "group/row flex w-full min-w-0 items-start text-start",
+    variant === "main"
+      ? "py-0.5 text-sm leading-6"
+      : "text-[0.8125rem] leading-6",
     headerClassName
   )
 

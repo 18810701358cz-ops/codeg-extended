@@ -225,6 +225,17 @@ describe("activity timeline: the reference turn", () => {
     expect(labels[0]).toHaveAttribute("aria-hidden", "true")
     expect(labels[1]).not.toHaveAttribute("aria-hidden")
   })
+
+  it("sets row headers on the 1.5rem line the rail is drawn for", () => {
+    // tailwind-merge drops a line height that a later font size follows; the
+    // rings, dots and chevrons are placed for this line.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const explored = within(rowOf("Explored")).getAllByRole("button")[0]!
+    expect(explored.className).toMatch(/\btext-sm\b.*\bleading-6\b/)
+    fireEvent.click(explored)
+    const child = within(rowOf(/\/Makefile$/)).getByRole("button")
+    expect(child.className).toMatch(/\bleading-6\b/)
+  })
 })
 
 describe("activity timeline: failures", () => {

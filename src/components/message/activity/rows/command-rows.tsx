@@ -164,8 +164,10 @@ function CommandLabel({ step }: { step: ToolStep }) {
   const extraLines = heredoc ? 0 : command.lineCount - 1
   // One clamped block holding the command and its trailing notes, so the
   // notes flow after the last line of the command instead of dropping below.
+  // A long command wraps on a 1.25rem line; the margin keeps its first line
+  // centred where the row's 1.5rem line would be, beside the marker.
   return (
-    <span className="line-clamp-3 [overflow-wrap:anywhere]">
+    <span className="my-0.5 line-clamp-3 leading-5 [overflow-wrap:anywhere]">
       <span className="font-mono text-[0.8125rem]" dir="ltr">
         <span className="select-none text-muted-foreground">$ </span>
         {firstLine}
