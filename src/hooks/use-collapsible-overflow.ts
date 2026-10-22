@@ -35,15 +35,17 @@ export function useCollapsibleOverflow<T extends HTMLElement>(
     if (expanded) return
     const el = contentRef.current
     if (!el) return
-    const measure = () => {
+    // Measured when the browser lays the node out: an observer reports a node
+    // at its first layout (so a new observer per `contentKey` remeasures a
+    // changed body) and again on every resize. Reading the heights here
+    // instead would force a synchronous layout from inside React's effects,
+    // once per clamped block — and a long transcript mounts dozens.
+    const observer = new ResizeObserver(() => {
       // Both reads are on the same, currently clamped node: no numeric
       // threshold duplicated from CSS. clientHeight is capped by the caller's
       // class; scrollHeight always reports the untruncated height.
       setIsOverflowing(el.scrollHeight > el.clientHeight + 1)
-    }
-    measure() // Synchronous initial read — doesn't depend on the
-    // ResizeObserver callback firing (the jsdom test stub never invokes it).
-    const observer = new ResizeObserver(measure)
+    })
     observer.observe(el)
     return () => observer.disconnect()
   }, [contentKey, expanded])

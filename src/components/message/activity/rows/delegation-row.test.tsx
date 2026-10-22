@@ -13,6 +13,7 @@ import {
   resetAssistantsStore,
   useAssistantsStore,
 } from "@/stores/assistants-store"
+import { mockClampLayout } from "@/test-layout"
 
 /**
  * The delegation row: one `delegate_to_agent` call, start to finish — who it
@@ -716,27 +717,7 @@ describe("delegation row: the task it was handed", () => {
   // Taller content than box makes the clamp actually cut it.
   let restoreMetrics: (() => void) | null = null
   function clipTheTask() {
-    const saved = (["scrollHeight", "clientHeight"] as const).map(
-      (prop) =>
-        [
-          prop,
-          Object.getOwnPropertyDescriptor(Element.prototype, prop),
-        ] as const
-    )
-    Object.defineProperty(Element.prototype, "scrollHeight", {
-      configurable: true,
-      get: () => 120,
-    })
-    Object.defineProperty(Element.prototype, "clientHeight", {
-      configurable: true,
-      get: () => 40,
-    })
-    restoreMetrics = () => {
-      for (const [prop, descriptor] of saved) {
-        if (descriptor)
-          Object.defineProperty(Element.prototype, prop, descriptor)
-      }
-    }
+    restoreMetrics = mockClampLayout(120, 40)
   }
   afterEach(() => {
     restoreMetrics?.()
