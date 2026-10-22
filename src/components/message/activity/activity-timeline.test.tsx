@@ -226,6 +226,17 @@ describe("activity timeline: the reference turn", () => {
     expect(labels[1]).not.toHaveAttribute("aria-hidden")
   })
 
+  it("turns an open row's chevron to point down in either direction", () => {
+    // Mirrored under RTL, the chevron has to turn the other way.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const thought = rowOf("Summarizing log status")
+    fireEvent.click(within(thought).getByRole("button"))
+    const chevron = thought.querySelector("svg.lucide-chevron-right")
+    expect(chevron?.getAttribute("class")).toMatch(
+      /\brotate-90\b.*\brtl:-rotate-90\b/
+    )
+  })
+
   it("sets row headers on the 1.5rem line the rail is drawn for", () => {
     // tailwind-merge drops a line height that a later font size follows; the
     // rings, dots and chevrons are placed for this line.

@@ -472,7 +472,7 @@ export const CommandGroupRow = memo(function CommandGroupRow({
           label={`${t("kind.command")}, ${statusText(status)}`}
           iconClassName={cn(
             "transition-[rotate] rtl:-scale-x-100",
-            open && "rotate-90"
+            open && "rotate-90 rtl:-rotate-90"
           )}
         />
       }

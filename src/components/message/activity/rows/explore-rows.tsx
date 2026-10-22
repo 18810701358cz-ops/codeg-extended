@@ -135,7 +135,7 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
           label={`${t("kind.explore")}, ${statusText(status)}`}
           iconClassName={cn(
             "transition-[rotate] rtl:-scale-x-100",
-            open && "rotate-90"
+            open && "rotate-90 rtl:-rotate-90"
           )}
         />
       }
