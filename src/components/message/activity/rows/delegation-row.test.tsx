@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
 import type { DelegationBinding } from "@/contexts/delegation-context"
@@ -645,7 +645,50 @@ describe("delegation row: the task it was handed", () => {
   const TASK =
     "Audit the sidebar width logic.\n\n1. Read sidebar-context.tsx\n2. Compare the Windows and macOS minimums"
 
+  // jsdom lays nothing out, so every node reads 0 tall — a task that fits.
+  // Taller content than box makes the clamp actually cut it.
+  let restoreMetrics: (() => void) | null = null
+  function clipTheTask() {
+    const saved = (["scrollHeight", "clientHeight"] as const).map(
+      (prop) =>
+        [
+          prop,
+          Object.getOwnPropertyDescriptor(Element.prototype, prop),
+        ] as const
+    )
+    Object.defineProperty(Element.prototype, "scrollHeight", {
+      configurable: true,
+      get: () => 120,
+    })
+    Object.defineProperty(Element.prototype, "clientHeight", {
+      configurable: true,
+      get: () => 40,
+    })
+    restoreMetrics = () => {
+      for (const [prop, descriptor] of saved) {
+        if (descriptor)
+          Object.defineProperty(Element.prototype, prop, descriptor)
+      }
+    }
+  }
+  afterEach(() => {
+    restoreMetrics?.()
+    restoreMetrics = null
+  })
+
+  it("has nothing to open when the task fits in its two lines", () => {
+    // The panel would only say it again.
+    renderRow(
+      delegation({
+        input: JSON.stringify({ agent_type: "codex", task: "Run the checks." }),
+      })
+    )
+    expect(toggle()).toBeNull()
+    expect(screen.getAllByText("Run the checks.")).toHaveLength(1)
+  })
+
   it("opens to the whole task, verbatim, and folds it back", () => {
+    clipTheTask()
     renderRow(
       delegation({ input: JSON.stringify({ agent_type: "codex", task: TASK }) })
     )
@@ -667,6 +710,7 @@ describe("delegation row: the task it was handed", () => {
   })
 
   it("keeps opening the task and opening the conversation apart", () => {
+    clipTheTask()
     bind(bindingOf({ status: "running", task: TASK }))
     renderRow(delegation())
     const button = toggle()!

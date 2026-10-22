@@ -11,6 +11,7 @@ import { ErrorLabel } from "@/components/message/delegation-status-badge"
 import { DelegationStatusRow } from "@/components/message/delegation-status-row"
 import { useSessionViewerHost } from "@/components/message/session-viewer-host-context"
 import { SubAgentSessionDialog } from "@/components/message/sub-agent-session-dialog"
+import { useCollapsibleOverflow } from "@/hooks/use-collapsible-overflow"
 import {
   useDelegationCardModel,
   type DelegationIdentity,
@@ -127,9 +128,9 @@ function DelegationStatusWord({
  * it was handed (two lines), and — once it reports back — the first line of
  * its result beside "Open conversation ↗" (usable while it still runs). The
  * agent's own `get_delegation_status` polls are folded in when they came right
- * after the hand-over; the full task and those checks (with any decision the
- * sub-agent is waiting on) are in the panel, which opens by itself while the
- * sub-agent waits for the user.
+ * after the hand-over; those checks (with any decision the sub-agent is waiting
+ * on) are in the panel — and the whole task, when two lines cut it short —
+ * which opens by itself while the sub-agent waits for the user.
  */
 export const DelegationRow = memo(function DelegationRow({
   step,
@@ -173,6 +174,9 @@ export const DelegationRow = memo(function DelegationRow({
     defaultOpen: false,
     force: model.status === "waiting",
   })
+  // The panel repeats the task only when the two lines above cut it short.
+  const { contentRef: taskRef, isOverflowing: taskClipped } =
+    useCollapsibleOverflow<HTMLParagraphElement>(model.task)
   const elapsed = useLiveElapsed(step.key, status === "running")
 
   if (!model.hasModel) return pinnedOnly ? null : <GenericRow step={step} />
@@ -207,7 +211,7 @@ export const DelegationRow = memo(function DelegationRow({
             label={`${t("kind.delegation")}, ${statusText(status)}`}
           />
         }
-        expandable={hasTask || pollRows.length > 0}
+        expandable={(hasTask && taskClipped) || pollRows.length > 0}
         expanded={open}
         onExpandedChange={setOpen}
         title={model.taskId ?? undefined}
@@ -228,6 +232,7 @@ export const DelegationRow = memo(function DelegationRow({
             <div className="space-y-1 pb-0.5">
               {hasTask ? (
                 <p
+                  ref={taskRef}
                   dir="auto"
                   className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-foreground/90"
                 >
@@ -273,7 +278,7 @@ export const DelegationRow = memo(function DelegationRow({
         }
         detail={() => (
           <div className="space-y-2">
-            {hasTask ? (
+            {hasTask && taskClipped ? (
               <DetailBox tone="neutral">
                 <p
                   dir="auto"
