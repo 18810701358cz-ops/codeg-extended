@@ -1,7 +1,7 @@
 import { useState, type ReactElement } from "react"
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
-import { beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
 import {
@@ -226,6 +226,16 @@ describe("activity timeline: the reference turn", () => {
     expect(labels[1]).not.toHaveAttribute("aria-hidden")
   })
 
+  it("folds and unfolds from anywhere on the header", () => {
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    fireEvent.click(screen.getByText("Activity"))
+    expect(screen.getByRole("button", { name: "Show" })).toBeTruthy()
+    expect(screen.queryByText("Explored")).toBeNull()
+    fireEvent.click(screen.getByText(/14 steps/))
+    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy()
+    expect(screen.getByText("Explored")).toBeTruthy()
+  })
+
   it("turns an open row's chevron to point down in either direction", () => {
     // Mirrored under RTL, the chevron has to turn the other way.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
@@ -261,6 +271,10 @@ describe("activity timeline: failures", () => {
     ],
   }
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it("opens a failure nobody redid and says so in red in the header", () => {
     renderSettled(partsOf(FAILURE))
     expect(screen.getByText("1 failed")).toBeTruthy()
@@ -275,6 +289,17 @@ describe("activity timeline: failures", () => {
     expect(row).toHaveAttribute("data-open")
     fireEvent.click(within(row).getAllByRole("button")[0]!)
     expect(row).not.toHaveAttribute("data-open")
+  })
+
+  it("leaves the failure link and a text selection to themselves", () => {
+    renderSettled(partsOf(FAILURE))
+    fireEvent.click(screen.getByText("1 failed"))
+    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy()
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      toString: () => "Activity",
+    } as Selection)
+    fireEvent.click(screen.getByText("Activity"))
+    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy()
   })
 })
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useMemo } from "react"
+import { memo, useMemo, type MouseEvent } from "react"
 import { useTranslations } from "next-intl"
 
 import type { ActivitySummary } from "@/lib/activity/types"
@@ -98,8 +98,26 @@ export const ActivityHeader = memo(function ActivityHeader({
   const pieces = [...(elapsed && completed ? [elapsed] : []), ...visible]
   const tooltip = [...(elapsed ? [elapsed] : []), ...full].join(separator)
 
+  // The whole header folds and unfolds the reply, not only the Hide / Show
+  // word at its end — that word stays the control for the keyboard and screen
+  // readers. A press on a button inside (that word, the failure link) is the
+  // button's own, and one that ends a text selection is not a toggle.
+  const onHeaderClick = toggle
+    ? (event: MouseEvent<HTMLDivElement>) => {
+        if ((event.target as Element | null)?.closest("button")) return
+        if (window.getSelection()?.toString()) return
+        toggle.onToggle()
+      }
+    : undefined
+
   return (
-    <div className="flex w-full min-w-0 items-center gap-3 pb-1 text-sm leading-6">
+    <div
+      className={cn(
+        "flex w-full min-w-0 items-center gap-3 pb-1 text-sm leading-6",
+        toggle && "group/header cursor-pointer"
+      )}
+      onClick={onHeaderClick}
+    >
       <span className="flex min-w-0 items-baseline gap-2.5">
         <span
           className={cn(
@@ -154,7 +172,7 @@ export const ActivityHeader = memo(function ActivityHeader({
       {toggle ? (
         <button
           type="button"
-          className="shrink-0 rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="shrink-0 rounded-sm text-sm text-muted-foreground group-hover/header:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-expanded={toggle.open}
           aria-controls={toggle.controls}
           onClick={toggle.onToggle}
