@@ -9,7 +9,7 @@ import type { ActivityStep } from "@/lib/activity/types"
 import { cn } from "@/lib/utils"
 import { ActivityRow } from "../activity-row"
 import { useDisclosure } from "../disclosure-store"
-import { RailDot, RailIcon } from "../rail-icon"
+import { RailIcon } from "../rail-icon"
 import { THOUGHT_ICON, useStatusText } from "../step-visuals"
 
 type ThoughtStep = Extract<ActivityStep, { type: "thought" }>
@@ -22,11 +22,8 @@ type ThoughtStep = Extract<ActivityStep, { type: "thought" }>
  */
 export const ThoughtRow = memo(function ThoughtRow({
   step,
-  inGroup = false,
 }: {
   step: ThoughtStep
-  /** Absorbed into an explore group: a child row with a dot marker. */
-  inGroup?: boolean
 }) {
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
@@ -48,18 +45,12 @@ export const ThoughtRow = memo(function ThoughtRow({
           ? "[animation:tool-content-fade_200ms_ease-out_500ms_both]"
           : undefined
       }
-      variant={inGroup ? "child" : "main"}
-      markerKind={inGroup ? "dot" : "ring"}
       marker={
-        inGroup ? (
-          <RailDot />
-        ) : (
-          <RailIcon
-            icon={THOUGHT_ICON}
-            status={status}
-            label={`${t("kind.thought")}, ${statusText(status)}`}
-          />
-        )
+        <RailIcon
+          icon={THOUGHT_ICON}
+          status={status}
+          label={`${t("kind.thought")}, ${statusText(status)}`}
+        />
       }
       expandable={body.length > 0}
       expanded={open}

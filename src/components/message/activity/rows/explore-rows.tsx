@@ -24,7 +24,6 @@ import { RailDot, RailIcon } from "../rail-icon"
 import { ResultBody } from "../result-body"
 import { ToolFigure, ToolNotes, toolIcon, useStatusText } from "../step-visuals"
 import { useAwaitedStep, useLiveToolStep } from "../use-live-step"
-import { ThoughtRow } from "./thought-row"
 
 type ToolStep = Extract<ActivityStep, { type: "tool" }>
 
@@ -44,7 +43,7 @@ export function useDisplayPath(path: string | undefined): string | undefined {
 }
 
 /** "3 files, 1 search" for an explore group's header. */
-function useExploreSummary(steps: ActivityStep[]): string {
+function useExploreSummary(steps: ToolStep[]): string {
   const t = useTranslations("Folder.chat.activity")
   return useMemo(() => {
     const files = new Set<string>()
@@ -54,7 +53,6 @@ function useExploreSummary(steps: ActivityStep[]): string {
     let webSearches = 0
     let memories = 0
     for (const step of steps) {
-      if (step.type !== "tool") continue
       const { tool } = step
       switch (tool.kind) {
         case "read":
@@ -103,7 +101,7 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
   status: given,
 }: {
   groupKey: string
-  steps: ActivityStep[]
+  steps: ToolStep[]
   status: StepStatus
 }) {
   const t = useTranslations("Folder.chat.activity")
@@ -112,7 +110,6 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
   const summary = useExploreSummary(steps)
   const failedOpen = steps.some(
     (s) =>
-      s.type === "tool" &&
       (s.tool.status === "failed" || s.tool.status === "rejected") &&
       !recoveredKeys.has(s.key)
   )
@@ -159,8 +156,7 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
             {t("metric.someFailed", {
               count: steps.filter(
                 (s) =>
-                  s.type === "tool" &&
-                  (s.tool.status === "failed" || s.tool.status === "rejected")
+                  s.tool.status === "failed" || s.tool.status === "rejected"
               ).length,
             })}
           </span>
@@ -168,13 +164,9 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
       }
       detail={() => (
         <ul role="list" className="activity-children">
-          {steps.map((step) =>
-            step.type === "tool" ? (
-              <ExploreChildRow key={step.key} step={step} />
-            ) : step.type === "thought" ? (
-              <ThoughtRow key={step.key} step={step} inGroup />
-            ) : null
-          )}
+          {steps.map((step) => (
+            <ExploreChildRow key={step.key} step={step} />
+          ))}
         </ul>
       )}
     >
@@ -195,13 +187,10 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
   )
 })
 
-function lastLiveTool(steps: ActivityStep[]): ToolStep | null {
+function lastLiveTool(steps: ToolStep[]): ToolStep | null {
   for (let i = steps.length - 1; i >= 0; i--) {
     const step = steps[i]!
-    if (
-      step.type === "tool" &&
-      (step.tool.status === "running" || step.tool.status === "pending")
-    ) {
+    if (step.tool.status === "running" || step.tool.status === "pending") {
       return step
     }
   }

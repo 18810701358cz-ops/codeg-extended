@@ -4,13 +4,11 @@
  * - Consecutive exploration calls (read / search / glob / list / fetch / web
  *   search / memory) become one "Explored" row; consecutive commands one "Ran N
  *   commands" row. A run needs two members — a lone call stays a plain row.
- * - A finished thought written between two exploration calls joins their row,
- *   in place, instead of splitting the run in two (codex's activity grouping).
- *   A thought before the first call stays its own row — "thought, then did" —
- *   and one still being written never joins anything.
- * - Everything else ends a run: prose, edits, MCP and other tools, sub-agents,
- *   plans, questions. A failed call does NOT end one; it stays inside, and the
- *   group shows the failure.
+ * - Everything else ends a run: thoughts, prose, edits, MCP and other tools,
+ *   sub-agents, plans, questions. A thought is the agent's own voice between
+ *   its calls, so it always stands as a row of its own rather than being
+ *   folded away with the calls around it. A failed call does NOT end a run;
+ *   it stays inside, and the group shows the failure.
  * - A group's key is its first member's, so a run that grows keeps its key
  *   (and with it the reader's open/closed choice).
  */
@@ -24,6 +22,8 @@ import {
   type GroupKind,
 } from "./types"
 
+type ToolStep = Extract<ActivityStep, { type: "tool" }>
+
 function familyOf(step: ActivityStep): GroupKind | null {
   if (step.type !== "tool") return null
   if (EXPLORE_KINDS.has(step.tool.kind)) return "explore"
@@ -33,10 +33,7 @@ function familyOf(step: ActivityStep): GroupKind | null {
 
 interface Run {
   kind: GroupKind
-  members: ActivityStep[]
-  /** Finished thoughts seen since the run's last call: absorbed if another
-   *  call of the run follows, released as their own rows otherwise. */
-  pending: ActivityStep[]
+  members: ToolStep[]
 }
 
 export function groupActivitySteps(steps: ActivityStep[]): ActivityItem[] {
@@ -49,46 +46,29 @@ export function groupActivitySteps(steps: ActivityStep[]): ActivityItem[] {
 
   const flush = () => {
     if (!run) return
-    const calls = run.members.filter((m) => m.type === "tool")
-    if (calls.length >= 2) {
+    if (run.members.length >= 2) {
       items.push({
         type: "group",
         key: run.members[0]!.key,
         kind: run.kind,
         steps: run.members,
-        status: combineStatuses(
-          calls.map((m) => (m.type === "tool" ? m.tool.status : "succeeded"))
-        ),
+        status: combineStatuses(run.members.map((m) => m.tool.status)),
       })
     } else {
       for (const member of run.members) emit(member)
     }
-    for (const thought of run.pending) emit(thought)
     run = null
   }
 
   for (const step of steps) {
     const family = familyOf(step)
-    if (family) {
+    if (family && step.type === "tool") {
       if (run && run.kind === family) {
-        if (run.pending.length > 0) {
-          if (family === "explore") {
-            run.members.push(...run.pending)
-            run.pending = []
-          } else {
-            flush()
-            run = { kind: family, members: [], pending: [] }
-          }
-        }
         run.members.push(step)
         continue
       }
       flush()
-      run = { kind: family, members: [step], pending: [] }
-      continue
-    }
-    if (run?.kind === "explore" && step.type === "thought" && !step.streaming) {
-      run.pending.push(step)
+      run = { kind: family, members: [step] }
       continue
     }
     flush()

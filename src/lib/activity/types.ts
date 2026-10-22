@@ -212,8 +212,8 @@ export type ActivityItem =
       type: "group"
       key: string
       kind: GroupKind
-      /** Members in order — tool steps, plus thoughts an explore run absorbed. */
-      steps: ActivityStep[]
+      /** The run's calls, in order. */
+      steps: Extract<ActivityStep, { type: "tool" }>[]
       status: StepStatus
     }
 

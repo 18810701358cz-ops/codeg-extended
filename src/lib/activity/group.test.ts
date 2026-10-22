@@ -65,26 +65,36 @@ describe("groupActivitySteps", () => {
     ])
   })
 
-  it("absorbs a finished thought between two exploration calls", () => {
+  it("lets a thought between two exploration calls stand on its own", () => {
     expect(
       shape(
-        groupActivitySteps([thought("t0"), read("a"), thought("t1"), read("b")])
+        groupActivitySteps([
+          thought("t0"),
+          read("a"),
+          read("b"),
+          thought("t1"),
+          read("c"),
+          grep("d"),
+          thought("t2", true),
+          read("e"),
+        ])
       )
-    ).toEqual(["step:t0", "explore[a,t1,b]"])
+    ).toEqual([
+      "step:t0",
+      "explore[a,b]",
+      "step:t1",
+      "explore[c,d]",
+      "step:t2",
+      "step:e",
+    ])
   })
 
-  it("releases a trailing thought that no call followed", () => {
+  it("keeps a thought that no call followed after its run", () => {
     expect(
       shape(
         groupActivitySteps([read("a"), read("b"), thought("t1"), bash("c")])
       )
     ).toEqual(["explore[a,b]", "step:t1", "step:c"])
-  })
-
-  it("never absorbs a thought still being written", () => {
-    expect(
-      shape(groupActivitySteps([read("a"), thought("t1", true), read("b")]))
-    ).toEqual(["step:a", "step:t1", "step:b"])
   })
 
   it("folds commands, and lets a thought split them", () => {

@@ -12,7 +12,7 @@ import {
   parseCodexScriptMeta,
 } from "@/lib/codex-code-mode"
 import { countLines } from "@/lib/activity/format"
-import type { ActivityStep, StepStatus } from "@/lib/activity/types"
+import type { StepStatus } from "@/lib/activity/types"
 import { describeStdinChars } from "@/lib/shell-session-tool"
 import { cn } from "@/lib/utils"
 import { useActivityRender } from "../activity-context"
@@ -428,18 +428,17 @@ export const CommandGroupRow = memo(function CommandGroupRow({
   status: given,
 }: {
   groupKey: string
-  steps: ActivityStep[]
+  steps: ToolStep[]
   status: StepStatus
 }) {
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
   const { recoveredKeys } = useActivityRender()
-  const tools = steps.filter((s): s is ToolStep => s.type === "tool")
-  const failures = tools.filter(
+  const failures = steps.filter(
     (s) => s.tool.status === "failed" || s.tool.status === "rejected"
   )
   const unrecovered = failures.some((s) => !recoveredKeys.has(s.key))
-  const awaited = useAwaitedStep(tools)
+  const awaited = useAwaitedStep(steps)
   const [open, setOpen] = useDisclosure(`group:${groupKey}`, {
     defaultOpen: false,
     force: unrecovered,
@@ -452,13 +451,13 @@ export const CommandGroupRow = memo(function CommandGroupRow({
     ? null
     : (awaited ??
       (live
-        ? ([...tools]
+        ? ([...steps]
             .reverse()
             .find(
               (s) => s.tool.status === "running" || s.tool.status === "pending"
             ) ?? null)
         : null))
-  const allSucceeded = tools.every((s) => s.tool.status === "succeeded")
+  const allSucceeded = steps.every((s) => s.tool.status === "succeeded")
 
   return (
     <ActivityRow
@@ -497,7 +496,7 @@ export const CommandGroupRow = memo(function CommandGroupRow({
       }
       detail={() => (
         <ul role="list" className="activity-children">
-          {tools.map((step) => (
+          {steps.map((step) => (
             <CommandRow key={step.key} step={step} inGroup />
           ))}
         </ul>
@@ -510,8 +509,8 @@ export const CommandGroupRow = memo(function CommandGroupRow({
         )}
       >
         {live || awaited
-          ? t("row.runningCommands", { count: tools.length })
-          : t("row.ranCommands", { count: tools.length })}
+          ? t("row.runningCommands", { count: steps.length })
+          : t("row.ranCommands", { count: steps.length })}
       </span>
     </ActivityRow>
   )
