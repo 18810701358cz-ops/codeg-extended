@@ -7,8 +7,7 @@
  * Renders fixture replies through the real pipeline (`adaptMessageTurn` →
  * `CompletedTurnContent`), outside any workspace, so every step kind and state
  * can be looked at and screenshotted side by side: `?view=` picks a scenario
- * (default: all), `?legacy=1` shows the classic cards instead, `?lang=` sets
- * the interface language.
+ * (default: all), `?lang=` sets the interface language.
  */
 
 import { useMemo, useState } from "react"
@@ -20,7 +19,6 @@ import {
   ActivityLiveProvider,
   type ActivityLiveValue,
 } from "@/components/message/activity/activity-live-context"
-import { setActivityTimelineEnabled } from "@/components/message/activity/use-activity-flag"
 import {
   StaticConnectionStoreProvider,
   type ConnectionStoreApi,
@@ -56,7 +54,6 @@ const params =
     : new URLSearchParams()
 
 if (typeof window !== "undefined") {
-  setActivityTimelineEnabled(params.get("legacy") !== "1")
   // Outside a backend: answer the language lookup, swallow the rest.
   const lang = params.get("lang") ?? "en"
   const original = window.fetch.bind(window)

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest"
 /**
  * Claude Code 2.1.296's Read takes `allow_large` to read a text file, or a
  * line range of one, past the usual size limits. The call is otherwise an
- * ordinary read of the path, so the card has to say why it is so large.
+ * ordinary read of the path, so the row has to say why it is so large.
  */
 
 vi.mock("@/components/ai-elements/link-safety", () => ({
@@ -48,25 +48,19 @@ function fileTool(
   }
 }
 
-function renderOpen(part: AdaptedContentPart, toolName: string) {
-  const view = render(
+function renderRow(part: AdaptedContentPart) {
+  return render(
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <ContentPartsRenderer parts={[part]} role="assistant" />
     </NextIntlClientProvider>
   )
-  // The input sits in the card body; open it if the card starts collapsed.
-  if (!screen.queryByText(PATH)) {
-    fireEvent.click(screen.getAllByText(new RegExp(toolName))[0])
-  }
-  return view
 }
 
-describe("Read card — allow_large", () => {
+describe("Read row — allow_large", () => {
   it("says the read went past the usual size limits", () => {
     for (const allowLarge of [true, "true"]) {
-      const { unmount } = renderOpen(
-        fileTool("Read", { file_path: PATH, allow_large: allowLarge }),
-        "Read"
+      const { unmount } = renderRow(
+        fileTool("Read", { file_path: PATH, allow_large: allowLarge })
       )
       expect(screen.getByText(PATH)).toBeInTheDocument()
       expect(screen.getByText("Over size limit")).toBeInTheDocument()
@@ -80,7 +74,7 @@ describe("Read card — allow_large", () => {
       { file_path: PATH, allow_large: false },
       { file_path: PATH, allow_large: "false" },
     ]) {
-      const { unmount } = renderOpen(fileTool("Read", input), "Read")
+      const { unmount } = renderRow(fileTool("Read", input))
       expect(screen.getByText(PATH)).toBeInTheDocument()
       expect(screen.queryByText("Over size limit")).not.toBeInTheDocument()
       unmount()
@@ -88,11 +82,14 @@ describe("Read card — allow_large", () => {
   })
 
   it("is Read's own argument, not a Write's", () => {
-    renderOpen(
-      fileTool("Write", { file_path: PATH, content: "x", allow_large: true }),
-      "Write"
+    renderRow(
+      fileTool("Write", { file_path: PATH, content: "x", allow_large: true })
     )
-    expect(screen.getByText(PATH)).toBeInTheDocument()
+    // The write's row names the file it wrote…
+    expect(screen.getByText("build.log")).toBeInTheDocument()
+    // …opened or not, with no size-limit note.
+    expect(screen.queryByText("Over size limit")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button"))
     expect(screen.queryByText("Over size limit")).not.toBeInTheDocument()
   })
 })

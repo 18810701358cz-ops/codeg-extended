@@ -561,19 +561,24 @@ function describeUncached(part: AdaptedToolCallPart): ToolDescriptor {
         : path
           ? pathTarget(path)
           : null
-      const lower = toolName.toLowerCase()
+      const text = searchResultText(
+        toolName.toLowerCase(),
+        part.output,
+        part.errorText
+      )
+      // grep's exit 1 means "found nothing", which codex reports as a failed
+      // call carrying its no-match envelope (`searchResultText` reads that as
+      // ""): an empty result, not a failure.
+      const settled = status === "failed" && text === "" ? "succeeded" : status
       return {
         ...base,
         kind: kind === "glob" && !pattern && path ? "list" : kind,
+        status: settled,
         target,
         detail: pattern && path ? shortPath(path) : null,
         metric:
-          status === "succeeded"
-            ? searchMetric(
-                summarizeSearchResult(
-                  searchResultText(lower, part.output, part.errorText)
-                )
-              )
+          settled === "succeeded"
+            ? searchMetric(summarizeSearchResult(text))
             : null,
       }
     }

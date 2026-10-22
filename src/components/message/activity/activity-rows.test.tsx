@@ -32,7 +32,6 @@ import type { ContentBlock, MessageTurn } from "@/lib/types"
 import { CompletedTurnContent } from "../completed-turn-content"
 import { ActivityLiveProvider } from "./activity-live-context"
 import { resetDisclosureStore } from "./disclosure-store"
-import { setActivityTimelineEnabled } from "./use-activity-flag"
 
 const STORE: ConnectionStoreApi = {
   getConnection: () => undefined,
@@ -117,12 +116,10 @@ function rowOf(text: string | RegExp): HTMLElement {
 }
 
 beforeEach(() => {
-  setActivityTimelineEnabled(true)
   resetDisclosureStore()
 })
 
 afterEach(() => {
-  setActivityTimelineEnabled(null)
   vi.useRealTimers()
 })
 

@@ -114,7 +114,6 @@ import { PlanCard, PlanEntriesList } from "./plan-card"
 import { PlanMarkdownCard, PlanModeCard } from "./plan-mode-card"
 import { PlainTextWithBadges } from "./plain-text-with-badges"
 import { ActivityTimeline } from "./activity/activity-timeline"
-import { useActivityTimelineEnabled } from "./activity/use-activity-flag"
 import {
   FileTextIcon,
   FilePenLineIcon,
@@ -2377,8 +2376,9 @@ export const ContentPartsRenderer = memo(function ContentPartsRenderer({
   role,
   isStreaming = false,
 }: ContentPartsRendererProps) {
-  const timeline = useActivityTimelineEnabled()
-  if (timeline && role === "assistant") {
+  // Anything the agent produced is drawn as its activity. A "tool" turn (a
+  // viewer that passes the transcript's roles through) is agent output too.
+  if (role !== "user" && role !== "system") {
     return <AssistantActivity parts={parts} isStreaming={isStreaming} />
   }
   return (

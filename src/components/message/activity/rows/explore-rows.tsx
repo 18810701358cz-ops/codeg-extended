@@ -390,9 +390,21 @@ function ReadDetail({ step }: { step: ToolStep }) {
     [parsed]
   )
   if (imageMime && path) {
+    // The picture, and whatever text the read answered with beside it
+    // (OpenCode says "Image read successfully"; codex's view_image says
+    // nothing at all).
+    const note = parsed?.content.trim()
     return (
       <DetailBox tone="neutral" bodyClassName="p-2">
         <ReadImagePreview path={path} mime={imageMime} />
+        {note ? (
+          <p
+            className="whitespace-pre-wrap break-words px-3 pb-2 font-mono text-[0.78125rem] leading-relaxed text-muted-foreground"
+            dir="auto"
+          >
+            {note}
+          </p>
+        ) : null}
       </DetailBox>
     )
   }

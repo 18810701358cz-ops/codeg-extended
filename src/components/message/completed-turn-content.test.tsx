@@ -41,6 +41,11 @@ const COMPLETED_PARTS: AdaptedContentPart[] = [
 // between tests. Render tests take a fresh copy.
 const freshCompletedParts = (): AdaptedContentPart[] => [...COMPLETED_PARTS]
 
+/** The header's Hide / Show control. */
+const toggle = () => screen.getByRole("button", { name: /^(Hide|Show)$/ })
+const queryToggle = () =>
+  screen.queryByRole("button", { name: /^(Hide|Show)$/ })
+
 describe("splitAssistantTurnParts", () => {
   it("keeps only the trailing final response outside progress", () => {
     const split = splitAssistantTurnParts(COMPLETED_PARTS)
@@ -64,7 +69,7 @@ describe("splitAssistantTurnParts", () => {
 
 describe("CompletedTurnContent with nothing left to show", () => {
   // A reply that ends on its last tool call has no trailing answer, so
-  // collapsing would leave an empty bubble under a lone "Worked for" chip.
+  // collapsing would leave an empty bubble under a lone header.
   // Reachable on every agent (a turn stopped mid-tool-call) and by design on
   // some: Cline's `attempt_completion` card and a plan-mode turn's
   // ExitPlanMode card ARE the answer.
@@ -90,9 +95,10 @@ describe("CompletedTurnContent with nothing left to show", () => {
     )
 
     // The header still reports the duration — it is the only place that does
-    // now — but as a static row, with no toggle that could hide the reply.
-    expect(screen.getByText("Worked for 5s")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Worked for/ })).toBeNull()
+    // now — but with no toggle that could hide the reply.
+    expect(screen.getByText("Activity")).toBeInTheDocument()
+    expect(screen.getByText(/^5s/)).toBeInTheDocument()
+    expect(queryToggle()).toBeNull()
     expect(screen.getByText("Wrapping up.")).toBeInTheDocument()
     // The completion card renders the result as both its header title and its
     // body, so match on presence rather than a unique node.
@@ -108,7 +114,8 @@ describe("CompletedTurnContent with nothing left to show", () => {
       />
     )
 
-    expect(screen.queryByRole("button", { name: /Worked for/ })).toBeNull()
+    expect(screen.getByText("Activity")).toBeInTheDocument()
+    expect(queryToggle()).toBeNull()
     expect(screen.getAllByText("All done.").length).toBeGreaterThan(0)
   })
 
@@ -149,7 +156,8 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    const trigger = screen.getByRole("button", { name: "Worked for 1m 9s" })
+    expect(screen.getByText(/^1m 9s/)).toBeInTheDocument()
+    const trigger = toggle()
     expect(trigger).toHaveAttribute("aria-expanded", "false")
     expect(screen.getByText("The fix is complete.")).toBeInTheDocument()
     expect(
@@ -173,7 +181,7 @@ describe("CompletedTurnContent", () => {
     const first = renderWithIntl(
       <CompletedTurnContent parts={parts} durationMs={69_000} completed />
     )
-    fireEvent.click(screen.getByRole("button", { name: "Worked for 1m 9s" }))
+    fireEvent.click(toggle())
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
@@ -183,9 +191,7 @@ describe("CompletedTurnContent", () => {
       <CompletedTurnContent parts={parts} durationMs={69_000} completed />
     )
 
-    expect(
-      screen.getByRole("button", { name: "Worked for 1m 9s" })
-    ).toHaveAttribute("aria-expanded", "true")
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
@@ -200,17 +206,14 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    expect(screen.queryByText("Worked for 1m 9s")).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Working..." })).toHaveAttribute(
-      "aria-expanded",
-      "true"
-    )
+    // A running reply's header says it is working, not how long it took.
+    expect(screen.getByText("Working")).toBeInTheDocument()
+    expect(screen.queryByText(/1m 9s/)).not.toBeInTheDocument()
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /Read src\/app\.tsx/ })
-    ).toBeInTheDocument()
+    expect(screen.getByText("src/app.tsx")).toBeInTheDocument()
     expect(screen.getByText("The fix is complete.")).toBeInTheDocument()
   })
 
@@ -248,9 +251,7 @@ describe("CompletedTurnContent", () => {
       </NextIntlClientProvider>
     )
 
-    expect(
-      screen.getByRole("button", { name: "Worked for 1m 9s" })
-    ).toHaveAttribute("aria-expanded", "true")
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
@@ -270,7 +271,7 @@ describe("CompletedTurnContent", () => {
       <CompletedTurnContent parts={parts} durationMs={69_000} completed />
     )
     // A real toggle DOES animate.
-    fireEvent.click(screen.getByRole("button", { name: "Worked for 1m 9s" }))
+    fireEvent.click(toggle())
     expect(foldBody()).toHaveClass("reply-fold-enter")
     first.unmount()
 
@@ -278,9 +279,7 @@ describe("CompletedTurnContent", () => {
     renderWithIntl(
       <CompletedTurnContent parts={parts} durationMs={69_000} completed />
     )
-    expect(
-      screen.getByRole("button", { name: "Worked for 1m 9s" })
-    ).toHaveAttribute("aria-expanded", "true")
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
     expect(foldBody()).not.toHaveClass("reply-fold-enter")
   })
 
@@ -294,7 +293,7 @@ describe("CompletedTurnContent", () => {
         foldEpoch={3}
       />
     )
-    fireEvent.click(screen.getByRole("button", { name: "Worked for 1m 9s" }))
+    fireEvent.click(toggle())
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
@@ -310,9 +309,7 @@ describe("CompletedTurnContent", () => {
       </NextIntlClientProvider>
     )
 
-    expect(
-      screen.getByRole("button", { name: "Worked for 1m 9s" })
-    ).toHaveAttribute("aria-expanded", "false")
+    expect(toggle()).toHaveAttribute("aria-expanded", "false")
     expect(
       screen.queryByText("I found the relevant component.")
     ).not.toBeInTheDocument()
@@ -329,16 +326,16 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    expect(screen.getByText("Worked for 1m 9s")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Worked for/ })).toBeNull()
+    expect(screen.getByText("Reply")).toBeInTheDocument()
+    expect(screen.getByText("1m 9s")).toBeInTheDocument()
+    expect(queryToggle()).toBeNull()
     expect(screen.getByText("Just an answer.")).toBeInTheDocument()
   })
 
   it("keeps a header while the duration has not been backfilled yet", () => {
     // A reply settles before the post-turn reparse patches `duration_ms` onto
     // it. Dropping the header for that window made it blink out between
-    // "Working..." and "Worked for 3s"; the settled-no-duration label holds
-    // the slot instead.
+    // "Working" and "Reply · 3s"; the bare label holds the slot instead.
     renderWithIntl(
       <CompletedTurnContent
         parts={[{ type: "text", text: "Just an answer." }]}
@@ -347,7 +344,7 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    expect(screen.getByText("Finished working")).toBeInTheDocument()
+    expect(screen.getByText("Reply")).toBeInTheDocument()
     expect(screen.getByText("Just an answer.")).toBeInTheDocument()
   })
 
@@ -358,7 +355,7 @@ describe("CompletedTurnContent", () => {
       <CompletedTurnContent parts={[]} durationMs={null} completed />
     )
 
-    expect(screen.queryByText("Finished working")).not.toBeInTheDocument()
+    expect(screen.queryByText("Reply")).not.toBeInTheDocument()
     expect(container.textContent).toBe("")
   })
 })

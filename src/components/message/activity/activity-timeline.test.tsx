@@ -1,7 +1,7 @@
 import { useState, type ReactElement } from "react"
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
 import {
@@ -30,7 +30,6 @@ import {
 import type { MessageTurn } from "@/lib/types"
 import { CompletedTurnContent } from "../completed-turn-content"
 import { resetDisclosureStore } from "./disclosure-store"
-import { setActivityTimelineEnabled } from "./use-activity-flag"
 
 const STORE: ConnectionStoreApi = {
   getConnection: () => undefined,
@@ -111,12 +110,7 @@ function rowOf(text: string | RegExp): HTMLElement {
 }
 
 beforeEach(() => {
-  setActivityTimelineEnabled(true)
   resetDisclosureStore()
-})
-
-afterEach(() => {
-  setActivityTimelineEnabled(null)
 })
 
 describe("activity timeline: the reference turn", () => {
@@ -260,14 +254,5 @@ describe("activity timeline: replies without steps", () => {
     renderSettled([{ type: "text", text: "Already on main." }], 3000)
     expect(screen.getByText("Reply")).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Hide" })).toBeNull()
-  })
-})
-
-describe("the internal switch", () => {
-  it("renders the classic cards when the timeline is off", () => {
-    act(() => setActivityTimelineEnabled(false))
-    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
-    expect(screen.queryByText("Activity")).toBeNull()
-    expect(screen.getByText(/Worked for/)).toBeTruthy()
   })
 })

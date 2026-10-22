@@ -1,7 +1,6 @@
 "use client"
 
 import { memo, useCallback, useId, useMemo, useRef, useState } from "react"
-import { ChevronRightIcon } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import {
@@ -10,18 +9,15 @@ import {
 } from "@/lib/adapters/ai-elements-adapter"
 import { formatElapsedLabel } from "@/lib/format-elapsed"
 import { cn } from "@/lib/utils"
-import { Shimmer } from "@/components/ai-elements/shimmer"
 import {
   Collapsible,
   CollapsibleContent,
-  CollapsibleTrigger,
 } from "@/components/ui/instant-collapsible"
 import { buildActivity } from "@/lib/activity/build-activity"
 import { disclosureKeysFor } from "@/lib/activity/group"
 import { ActivityParts, ContentPartsRenderer } from "./content-parts-renderer"
 import { ActivityHeader } from "./activity/activity-header"
 import { openDisclosures } from "./activity/disclosure-store"
-import { useActivityTimelineEnabled } from "./activity/use-activity-flag"
 
 export interface SplitAssistantTurnParts {
   progress: AdaptedContentPart[]
@@ -85,33 +81,6 @@ const manualFold = new WeakMap<
   { epoch: number; open: boolean }
 >()
 
-/**
- * Shared between the interactive trigger and the static (nothing-to-fold) row
- * so a turn's header keeps the same shape whether or not it can be folded.
- *
- * `w-full` with the chevron sitting right after the label (not pushed to the
- * far edge): the rule underneath is a section divider and spans the reply,
- * while the control it belongs to reads as one unit. No corner radius — a
- * radius curls the ends of a lone `border-b` up into little hooks.
- *
- * The rule is tinted from `--foreground` rather than taking `--border`, which
- * it cannot use at any opacity: `--border` is a near-white `oklch(0.922)` in
- * light and `white/10%` in dark, so the usual `border-border/50` came out at
- * roughly `oklch(0.96)` on white and white at 5% on near-black — invisible in
- * both, and worst in dark. A foreground tint inverts with the theme instead —
- * the same derivation as task-card's outline and `--ws-chrome-border`, which
- * both reach for `--foreground` for exactly this reason.
- *
- * The TINT is what buys the legibility here, not the strength: at 10% this
- * lands about where `--border` would if it were used undiluted, except it now
- * holds up in dark and over a workspace background image, where the token
- * washes out. Deliberately no heavier — the header is a quiet label the reader
- * scans past, and a rule spanning the full width of every reply in the thread
- * carries far more weight than a lone boxed card's outline does.
- */
-const HEADER_CLASS =
-  "flex w-full items-center gap-1 border-b border-foreground/10 pb-1.5 text-xs font-medium text-muted-foreground/70"
-
 export const CompletedTurnContent = memo(function CompletedTurnContent({
   parts,
   durationMs,
@@ -134,7 +103,6 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
   /** Bumped by `message-list-view` on every user send. */
   foldEpoch?: number
 }) {
-  const t = useTranslations("Folder.chat.messageList")
   const tElapsed = useTranslations("Folder.chat.liveTurnStats")
   const split = useMemo(() => splitAssistantTurnParts(parts), [parts])
 
@@ -216,30 +184,6 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
   const foldable =
     split.progress.length > 0 && (!completed || hasVisibleAnswer(split.answer))
 
-  const label = !completed
-    ? t("working")
-    : elapsed
-      ? t("workedFor", { duration: elapsed })
-      : t("worked")
-
-  // Every assistant reply with content carries a header. Gating it on "has work
-  // to fold or a duration to show" made it blink out at the worst moment: a
-  // reply settles BEFORE the post-turn reparse backfills `duration_ms`, so a
-  // text-only reply went "Working…" → no header at all → "Worked for 3s" a
-  // second later. The settled-no-duration label holds that slot.
-  const labelNode = completed ? (
-    <span className="min-w-0 truncate tabular-nums">{label}</span>
-  ) : (
-    <Shimmer
-      as="span"
-      className="min-w-0 truncate"
-      duration={1}
-      shineColor="var(--primary)"
-    >
-      {label}
-    </Shimmer>
-  )
-
   // Streamdown's incomplete-markdown repair (remend) may only run on text that
   // is still being written. On settled text it appends a closer after spans
   // that are ALREADY complete — a glob inside code, an identifier like `_meta`
@@ -248,21 +192,17 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
   // turn, so they all get the same answer.
   const isStreaming = !completed
 
-  // The activity timeline (internal switch while both renderers ship): the
-  // same round model, fold state and foldability as below — only the header
-  // and the body's renderer change.
-  const timeline = useActivityTimelineEnabled()
   const bodyId = useId()
   const turnRef = useRef<HTMLDivElement | null>(null)
   const activity = useMemo(
-    () => (timeline ? buildActivity(parts, { isStreaming }) : null),
-    [timeline, parts, isStreaming]
+    () => buildActivity(parts, { isStreaming }),
+    [parts, isStreaming]
   )
   // The header's red "N failed": open the turn at the first failure nothing
   // redid — the row, and the group it is folded into.
-  const failureKey = activity?.summary.firstUnrecoveredKey ?? null
+  const failureKey = activity.summary.firstUnrecoveredKey
   const jumpToFailure = useCallback(() => {
-    if (!activity || !failureKey) return
+    if (!failureKey) return
     openDisclosures(disclosureKeysFor(activity.items, failureKey))
     if (!open) handleOpenChange(true)
     requestAnimationFrame(() =>
@@ -277,92 +217,24 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
     )
   }, [activity, failureKey, open, handleOpenChange])
 
-  if (activity) {
-    const header = (
-      <ActivityHeader
-        summary={activity.summary}
-        completed={completed}
-        hasSteps={activity.items.length > 0}
-        elapsed={elapsed}
-        onJumpToFailure={failureKey ? jumpToFailure : undefined}
-        toggle={
-          foldable
-            ? {
-                open,
-                onToggle: () => handleOpenChange(!open),
-                controls: bodyId,
-              }
-            : undefined
-        }
-      />
-    )
-    if (!foldable) {
-      const blank =
-        completed &&
-        split.progress.length === 0 &&
-        !hasVisibleAnswer(split.answer)
-      if (blank) {
-        return (
-          <ContentPartsRenderer
-            parts={parts}
-            role="assistant"
-            isStreaming={isStreaming}
-          />
-        )
+  const header = (
+    <ActivityHeader
+      summary={activity.summary}
+      completed={completed}
+      hasSteps={activity.items.length > 0}
+      elapsed={elapsed}
+      onJumpToFailure={failureKey ? jumpToFailure : undefined}
+      toggle={
+        foldable
+          ? {
+              open,
+              onToggle: () => handleOpenChange(!open),
+              controls: bodyId,
+            }
+          : undefined
       }
-      return (
-        <div className="space-y-3">
-          {header}
-          <ContentPartsRenderer
-            parts={parts}
-            role="assistant"
-            isStreaming={isStreaming}
-          />
-        </div>
-      )
-    }
-    return (
-      <div ref={turnRef} className="space-y-4">
-        <Collapsible
-          className="w-full"
-          open={open}
-          onOpenChange={handleOpenChange}
-        >
-          {header}
-          {/* Folded: what can outlive the turn — a delegation or sub-agent
-              still running — stays in view under the header. */}
-          {!open ? (
-            <ActivityParts
-              model={activity}
-              isStreaming={isStreaming}
-              pinnedOnly
-            />
-          ) : null}
-          <CollapsibleContent
-            id={bodyId}
-            className={cn(
-              "reply-fold-body w-full outline-none",
-              animateEnter && "reply-fold-enter"
-            )}
-          >
-            <div>
-              <div className="pt-2">
-                <ActivityParts model={activity} isStreaming={isStreaming} />
-              </div>
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-        {split.answer.length > 0 && (
-          <ContentPartsRenderer
-            parts={split.answer}
-            role="assistant"
-            isStreaming={isStreaming}
-          />
-        )}
-      </div>
-    )
-  }
-
+    />
+  )
   if (!foldable) {
     // Parsers leave empty placeholder turns between tool exchanges;
     // `mergeConsecutiveAssistantTurns` only swallows them mid-run, so a lone
@@ -385,7 +257,7 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
     }
     return (
       <div className="space-y-3">
-        <div className={HEADER_CLASS}>{labelNode}</div>
+        {header}
         <ContentPartsRenderer
           parts={parts}
           role="assistant"
@@ -394,47 +266,37 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
       </div>
     )
   }
-
   return (
-    <div className="space-y-4">
+    <div ref={turnRef} className="space-y-4">
       <Collapsible
         className="w-full"
         open={open}
         onOpenChange={handleOpenChange}
       >
-        {/* No hover treatment at all — the header is a quiet label the reader
-            scans past, and the chevron carries the affordance. Closed points
-            along the reading direction, open points down at what it revealed:
-            the same disclosure triangle every other fold in the thread uses. */}
-        <CollapsibleTrigger
-          className={cn(
-            HEADER_CLASS,
-            "group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          )}
-        >
-          {labelNode}
-          <ChevronRightIcon
-            aria-hidden="true"
-            className="size-3.5 shrink-0 opacity-50 transition-transform group-data-[state=open]:rotate-90"
+        {header}
+        {/* Folded: what can outlive the turn — a delegation or sub-agent
+            still running — stays in view under the header. */}
+        {!open ? (
+          <ActivityParts
+            model={activity}
+            isStreaming={isStreaming}
+            pinnedOnly
           />
-        </CollapsibleTrigger>
+        ) : null}
         {/* `reply-fold-body` (globals.css) slides the body open and shut on a
-            grid track. The inner div is the clipped grid item — it must stay a
-            single child, and the spacing has to live INSIDE it or the closed
+            grid track. The inner div is the clipped grid item — it must stay
+            a single child, and the spacing has to live INSIDE it or the closed
             track never reaches zero. */}
         <CollapsibleContent
+          id={bodyId}
           className={cn(
             "reply-fold-body w-full outline-none",
             animateEnter && "reply-fold-enter"
           )}
         >
           <div>
-            <div className="pt-3">
-              <ContentPartsRenderer
-                parts={split.progress}
-                role="assistant"
-                isStreaming={isStreaming}
-              />
+            <div className="pt-2">
+              <ActivityParts model={activity} isStreaming={isStreaming} />
             </div>
           </div>
         </CollapsibleContent>

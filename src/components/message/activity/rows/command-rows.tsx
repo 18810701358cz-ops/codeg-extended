@@ -358,10 +358,19 @@ export const CommandRow = memo(function CommandRow({
     force:
       (failed && !recoveredKeys.has(step.key)) || tool.status === "awaiting",
   })
+  // A codex fan-out command can come with no output of its own and only a
+  // note saying why (the truncated output lost its separator); that note is
+  // reason enough to open the row.
+  const scriptMeta = useMemo(
+    () => parseCodexScriptMeta(step.part.meta),
+    [step.part.meta]
+  )
   const expandable =
     !!output ||
     !!tool.command?.description ||
-    (tool.command?.lineCount ?? 0) > 1
+    (tool.command?.lineCount ?? 0) > 1 ||
+    !!scriptMeta?.outputMissing ||
+    !!scriptMeta?.sharedWith.length
   const elapsed = useLiveElapsed(step.key, live)
   const clock =
     elapsed !== null && elapsed >= LIVE_CLOCK_AFTER_MS
