@@ -9,6 +9,8 @@ import { StatusBarUpdate } from "@/components/layout/status-bar-update"
 import { CommandDropdown } from "@/components/layout/command-dropdown"
 import { QuickActionsDropdown } from "@/components/layout/quick-actions-dropdown"
 import { useIsMobile } from "@/hooks/use-mobile"
+// [codeg-extended] plugin slot
+import { PluginSlot } from "@/components/plugin-host/plugin-slot"
 
 export function StatusBar() {
   const isMobile = useIsMobile()
@@ -58,8 +60,12 @@ export function StatusBar() {
       <div className="flex items-center gap-3">
         <QuickActionsDropdown />
         <StatusBarStats />
+        {/* [codeg-extended] statusbar.left plugin slot */}
+        <PluginSlot name="statusbar.left" />
       </div>
       <div className="flex items-center gap-4">
+        {/* [codeg-extended] statusbar.right plugin slot */}
+        <PluginSlot name="statusbar.right" />
         <StatusBarUpdate />
         <StatusBarTasks />
         {/* Command launcher (moved from the aux "session details" tab), taking

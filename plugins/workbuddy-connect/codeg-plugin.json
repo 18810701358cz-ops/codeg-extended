@@ -1,0 +1,80 @@
+{
+  "id": "workbuddy-connect",
+  "name": "WorkBuddy Connect",
+  "version": "2.0.0",
+  "apiVersion": 1,
+  "engines": {
+    "pluginHost": ">=1.0.0 <2.0.0"
+  },
+  "description": "把本机已登录的 WorkBuddy 模型接入 Codeg",
+  "author": "codeg-community",
+  "category": "model-provider",
+  "permissions": [
+    "ui",
+    "process",
+    "modelProviders"
+  ],
+  "styles": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "authFile": {
+        "type": "string",
+        "title": "凭据文件路径",
+        "description": "留空则自动探测"
+      },
+      "probeConsent": {
+        "type": "boolean",
+        "title": "允许探测推理档位（会消耗额度）",
+        "default": false
+      }
+    }
+  },
+  "backend": {
+    "command": "${python}",
+    "args": [
+      "backend/server.py"
+    ],
+    "setup": {
+      "command": "${python}",
+      "args": [
+        "-m",
+        "pip",
+        "install",
+        "--target",
+        ".deps",
+        "-r",
+        "requirements.txt"
+      ]
+    },
+    "env": {
+      "PYTHONPATH": "${pluginDir}/.deps",
+      "HOST": "127.0.0.1",
+      "PORT": "${port}",
+      "CODEG_PLUGIN_TOKEN": "${token}",
+      "WORKBUDDY_AUTH_FILE": "${config.authFile}",
+      "WORKBUDDY_PROBE_CONSENT": "${config.probeConsent}"
+    },
+    "port": 18080,
+    "healthcheck": {
+      "path": "/healthz",
+      "timeoutMs": 20000
+    },
+    "restart": "on-failure"
+  },
+  "contributes": {
+    "modelProviders": [
+      {
+        "key": "default",
+        "name": "WorkBuddy",
+        "apiUrl": "${backend.url}/v1",
+        "apiKey": "${token}",
+        "agentTypes": [
+          "codex",
+          "open_code"
+        ]
+      }
+    ]
+  },
+  "main": "dist/index.js"
+}

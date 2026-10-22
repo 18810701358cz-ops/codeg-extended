@@ -8,8 +8,10 @@
 #![recursion_limit = "256"]
 // The unoptimized lib test binary trips the same harmless macOS
 // "__eh_frame section too large" linker warning as the `codeg` binary; see the
-// note at the top of `main.rs`.
-#![cfg_attr(debug_assertions, allow(linker_messages))]
+// note at the top of `main.rs`. Only under `cfg(test)`: elsewhere the crate is
+// built as an rlib only, which is not the root of any link, so rustc flags the
+// allow there as an unused attribute (an error under clippy's -D warnings).
+#![cfg_attr(all(test, debug_assertions), allow(linker_messages))]
 
 pub mod acp;
 pub mod acp_transcript;
@@ -22,13 +24,19 @@ mod app_error;
 #[cfg(all(feature = "tauri-runtime", target_os = "macos"))]
 mod app_menu;
 pub mod app_state;
+pub mod appimage_env;
 pub mod automation;
 pub mod backgrounds;
 /// Built-in browser. Only its wire types and its grant rules compile in server
 /// mode — see `browser/mod.rs` for why those two, and only those two.
 pub mod browser;
 pub mod chat_channel;
+/// The `codeg-cli` binary's client side (feature `cli-bin`).
+#[cfg(feature = "cli-bin")]
+pub mod cli;
+pub mod cli_run;
 pub mod commands;
+pub mod commit_message;
 pub mod computer;
 pub mod db;
 pub mod deep_link;
@@ -47,9 +55,14 @@ pub mod paths;
 pub mod pet_sessions;
 pub mod pet_state_mapper;
 pub mod pets;
+// [codeg-extended] plugin host
+pub mod plugin_host;
 #[cfg(feature = "tauri-runtime")]
 pub mod preferences;
 pub mod process;
+#[cfg(all(feature = "tauri-runtime", target_os = "macos"))]
+mod relaunch;
+pub mod runtime_lock;
 pub mod supervise;
 mod terminal;
 pub mod turn_timings;
@@ -95,13 +108,14 @@ mod tauri_app {
         canvas as canvas_commands,
         chat_authoring as chat_authoring_commands, chat_channel as chat_channel_commands,
         clipboard as clipboard_commands,
+        commit_message as commit_message_commands,
         config_sync,
         conversation_tags,
         conversations,
         custom_skills as custom_skills_commands,
         deepseek_settings as deepseek_settings_commands, delegation as delegation_commands,
         experts as experts_commands, feedback as feedback_commands, file_io, folder_commands,
-        folder_links, office_tools as office_tools_commands, open_in,
+        folder_links, local_command, office_tools as office_tools_commands, open_in,
         folders, logging as logging_commands, mcp as mcp_commands,
         model_provider as model_provider_commands, notification, pet as pet_commands, project_boot,
         question as question_commands, quick_messages as quick_messages_commands,
@@ -150,6 +164,10 @@ mod tauri_app {
                 tauri::async_runtime::block_on(persist_pet_closed(&db.conn));
             }
         }
+        // Unpublished first: from here on no CLI may pick this process.
+        if let Some(access) = app.try_state::<std::sync::Arc<crate::cli_run::CliAccess>>() {
+            access.unpublish_now();
+        }
         if let Some(ws) = app.try_state::<web::WebServerState>() {
             tauri::async_runtime::block_on(web::do_stop_web_server(&ws));
         }
@@ -157,8 +175,25 @@ mod tauri_app {
             tm.kill_all();
         }
         crate::office_watch::stop_all_office_watches();
+        // [codeg-extended] plugin host
+        crate::plugin_host::stop_all();
         if let Some(cm) = app.try_state::<ConnectionManager>() {
             tauri::async_runtime::block_on(cm.disconnect_all());
+        }
+    }
+
+    /// `--open` on the desktop: the conversation opens in THIS process, by the
+    /// same in-process path a deep link takes — never through the OS, which
+    /// would hand `codeg://session/<id>` to whichever desktop registered the
+    /// scheme (a debug build's id means another conversation in release).
+    struct DesktopSessionOpener(tauri::AppHandle);
+
+    impl crate::cli_run::SessionOpener for DesktopSessionOpener {
+        fn open_conversation(&self, conversation_id: i32) {
+            crate::deep_link::handle_raw_urls(
+                &self.0,
+                &[crate::cli_run::wire::session_link(conversation_id)],
+            );
         }
     }
 
@@ -313,6 +348,10 @@ mod tauri_app {
             _ => err.message.clone(),
         }
     }
+
+    /// This window's share of its data directory (`runtime_lock`), held for
+    /// as long as the app runs: managed state lives until it exits.
+    struct HeldRuntimeLock(#[allow(dead_code)] crate::runtime_lock::RuntimeLock);
 
     fn notify_web_auto_start_failed(
         app: &tauri::AppHandle,
@@ -504,7 +543,6 @@ mod tauri_app {
         unsafe { std::env::remove_var(RENDERING_OVERRIDE_OWNED_ENV) };
     }
 
-    #[cfg_attr(mobile, tauri::mobile_entry_point)]
     pub fn run() {
         // Ahead of the logging init, which is otherwise the first statement
         // here: `init_desktop` builds a `tracing_appender::non_blocking` file
@@ -532,13 +570,26 @@ mod tauri_app {
         // reader of the variable sees the value the in-process resolver
         // returns.
         let context = tauri::generate_context!();
-        if let Some(data_dir) = paths::desktop_data_dir(
+        let desktop_data_dir = paths::desktop_data_dir(
             std::env::var_os("CODEG_DATA_DIR").as_deref(),
             dirs::data_dir().as_deref(),
             &context.config().identifier,
-        ) {
+        );
+        if let Some(data_dir) = &desktop_data_dir {
             // SAFETY: single-threaded as argued above.
-            unsafe { std::env::set_var("CODEG_DATA_DIR", &data_dir) };
+            unsafe { std::env::set_var("CODEG_DATA_DIR", data_dir) };
+            // This process's `codeg-cli` discovery file, for everything it
+            // starts, so a CLI run from one of its terminals or agents
+            // connects back here — not to the debug or release desktop, or
+            // the server, that shares the directory. Replaces a value
+            // inherited from a runtime this one was started from.
+            // SAFETY: single-threaded as argued above.
+            unsafe {
+                std::env::set_var(
+                    crate::cli_run::discovery::ENDPOINT_FILE_ENV,
+                    crate::cli_run::discovery::file_for(data_dir, std::process::id()),
+                )
+            };
         }
 
         // Install the logging subscriber next so it captures everything from
@@ -552,6 +603,17 @@ mod tauri_app {
         }
         process::ensure_node_in_path();
         process::ensure_user_npm_prefix_in_path();
+        // This release's own `codeg-cli`, first on the PATH of everything it
+        // starts and named in CODEG_CLI (`cli_run::shim`); written in setup.
+        // After the PATH fixes above, which rewrite PATH.
+        if let (Some(data_dir), Ok(exe)) = (&desktop_data_dir, std::env::current_exe()) {
+            let local = dirs::data_local_dir().map(|d| d.join(&context.config().identifier));
+            if let Some(layout) = crate::cli_run::shim::plan_desktop(data_dir, local.as_deref(), &exe)
+            {
+                layout.export();
+                layout.remember();
+            }
+        }
 
         let builder = tauri::Builder::default();
 
@@ -613,6 +675,12 @@ mod tauri_app {
             // consent prompt, where scripting System Events does. No extra
             // startup args — an auto-started codeg is the same app the user
             // would have launched by hand.
+            //
+            // With one difference on macOS: a codeg started at login is the
+            // LaunchAgent job's own process, so when it exits, launchd kills
+            // whatever is still in its process group. Anything that has to
+            // outlive it must leave the group first; see `relaunch` for the
+            // relauncher behind every restart.
             //
             // Nothing rewrites the registration at startup, deliberately. The
             // entry records an absolute path that no backend re-validates, so a
@@ -751,6 +819,45 @@ mod tauri_app {
                     }
                 }
 
+                // Before the database (see `runtime_lock`): shared with any
+                // other runtime of this data directory, never with a private
+                // `codeg-cli --standalone` server that has it alone. The
+                // window does not wait for that one: it says so and leaves.
+                let refused = match crate::runtime_lock::try_shared(&effective_data_dir) {
+                    Ok(Some(lock)) => {
+                        app.manage(HeldRuntimeLock(lock));
+                        None
+                    }
+                    Ok(None) => Some(format!(
+                        "{} is in use by a `codeg-cli --standalone` server. Open Codeg again \
+                         once that command has finished.",
+                        effective_data_dir.display()
+                    )),
+                    Err(e) if crate::runtime_lock::locking_unsupported(&e) => {
+                        tracing::warn!(
+                            "[startup] {} cannot lock files ({e}); going on without, so a \
+                             `codeg-cli --standalone` there would not see this window",
+                            effective_data_dir.display()
+                        );
+                        None
+                    }
+                    // Not run unlocked: a private server could be using it.
+                    Err(e) => Some(format!(
+                        "Codeg cannot lock its data directory {}: {e}",
+                        effective_data_dir.display()
+                    )),
+                };
+                if let Some(message) = refused {
+                    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                    let handle = app.handle().clone();
+                    app.dialog()
+                        .message(message)
+                        .title("Codeg")
+                        .kind(MessageDialogKind::Error)
+                        .show(move |_| handle.exit(1));
+                    return Ok(());
+                }
+
                 let app_version = env!("CARGO_PKG_VERSION");
                 let database = tauri::async_runtime::block_on(db::init_database(
                     &effective_data_dir,
@@ -758,6 +865,16 @@ mod tauri_app {
                 ))
                 .map_err(|e| e.to_string())?;
                 app.manage(database);
+
+                // The `codeg-cli` startup put first on PATH (`cli_run::shim`),
+                // written off the way of the window.
+                if let Some(layout) = crate::cli_run::shim::layout() {
+                    std::thread::spawn(move || {
+                        if let Err(e) = layout.write() {
+                            tracing::warn!("[cli] this app's own codeg-cli: {e}");
+                        }
+                    });
+                }
 
                 // Restore and apply saved system proxy settings before any network operation.
                 let db = app.state::<db::AppDatabase>();
@@ -812,6 +929,15 @@ mod tauri_app {
                 // turning off idle disconnects must not also turn off disk
                 // reclamation on a machine leaking gigabytes per launch.
                 tauri::async_runtime::spawn(crate::scratch_sweep_task());
+
+                // [codeg-extended] plugin host
+                let plugin_emitter = crate::web::event_bridge::EventEmitter::Tauri(app.handle().clone());
+                crate::plugin_host::set_emitter(plugin_emitter);
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::plugin_host::init().await {
+                        tracing::error!("[plugin_host] init error: {e}");
+                    }
+                });
 
                 // Install bundled expert skills into the central store
                 // (`~/.codeg/skills/`). Runs in the background and does
@@ -1206,6 +1332,11 @@ mod tauri_app {
                         std::sync::Arc::new(crate::commands::computer::McpComputerTools::new(
                             computer_service,
                         )),
+                        std::sync::Arc::new(
+                            crate::acp::result_tool::ConnectionManagerResultLookup {
+                                manager: std::sync::Arc::new(cm_state.clone_ref()),
+                            },
+                        ),
                     );
                     // Bind through the service handle rather than a bare
                     // `listener.run` spawn: it keeps the bind error and the
@@ -1244,6 +1375,34 @@ mod tauri_app {
                         bus,
                         Some(broker_for_lifecycle),
                     ));
+                }
+
+                // Headless `codeg-cli` runs: the service and its loopback
+                // access. Managed before the web service may start below,
+                // which serves the same routes from this state.
+                {
+                    let service = crate::cli_run::CliRunService::new(
+                        &app.state::<db::AppDatabase>(),
+                        &app.state::<ConnectionManager>(),
+                        crate::web::event_bridge::EventEmitter::Tauri(app.handle().clone()),
+                        app.state::<std::sync::Arc<crate::acp::InternalEventBus>>()
+                            .inner()
+                            .clone(),
+                        effective_data_dir.clone(),
+                        crate::cli_run::wire::RuntimeKind::Desktop,
+                    );
+                    service.set_opener(std::sync::Arc::new(DesktopSessionOpener(
+                        app.handle().clone(),
+                    )));
+                    let access =
+                        crate::cli_run::CliAccess::new(service.clone(), effective_data_dir.clone());
+                    app.manage(service.clone());
+                    app.manage(access.clone());
+                    let db_conn = app.state::<db::AppDatabase>().conn.clone();
+                    tauri::async_runtime::spawn(async move {
+                        service.spawn_background();
+                        access.start_if_enabled(&db_conn).await;
+                    });
                 }
 
                 match tauri::async_runtime::block_on(web::load_web_service_config(&db.conn)) {
@@ -1787,6 +1946,11 @@ mod tauri_app {
                 folders::git_show_file,
                 folders::git_show_file_base64,
                 folders::git_commit,
+                commit_message_commands::git_generate_commit_message,
+                commit_message_commands::git_generate_commit_message_cancel,
+                commit_message_commands::get_commit_message_settings,
+                commit_message_commands::set_commit_message_settings,
+                commit_message_commands::delete_commit_message_settings,
                 folders::git_rollback_file,
                 folders::git_add_files,
                 folders::git_list_all_branches,
@@ -2101,6 +2265,7 @@ mod tauri_app {
                 folder_commands::delete_folder_command,
                 folder_commands::reorder_folder_commands,
                 folder_commands::bootstrap_folder_commands_from_package_json,
+                local_command::run_local_command,
                 quick_messages_commands::quick_messages_list,
                 quick_messages_commands::quick_messages_create,
                 quick_messages_commands::quick_messages_update,
@@ -2246,15 +2411,52 @@ mod tauri_app {
                 web::start_web_server,
                 web::stop_web_server,
                 web::get_web_server_status,
+                crate::commands::cli_access::cli_access_status,
+                crate::commands::cli_access::cli_access_set_enabled,
+                crate::commands::cli_access::cli_tool_status,
+                crate::commands::cli_access::cli_tool_install,
                 web::get_web_service_config,
                 web::update_web_service_config,
                 web::probe_web_service_port,
+                // [codeg-extended] plugin host
+                crate::commands::plugin_host::plugin_host_list,
+                crate::commands::plugin_host::plugin_host_read_entry,
+                crate::commands::plugin_host::plugin_host_read_asset,
+                crate::commands::plugin_host::plugin_host_set_enabled,
+                crate::commands::plugin_host::plugin_host_get_config,
+                crate::commands::plugin_host::plugin_host_set_config,
+                crate::commands::plugin_host::plugin_host_report_error,
+                crate::commands::plugin_host::plugin_host_report_activated,
+                crate::commands::plugin_host::plugin_host_disable_all,
+                crate::commands::plugin_host::plugin_host_parse_repo_url,
+                crate::commands::plugin_host::plugin_host_stage,
+                crate::commands::plugin_host::plugin_host_commit_install,
+                crate::commands::plugin_host::plugin_host_discard_staging,
+                crate::commands::plugin_host::plugin_host_check_update,
+                crate::commands::plugin_host::plugin_host_uninstall,
+                crate::commands::plugin_host::plugin_host_backend_restart,
+                crate::commands::plugin_host::plugin_host_backend_fetch,
+                crate::commands::plugin_host::plugin_host_read_log,
+                crate::commands::plugin_host::plugin_host_set_dev_mode,
             ])
             .build(context)
             .expect("error while building tauri application")
             .run(|app, event| match event {
                 // Some quits only ever reach `Exit`; see `shut_down`.
-                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => shut_down(app),
+                tauri::RunEvent::ExitRequested { code, .. } => {
+                    #[cfg(target_os = "macos")]
+                    crate::relaunch::note_exit_requested(code);
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = code;
+                    shut_down(app);
+                }
+                tauri::RunEvent::Exit => {
+                    shut_down(app);
+                    // A restart on macOS goes on from here and never comes
+                    // back; see `relaunch`.
+                    #[cfg(target_os = "macos")]
+                    crate::relaunch::relaunch_after_exit(app);
+                }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => {
                     // Every Dock click, whatever `has_visible_windows` says:

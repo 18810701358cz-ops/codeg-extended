@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "codeg",
-  "version": "0.36.0-ext-1",
+  "version": "0.39.0-ext.1",
   "identifier": "app.codeg",
   "build": {
     "beforeDevCommand": "pnpm tauri:before-dev",
@@ -31,7 +31,8 @@
     },
     "externalBin": [
       "binaries/codeg-mcp",
-      "binaries/codeg-computer-helper"
+      "binaries/codeg-computer-helper",
+      "binaries/codeg-cli"
     ],
     "windows": {
       "nsis": {
@@ -50,15 +51,13 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": [
-          "codeg"
-        ]
+        "schemes": ["codeg"]
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc1NThENUE0MUFFNzg3MTgKUldRWWgrY2FwTlZZZGRqRy90NWF0ZFh1OFptYllzL1gvSHNMVVNjakM2dUhsMVRWN1VXcmpXSm8K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ4OEM3NkMyMTVENjdBODgKUldTSWV0WVZ3bmFNU0NnSzhpdFg2bXFmMHFidWd1eWpuZ2Y2WmU5QmVXdWVrU0ZpOCt2dnd6WW4K",
       "endpoints": [
-        "https://github.com/18810701358cz-ops/codeg-extended/releases/latest/download/latest.json"
+        "https://github.com/spacering-net/codeg/releases/latest/download/latest.json"
       ],
       "requireSignedVersion": true,
       "windows": {

@@ -18,6 +18,9 @@ import {
 import type { ImperativePanelGroupHandle } from "react-resizable-panels"
 import { FolderTitleBar } from "@/components/layout/folder-title-bar"
 import { Sidebar } from "@/components/layout/sidebar"
+// [codeg-extended] plugin host
+import { PluginHost } from "@/components/plugin-host/plugin-host"
+import { PluginSlot } from "@/components/plugin-host/plugin-slot"
 import { StatusBar } from "@/components/layout/status-bar"
 import {
   AppWorkspaceProvider,
@@ -696,8 +699,19 @@ function MobileFolderWorkspaceShell({
     isOpen: auxOpen,
     restored: auxRestored,
     toggle: toggleAux,
+    setOpen: setAuxOpen,
   } = useAuxPanelContext()
   const { isOpen: terminalOpen, toggle: toggleTerminal } = useTerminalContext()
+
+  // A full-page route opened from inside the aux drawer — a work tab's "open
+  // full page", a repository row's task chip — would otherwise land UNDER the
+  // drawer, which on a phone covers nearly the whole screen. The desktop panel
+  // collapses for a route by itself (see FolderWorkspaceShell); here the drawer
+  // closes, and its toggle stays hidden until the conversations come back.
+  const { isConversations } = useWorkbenchRoute()
+  useEffect(() => {
+    if (!isConversations) setAuxOpen(false)
+  }, [isConversations, setAuxOpen])
 
   // Each of these drawers is a state toggle, not a route: without a history
   // entry behind them the back gesture falls through and unloads the whole
@@ -1459,6 +1473,14 @@ function FolderLayoutShell({ children }: { children: React.ReactNode }) {
           </div>
         </>
       )}
+      {/* [codeg-extended] plugin host runtime and workspace overlay container */}
+      <PluginHost />
+      <div
+        id="plugin-workspace-overlay"
+        className="pointer-events-none fixed inset-0 z-40 overflow-hidden"
+      >
+        <PluginSlot name="workspace.overlay" />
+      </div>
       <AppToaster
         position="bottom-right"
         duration={TOAST_DURATION_MS}

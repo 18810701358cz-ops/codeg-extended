@@ -1,0 +1,35 @@
+{
+  "id": "prompt-pack",
+  "name": "Prompt Pack",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "engines": {
+    "pluginHost": ">=1.0.0 <2.0.0"
+  },
+  "description": "Essential prompt templates and quick messages for development workflows",
+  "author": "codeg-community",
+  "category": "workflow",
+  "permissions": [
+    "quickMessages"
+  ],
+  "contributes": {
+    "quickMessages": [
+      {
+        "title": "Code Review",
+        "content": "Please review this code for potential bugs, performance bottlenecks, and architectural clarity."
+      },
+      {
+        "title": "Write Tests",
+        "content": "Write comprehensive unit tests covering edge cases, error conditions, and happy paths."
+      },
+      {
+        "title": "Explain Code",
+        "content": "Explain the architecture, design patterns, and step-by-step logic of this module."
+      },
+      {
+        "title": "Refactor",
+        "content": "Refactor this code to follow clean code principles while preserving backward compatibility."
+      }
+    ]
+  }
+}

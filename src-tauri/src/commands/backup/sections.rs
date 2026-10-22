@@ -114,6 +114,15 @@ pub const MANAGED_SECTIONS: &[ManagedSection] = &[
         live_path: |_| crate::commands::experts::central_experts_dir(),
     },
     ManagedSection {
+        // [codeg-extended] Installed plugins and state.json. Ephemeral /
+        // generated artifacts (.deps, .trash, .staging) are excluded during
+        // packaging by `is_excluded_section_entry`.
+        id: "plugins",
+        kind: SectionKind::Dir,
+        policy: SectionPolicy::AlwaysReplace,
+        live_path: |_| crate::paths::codeg_plugins_root(),
+    },
+    ManagedSection {
         id: "tokens.json",
         kind: SectionKind::File,
         policy: SectionPolicy::ReplaceIfPresent,
@@ -162,14 +171,20 @@ pub fn normalize_section_ids(declared: &[String]) -> Vec<String> {
 }
 
 /// Exclude codeg-internal scaffolding from any packed section: upload staging
-/// (`uploads/.tmp/`) and any `.codeg-*` directory (restore staging / safety
-/// snapshots), which must never be archived even if a data-dir layout ever
-/// nests one inside a section root.
+/// (`uploads/.tmp/`), plugin virtual environments (`.deps`), uninstalled trash
+/// (`.trash`), plugin install staging (`.staging`), and any `.codeg-*` directory
+/// (restore staging / safety snapshots), which must never be archived even if
+/// a data-dir layout ever nests one inside a section root.
 pub fn is_excluded_section_entry(rel: &Path) -> bool {
     rel.components().any(|c| match c {
         std::path::Component::Normal(s) => {
             let s = s.to_string_lossy();
-            s == ".tmp" || s.starts_with(".codeg")
+            // [codeg-extended] `.deps`, `.trash` and `.staging` are plugin host scaffolding.
+            s == ".tmp"
+                || s == ".deps"
+                || s == ".trash"
+                || s == ".staging"
+                || s.starts_with(".codeg")
         }
         _ => false,
     })
@@ -311,6 +326,21 @@ mod tests {
         assert!(is_excluded_section_entry(Path::new(
             "a/.codeg-restore-staging/x"
         )));
+        assert!(is_excluded_section_entry(Path::new(
+            "plugins/my-plugin/.deps/site-packages"
+        )));
+        assert!(is_excluded_section_entry(Path::new(
+            "plugins/.trash/removed-plugin"
+        )));
+        assert!(is_excluded_section_entry(Path::new(
+            "plugins/.staging/staging-id/manifest.json"
+        )));
         assert!(!is_excluded_section_entry(Path::new("a/b.png")));
+        assert!(!is_excluded_section_entry(Path::new(
+            "plugins/my-plugin/codeg-plugin.json"
+        )));
+        assert!(!is_excluded_section_entry(Path::new(
+            "plugins/my-plugin/dist/index.js"
+        )));
     }
 }

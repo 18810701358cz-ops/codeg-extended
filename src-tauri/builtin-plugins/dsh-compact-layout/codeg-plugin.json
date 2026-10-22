@@ -1,0 +1,18 @@
+{
+  "id": "dsh-compact-layout",
+  "name": "DSH Compact Layout",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "engines": {
+    "pluginHost": ">=1.0.0 <2.0.0"
+  },
+  "description": "High information density layout optimizing margins, padding, and conversation viewport",
+  "author": "codeg-community",
+  "category": "appearance",
+  "permissions": [
+    "ui"
+  ],
+  "styles": [
+    "styles/compact-layout.css"
+  ]
+}
