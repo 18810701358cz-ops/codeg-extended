@@ -46,9 +46,7 @@ export const PlanRow = memo(function PlanRow({ step }: { step: PlanStep }) {
       title={current?.content}
       trailing={`${done}/${entries.length}`}
       detail={() => (
-        <div className="ps-1">
-          <PlanEntriesList entries={entries} isStreaming={isStreaming} />
-        </div>
+        <PlanEntriesList entries={entries} isStreaming={isStreaming} />
       )}
     >
       <span className="flex min-w-0 items-baseline gap-2">

@@ -26,12 +26,27 @@ describe("PlanEntriesList", () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it("strikes through completed entries only", () => {
+  it("greys out finished steps and sets the current one in ink", () => {
     renderWithIntl(<PlanEntriesList entries={sampleEntries} />)
-    expect(screen.getByText("First step").className).toContain("line-through")
-    expect(screen.getByText("Second step").className).not.toContain(
-      "line-through"
+    expect(screen.getByText("First step").className).toContain(
+      "text-muted-foreground"
     )
+    expect(screen.getByText("Second step").className).toContain(
+      "font-medium text-foreground"
+    )
+    expect(screen.getByText("Third step").className).not.toContain(
+      "text-muted-foreground"
+    )
+  })
+
+  it("says each step's status to assistive tech", () => {
+    renderWithIntl(<PlanEntriesList entries={sampleEntries} />)
+    const items = screen.getAllByRole("listitem")
+    expect(items.map((item) => item.textContent)).toEqual([
+      "CompletedFirst stepHigh",
+      "In ProgressSecond stepMedium",
+      "PendingThird stepLow",
+    ])
   })
 
   it("renders each entry's content and priority label", () => {
@@ -40,5 +55,19 @@ describe("PlanEntriesList", () => {
     expect(screen.getByText("High")).toBeInTheDocument()
     expect(screen.getByText("Medium")).toBeInTheDocument()
     expect(screen.getByText("Low")).toBeInTheDocument()
+  })
+
+  it("leaves the priority out when every step shares it", () => {
+    // Agents that rank nothing get "medium" on every step.
+    renderWithIntl(
+      <PlanEntriesList
+        entries={sampleEntries.map((entry) => ({
+          ...entry,
+          priority: "medium",
+        }))}
+      />
+    )
+    expect(screen.getByText("First step")).toBeInTheDocument()
+    expect(screen.queryByText("Medium")).toBeNull()
   })
 })
