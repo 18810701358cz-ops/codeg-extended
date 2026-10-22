@@ -15,7 +15,6 @@ import {
   FileXIcon,
   FolderTreeIcon,
   GlobeIcon,
-  HourglassIcon,
   ImageIcon,
   KeyboardIcon,
   LightbulbIcon,
@@ -114,10 +113,8 @@ export function toolIcon(tool: ToolDescriptor): ActivityIcon {
 }
 
 export const THOUGHT_ICON = LightbulbIcon
-export const DELEGATION_ICON = UsersIcon
 export const GOAL_ICON = TargetIcon
 export const PLAN_ICON = ListTodoIcon
-export const BACKGROUND_TASK_ICON = HourglassIcon
 export const IMAGE_ICON = ImageIcon
 export const RESULT_ICON = WrenchIcon
 
@@ -177,7 +174,7 @@ export function StatusFigure({
   }
 }
 
-export function MetricFigure({ metric }: { metric: ToolMetric }) {
+function MetricFigure({ metric }: { metric: ToolMetric }) {
   const t = useTranslations("Folder.chat.activity")
   switch (metric.kind) {
     case "lines":

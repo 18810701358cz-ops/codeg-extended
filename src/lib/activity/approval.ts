@@ -24,7 +24,7 @@ export interface ToolApproval {
 export type ApprovalDecision = "allowOnce" | "allowAlways" | "rejected"
 
 /** Where a detail load stamps a call's approval (Rust `APPROVAL_META_KEY`). */
-export const APPROVAL_META_KEY = "codeg.approval"
+const APPROVAL_META_KEY = "codeg.approval"
 
 function decisionOf(kind: unknown): ApprovalDecision | null {
   switch (kind) {

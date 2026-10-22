@@ -16,7 +16,7 @@ import { ToolFigure, toolIcon, useStatusText } from "../step-visuals"
 import type { ToolStep } from "./explore-rows"
 
 /** `mcp · linear` — where the tool came from, not a status. */
-export function McpChip({ server }: { server: string }) {
+function McpChip({ server }: { server: string }) {
   return (
     <span className="inline-flex shrink-0 items-center rounded-full bg-tone-mcp/12 px-2 font-mono text-xs leading-5 text-tone-mcp ws-msg-chip">
       mcp · {server}

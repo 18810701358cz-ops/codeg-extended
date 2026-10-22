@@ -34,7 +34,7 @@ export function formatDuration(ms: number): string {
 
 /** Convert AgentToolCall[] to tool-call parts: the sub-agent's own steps, as
  *  its nested timeline draws them. */
-export function adaptToolCalls(
+function adaptToolCalls(
   calls: AgentToolCall[],
   parentId: string
 ): AdaptedToolCallPart[] {

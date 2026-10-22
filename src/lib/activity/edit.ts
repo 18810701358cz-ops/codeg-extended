@@ -27,9 +27,9 @@ import {
   tryParseJson,
 } from "./json"
 
-export type ApplyPatchOp = "add" | "update" | "delete" | "move"
+type ApplyPatchOp = "add" | "update" | "delete" | "move"
 
-export type ApplyPatchFile = {
+type ApplyPatchFile = {
   op: ApplyPatchOp
   path: string
   from?: string
@@ -113,24 +113,6 @@ function parseApplyPatchDetailed(input: string): {
   }
 
   return { files, additions, deletions }
-}
-
-export function parseApplyPatchInput(input: string): {
-  files: ApplyPatchFile[]
-  additions: number
-  deletions: number
-} {
-  const detailed = parseApplyPatchDetailed(input)
-  return {
-    files: detailed.files.map((file) => {
-      const plain: ApplyPatchFile = { op: file.op, path: file.path }
-      if (file.from !== undefined) plain.from = file.from
-      if (file.to !== undefined) plain.to = file.to
-      return plain
-    }),
-    additions: detailed.additions,
-    deletions: detailed.deletions,
-  }
 }
 
 export function looksLikeDiffPayload(input: string): boolean {
