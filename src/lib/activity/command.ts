@@ -439,5 +439,10 @@ export function extractCommandExit(
     return { code: reported, signal: null }
   }
   const text = commandOutputFromJsonString(source) ?? source
-  return exitFromTerminalLine(text) ?? exitFromFramingLines(text)
+  // claude-agent-acp fences a failed result for clients without a terminal
+  // channel, which pushes its `Exit code N` line down to the second.
+  const body = text.trimStart().startsWith("```")
+    ? stripMarkdownCodeFence(text)
+    : text
+  return exitFromTerminalLine(body) ?? exitFromFramingLines(body)
 }

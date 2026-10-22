@@ -94,6 +94,17 @@ describe("extractCommandExit", () => {
     expect(extractCommandExit("[terminal exited: finished]")).toBeNull()
   })
 
+  it("reads the Exit code line inside the fence claude-agent-acp puts around a failure", () => {
+    // Without a terminal channel the adapter sends a failed result fenced for
+    // Markdown; history (the transcript) keeps it bare. Both read the same.
+    expect(
+      extractCommandExit(
+        "```\nExit code 1\nls: /missing: No such file or directory\n```"
+      )
+    ).toEqual({ code: 1, signal: null })
+    expect(extractCommandExit("```\nboom\n```")).toBeNull()
+  })
+
   it("reads Claude Code's leading and OpenCode's trailing Exit code line", () => {
     expect(extractCommandExit("Exit code 1\nFAIL src/a.test.ts")).toEqual({
       code: 1,
