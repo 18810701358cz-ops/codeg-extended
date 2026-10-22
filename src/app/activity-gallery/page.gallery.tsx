@@ -1,0 +1,343 @@
+"use client"
+
+/**
+ * Activity timeline gallery — a development page, built only with
+ * CODEG_GALLERY=1 (see `pageExtensions` in next.config.ts).
+ *
+ * Renders fixture replies through the real pipeline (`adaptMessageTurn` →
+ * `CompletedTurnContent`), outside any workspace, so every step kind and state
+ * can be looked at and screenshotted side by side: `?view=` picks a scenario
+ * (default: all), `?legacy=1` shows the classic cards instead, `?lang=` sets
+ * the interface language.
+ */
+
+import { useMemo, useState } from "react"
+
+import { Message, MessageContent } from "@/components/ai-elements/message"
+import { CompletedTurnContent } from "@/components/message/completed-turn-content"
+import { ContentPartsRenderer } from "@/components/message/content-parts-renderer"
+import { setActivityTimelineEnabled } from "@/components/message/activity/use-activity-flag"
+import {
+  StaticConnectionStoreProvider,
+  type ConnectionStoreApi,
+} from "@/contexts/acp-connections-context"
+import {
+  StaticDelegationProvider,
+  type DelegationContextValue,
+} from "@/contexts/delegation-context"
+import {
+  StaticWorkspaceActionsProvider,
+  type WorkspaceActionsValue,
+} from "@/contexts/workspace-context"
+import { adaptMessageTurn } from "@/lib/adapters/ai-elements-adapter"
+import {
+  fixtureLines,
+  MOCKUP_ADAPTER_TEXT,
+  MOCKUP_ASSISTANT_TURN,
+  MOCKUP_LIVE_TURN,
+  MOCKUP_REPO,
+  MOCKUP_USER_TURN,
+  toolResult,
+  toolUse,
+} from "@/lib/activity/__fixtures__/mockup-turn"
+import type { MessageTurn } from "@/lib/types"
+
+const params =
+  typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams()
+
+if (typeof window !== "undefined") {
+  setActivityTimelineEnabled(params.get("legacy") !== "1")
+  // Outside a backend: answer the language lookup, swallow the rest.
+  const lang = params.get("lang") ?? "en"
+  const original = window.fetch.bind(window)
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString()
+    if (url.endsWith("/api/get_system_language_settings")) {
+      return new Response(JSON.stringify({ mode: "manual", language: lang }))
+    }
+    if (url.includes("/api/")) return new Response(JSON.stringify(null))
+    return original(input, init)
+  }
+}
+
+const STORE: ConnectionStoreApi = {
+  getConnection: () => undefined,
+  getConnectPending: () => undefined,
+  getConnectError: () => undefined,
+  getActiveKey: () => null,
+  subscribeKey: () => () => {},
+  subscribeActiveKey: () => () => {},
+}
+
+const DELEGATION: DelegationContextValue = {
+  findByParentToolUseId: () => undefined,
+  findByChildConversationId: () => undefined,
+  findByTaskId: () => undefined,
+}
+
+const WORKSPACE = new Proxy(
+  {},
+  { get: () => () => {} }
+) as unknown as WorkspaceActionsValue
+
+const FAILURE_TURN: MessageTurn = {
+  id: "turn-failure",
+  role: "assistant",
+  timestamp: "2026-10-22T09:00:00Z",
+  duration_ms: 41000,
+  blocks: [
+    toolUse("f1", "Bash", { command: "pnpm --filter web build" }),
+    toolResult(
+      "f1",
+      [
+        "> web@0.1.0 build",
+        "> next build",
+        "",
+        "Failed to compile.",
+        "",
+        "./lib/tasks.ts:12:7",
+        "Type error: Property 'active' does not exist on type 'Binding'.",
+        "",
+        "[terminal exited: exit code: 1]",
+      ].join("\n"),
+      true
+    ),
+    toolUse("f2", "mcp__github__create_pull_request", {
+      title: "Filter inactive bindings",
+      head: "audit-followup",
+    }),
+    toolResult(
+      "f2",
+      JSON.stringify({ result: null, error: "GitHub API rate limit exceeded" }),
+      true
+    ),
+    toolUse("f3", "Edit", {
+      file_path: `${MOCKUP_REPO}/web/lib/tasks.ts`,
+      old_string: "binding.active",
+      new_string: "binding.isActive",
+    }),
+    toolResult(
+      "f3",
+      "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).",
+      true
+    ),
+    {
+      type: "text",
+      text: "The build fails on a type error and I could not open the pull request.",
+    },
+  ],
+}
+
+const CODEX_TURN: MessageTurn = {
+  id: "turn-codex",
+  role: "assistant",
+  timestamp: "2026-10-22T09:10:00Z",
+  duration_ms: 96000,
+  blocks: [
+    {
+      type: "thinking",
+      text: "**Locating the report writer**\n\nThe regen script writes report.md; check how it orders bindings.",
+    },
+    toolUse("c1", "exec_command", {
+      cmd: ["bash", "-lc", "rg -n 'def write_report' agent/src"],
+    }),
+    toolResult(
+      "c1",
+      JSON.stringify({
+        formatted_output:
+          "agent/src/hvac_agent/report.py:31:def write_report(tasks, path):",
+        exit_code: 0,
+      })
+    ),
+    toolUse("c2", "Read", {
+      file_path: `${MOCKUP_REPO}/agent/src/hvac_agent/report.py`,
+    }),
+    toolResult("c2", fixtureLines(64, "report.py")),
+    toolUse("c3", "grep", { pattern: "legacy_binding", path: "agent/src" }),
+    toolResult("c3", ""),
+    toolUse(
+      "c4",
+      "apply_patch",
+      [
+        "*** Begin Patch",
+        "*** Update File: agent/src/hvac_agent/report.py",
+        "@@ def write_report(tasks, path):",
+        "-    for b in task.source_bindings:",
+        "+    for b in sorted(task.source_bindings, key=lambda b: b.id):",
+        "*** Add File: agent/src/hvac_agent/report_test.py",
+        "+from hvac_agent.report import write_report",
+        "+",
+        "+def test_sorted():",
+        "+    assert True",
+        "*** End Patch",
+      ].join("\n")
+    ),
+    toolResult(
+      "c4",
+      "Success. Updated the following files:\nM report.py\nA report_test.py"
+    ),
+    toolUse("c5", "exec_command", {
+      cmd: ["bash", "-lc", "cd agent && .venv/bin/pytest -q"],
+    }),
+    toolResult(
+      "c5",
+      "Chunk ID: 8f2a\nWall time: 14.2 seconds\nProcess exited with code 0\nOutput:\n\u001b[32m....\u001b[0m\n4 passed in 13.87s"
+    ),
+    toolUse("c6", "wait", {
+      cell_id: "7106",
+      session_command: "bash -lc 'pnpm dev'",
+    }),
+    toolResult("c6", "ready - started server on 0.0.0.0:3000"),
+    { type: "text", text: "Sorted the bindings and added a test." },
+  ],
+}
+
+const AGENT_TURN: MessageTurn = {
+  id: "turn-agent",
+  role: "assistant",
+  timestamp: "2026-10-22T09:20:00Z",
+  duration_ms: 61000,
+  blocks: [
+    toolUse("a1", "Agent", {
+      description: "Find binding consumers",
+      prompt:
+        "Find every consumer of source_bindings in the agent package and report which ones assume inactive bindings are present.",
+      subagent_type: "Explore",
+    }),
+    {
+      type: "tool_result",
+      tool_use_id: "a1",
+      is_error: false,
+      output_preview:
+        "Three consumers read `source_bindings`; only `report.py` assumes inactive bindings are present.",
+      agent_stats: {
+        agent_type: "Explore",
+        status: "completed",
+        total_duration_ms: 48000,
+        total_tokens: 18400,
+        total_tool_use_count: 2,
+        read_count: 1,
+        search_count: 1,
+        tool_calls: [
+          {
+            tool_name: "Grep",
+            input_preview: JSON.stringify({ pattern: "source_bindings" }),
+            output_preview: "4 matches",
+            is_error: false,
+          },
+          {
+            tool_name: "Read",
+            input_preview: JSON.stringify({
+              file_path: `${MOCKUP_REPO}/agent/src/hvac_agent/report.py`,
+            }),
+            output_preview: fixtureLines(30, "report.py"),
+            is_error: false,
+          },
+        ],
+      },
+    },
+    {
+      type: "text",
+      text: "Only `report.py` relies on inactive bindings being present.",
+    },
+  ],
+}
+
+const TEXT_TURN: MessageTurn = {
+  id: "turn-text",
+  role: "assistant",
+  timestamp: "2026-10-22T09:30:00Z",
+  duration_ms: 3000,
+  blocks: [{ type: "text", text: "Yes — the fix is already on `main`." }],
+}
+
+type Scenario = {
+  id: string
+  title: string
+  turn: MessageTurn
+  live?: boolean
+  inProgress?: string[]
+}
+
+const SCENARIOS: Scenario[] = [
+  { id: "main", title: "Reference turn", turn: MOCKUP_ASSISTANT_TURN },
+  {
+    id: "live",
+    title: "Live turn",
+    turn: MOCKUP_LIVE_TURN,
+    live: true,
+    inProgress: ["l3"],
+  },
+  { id: "failure", title: "Failures", turn: FAILURE_TURN },
+  { id: "codex", title: "Codex", turn: CODEX_TURN },
+  { id: "agent", title: "Sub-agent", turn: AGENT_TURN },
+  { id: "text", title: "Text-only reply", turn: TEXT_TURN },
+]
+
+function ScenarioView({ scenario }: { scenario: Scenario }) {
+  const [roundOpen, setRoundOpen] = useState(true)
+  const adapted = useMemo(
+    () =>
+      adaptMessageTurn(
+        scenario.turn,
+        MOCKUP_ADAPTER_TEXT,
+        scenario.live ?? false,
+        scenario.inProgress ? new Set(scenario.inProgress) : undefined
+      ),
+    [scenario]
+  )
+  return (
+    <section data-scenario={scenario.id} className="space-y-3">
+      <h2 className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+        {scenario.title}
+      </h2>
+      <Message from="assistant">
+        <MessageContent>
+          <CompletedTurnContent
+            parts={adapted.content}
+            durationMs={scenario.turn.duration_ms}
+            completed={!scenario.live}
+            currentRound
+            roundOpen={roundOpen}
+            onRoundOpenChange={setRoundOpen}
+          />
+        </MessageContent>
+      </Message>
+    </section>
+  )
+}
+
+export default function ActivityGalleryPage() {
+  const view = params.get("view") ?? "all"
+  const user = useMemo(
+    () => adaptMessageTurn(MOCKUP_USER_TURN, MOCKUP_ADAPTER_TEXT),
+    []
+  )
+  const scenarios =
+    view === "all" ? SCENARIOS : SCENARIOS.filter((s) => s.id === view)
+  return (
+    <StaticConnectionStoreProvider store={STORE}>
+      <StaticDelegationProvider value={DELEGATION}>
+        <StaticWorkspaceActionsProvider value={WORKSPACE}>
+          <div className="chat-motion-scope min-h-screen bg-background text-foreground">
+            <div
+              id="gallery-root"
+              className="mx-auto flex w-full max-w-[48rem] flex-col gap-8 px-6 py-8"
+            >
+              <Message from="user">
+                <MessageContent>
+                  <ContentPartsRenderer parts={user.content} role="user" />
+                </MessageContent>
+              </Message>
+              {scenarios.map((scenario) => (
+                <ScenarioView key={scenario.id} scenario={scenario} />
+              ))}
+            </div>
+          </div>
+        </StaticWorkspaceActionsProvider>
+      </StaticDelegationProvider>
+    </StaticConnectionStoreProvider>
+  )
+}

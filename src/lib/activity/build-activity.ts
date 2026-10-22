@@ -52,28 +52,74 @@ function isBlankInterruption(step: ActivityStep): boolean {
   return !input || input === "{}" || input === "[]" || input === "null"
 }
 
+/** djb2 — only has to tell replies apart, not resist collisions on purpose. */
+function hashText(text: string): string {
+  let hash = 5381
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0
+  }
+  return (hash >>> 0).toString(36)
+}
+
+/**
+ * A stable name for the reply, prefixed onto the keys of steps that have no id
+ * of their own (thoughts, notes, plans), so a remembered open/closed choice
+ * stays with the right row across replies and through the live → history
+ * hand-over. The opening prose or thought names it when the reply starts with
+ * one (its first characters stop changing almost at once while it streams, and
+ * reload with the same text); otherwise the first tool call id does (ids
+ * persist across that hand-over).
+ */
+function replyAnchor(parts: AdaptedContentPart[]): string {
+  const first = parts[0]
+  if (first?.type === "text" || first?.type === "reasoning") {
+    const text = first.type === "text" ? first.text : first.content
+    if (text.trim().length >= ANCHOR_TEXT_LENGTH) {
+      return `h${hashText(text.slice(0, ANCHOR_TEXT_LENGTH))}`
+    }
+  }
+  for (const part of parts) {
+    if (part.type === "tool-call") return part.toolCallId
+    if (part.type === "tool-group" && part.items[0]) {
+      return part.items[0].toolCallId
+    }
+    if (
+      (part.type === "delegation-status-group" ||
+        part.type === "background-task-group") &&
+      part.polls[0]
+    ) {
+      return part.polls[0].toolCallId
+    }
+    if (part.type === "goal-run") return part.start.toolCallId
+  }
+  return first ? `h${hashText(JSON.stringify(first).slice(0, 200))}` : "empty"
+}
+
+const ANCHOR_TEXT_LENGTH = 32
+
 function collectSteps(
   parts: AdaptedContentPart[],
   isStreaming: boolean
 ): ActivityStep[] {
   const steps: ActivityStep[] = []
+  const anchor = replyAnchor(parts)
   parts.forEach((part, index) => {
     switch (part.type) {
       case "text":
         if (part.text.trim().length > 0) {
-          steps.push({ type: "note", key: `note:${index}`, part })
+          steps.push({ type: "note", key: `note:${anchor}:${index}`, part })
         }
         return
       case "proposed-plan":
       case "turn-error":
-        steps.push({ type: "note", key: `note:${index}`, part })
+        steps.push({ type: "note", key: `note:${anchor}:${index}`, part })
         return
       case "reasoning": {
         const streaming = isStreaming && part.isStreaming
         if (!streaming && part.content.trim().length === 0) return
         steps.push({
           type: "thought",
-          key: `thought:${index}`,
+          key: `thought:${anchor}:${index}`,
           part,
           title: thoughtTitle(part.content, streaming),
           streaming,
@@ -120,10 +166,10 @@ function collectSteps(
         })
         return
       case "plan":
-        steps.push({ type: "plan", key: `plan:${index}`, part })
+        steps.push({ type: "plan", key: `plan:${anchor}:${index}`, part })
         return
       case "generated-image":
-        steps.push({ type: "image", key: `image:${index}`, part })
+        steps.push({ type: "image", key: `image:${anchor}:${index}`, part })
         return
     }
   })

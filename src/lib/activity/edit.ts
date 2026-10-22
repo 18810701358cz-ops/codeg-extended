@@ -16,6 +16,7 @@ import {
   extractCommandFromUnknownInput,
 } from "./command"
 import { aliasToolInputKeys } from "@/lib/tool-call-normalization"
+import { generateUnifiedDiff } from "@/lib/unified-diff-generator"
 import { countLines } from "./format"
 import {
   asObjectLike,
@@ -798,4 +799,121 @@ export function describeEditFiles(
   }
 
   return []
+}
+
+// ── diff text for the detail panel ────────────────────────────────────────
+
+function startLineAdjusted(
+  diff: string,
+  startLine: number | undefined
+): string {
+  if (!startLine || startLine <= 1) return diff
+  // Hunk headers of a diff generated from an `old_string → new_string` pair
+  // count from the snippet's first line; move them to where it sits in the
+  // file.
+  return diff.replace(
+    /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@/gm,
+    (_, _o, oc, _n, nc) => `@@ -${startLine},${oc} +${startLine},${nc} @@`
+  )
+}
+
+export interface EditDiff {
+  text: string
+  /**
+   * The hunk headers carry the file's real line numbers. False for a patch
+   * (codex's `@@` hunks have none) and for a diff generated from an old/new
+   * pair whose position in the file is unknown — numbering those from 1
+   * would point at the wrong lines.
+   */
+  numbered: boolean
+}
+
+const NUMBERED_HUNK_RE = /^@@ -\d+/m
+
+/**
+ * The unified diff (or `*** Begin Patch` text) an edit-like call's detail
+ * panel draws: the same sources, in the same order, the legacy edit card
+ * used — a patch in the input, codex's changes map, a diff with real line
+ * numbers in the output, then a diff generated from the old/new strings.
+ * Write and notebook edits draw their new content as added lines.
+ */
+export function editDiffText(
+  toolName: string,
+  input: string | null,
+  output: string | null
+): EditDiff | null {
+  const name = toolName.toLowerCase()
+  const raw = input ?? ""
+  const parsed = aliasToolInputKeys(raw ? tryParseJson(raw) : null)
+
+  const patch = raw ? extractApplyPatchTextFromUnknownInput(raw, parsed) : null
+  if (patch) return { text: patch, numbered: false }
+  if (name === "apply_patch") {
+    return raw.trim()
+      ? { text: raw, numbered: NUMBERED_HUNK_RE.test(raw) }
+      : null
+  }
+
+  if (name === "write" || name === "notebookedit") {
+    const path =
+      (parsed && (str(parsed, "file_path") ?? str(parsed, "notebook_path"))) ??
+      undefined
+    const content =
+      parsed && (str(parsed, "content") ?? str(parsed, "new_source"))
+    const diff = content ? generateUnifiedDiff("", content, path) : null
+    // A whole new file starts at line 1, so its numbers are real; a notebook
+    // cell's are not.
+    return diff ? { text: diff, numbered: name === "write" } : null
+  }
+
+  if (parsed) {
+    const changes = extractEditChangesPayload(parsed)
+    if (changes.length > 0) {
+      const parts: string[] = []
+      let numbered = true
+      for (const change of changes) {
+        if (change.unifiedDiff && change.unifiedDiff.trim().length > 0) {
+          parts.push(change.unifiedDiff.trim(), "")
+          if (!NUMBERED_HUNK_RE.test(change.unifiedDiff)) numbered = false
+          continue
+        }
+        const generated = generateUnifiedDiff(
+          change.oldText,
+          change.newText,
+          change.path
+        )
+        if (generated) {
+          parts.push(generated, "")
+          // A new file's lines are numbered from 1 for real.
+          if (change.oldText) numbered = false
+        }
+      }
+      const joined = parts.join("\n").trim()
+      if (joined) return { text: joined, numbered }
+    }
+  }
+
+  if (output && /^@@ /m.test(output)) {
+    return { text: output, numbered: NUMBERED_HUNK_RE.test(output) }
+  }
+
+  if (parsed && isCanonicalEditPayload(parsed)) {
+    const diff = generateUnifiedDiff(
+      str(parsed, "old_string") ?? "",
+      str(parsed, "new_string") ?? "",
+      str(parsed, "file_path") ?? undefined
+    )
+    if (!diff) return null
+    const startLine = num(parsed, "_start_line")
+    return {
+      text: startLineAdjusted(diff, startLine),
+      numbered: startLine !== undefined && startLine > 0,
+    }
+  }
+
+  if (raw && looksLikeDiffPayload(raw)) {
+    const text = unescapeInlineEscapes(raw)
+    return { text, numbered: NUMBERED_HUNK_RE.test(text) }
+  }
+  return null
 }

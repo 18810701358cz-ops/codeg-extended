@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type ReactNode } from "react"
+import { memo, useCallback, useMemo, useState, type ReactNode } from "react"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
 import type { MessageRole, PlanEntryInfo } from "@/lib/types"
 import {
@@ -29,7 +29,9 @@ import {
   parseApplyPatchFilesFromUnknownInput,
   type EditChangePreview,
 } from "@/lib/activity/edit"
+import { buildActivity } from "@/lib/activity/build-activity"
 import { parseReadOutput } from "@/lib/activity/explore"
+import type { ActivityModel } from "@/lib/activity/types"
 import { ellipsis, shortPath } from "@/lib/activity/format"
 import {
   extractJsonField,
@@ -111,6 +113,8 @@ import { GoalRunPart, GoalToolCallPart } from "./goal-tool-call"
 import { PlanCard, PlanEntriesList } from "./plan-card"
 import { PlanMarkdownCard, PlanModeCard } from "./plan-mode-card"
 import { PlainTextWithBadges } from "./plain-text-with-badges"
+import { ActivityTimeline } from "./activity/activity-timeline"
+import { useActivityTimelineEnabled } from "./activity/use-activity-flag"
 import {
   FileTextIcon,
   FilePenLineIcon,
@@ -2215,105 +2219,169 @@ interface ContentPartsRendererProps {
   isStreaming?: boolean
 }
 
+/**
+ * Draw one part the classic way. Module-level (rather than a closure inside
+ * the renderer) so the activity timeline can be handed it as its
+ * `renderPart` for the cards it hosts and the prose between steps.
+ */
+function renderLegacyPart(
+  part: AdaptedContentPart,
+  keyId: string,
+  role: MessageRole | undefined,
+  isStreaming: boolean
+): ReactNode {
+  const renderChild = (child: AdaptedContentPart, childKey: string) =>
+    renderLegacyPart(child, childKey, role, isStreaming)
+
+  if (part.type === "text") {
+    // An empty text part renders nothing but still earns a `space-y-4` gap
+    // below, which reads as a blank band inside the bubble. A user turn is
+    // final by the time it is rendered, so an empty one is always residue —
+    // never a stream that has not produced its first token yet, which is why
+    // this is scoped to `user` and assistant text is left to render as-is.
+    if (role === "user" && part.text.trim().length === 0) return null
+    return (
+      <TextPart
+        key={`text-${keyId}`}
+        text={part.text}
+        isUser={role === "user"}
+        isStreaming={isStreaming}
+      />
+    )
+  }
+
+  if (part.type === "tool-call") {
+    return <ToolCallPart key={`tc-${part.toolCallId ?? keyId}`} part={part} />
+  }
+
+  if (part.type === "tool-group") {
+    return (
+      <ToolGroupPart
+        key={`tg-${keyId}`}
+        part={part}
+        renderItem={(item, key) => <ToolCallPart key={key} part={item} />}
+      />
+    )
+  }
+
+  if (part.type === "goal-run") {
+    return (
+      <GoalRunPart key={`goal-${keyId}`} part={part} renderPart={renderChild} />
+    )
+  }
+
+  if (part.type === "delegation-status-group") {
+    return <DelegationStatusGroupCard key={`dsg-${keyId}`} polls={part.polls} />
+  }
+
+  if (part.type === "background-task-group") {
+    return <BackgroundTaskCard key={`btg-${keyId}`} polls={part.polls} />
+  }
+
+  if (part.type === "tool-result") {
+    return <ToolResultPart key={`tr-${part.toolCallId ?? keyId}`} part={part} />
+  }
+
+  if (part.type === "reasoning") {
+    return <ReasoningPart key={`reasoning-${keyId}`} part={part} />
+  }
+
+  if (part.type === "plan") {
+    return <PlanPart key={`plan-${keyId}`} part={part} />
+  }
+
+  if (part.type === "proposed-plan") {
+    return <ProposedPlanPart key={`proposed-plan-${keyId}`} part={part} />
+  }
+
+  if (part.type === "generated-image") {
+    return (
+      <GeneratedImagesBlock
+        key={`gimg-${keyId}`}
+        label={part.label}
+        revisedPrompt={part.revisedPrompt}
+        image={part.image}
+        status={part.status}
+      />
+    )
+  }
+
+  if (part.type === "turn-error") {
+    return <TurnErrorPart key={`turn-error-${keyId}`} message={part.message} />
+  }
+
+  return null
+}
+
+function useAssistantRenderPart(isStreaming: boolean) {
+  return useCallback(
+    (part: AdaptedContentPart, key: string) =>
+      renderLegacyPart(part, key, "assistant", isStreaming),
+    [isStreaming]
+  )
+}
+
+/**
+ * The activity timeline for an already-built model, with the classic renderer
+ * wired in for the cards it hosts. `CompletedTurnContent` builds the model once
+ * for its header and hands it here for the body.
+ */
+export const ActivityParts = memo(function ActivityParts({
+  model,
+  isStreaming,
+}: {
+  model: ActivityModel
+  isStreaming: boolean
+}) {
+  const renderPart = useAssistantRenderPart(isStreaming)
+  return (
+    <ActivityTimeline
+      model={model}
+      isStreaming={isStreaming}
+      renderPart={renderPart}
+    />
+  )
+})
+
+/** An assistant reply as timeline + answer (the activity view's body). */
+const AssistantActivity = memo(function AssistantActivity({
+  parts,
+  isStreaming,
+}: {
+  parts: AdaptedContentPart[]
+  isStreaming: boolean
+}) {
+  const renderPart = useAssistantRenderPart(isStreaming)
+  const model = useMemo(
+    () => buildActivity(parts, { isStreaming }),
+    [parts, isStreaming]
+  )
+  return (
+    <div className="space-y-4">
+      <ActivityTimeline
+        model={model}
+        isStreaming={isStreaming}
+        renderPart={renderPart}
+      />
+      {model.answer.map((part, i) => renderPart(part, `answer-${i}`))}
+    </div>
+  )
+})
+
 export const ContentPartsRenderer = memo(function ContentPartsRenderer({
   parts,
   role,
   isStreaming = false,
 }: ContentPartsRendererProps) {
-  const renderPart = (part: AdaptedContentPart, keyId: string): ReactNode => {
-    if (part.type === "text") {
-      // An empty text part renders nothing but still earns a `space-y-4` gap
-      // below, which reads as a blank band inside the bubble. A user turn is
-      // final by the time it is rendered, so an empty one is always residue —
-      // never a stream that has not produced its first token yet, which is why
-      // this is scoped to `user` and assistant text is left to render as-is.
-      if (role === "user" && part.text.trim().length === 0) return null
-      return (
-        <TextPart
-          key={`text-${keyId}`}
-          text={part.text}
-          isUser={role === "user"}
-          isStreaming={isStreaming}
-        />
-      )
-    }
-
-    if (part.type === "tool-call") {
-      return <ToolCallPart key={`tc-${part.toolCallId ?? keyId}`} part={part} />
-    }
-
-    if (part.type === "tool-group") {
-      return (
-        <ToolGroupPart
-          key={`tg-${keyId}`}
-          part={part}
-          renderItem={(item, key) => <ToolCallPart key={key} part={item} />}
-        />
-      )
-    }
-
-    if (part.type === "goal-run") {
-      return (
-        <GoalRunPart
-          key={`goal-${keyId}`}
-          part={part}
-          renderPart={(child, childKey) => renderPart(child, childKey)}
-        />
-      )
-    }
-
-    if (part.type === "delegation-status-group") {
-      return (
-        <DelegationStatusGroupCard key={`dsg-${keyId}`} polls={part.polls} />
-      )
-    }
-
-    if (part.type === "background-task-group") {
-      return <BackgroundTaskCard key={`btg-${keyId}`} polls={part.polls} />
-    }
-
-    if (part.type === "tool-result") {
-      return (
-        <ToolResultPart key={`tr-${part.toolCallId ?? keyId}`} part={part} />
-      )
-    }
-
-    if (part.type === "reasoning") {
-      return <ReasoningPart key={`reasoning-${keyId}`} part={part} />
-    }
-
-    if (part.type === "plan") {
-      return <PlanPart key={`plan-${keyId}`} part={part} />
-    }
-
-    if (part.type === "proposed-plan") {
-      return <ProposedPlanPart key={`proposed-plan-${keyId}`} part={part} />
-    }
-
-    if (part.type === "generated-image") {
-      return (
-        <GeneratedImagesBlock
-          key={`gimg-${keyId}`}
-          label={part.label}
-          revisedPrompt={part.revisedPrompt}
-          image={part.image}
-          status={part.status}
-        />
-      )
-    }
-
-    if (part.type === "turn-error") {
-      return (
-        <TurnErrorPart key={`turn-error-${keyId}`} message={part.message} />
-      )
-    }
-
-    return null
+  const timeline = useActivityTimelineEnabled()
+  if (timeline && role === "assistant") {
+    return <AssistantActivity parts={parts} isStreaming={isStreaming} />
   }
-
   return (
     <div className="space-y-4">
-      {parts.map((part, i) => renderPart(part, `${i}`))}
+      {parts.map((part, i) =>
+        renderLegacyPart(part, `${i}`, role, isStreaming)
+      )}
     </div>
   )
 })

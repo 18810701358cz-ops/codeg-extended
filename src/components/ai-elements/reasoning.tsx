@@ -225,22 +225,53 @@ const rehypePlugins = rehypePluginsAllowingCodeg(
 
 const reasoningComponents = { ...markdownLinkComponents, ...mermaidComponents }
 
+/**
+ * The reasoning text itself, rendered as Markdown — shared by the collapsible
+ * `ReasoningContent` and the activity timeline's thought row.
+ *
+ * Reasoning is a LIVE surface — a reader who opens it mid-turn keeps it
+ * mounted across every delta of a block that routinely runs into the thousands
+ * of tokens. `mode="static"` re-parses the whole text each time (streaming
+ * splits it into blocks and re-parses only the tail), which measured ~2.9x
+ * slower over a 120-delta stream and gets worse the longer the block runs. So
+ * track the turn, exactly like the reply prose does: remend while the text is
+ * still growing, static — and therefore free of remend's leftover `*` / `_` —
+ * once it has settled.
+ */
+export const ReasoningMarkdown = memo(function ReasoningMarkdown({
+  children,
+  isStreaming,
+}: {
+  children: string
+  isStreaming: boolean
+}) {
+  const normalized = useMemo(
+    () => normalizeMathDelimiters(children),
+    [children]
+  )
+  const plugins = useStreamdownPlugins(normalized)
+
+  return (
+    <Streamdown
+      plugins={plugins}
+      remarkPlugins={remarkPlugins}
+      rehypePlugins={rehypePlugins}
+      mode={isStreaming ? "streaming" : "static"}
+      parseIncompleteMarkdown={isStreaming}
+      // An unclosed link shows as text, as in MessageResponse — see
+      // LIVE_REMEND for why the default placeholder cannot be used.
+      remend={LIVE_REMEND}
+      // The link icon + safety override, and the diagram blocks.
+      components={reasoningComponents}
+    >
+      {normalized}
+    </Streamdown>
+  )
+})
+
 export const ReasoningContent = memo(
   ({ className, children, ...props }: ReasoningContentProps) => {
-    // Reasoning is a LIVE surface — a reader who opens this panel mid-turn
-    // keeps it mounted across every delta of a block that routinely runs into
-    // the thousands of tokens. `mode="static"` re-parses the whole text each
-    // time (streaming splits it into blocks and re-parses only the tail),
-    // which measured ~2.9x slower over a 120-delta stream and gets worse the
-    // longer the block runs. So track the turn, exactly like the reply prose
-    // does: remend while the text is still growing, static — and therefore
-    // free of remend's leftover `*` / `_` — once it has settled.
     const { isStreaming } = useReasoning()
-    const normalized = useMemo(
-      () => normalizeMathDelimiters(children),
-      [children]
-    )
-    const plugins = useStreamdownPlugins(normalized)
 
     return (
       <CollapsibleContent
@@ -251,20 +282,9 @@ export const ReasoningContent = memo(
         )}
         {...props}
       >
-        <Streamdown
-          plugins={plugins}
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          mode={isStreaming ? "streaming" : "static"}
-          parseIncompleteMarkdown={isStreaming}
-          // An unclosed link shows as text, as in MessageResponse — see
-          // LIVE_REMEND for why the default placeholder cannot be used.
-          remend={LIVE_REMEND}
-          // The link icon + safety override, and the diagram blocks.
-          components={reasoningComponents}
-        >
-          {normalized}
-        </Streamdown>
+        <ReasoningMarkdown isStreaming={isStreaming}>
+          {children}
+        </ReasoningMarkdown>
       </CollapsibleContent>
     )
   }

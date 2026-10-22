@@ -3313,6 +3313,24 @@ export function useConnectionStore(): ConnectionStoreApi {
   return ctx
 }
 
+/**
+ * A fixed store in place of `AcpConnectionsProvider` — for surfaces that render
+ * chat cards outside a workspace (the activity gallery page, component tests).
+ */
+export function StaticConnectionStoreProvider({
+  store,
+  children,
+}: {
+  store: ConnectionStoreApi
+  children: ReactNode
+}) {
+  return (
+    <ConnectionStoreContext.Provider value={store}>
+      {children}
+    </ConnectionStoreContext.Provider>
+  )
+}
+
 /** The store, or `null` outside `AcpConnectionsProvider` — for a card that
  *  renders fine without live state and only enriches itself when it has some
  *  (the `get_delegation_status` row). */

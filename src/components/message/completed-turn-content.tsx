@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useCallback, useMemo, useState } from "react"
+import { memo, useCallback, useId, useMemo, useState } from "react"
 import { ChevronRightIcon } from "lucide-react"
 import { useTranslations } from "next-intl"
 
@@ -16,7 +16,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/instant-collapsible"
-import { ContentPartsRenderer } from "./content-parts-renderer"
+import { buildActivity } from "@/lib/activity/build-activity"
+import { ActivityParts, ContentPartsRenderer } from "./content-parts-renderer"
+import { ActivityHeader } from "./activity/activity-header"
+import { useActivityTimelineEnabled } from "./activity/use-activity-flag"
 
 export interface SplitAssistantTurnParts {
   progress: AdaptedContentPart[]
@@ -242,6 +245,92 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
   // reopens the block (#555). Every branch below renders some slice of this one
   // turn, so they all get the same answer.
   const isStreaming = !completed
+
+  // The activity timeline (internal switch while both renderers ship): the
+  // same round model, fold state and foldability as below — only the header
+  // and the body's renderer change.
+  const timeline = useActivityTimelineEnabled()
+  const bodyId = useId()
+  const activity = useMemo(
+    () => (timeline ? buildActivity(parts, { isStreaming }) : null),
+    [timeline, parts, isStreaming]
+  )
+
+  if (activity) {
+    const header = (
+      <ActivityHeader
+        summary={activity.summary}
+        completed={completed}
+        hasSteps={activity.items.length > 0}
+        elapsed={elapsed}
+        toggle={
+          foldable
+            ? {
+                open,
+                onToggle: () => handleOpenChange(!open),
+                controls: bodyId,
+              }
+            : undefined
+        }
+      />
+    )
+    if (!foldable) {
+      const blank =
+        completed &&
+        split.progress.length === 0 &&
+        !hasVisibleAnswer(split.answer)
+      if (blank) {
+        return (
+          <ContentPartsRenderer
+            parts={parts}
+            role="assistant"
+            isStreaming={isStreaming}
+          />
+        )
+      }
+      return (
+        <div className="space-y-3">
+          {header}
+          <ContentPartsRenderer
+            parts={parts}
+            role="assistant"
+            isStreaming={isStreaming}
+          />
+        </div>
+      )
+    }
+    return (
+      <div className="space-y-4">
+        <Collapsible
+          className="w-full"
+          open={open}
+          onOpenChange={handleOpenChange}
+        >
+          {header}
+          <CollapsibleContent
+            id={bodyId}
+            className={cn(
+              "reply-fold-body w-full outline-none",
+              animateEnter && "reply-fold-enter"
+            )}
+          >
+            <div>
+              <div className="pt-2">
+                <ActivityParts model={activity} isStreaming={isStreaming} />
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+        {split.answer.length > 0 && (
+          <ContentPartsRenderer
+            parts={split.answer}
+            role="assistant"
+            isStreaming={isStreaming}
+          />
+        )}
+      </div>
+    )
+  }
 
   if (!foldable) {
     // Parsers leave empty placeholder turns between tool exchanges;

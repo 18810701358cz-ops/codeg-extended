@@ -69,7 +69,7 @@ export interface DelegationBinding {
   assistantName: string | null
 }
 
-interface DelegationContextValue {
+export interface DelegationContextValue {
   findByParentToolUseId(id: string): DelegationBinding | undefined
   findByChildConversationId(id: number): DelegationBinding | undefined
   /**
@@ -89,6 +89,24 @@ export function useDelegation(): DelegationContextValue {
     throw new Error("useDelegation must be used within DelegationProvider")
   }
   return ctx
+}
+
+/**
+ * Fixed lookups in place of the live provider — for surfaces that render chat
+ * cards outside a workspace (the activity gallery page, component tests).
+ */
+export function StaticDelegationProvider({
+  value,
+  children,
+}: {
+  value: DelegationContextValue
+  children: ReactNode
+}) {
+  return (
+    <DelegationContext.Provider value={value}>
+      {children}
+    </DelegationContext.Provider>
+  )
 }
 
 /** The lookups, or `null` outside `DelegationProvider` — for a card that only
