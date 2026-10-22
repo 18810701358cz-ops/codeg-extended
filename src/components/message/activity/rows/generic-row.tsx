@@ -147,6 +147,7 @@ export const GenericRow = memo(function GenericRow({
   return (
     <ActivityRow
       stepKey={step.key}
+      approval={step.tool.approval}
       status={tool.status}
       marker={
         <RailIcon

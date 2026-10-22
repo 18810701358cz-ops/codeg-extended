@@ -65,7 +65,7 @@ use crate::acp::types::{
     PromptInputBlock, RemoteControlInfo, SessionConfigBooleanInfo, SessionConfigKindInfo,
     SessionConfigOptionInfo, SessionConfigSelectGroupInfo, SessionConfigSelectInfo,
     SessionConfigSelectOptionInfo, SessionFailureRecord, SessionModeInfo, SessionModeStateInfo,
-    SessionNotice, ToolCallImageInfo, UserMessageBlock,
+    SessionNotice, ToolApprovalInfo, ToolCallImageInfo, UserMessageBlock,
 };
 use crate::logging::throttle::LeadingEdgeThrottle;
 use crate::models::agent::AgentType;
@@ -2993,6 +2993,16 @@ struct QueuedPermission {
     options: Vec<PermissionOptionInfo>,
 }
 
+/// A blocked responder, with what its card asked: the answer's approval record
+/// needs the tool call and the chosen option, and by then the card itself has
+/// been moved into its publish.
+struct Parked<R> {
+    responder: R,
+    /// Empty when the card names no tool call.
+    tool_call_id: String,
+    options: Vec<PermissionOptionInfo>,
+}
+
 /// What [`PermissionQueue::resolve`] decided.
 struct ResolvedPermission {
     /// `false` when `request_id` was not ours (already answered, drained, or a
@@ -3000,6 +3010,19 @@ struct ResolvedPermission {
     answered: bool,
     /// The card promoted onto the screen by this answer, if any.
     next: Option<QueuedPermission>,
+    /// What the answer decided about the card's tool call. `None` when the card
+    /// named no tool call or the answer picked an option it did not offer.
+    decision: Option<PermissionDecision>,
+}
+
+/// The tool call an answered card was about and the option that took effect —
+/// everything an approval record needs except who answered and when, which
+/// the caller knows.
+#[derive(Debug, PartialEq)]
+struct PermissionDecision {
+    tool_call_id: String,
+    option_kind: String,
+    option_name: String,
 }
 
 /// Where a card stood when it left [`PermissionQueue`].
@@ -3058,7 +3081,7 @@ enum Departure {
 /// while holding this mutex is the sanctioned direction; nothing may acquire
 /// this mutex while already holding a `SessionState` guard.
 struct PermissionQueue<R = PendingPermission> {
-    responders: HashMap<String, R>,
+    responders: HashMap<String, Parked<R>>,
     /// The card currently published to clients. `None` = nothing on screen.
     showing: Option<String>,
     waiting: VecDeque<QueuedPermission>,
@@ -3102,7 +3125,14 @@ impl<R: PermissionResponder> PermissionQueue<R> {
     /// NOW — the newcomer itself when the screen was free, otherwise `None`
     /// (it waits its turn).
     fn admit(&mut self, responder: R, card: QueuedPermission) -> Option<QueuedPermission> {
-        self.responders.insert(card.request_id.clone(), responder);
+        self.responders.insert(
+            card.request_id.clone(),
+            Parked {
+                responder,
+                tool_call_id: crate::acp::session_state::extract_tool_call_id(&card.tool_call),
+                options: card.options.clone(),
+            },
+        );
         if self.showing.is_none() {
             self.showing = Some(card.request_id.clone());
             Some(card)
@@ -3118,19 +3148,31 @@ impl<R: PermissionResponder> PermissionQueue<R> {
     /// false`) — two clients racing the same card must not double-respond to a
     /// responder that has already been consumed.
     fn resolve(&mut self, request_id: &str, option_id: String) -> ResolvedPermission {
-        let Some((pending, departure)) = self.take(request_id) else {
+        let Some((parked, departure)) = self.take(request_id) else {
             return ResolvedPermission {
                 answered: false,
                 next: None,
+                decision: None,
             };
         };
-        pending.respond_selected(option_id);
+        let decision = parked
+            .options
+            .iter()
+            .find(|o| o.option_id == option_id)
+            .filter(|_| !parked.tool_call_id.is_empty())
+            .map(|o| PermissionDecision {
+                tool_call_id: parked.tool_call_id.clone(),
+                option_kind: o.kind.clone(),
+                option_name: o.name.clone(),
+            });
+        parked.responder.respond_selected(option_id);
         ResolvedPermission {
             answered: true,
             next: match departure {
                 Departure::Shown { next } => next,
                 Departure::Queued => None,
             },
+            decision,
         }
     }
 
@@ -3139,14 +3181,14 @@ impl<R: PermissionResponder> PermissionQueue<R> {
     /// `None` when the id is no longer ours — answered or drained first, which
     /// is the common outcome of a withdrawal racing the user's click.
     fn withdraw(&mut self, request_id: &str) -> Option<Departure> {
-        let (pending, departure) = self.take(request_id)?;
-        pending.respond_cancelled();
+        let (parked, departure) = self.take(request_id)?;
+        parked.responder.respond_cancelled();
         Some(departure)
     }
 
     /// Remove `request_id`'s responder and card, promoting the next card when
     /// it was the one on screen. `None` when the id is not ours.
-    fn take(&mut self, request_id: &str) -> Option<(R, Departure)> {
+    fn take(&mut self, request_id: &str) -> Option<(Parked<R>, Departure)> {
         let pending = self.responders.remove(request_id)?;
         if self.showing.as_deref() == Some(request_id) {
             let next = self.promote_next();
@@ -3175,12 +3217,12 @@ impl<R: PermissionResponder> PermissionQueue<R> {
             let withdrawn = self
                 .responders
                 .get(&card.request_id)
-                .is_some_and(R::is_withdrawn);
+                .is_some_and(|parked| parked.responder.is_withdrawn());
             if !withdrawn {
                 return Some(card);
             }
-            if let Some(pending) = self.responders.remove(&card.request_id) {
-                pending.respond_cancelled();
+            if let Some(parked) = self.responders.remove(&card.request_id) {
+                parked.responder.respond_cancelled();
             }
             // Pairs with its `queued` line; the queue cannot take the state
             // lock the other lines' scope needs, and the id is unique enough.
@@ -3203,8 +3245,8 @@ impl<R: PermissionResponder> PermissionQueue<R> {
     /// the `detached` ones — dropping their abort senders lets each bridged
     /// task clear its own surface.
     fn drain(&mut self) -> Option<String> {
-        for (_, pending) in self.responders.drain() {
-            pending.respond_cancelled();
+        for (_, parked) in self.responders.drain() {
+            parked.responder.respond_cancelled();
         }
         self.waiting.clear();
         self.detached.clear();
@@ -3363,6 +3405,7 @@ async fn resolve_permission(
     if !resolved.answered {
         return;
     }
+    let decided_at = chrono::Utc::now();
     // Pairs with the `shown` line: a watchdog reading only the raise side can't
     // tell a permission the user answered in seconds from one that has been
     // blocking the agent since. Resolved AFTER the idempotent no-op check, so a
@@ -3375,6 +3418,7 @@ async fn resolve_permission(
     }
     // Only an answer that took effect gets here (a stale or duplicate one
     // returned above), so this option and origin are the effective ones.
+    let origin_kind = origin.kind();
     emit_with_state(
         state,
         emitter,
@@ -3385,6 +3429,22 @@ async fn resolve_permission(
         },
     )
     .await;
+    if let Some(decision) = resolved.decision {
+        emit_with_state(
+            state,
+            emitter,
+            AcpEvent::ToolApproval {
+                approval: ToolApprovalInfo {
+                    tool_call_id: decision.tool_call_id,
+                    option_kind: decision.option_kind,
+                    option_name: decision.option_name,
+                    origin: origin_kind.to_string(),
+                    decided_at,
+                },
+            },
+        )
+        .await;
+    }
 }
 
 /// Publish the card a departing one promoted onto the screen, with `depth`
@@ -22324,6 +22384,65 @@ mod tests {
     }
 
     #[test]
+    fn permission_queue_reports_what_an_answer_decided_about_its_tool_call() {
+        let (mut q, log) = stub_queue();
+        let option = |id: &str, name: &str, kind: &str| PermissionOptionInfo {
+            option_id: id.into(),
+            name: name.into(),
+            kind: kind.into(),
+            meta: None,
+        };
+        let options = vec![
+            option("allow", "Allow", "allow_once"),
+            option("always", "Always Allow", "allow_always"),
+            option("deny", "Reject", "reject_once"),
+        ];
+        for (id, tool_call) in [
+            ("a", serde_json::json!({ "toolCallId": "tc-a" })),
+            ("b", serde_json::json!({ "title": "no call named" })),
+            ("c", serde_json::json!({ "toolCallId": "tc-c" })),
+            ("d", serde_json::json!({ "toolCallId": "tc-d" })),
+        ] {
+            q.admit(
+                StubResponder {
+                    request_id: id.into(),
+                    log: Arc::clone(&log),
+                    withdrawn: Default::default(),
+                },
+                QueuedPermission {
+                    request_id: id.into(),
+                    tool_call,
+                    options: options.clone(),
+                },
+            );
+        }
+        let decision = |tool_call_id: &str, option_kind: &str, option_name: &str| {
+            Some(PermissionDecision {
+                tool_call_id: tool_call_id.into(),
+                option_kind: option_kind.into(),
+                option_name: option_name.into(),
+            })
+        };
+
+        // A card still waiting behind the visible one carries its own facts.
+        assert_eq!(
+            q.resolve("c", "deny".into()).decision,
+            decision("tc-c", "reject_once", "Reject")
+        );
+        assert_eq!(
+            q.resolve("a", "always".into()).decision,
+            decision("tc-a", "allow_always", "Always Allow")
+        );
+        let unnamed = q.resolve("b", "allow".into());
+        assert!(unnamed.answered);
+        assert_eq!(unnamed.decision, None, "the card named no tool call");
+        let bogus = q.resolve("d", "not-offered".into());
+        assert!(bogus.answered, "the agent still gets the answer");
+        assert_eq!(bogus.decision, None, "but it decided nothing we can name");
+        assert_eq!(q.resolve("zzz", "allow".into()).decision, None);
+    }
+
+    #[test]
     fn permission_queue_drain_cancels_all_and_reports_the_visible_card() {
         let (mut q, log) = stub_queue();
         admit_stub(&mut q, &log, "a");
@@ -22693,6 +22812,12 @@ mod tests {
             "the card must be retracted, not left up with no one behind it, and \
              a withdrawal names no option and no answerer"
         );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e.payload, AcpEvent::ToolApproval { .. })),
+            "a withdrawal decided nothing about the call"
+        );
         assert!(perms.lock().await.showing.is_none());
     }
 
@@ -22834,6 +22959,28 @@ mod tests {
             vec![(shown, Some("deny".to_string()), Some(policy))],
             "exactly one report, naming the effective option and its answerer"
         );
+
+        // …followed by exactly one record of what it decided about the call.
+        let resolved_at = events
+            .iter()
+            .position(|e| matches!(e.payload, AcpEvent::PermissionResolved { .. }))
+            .expect("resolved");
+        let approvals: Vec<_> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match &e.payload {
+                AcpEvent::ToolApproval { approval } => Some((i, approval.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(approvals.len(), 1, "one record per effective answer");
+        let (approval_at, approval) = &approvals[0];
+        assert!(*approval_at > resolved_at, "after the card is retired");
+        assert_eq!(approval.tool_call_id, "call-1");
+        assert_eq!(approval.option_kind, "reject_once");
+        assert_eq!(approval.option_name, "Deny");
+        assert_eq!(approval.origin, "cli_policy");
+        assert_eq!(guard.tool_approvals, vec![approval.clone()]);
     }
 
     /// An agent request codeg has no handler for still gets an answer. One

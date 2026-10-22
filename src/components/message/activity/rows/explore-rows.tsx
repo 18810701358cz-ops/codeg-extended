@@ -23,6 +23,7 @@ import { useDisclosure } from "../disclosure-store"
 import { RailDot, RailIcon } from "../rail-icon"
 import { ResultBody } from "../result-body"
 import { ToolFigure, ToolNotes, toolIcon, useStatusText } from "../step-visuals"
+import { useAwaitedStep, useLiveToolStep } from "../use-live-step"
 import { ThoughtRow } from "./thought-row"
 
 type ToolStep = Extract<ActivityStep, { type: "tool" }>
@@ -99,7 +100,7 @@ function useExploreSummary(steps: ActivityStep[]): string {
 export const ExploreGroupRow = memo(function ExploreGroupRow({
   groupKey,
   steps,
-  status,
+  status: given,
 }: {
   groupKey: string
   steps: ActivityStep[]
@@ -115,12 +116,16 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
       (s.tool.status === "failed" || s.tool.status === "rejected") &&
       !recoveredKeys.has(s.key)
   )
+  const awaited = useAwaitedStep(steps)
   const [open, setOpen] = useDisclosure(`group:${groupKey}`, {
     defaultOpen: false,
     force: failedOpen,
   })
+  const status = awaited ? "awaiting" : given
   const live = status === "running" || status === "pending"
-  const liveStep = !open && live ? lastLiveTool(steps) : null
+  const liveStep = open
+    ? null
+    : (awaited ?? (live ? lastLiveTool(steps) : null))
 
   return (
     <ActivityRow
@@ -180,7 +185,7 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
             live ? "activity-shimmer" : "text-foreground"
           )}
         >
-          {live ? t("row.exploring") : t("row.explored")}
+          {live || awaited ? t("row.exploring") : t("row.explored")}
         </span>
         <span className="min-w-0 truncate text-muted-foreground">
           {summary}
@@ -230,7 +235,7 @@ const STEP_VERB_KEY = {
  * agent/src/q.py  212 lines`.
  */
 export const ExploreChildRow = memo(function ExploreChildRow({
-  step,
+  step: given,
   standalone = false,
 }: {
   step: ToolStep
@@ -239,6 +244,7 @@ export const ExploreChildRow = memo(function ExploreChildRow({
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
   const { recoveredKeys } = useActivityRender()
+  const step = useLiveToolStep(given)
   const { tool, part } = step
   const known = tool.kind in VERB_KEY
   const path = useDisplayPath(tool.target?.path)
@@ -278,6 +284,7 @@ export const ExploreChildRow = memo(function ExploreChildRow({
       expanded={open}
       onExpandedChange={setOpen}
       title={tool.target?.full ?? tool.target?.path ?? undefined}
+      approval={tool.approval}
       trailing={<ToolFigure tool={tool} />}
       detail={() => <ExploreDetail step={step} />}
     >

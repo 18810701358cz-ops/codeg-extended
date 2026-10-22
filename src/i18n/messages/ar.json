@@ -4175,6 +4175,13 @@
           "showAll": "عرض كل الأسطر ({count})",
           "tailOnly": "عرض آخر {count} سطر فقط",
           "streamingTail": "يعرض أحدث المخرجات أثناء التشغيل"
+        },
+        "approval": {
+          "allowOnce": "سُمح مرة واحدة",
+          "allowAlways": "مسموح دائمًا",
+          "rejected": "رُفض",
+          "viaChatChannel": "عبر قناة دردشة",
+          "byPolicy": "بحسب سياسة أذونات التشغيل"
         }
       },
       "messageNav": {

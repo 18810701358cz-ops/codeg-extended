@@ -3,8 +3,10 @@
 import { useId, type ReactNode } from "react"
 import { ChevronRightIcon } from "lucide-react"
 
+import type { ToolApproval } from "@/lib/activity/approval"
 import type { StepStatus } from "@/lib/activity/types"
 import { cn } from "@/lib/utils"
+import { ApprovalChip, showsApproval } from "./approval-chip"
 
 const MARKER_POSITION = {
   main: {
@@ -37,6 +39,7 @@ export function ActivityRow({
   variant = "main",
   children,
   trailing,
+  approval,
   expandable = false,
   expanded = false,
   onExpandedChange,
@@ -56,6 +59,9 @@ export function ActivityRow({
   children: ReactNode
   /** The right-hand figure: `84 lines`, `+3 −1`, `exit 1`. */
   trailing?: ReactNode
+  /** How the call's permission request was answered: a chip ahead of the
+   *  figure. */
+  approval?: ToolApproval | null
   expandable?: boolean
   expanded?: boolean
   onExpandedChange?: (open: boolean) => void
@@ -73,6 +79,9 @@ export function ActivityRow({
 }) {
   const detailId = useId()
   const open = expandable && expanded
+  const chip = showsApproval(approval, status) ? (
+    <ApprovalChip approval={approval} />
+  ) : null
 
   const header = (
     <>
@@ -88,8 +97,9 @@ export function ActivityRow({
           />
         ) : null}
       </span>
-      {trailing ? (
-        <span className="activity-mono ms-auto shrink-0 ps-3 text-xs leading-6 text-muted-foreground">
+      {trailing || chip ? (
+        <span className="activity-mono ms-auto flex shrink-0 items-center gap-3 ps-3 text-xs leading-6 text-muted-foreground">
+          {chip}
           {trailing}
         </span>
       ) : null}

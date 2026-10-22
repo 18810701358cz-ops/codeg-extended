@@ -185,6 +185,7 @@ export const DelegationRow = memo(function DelegationRow({
     <>
       <ActivityRow
         stepKey={step.key}
+        approval={step.tool.approval}
         status={status}
         marker={
           <RailIcon

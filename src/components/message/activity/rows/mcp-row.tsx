@@ -64,6 +64,7 @@ export const McpRow = memo(function McpRow({ step }: { step: ToolStep }) {
   return (
     <ActivityRow
       stepKey={step.key}
+      approval={step.tool.approval}
       status={tool.status}
       marker={
         <RailIcon

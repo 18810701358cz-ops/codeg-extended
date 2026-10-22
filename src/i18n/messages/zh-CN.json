@@ -4175,6 +4175,13 @@
           "showAll": "显示全部 {count} 行",
           "tailOnly": "只显示最后 {count} 行",
           "streamingTail": "运行中，显示最新输出"
+        },
+        "approval": {
+          "allowOnce": "已批准一次",
+          "allowAlways": "总是允许",
+          "rejected": "已拒绝",
+          "viaChatChannel": "来自聊天频道",
+          "byPolicy": "由运行的权限策略决定"
         }
       },
       "messageNav": {

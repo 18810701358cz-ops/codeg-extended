@@ -4175,6 +4175,13 @@
           "showAll": "전체 {count}줄 보기",
           "tailOnly": "마지막 {count}줄만 표시",
           "streamingTail": "실행 중이라 최신 출력을 표시합니다"
+        },
+        "approval": {
+          "allowOnce": "이번만 허용",
+          "allowAlways": "항상 허용",
+          "rejected": "거부됨",
+          "viaChatChannel": "채팅 채널에서",
+          "byPolicy": "실행 권한 정책에 따름"
         }
       },
       "messageNav": {

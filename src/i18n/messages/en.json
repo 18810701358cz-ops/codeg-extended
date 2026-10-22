@@ -4175,6 +4175,13 @@
           "showAll": "Show all {count} lines",
           "tailOnly": "Showing the last {count} lines",
           "streamingTail": "Showing the latest output while it runs"
+        },
+        "approval": {
+          "allowOnce": "approved once",
+          "allowAlways": "always allowed",
+          "rejected": "declined",
+          "viaChatChannel": "via a chat channel",
+          "byPolicy": "by the run's permission policy"
         }
       },
       "messageNav": {

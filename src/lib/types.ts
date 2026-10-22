@@ -1581,6 +1581,24 @@ export type PermissionAnswerOrigin =
   | { kind: "chat_channel" }
   | { kind: "cli_policy"; run_id: string }
 
+/**
+ * One answered permission request, as a record about its tool call (Rust
+ * `ToolApprovalInfo`): live on the `tool_approval` event and the snapshot's
+ * `tool_approvals`, and kept by the backend for reopened conversations.
+ */
+export interface ToolApprovalInfo {
+  tool_call_id: string
+  /** The chosen option's ACP kind (`allow_once`, `allow_always`,
+   *  `reject_once`, `reject_always`), verbatim. */
+  option_kind: string
+  /** The chosen option's label in the agent's own words. */
+  option_name: string
+  /** `PermissionAnswerOrigin.kind` of whoever answered. */
+  origin: string
+  /** ISO timestamp. */
+  decided_at: string
+}
+
 // --- ask_user_question (mirror of Rust `crate::acp::question`) ---
 
 /** One selectable choice in an `ask_user_question` (mirror of `QuestionOption`). */
@@ -2974,6 +2992,14 @@ export type AcpEvent =
     }
   | {
       /**
+       * What an answer decided about the card's tool call. Follows the
+       * `permission_resolved` that retired the card, only for answers.
+       */
+      type: "tool_approval"
+      approval: ToolApprovalInfo
+    }
+  | {
+      /**
        * Depth-only update: a new request queued up behind the visible card,
        * which publishes no `permission_request` of its own. Without this the
        * card's `queued` count would go stale.
@@ -3756,6 +3782,9 @@ export interface LiveSessionSnapshot {
    *  watermarks included, so an attaching client seeds the same monotonic
    *  merge the live path applies. Absent while empty (the common case). */
   session_failures?: SessionFailureRecord[]
+  /** The connection's recent approval records, oldest first, one per tool
+   *  call. Absent while empty (the common case). */
+  tool_approvals?: ToolApprovalInfo[]
   /** AIR async tasks, merged. Terminal rows included: they carry the ids the
    *  subsequent live deltas revise, so a client seeded without them would
    *  re-create a settled task as a running one on its next correction. Absent

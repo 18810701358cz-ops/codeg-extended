@@ -16,6 +16,10 @@ import { useMemo, useState } from "react"
 import { Message, MessageContent } from "@/components/ai-elements/message"
 import { CompletedTurnContent } from "@/components/message/completed-turn-content"
 import { ContentPartsRenderer } from "@/components/message/content-parts-renderer"
+import {
+  ActivityLiveProvider,
+  type ActivityLiveValue,
+} from "@/components/message/activity/activity-live-context"
 import { setActivityTimelineEnabled } from "@/components/message/activity/use-activity-flag"
 import {
   StaticConnectionStoreProvider,
@@ -30,6 +34,10 @@ import {
   type WorkspaceActionsValue,
 } from "@/contexts/workspace-context"
 import { adaptMessageTurn } from "@/lib/adapters/ai-elements-adapter"
+import {
+  EMPTY_TOOL_APPROVALS,
+  type ToolApprovalMap,
+} from "@/lib/activity/approval"
 import {
   fixtureLines,
   MOCKUP_ADAPTER_TEXT,
@@ -330,10 +338,34 @@ type Scenario = {
   turn: MessageTurn
   live?: boolean
   inProgress?: string[]
+  /** The connection's answered permission requests, by tool call id. */
+  approvals?: ToolApprovalMap
+}
+
+const MAIN_APPROVALS: ToolApprovalMap = {
+  t13: {
+    tool_call_id: "t13",
+    option_kind: "allow_always",
+    option_name: "Yes, and don't ask again for python commands",
+    origin: "user",
+    decided_at: "2026-10-22T09:44:02Z",
+  },
+  t15: {
+    tool_call_id: "t15",
+    option_kind: "allow_once",
+    option_name: "Yes",
+    origin: "chat_channel",
+    decided_at: "2026-10-22T09:46:30Z",
+  },
 }
 
 const SCENARIOS: Scenario[] = [
-  { id: "main", title: "Reference turn", turn: MOCKUP_ASSISTANT_TURN },
+  {
+    id: "main",
+    title: "Reference turn",
+    turn: MOCKUP_ASSISTANT_TURN,
+    approvals: MAIN_APPROVALS,
+  },
   {
     id: "live",
     title: "Live turn",
@@ -360,23 +392,32 @@ function ScenarioView({ scenario }: { scenario: Scenario }) {
       ),
     [scenario]
   )
+  const live = useMemo<ActivityLiveValue>(
+    () => ({
+      awaitingToolCallId: null,
+      approvals: scenario.approvals ?? EMPTY_TOOL_APPROVALS,
+    }),
+    [scenario]
+  )
   return (
     <section data-scenario={scenario.id} className="space-y-3">
       <h2 className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
         {scenario.title}
       </h2>
-      <Message from="assistant">
-        <MessageContent>
-          <CompletedTurnContent
-            parts={adapted.content}
-            durationMs={scenario.turn.duration_ms}
-            completed={!scenario.live}
-            currentRound
-            roundOpen={roundOpen}
-            onRoundOpenChange={setRoundOpen}
-          />
-        </MessageContent>
-      </Message>
+      <ActivityLiveProvider value={live}>
+        <Message from="assistant">
+          <MessageContent>
+            <CompletedTurnContent
+              parts={adapted.content}
+              durationMs={scenario.turn.duration_ms}
+              completed={!scenario.live}
+              currentRound
+              roundOpen={roundOpen}
+              onRoundOpenChange={setRoundOpen}
+            />
+          </MessageContent>
+        </Message>
+      </ActivityLiveProvider>
     </section>
   )
 }

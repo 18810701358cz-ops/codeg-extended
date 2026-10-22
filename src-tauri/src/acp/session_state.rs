@@ -19,7 +19,8 @@ use crate::acp::question::PendingQuestionState;
 use crate::acp::types::{
     AcpEvent, AsyncTaskRecord, AvailableCommandInfo, ConfigStaleKind, ConnectionStatus,
     EventEnvelope, GrokModelCatalog, GrokModelSpec, PromptCapabilitiesInfo, RemoteControlInfo,
-    SessionConfigOptionInfo, SessionFailureRecord, SessionModeStateInfo, ToolCallImageInfo,
+    SessionConfigOptionInfo, SessionFailureRecord, SessionModeStateInfo, ToolApprovalInfo,
+    ToolCallImageInfo,
 };
 use crate::models::agent::AgentType;
 use crate::models::message::MessageRole;
@@ -322,6 +323,15 @@ pub struct SessionState {
     /// pending notes the one-shot `FeedbackSubmitted` event won't replay for it.
     /// Size is human-bounded (one entry per note the user types this turn).
     pub feedback: Vec<FeedbackItem>,
+
+    /// This connection's answered permission requests, as records about their
+    /// tool calls (`AcpEvent::ToolApproval`), oldest first, one per tool call.
+    /// NOT turn-scoped: the transcript keeps drawing a call's approval after
+    /// its turn ends, and a client attaching later has no other live source
+    /// for the ones the lifecycle worker may not have stored yet. Carried on
+    /// `to_snapshot()`; capped at [`MAX_TOOL_APPROVALS`], past which the
+    /// `tool_approval` table serves the transcript on its own.
+    pub tool_approvals: Vec<ToolApprovalInfo>,
 
     /// Launched-but-unresolved background tasks (async sub-agents + background
     /// shell tasks), mirrored from the transcript watcher's authoritative
@@ -839,6 +849,7 @@ impl SessionState {
             pending_plan_approval: None,
             active_delegations: BTreeMap::new(),
             feedback: Vec::new(),
+            tool_approvals: Vec::new(),
             background_outstanding: 0,
             background_activity_at: None,
             modes: None,
@@ -1194,6 +1205,17 @@ impl SessionState {
                     Some(p) if p.request_id == *request_id,
                 ) {
                     self.pending_permission = None;
+                }
+            }
+            AcpEvent::ToolApproval { approval } => {
+                // One record per call: a later answer about the same call
+                // replaces the earlier one and moves to the newest end.
+                self.tool_approvals
+                    .retain(|a| a.tool_call_id != approval.tool_call_id);
+                self.tool_approvals.push(approval.clone());
+                if self.tool_approvals.len() > MAX_TOOL_APPROVALS {
+                    let excess = self.tool_approvals.len() - MAX_TOOL_APPROVALS;
+                    self.tool_approvals.drain(..excess);
                 }
             }
             AcpEvent::QuestionRequest {
@@ -2307,6 +2329,7 @@ impl SessionState {
             pending_user_message: self.pending_user_message.clone(),
             active_delegations: self.active_delegations.values().cloned().collect(),
             feedback: self.feedback.clone(),
+            tool_approvals: self.tool_approvals.clone(),
             background_outstanding: self.background_outstanding,
             feedback_tool_available: self.feedback_tool_available,
             native_steering_available: self.native_steering_available,
@@ -2422,6 +2445,12 @@ pub struct LiveSessionSnapshot {
     /// wire so every snapshot stays byte-identical with the pre-feature shape.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub feedback: Vec<FeedbackItem>,
+    /// The connection's recent approval records (see
+    /// `SessionState.tool_approvals`). Same `default` / `skip_serializing_if`
+    /// treatment as `feedback`: absent from older payloads, and off the wire
+    /// for a connection that has answered nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_approvals: Vec<ToolApprovalInfo>,
     /// Launched-but-unresolved background tasks (see
     /// `SessionState.background_outstanding`) — lets a client attaching
     /// mid-episode (web reconnect, new window) recover the pending count the
@@ -2524,6 +2553,12 @@ fn u32_is_zero(v: &u32) -> bool {
 /// budget. That is the same size it ships today.
 const MAX_SNAPSHOT_TOOL_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 
+/// How many approval records [`SessionState::tool_approvals`] keeps. A record
+/// is a few hundred bytes, and a connection that has answered more than this
+/// many permission requests has long had the older ones stored, so the cap
+/// only bounds the snapshot of a very long-lived connection.
+const MAX_TOOL_APPROVALS: usize = 256;
+
 /// The part of a `ToolCallState` a trim actually removes: the RESULT payload,
 /// which grows with what the tool did. Excludes the identity fields (id / kind /
 /// label / status / meta) and `images`, which every entry keeps whatever the
@@ -2614,7 +2649,7 @@ fn parse_tool_call_output_text(text: &str) -> ToolCallOutput {
 /// `PendingPermissionState.tool_call_id`——快查路径（match by id 时不必每次重
 /// 解析整个 tool_call value）。完整 tool_call value 由调用方另行保留，前端
 /// 依赖它做 diff / 命令 / plan 渲染。同时兼容 camelCase / snake_case。
-fn extract_tool_call_id(tool_call: &serde_json::Value) -> String {
+pub(crate) fn extract_tool_call_id(tool_call: &serde_json::Value) -> String {
     tool_call
         .as_object()
         .and_then(|o| {
@@ -5016,6 +5051,72 @@ mod tests {
             .as_ref()
             .expect("stale PermissionResolved must not clear a non-matching pending permission");
         assert_eq!(p.request_id, "p-2");
+    }
+
+    fn approval(tool_call_id: &str, option_kind: &str) -> ToolApprovalInfo {
+        ToolApprovalInfo {
+            tool_call_id: tool_call_id.into(),
+            option_kind: option_kind.into(),
+            option_name: "Allow".into(),
+            origin: "user".into(),
+            decided_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn tool_approvals_keep_one_record_per_call_across_turns() {
+        let mut s = fresh_state();
+        s.apply_event(&AcpEvent::ToolApproval {
+            approval: approval("tc-1", "allow_once"),
+        });
+        s.apply_event(&AcpEvent::ToolApproval {
+            approval: approval("tc-2", "allow_once"),
+        });
+        // A second answer about the same call replaces the first and becomes
+        // the newest.
+        let again = approval("tc-1", "reject_once");
+        s.apply_event(&AcpEvent::ToolApproval {
+            approval: again.clone(),
+        });
+        // Not turn-scoped: a finished turn keeps its approvals.
+        s.apply_event(&AcpEvent::TurnComplete {
+            session_id: "ext".into(),
+            stop_reason: "end_turn".into(),
+            agent_type: "claude_code".into(),
+        });
+        let ids: Vec<_> = s
+            .tool_approvals
+            .iter()
+            .map(|a| a.tool_call_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["tc-2", "tc-1"]);
+        assert_eq!(s.tool_approvals[1], again);
+
+        let snap = s.to_snapshot();
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let back: LiveSessionSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.tool_approvals, s.tool_approvals);
+        let empty_json = serde_json::to_string(&fresh_state().to_snapshot()).expect("serialize");
+        assert!(
+            !empty_json.contains("tool_approvals"),
+            "a connection that answered nothing keeps the field off the wire"
+        );
+    }
+
+    #[test]
+    fn tool_approvals_drop_the_oldest_past_the_cap() {
+        let mut s = fresh_state();
+        for i in 0..MAX_TOOL_APPROVALS + 3 {
+            s.apply_event(&AcpEvent::ToolApproval {
+                approval: approval(&format!("tc-{i}"), "allow_once"),
+            });
+        }
+        assert_eq!(s.tool_approvals.len(), MAX_TOOL_APPROVALS);
+        assert_eq!(s.tool_approvals[0].tool_call_id, "tc-3");
+        assert_eq!(
+            s.tool_approvals.last().map(|a| a.tool_call_id.as_str()),
+            Some(format!("tc-{}", MAX_TOOL_APPROVALS + 2).as_str())
+        );
     }
 
     #[test]

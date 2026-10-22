@@ -4175,6 +4175,13 @@
           "showAll": "全 {count} 行を表示",
           "tailOnly": "最後の {count} 行のみ表示",
           "streamingTail": "実行中のため最新の出力を表示"
+        },
+        "approval": {
+          "allowOnce": "今回のみ許可",
+          "allowAlways": "常に許可",
+          "rejected": "拒否",
+          "viaChatChannel": "チャットチャネル経由",
+          "byPolicy": "実行の権限ポリシーによる"
         }
       },
       "messageNav": {

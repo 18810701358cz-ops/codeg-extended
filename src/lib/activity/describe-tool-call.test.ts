@@ -376,3 +376,36 @@ describe("describeToolCall: MCP and generic tools", () => {
     expect(describeToolCall(part)).toBe(describeToolCall(part))
   })
 })
+
+describe("describeToolCall: approvals", () => {
+  it("carries the approval a detail load stamped on the call", () => {
+    const tool = describeToolCall(
+      call(
+        "Bash",
+        { command: "git commit -am wip" },
+        {
+          meta: {
+            "codeg.approval": {
+              option_kind: "allow_once",
+              option_name: "Allow",
+              origin: "user",
+              decided_at: "2026-10-22T09:41:12Z",
+            },
+          },
+        }
+      )
+    )
+    expect(tool.approval).toEqual({
+      decision: "allowOnce",
+      optionName: "Allow",
+      origin: "user",
+      decidedAt: "2026-10-22T09:41:12Z",
+    })
+  })
+
+  it("has none when the call carries no stamp", () => {
+    expect(
+      describeToolCall(call("Read", { file_path: "/r/a.ts" })).approval
+    ).toBeNull()
+  })
+})

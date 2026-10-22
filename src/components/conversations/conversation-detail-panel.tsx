@@ -2110,13 +2110,15 @@ const ConversationTabView = memo(function ConversationTabView({
   )
 
   // Which tool call a pending approval is about, so the activity timeline can
-  // mark that step as waiting on the user.
+  // mark that step as waiting on the user; and how the connection's answered
+  // ones went, for the chips on their rows.
   const awaitingToolCallId = extractPermissionToolCallId(
     conn.pendingPermission?.tool_call
   )
+  const approvals = conn.toolApprovals
   const activityLive = useMemo(
-    () => ({ awaitingToolCallId }),
-    [awaitingToolCallId]
+    () => ({ awaitingToolCallId, approvals }),
+    [awaitingToolCallId, approvals]
   )
 
   const messageListNode = (

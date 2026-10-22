@@ -4175,6 +4175,13 @@
           "showAll": "顯示全部 {count} 行",
           "tailOnly": "只顯示最後 {count} 行",
           "streamingTail": "執行中，顯示最新輸出"
+        },
+        "approval": {
+          "allowOnce": "已核准一次",
+          "allowAlways": "一律允許",
+          "rejected": "已拒絕",
+          "viaChatChannel": "來自聊天頻道",
+          "byPolicy": "由執行的權限原則決定"
         }
       },
       "messageNav": {

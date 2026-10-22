@@ -34,6 +34,7 @@ import {
   normalizeToolName,
   toolCallMovedToBackground,
 } from "@/lib/tool-call-normalization"
+import { approvalFromMeta } from "./approval"
 import {
   detectHeredoc,
   extractCommandExit,
@@ -258,6 +259,7 @@ function emptyDescriptor(
     files: null,
     mcp: null,
     background: null,
+    approval: null,
   }
 }
 
@@ -511,7 +513,10 @@ function describeUncached(part: AdaptedToolCallPart): ToolDescriptor {
   const kind = toolStepKind(part)
   const toolName = normalizeToolName(part.toolName)
   const status = toolCallStatus(part)
-  const base = emptyDescriptor(kind, toolName, status)
+  const base = {
+    ...emptyDescriptor(kind, toolName, status),
+    approval: approvalFromMeta(part.meta),
+  }
   const payload = payloadOf(part)
 
   switch (kind) {

@@ -118,6 +118,7 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
     <>
       <ActivityRow
         stepKey={step.key}
+        approval={step.tool.approval}
         status={status}
         marker={
           <RailIcon

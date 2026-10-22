@@ -27,6 +27,7 @@ import {
   toolResult,
   toolUse,
 } from "@/lib/activity/__fixtures__/mockup-turn"
+import type { ToolApprovalMap } from "@/lib/activity/approval"
 import type { ContentBlock, MessageTurn } from "@/lib/types"
 import { CompletedTurnContent } from "../completed-turn-content"
 import { ActivityLiveProvider } from "./activity-live-context"
@@ -71,13 +72,17 @@ function Round({
   )
 }
 
-function renderUi(ui: ReactElement, awaitingToolCallId: string | null = null) {
+function renderUi(
+  ui: ReactElement,
+  awaitingToolCallId: string | null = null,
+  approvals: ToolApprovalMap = {}
+) {
   return render(
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <StaticConnectionStoreProvider store={STORE}>
         <StaticDelegationProvider value={DELEGATION}>
           <StaticWorkspaceActionsProvider value={WORKSPACE}>
-            <ActivityLiveProvider value={{ awaitingToolCallId }}>
+            <ActivityLiveProvider value={{ awaitingToolCallId, approvals }}>
               {ui}
             </ActivityLiveProvider>
           </StaticWorkspaceActionsProvider>
@@ -307,5 +312,98 @@ describe("running clock", () => {
       vi.advanceTimersByTime(12_000)
     })
     expect(within(row).getByText("0:12")).toBeTruthy()
+  })
+})
+
+describe("approval chips", () => {
+  const record = (toolCallId: string, optionKind: string) => ({
+    tool_call_id: toolCallId,
+    option_kind: optionKind,
+    option_name: "Allow",
+    origin: "user",
+    decided_at: "2026-10-22T09:41:12Z",
+  })
+
+  it("draws a reopened conversation's approval on the call's row", () => {
+    const REOPENED = turn([
+      toolUse(
+        "c1",
+        "Bash",
+        { command: "git commit -am wip" },
+        {
+          "codeg.approval": {
+            option_kind: "allow_always",
+            option_name: "Yes, and don't ask again for git commands",
+            origin: "chat_channel",
+            decided_at: "2026-10-22T09:41:12Z",
+          },
+        }
+      ),
+      toolResult("c1", "[main 1a2b3c4] wip"),
+    ])
+    renderUi(<Round parts={parts(REOPENED)} />)
+    const chip = within(rowOf("git commit -am wip")).getByText("always allowed")
+    expect(chip.getAttribute("title")).toMatch(
+      /^Yes, and don't ask again for git commands · via a chat channel · /
+    )
+  })
+
+  it("draws the live connection's answer, which the history has yet to carry", () => {
+    const LIVE = turn([
+      toolUse("c1", "Bash", { command: "pnpm build" }),
+      toolResult("c1", "built"),
+    ])
+    renderUi(<Round parts={parts(LIVE)} />, null, {
+      c1: record("c1", "allow_once"),
+    })
+    expect(within(rowOf("pnpm build")).getByText("approved once")).toBeTruthy()
+  })
+
+  it("says a declined call was declined, once", () => {
+    const DECLINED = turn([
+      toolUse("c1", "Bash", { command: "rm -rf build" }),
+      toolResult("c1", "Error: tool call was not run", true),
+    ])
+    renderUi(<Round parts={parts(DECLINED)} />, null, {
+      c1: record("c1", "reject_once"),
+    })
+    const row = rowOf("rm -rf build")
+    expect(row.getAttribute("data-status")).toBe("rejected")
+    expect(within(row).getAllByText("declined")).toHaveLength(1)
+  })
+
+  it("marks an approved call inside an opened group", () => {
+    const RUN = turn([
+      toolUse("c1", "Bash", { command: "pnpm lint" }),
+      toolResult("c1", "ok"),
+      toolUse("c2", "Bash", { command: "pnpm test" }),
+      toolResult("c2", "ok"),
+    ])
+    renderUi(<Round parts={parts(RUN)} />, null, {
+      c2: record("c2", "allow_once"),
+    })
+    fireEvent.click(screen.getByRole("button", { name: /Ran 2 commands/ }))
+    expect(within(rowOf("pnpm test")).getByText("approved once")).toBeTruthy()
+    expect(within(rowOf("pnpm lint")).queryByText("approved once")).toBeNull()
+  })
+})
+
+describe("a folded group waiting on the user", () => {
+  it("shows the member that needs the user under its header", () => {
+    const LIVE = turn([
+      toolUse("c1", "Bash", { command: "pnpm lint" }),
+      toolResult("c1", "ok"),
+      toolUse("c2", "Bash", { command: "rm -rf build" }),
+    ])
+    renderUi(
+      <Round parts={parts(LIVE, true, ["c2"])} completed={false} />,
+      "c2"
+    )
+    const group = rowOf("Running 2 commands")
+    expect(group.getAttribute("data-status")).toBe("awaiting")
+    const member = rowOf("rm -rf build")
+    expect(member.getAttribute("data-status")).toBe("awaiting")
+    expect(within(member).getByText("needs you")).toBeTruthy()
+    expect(screen.queryByText("pnpm lint")).toBeNull()
   })
 })

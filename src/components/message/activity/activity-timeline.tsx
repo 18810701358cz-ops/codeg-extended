@@ -11,7 +11,6 @@ import type {
 } from "@/lib/activity/types"
 import { ActivityRenderProvider, useActivityRender } from "./activity-context"
 import { cn } from "@/lib/utils"
-import { useActivityLive } from "./activity-live-context"
 import { GOAL_ICON, IMAGE_ICON, toolIcon } from "./step-visuals"
 import { AskQuestionResultCard } from "../ask-question-result-card"
 import { CODEG_MCP_TOOL_ICONS, CodegMcpToolCard } from "../codeg-mcp-tool-card"
@@ -33,6 +32,7 @@ import { GenericRow, ToolResultRow } from "./rows/generic-row"
 import { HostedRow, NoteRow } from "./rows/hosted-row"
 import { McpRow } from "./rows/mcp-row"
 import { ThoughtRow } from "./rows/thought-row"
+import { useLiveToolStep } from "./use-live-step"
 
 /**
  * The activity timeline: a reply's process as one row per step on a left
@@ -218,21 +218,9 @@ type ToolStep = Extract<ActivityStep, { type: "tool" }>
 function ToolStepView({ step: given }: { step: ToolStep }) {
   const t = useTranslations("Folder.chat.activity")
   const { renderPart } = useActivityRender()
-  // The call a pending approval is about is waiting on the user, whatever its
-  // transcript state says.
-  const { awaitingToolCallId } = useActivityLive()
-  const awaiting =
-    awaitingToolCallId !== null &&
-    awaitingToolCallId === given.part.toolCallId &&
-    given.tool.status !== "succeeded" &&
-    given.tool.status !== "failed"
-  const step = useMemo(
-    () =>
-      awaiting
-        ? { ...given, tool: { ...given.tool, status: "awaiting" as const } }
-        : given,
-    [awaiting, given]
-  )
+  // A pending approval's call waits on the user, an answered one carries the
+  // answer — whatever the transcript says.
+  const step = useLiveToolStep(given)
   const { tool, part } = step
   switch (tool.kind) {
     case "read":

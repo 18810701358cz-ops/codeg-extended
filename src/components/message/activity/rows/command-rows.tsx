@@ -27,6 +27,7 @@ import {
   useLiveElapsed,
 } from "../use-live-elapsed"
 import type { ToolStep } from "./explore-rows"
+import { useAwaitedStep, useLiveToolStep } from "../use-live-step"
 
 /** Tail of a running command's output kept for display (as the legacy card). */
 const LIVE_OUTPUT_CHARS = 24_000
@@ -338,7 +339,7 @@ function LiveTail({ text }: { text: string }) {
  * open; a running command stays folded with its last lines showing beneath.
  */
 export const CommandRow = memo(function CommandRow({
-  step,
+  step: given,
   inGroup = false,
 }: {
   step: ToolStep
@@ -347,6 +348,7 @@ export const CommandRow = memo(function CommandRow({
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
   const { recoveredKeys } = useActivityRender()
+  const step = useLiveToolStep(given)
   const { tool } = step
   const output = useCommandOutput(step)
   const failed = tool.status === "failed" || tool.status === "rejected"
@@ -389,6 +391,7 @@ export const CommandRow = memo(function CommandRow({
       expanded={open}
       onExpandedChange={setOpen}
       title={tool.command?.description ?? tool.command?.display ?? undefined}
+      approval={tool.approval}
       trailing={
         duration ??
         (clock ? (
@@ -407,12 +410,13 @@ export const CommandRow = memo(function CommandRow({
 
 /**
  * "Ran 2 commands · all passed". Folded unless a member failed without being
- * redone; while live and folded, the running member shows under the header.
+ * redone; while folded, a member waiting on the user or running shows under
+ * the header.
  */
 export const CommandGroupRow = memo(function CommandGroupRow({
   groupKey,
   steps,
-  status,
+  status: given,
 }: {
   groupKey: string
   steps: ActivityStep[]
@@ -426,19 +430,25 @@ export const CommandGroupRow = memo(function CommandGroupRow({
     (s) => s.tool.status === "failed" || s.tool.status === "rejected"
   )
   const unrecovered = failures.some((s) => !recoveredKeys.has(s.key))
+  const awaited = useAwaitedStep(tools)
   const [open, setOpen] = useDisclosure(`group:${groupKey}`, {
     defaultOpen: false,
     force: unrecovered,
   })
+  const status = awaited ? "awaiting" : given
   const live = status === "running" || status === "pending"
-  const liveStep =
-    !open && live
-      ? ([...tools]
-          .reverse()
-          .find(
-            (s) => s.tool.status === "running" || s.tool.status === "pending"
-          ) ?? null)
-      : null
+  // Folded, the member that needs the user — or else the one running — shows
+  // under the header, so the current step is never hidden.
+  const liveStep = open
+    ? null
+    : (awaited ??
+      (live
+        ? ([...tools]
+            .reverse()
+            .find(
+              (s) => s.tool.status === "running" || s.tool.status === "pending"
+            ) ?? null)
+        : null))
   const allSucceeded = tools.every((s) => s.tool.status === "succeeded")
 
   return (
@@ -490,7 +500,7 @@ export const CommandGroupRow = memo(function CommandGroupRow({
           live ? "activity-shimmer" : "text-foreground"
         )}
       >
-        {live
+        {live || awaited
           ? t("row.runningCommands", { count: tools.length })
           : t("row.ranCommands", { count: tools.length })}
       </span>

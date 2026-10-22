@@ -28,6 +28,10 @@ import type {
   SessionModeStateInfo,
   PromptInputBlock,
 } from "@/lib/types"
+import {
+  EMPTY_TOOL_APPROVALS,
+  type ToolApprovalMap,
+} from "@/lib/activity/approval"
 
 const DEFAULT_PROMPT_CAPABILITIES: PromptCapabilitiesInfo = {
   image: false,
@@ -96,6 +100,9 @@ export interface UseConnectionReturn {
   /** AIR typed session failure table (active + resolved; see
    *  `lib/session-failures.ts`). `[]` when the connection has none. */
   sessionFailures: SessionFailureRecord[]
+  /** The connection's answered permission requests by tool call id, for the
+   *  chips on their rows. See `ConnectionState.toolApprovals`. */
+  toolApprovals: ToolApprovalMap
   /** AIR async tasks — Claude's background shells / workflows / monitors
    *  (see `lib/async-tasks.ts`). Retained after they settle; the strip filters
    *  to the live ones. `[]` when the connection has none. */
@@ -296,6 +303,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
   const pendingPlanApproval = connection?.pendingPlanApproval ?? null
   const claudeApiRetry = connection?.claudeApiRetry ?? null
   const sessionFailures = connection?.sessionFailures ?? EMPTY_SESSION_FAILURES
+  const toolApprovals = connection?.toolApprovals ?? EMPTY_TOOL_APPROVALS
   const asyncTasks = connection?.asyncTasks ?? EMPTY_ASYNC_TASKS
   const error = connection?.error ?? null
   const loadError = connection?.loadError ?? null
@@ -406,6 +414,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
       pendingPlanApproval,
       claudeApiRetry,
       sessionFailures,
+      toolApprovals,
       asyncTasks,
       error,
       loadError,
@@ -451,6 +460,7 @@ export function useConnection(contextKey: string): UseConnectionReturn {
       pendingPlanApproval,
       claudeApiRetry,
       sessionFailures,
+      toolApprovals,
       asyncTasks,
       error,
       loadError,

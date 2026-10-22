@@ -5,6 +5,7 @@ import type {
   AdaptedPlanPart,
   AdaptedToolCallPart,
 } from "@/lib/adapters/ai-elements-adapter"
+import type { ToolApproval } from "./approval"
 import type { CommandExit, HeredocCommand } from "./command"
 import type { EditFileChange } from "./edit"
 import type { McpIdentity } from "./mcp"
@@ -130,6 +131,10 @@ export interface ToolDescriptor {
   mcp: McpIdentity | null
   /** A command whose process was moved to the background. */
   background: { taskId: string | null } | null
+  /** How the call's permission request was answered, when a reopened
+   *  conversation's detail load stamped it on the call. The live record of the
+   *  connection that ran it is merged in at render (`useLiveToolStep`). */
+  approval: ToolApproval | null
 }
 
 export type ReasoningPart = Extract<AdaptedContentPart, { type: "reasoning" }>

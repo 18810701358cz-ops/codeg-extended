@@ -26,7 +26,7 @@ use crate::acp::session_state::{SessionState, TurnStatusWriter};
 use crate::acp::types::{AcpEvent, ConnectionStatus, EventEnvelope};
 use crate::db::entities::conversation::ConversationStatus;
 use crate::db::error::DbError;
-use crate::db::service::conversation_service;
+use crate::db::service::{conversation_service, tool_approval_service};
 use crate::logging::throttle::{LagLogThrottle, LAG_LOG_WINDOW};
 use crate::web::event_bridge::{emit_with_state, EventEmitter};
 use tokio::sync::RwLock;
@@ -34,11 +34,12 @@ use tokio::sync::RwLock;
 /// Per-connection worker queue depth. Sized for the **filtered** event set
 /// only (see `is_lifecycle_relevant`) — high-frequency events (ContentDelta,
 /// ToolCall*, PermissionRequest) are dropped at the dispatcher and never
-/// enter the queue. The remaining 7 event types arrive at most a handful
+/// enter the queue. The remaining 8 event types arrive at most a handful
 /// of times per turn, so 64 slots is comfortable headroom for a sustained
 /// SQLite stall without forcing the dispatcher to block on `send`.
 /// (SessionStarted, TurnComplete, ConversationLinked, NativeSessionTitle,
-/// TranscriptRolledOver, Disconnected, Error.)
+/// TranscriptRolledOver, ToolApproval, Disconnected, Error.) `ToolApproval`
+/// is one per answered permission card, so it is paced by a person.
 const WORKER_QUEUE_CAPACITY: usize = 64;
 
 /// Whether an event needs to reach the per-connection worker. Mirrors the
@@ -68,6 +69,7 @@ fn is_lifecycle_relevant(event: &AcpEvent) -> bool {
             | AcpEvent::ConversationLinked { .. }
             | AcpEvent::NativeSessionTitle { .. }
             | AcpEvent::TranscriptRolledOver { .. }
+            | AcpEvent::ToolApproval { .. }
             | AcpEvent::StatusChanged {
                 status: ConnectionStatus::Disconnected
             }
@@ -441,6 +443,21 @@ pub(crate) async fn handle_event(
                 .await;
             }
             Ok(())
+        }
+        AcpEvent::ToolApproval { approval } => {
+            // Agent transcripts record the call but not how its permission
+            // request was answered, so this row is the only thing that brings
+            // the approval back when the conversation is reopened.
+            let Some(state_arc) = manager.get_state(&envelope.connection_id).await else {
+                return Ok(());
+            };
+            let conversation_id = { state_arc.read().await.conversation_id };
+            // A permission request is raised by a running prompt, and the row
+            // is bound before the prompt is sent — defensive only.
+            let Some(cid) = conversation_id else {
+                return Ok(());
+            };
+            tool_approval_service::record(db_conn, cid, approval).await
         }
         // Other events don't need cross-connection DB persistence today; extend
         // this dispatcher with new arms as the lifecycle scope grows.
@@ -1935,6 +1952,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reloaded.external_id.as_deref(), Some("ext-99"));
+    }
+
+    #[tokio::test]
+    async fn handle_event_keeps_a_tool_approval_for_the_bound_conversation() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let folder_id = test_helpers::seed_folder(&db, "/tmp/test-approval").await;
+        let conv =
+            conversation_service::create(&db.conn, folder_id, AgentType::ClaudeCode, None, None)
+                .await
+                .unwrap();
+        let mgr = ConnectionManager::new();
+        {
+            let mut map = mgr.connections.lock().await;
+            map.insert(
+                "c1".to_string(),
+                fake_connection_with_state("c1", Some(conv.id)),
+            );
+            map.insert("c2".to_string(), fake_connection_with_state("c2", None));
+        }
+        let approval = crate::acp::types::ToolApprovalInfo {
+            tool_call_id: "toolu_1".into(),
+            option_kind: "allow_once".into(),
+            option_name: "Allow".into(),
+            origin: "user".into(),
+            decided_at: chrono::Utc::now(),
+        };
+        assert!(is_lifecycle_relevant(&AcpEvent::ToolApproval {
+            approval: approval.clone()
+        }));
+        for connection_id in ["c1", "c2"] {
+            let env = EventEnvelope {
+                seq: 1,
+                connection_id: connection_id.to_string(),
+                payload: AcpEvent::ToolApproval {
+                    approval: approval.clone(),
+                },
+            };
+            handle_event(&db.conn, &mgr, &env, None).await.unwrap();
+        }
+        // The unbound connection's copy had nowhere to go.
+        let kept = tool_approval_service::list_by_conversation(&db.conn, conv.id)
+            .await
+            .unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].tool_call_id, "toolu_1");
+        assert_eq!(kept[0].option_kind, "allow_once");
     }
 
     #[tokio::test]
