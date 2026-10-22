@@ -41,6 +41,11 @@ import {
 import type { ToolCallState } from "@/lib/adapters/ai-elements-adapter"
 import { MessageResponse } from "@/components/ai-elements/message"
 import { Shimmer } from "@/components/ai-elements/shimmer"
+import {
+  RowChevron,
+  RowFigure,
+} from "@/components/message/activity/activity-row"
+import { StatusFigure } from "@/components/message/activity/step-visuals"
 import { StatusBadge } from "@/components/message/delegation-status-badge"
 
 interface Props {
@@ -171,25 +176,42 @@ export function CodegMcpToolCard({
   const expandable =
     resultText !== "" || prompt !== "" || report !== "" || ack !== null
 
-  const row = (
+  // `title` restores the full text on hover: a long progress message or task
+  // summary is CSS-truncated here, and the panel below has to be opened to
+  // read it.
+  const row = timeline ? (
+    // Laid out like the timeline's other rows: the chevron follows the label,
+    // and a failure is the word at the end (the ring carries the icon).
     <>
-      {timeline ? null : (
-        <Icon
+      <span className="flex min-w-0 flex-1 items-start gap-1">
+        <span
+          title={label}
           className={cn(
-            "h-3.5 w-3.5 shrink-0",
-            isError ? "text-destructive" : "text-muted-foreground"
+            "min-w-0 truncate font-medium",
+            isRunning ? "activity-shimmer" : "text-foreground"
           )}
-        />
-      )}
-      {/* `title` restores the full text on hover: a long progress message or
-          task summary is CSS-truncated here, and the panel below has to be
-          opened to read it. */}
+        >
+          {label}
+        </span>
+        {expandable ? <RowChevron open={expanded} /> : null}
+      </span>
+      {isError ? (
+        <RowFigure>
+          <StatusFigure status="failed" />
+        </RowFigure>
+      ) : null}
+    </>
+  ) : (
+    <>
+      <Icon
+        className={cn(
+          "h-3.5 w-3.5 shrink-0",
+          isError ? "text-destructive" : "text-muted-foreground"
+        )}
+      />
       <span
         title={label}
-        className={cn(
-          "min-w-0 flex-1 truncate font-medium text-foreground",
-          timeline ? "text-sm" : "text-xs"
-        )}
+        className="min-w-0 flex-1 truncate text-xs font-medium text-foreground"
       >
         {isRunning ? (
           <Shimmer as="span" duration={1} shineColor="var(--primary)">
@@ -199,13 +221,7 @@ export function CodegMcpToolCard({
           label
         )}
       </span>
-      {timeline ? (
-        isError ? (
-          <StatusBadge status={model.status} />
-        ) : null
-      ) : (
-        <StatusBadge status={model.status} />
-      )}
+      <StatusBadge status={model.status} />
       {expandable &&
         (expanded ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -237,10 +253,10 @@ export function CodegMcpToolCard({
           // collapsed tree so the Markdown renderer isn't paid for unopened rows.
           aria-controls={expanded ? panelId : undefined}
           className={cn(
-            "flex w-full items-center gap-2 text-start transition-colors",
+            "flex w-full text-start",
             timeline
-              ? "min-h-7 rounded-sm py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              : "px-3 py-2 hover:bg-muted/50"
+              ? "group/row min-w-0 cursor-pointer items-start rounded-sm py-0.5 text-sm leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              : "items-center gap-2 px-3 py-2 transition-colors hover:bg-muted/50"
           )}
         >
           {row}
@@ -248,8 +264,10 @@ export function CodegMcpToolCard({
       ) : (
         <div
           className={cn(
-            "flex w-full items-center gap-2",
-            timeline ? "min-h-7 py-0.5" : "px-3 py-2"
+            "flex w-full",
+            timeline
+              ? "min-w-0 items-start py-0.5 text-sm leading-6"
+              : "items-center gap-2 px-3 py-2"
           )}
         >
           {row}

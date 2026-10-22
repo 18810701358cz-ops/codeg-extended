@@ -17,14 +17,10 @@
 
 import { useMemo, useState, type ReactNode } from "react"
 import { useTranslations } from "next-intl"
-import {
-  ChevronDown,
-  ChevronUp,
-  Loader2,
-  MessageCircleQuestionMark,
-} from "lucide-react"
+import { Loader2, MessageCircleQuestionMark } from "lucide-react"
 
 import { AskQuestionCard } from "@/components/chat/ask-question-card"
+import { RowChevron } from "@/components/message/activity/activity-row"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import {
@@ -234,25 +230,22 @@ export function AskQuestionResultCard({
       ? picks.join(", ")
       : t("noSelection")
 
+  // Laid out like the timeline's other rows: the chevron follows the label.
   const capsule = (
     <button
       type="button"
       onClick={() => setExpanded((v) => !v)}
       aria-expanded={expanded}
       data-testid="ask-question-result-card"
-      className="flex min-h-7 w-full max-w-full items-center gap-2 rounded-sm py-0.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group/row flex w-full min-w-0 cursor-pointer items-start gap-1 rounded-sm py-0.5 text-start text-sm leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <span className="min-w-0 flex-1 truncate text-sm">
+      <span className="min-w-0 truncate">
         <span className="me-1 font-medium text-foreground">
           {t("answeredLabel")}
         </span>
         <span className="text-muted-foreground">{summary}</span>
       </span>
-      {expanded ? (
-        <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
-      ) : (
-        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-      )}
+      <RowChevron open={expanded} />
     </button>
   )
 

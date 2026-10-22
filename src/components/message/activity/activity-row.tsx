@@ -87,21 +87,13 @@ export function ActivityRow({
     <>
       <span className="flex min-w-0 flex-1 items-start gap-1">
         <span className="min-w-0">{children}</span>
-        {expandable && showChevron ? (
-          <ChevronRightIcon
-            aria-hidden="true"
-            className={cn(
-              "mt-[0.3125rem] size-3.5 shrink-0 text-muted-foreground opacity-0 transition-[opacity,rotate] group-hover/row:opacity-100 group-focus-visible/row:opacity-100 rtl:-scale-x-100",
-              open && "rotate-90 opacity-100"
-            )}
-          />
-        ) : null}
+        {expandable && showChevron ? <RowChevron open={open} /> : null}
       </span>
       {trailing || chip ? (
-        <span className="activity-mono ms-auto flex shrink-0 items-center gap-3 ps-3 text-xs leading-6 text-muted-foreground">
+        <RowFigure>
           {chip}
           {trailing}
-        </span>
+        </RowFigure>
       ) : null}
     </>
   )
@@ -163,5 +155,31 @@ export function ActivityRow({
         </div>
       ) : null}
     </li>
+  )
+}
+
+/**
+ * The disclosure chevron after a row's label. It always takes its space and
+ * only shows on hover / focus — or while the row is open — so nothing shifts
+ * when it appears.
+ */
+export function RowChevron({ open }: { open: boolean }) {
+  return (
+    <ChevronRightIcon
+      aria-hidden="true"
+      className={cn(
+        "mt-[0.3125rem] size-3.5 shrink-0 text-muted-foreground opacity-0 transition-[opacity,rotate] group-hover/row:opacity-100 group-focus-visible/row:opacity-100 rtl:-scale-x-100",
+        open && "rotate-90 opacity-100"
+      )}
+    />
+  )
+}
+
+/** A row header's end column: its figure, status word, time. */
+export function RowFigure({ children }: { children: ReactNode }) {
+  return (
+    <span className="activity-mono ms-auto flex shrink-0 items-center gap-3 ps-3 text-xs leading-6 text-muted-foreground">
+      {children}
+    </span>
   )
 }

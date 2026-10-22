@@ -351,7 +351,7 @@ describe("delegation status call", () => {
     ).toBeInTheDocument()
   })
 
-  it("shows the execution time and a status badge on the title line for a completed result", () => {
+  it("ends the title line with the status and execution time for a completed result", () => {
     renderWithIntl(
       <StatusCall
         kind="status"
@@ -365,9 +365,8 @@ describe("delegation status call", () => {
         state="output-available"
       />
     )
-    expect(screen.getByText("1.2s")).toBeInTheDocument()
-    // StatusBadge for a completed task (en: status.ok = "done").
-    expect(screen.getByText("done")).toBeInTheDocument()
+    // Like a delegation's own row: `done · 1.2s` (en: status.ok = "done").
+    expect(screen.getByText("done · 1.2s")).toBeInTheDocument()
   })
 
   it("renders the expanded result through the Markdown renderer (not a <pre>)", () => {
@@ -449,7 +448,7 @@ describe("delegation status call", () => {
         state="output-available"
       />
     )
-    expect(screen.getByText("2m 0s")).toBeInTheDocument()
-    expect(screen.queryByText("1m 60s")).not.toBeInTheDocument()
+    expect(screen.getByText("done · 2m 0s")).toBeInTheDocument()
+    expect(screen.queryByText(/1m 60s/)).not.toBeInTheDocument()
   })
 })

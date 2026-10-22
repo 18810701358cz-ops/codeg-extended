@@ -2,10 +2,11 @@
 
 /**
  * One collapsible row for a delegation status / cancel poll. Renders the
- * intent label ("waiting for task <id>'s result" / "canceling task <id>"), an
- * optional check-count hint (`×N`, the number of times the task was polled),
- * the task execution time, and a status badge; expands inline to reveal the
- * result, Markdown-rendered. A task polled more than once paginates through
+ * intent label ("waiting for task <id>'s result" / "canceling task <id>") and
+ * an optional check-count hint (`×N`, the number of times the task was
+ * polled), with the task's status and execution time at the end of the line
+ * (`done · 42s`); expands inline to reveal the result, Markdown-rendered.
+ * A task polled more than once paginates through
  * each check's result (latest first) via a `< N / M >` footer whose total
  * matches the `×N` hint.
  *
@@ -34,7 +35,7 @@
  */
 
 import { memo, useEffect, useId, useMemo, useState } from "react"
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { cn } from "@/lib/utils"
@@ -45,9 +46,12 @@ import {
 } from "@/lib/delegation-status"
 import { Button } from "@/components/ui/button"
 import { MessageResponse } from "@/components/ai-elements/message"
-import { Shimmer } from "@/components/ai-elements/shimmer"
 import { ConnectionBlockingPrompts } from "@/components/chat/connection-blocking-prompts"
-import { StatusBadge } from "@/components/message/delegation-status-badge"
+import {
+  RowChevron,
+  RowFigure,
+} from "@/components/message/activity/activity-row"
+import { ErrorLabel } from "@/components/message/delegation-status-badge"
 import { useDelegationStatusContext } from "@/components/message/delegation-status-index-context"
 import { useDelegationTaskLive } from "@/hooks/use-delegation-task-live"
 
@@ -225,39 +229,41 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
         ? t("waitForResult", { task: `#${shortId}` })
         : t("waitForResultNoTask")
 
+  // Laid out like the timeline's other rows: the label with the chevron
+  // after it, and the status and time at the end — as a delegation's own row
+  // reads `done · 42s`.
   const row = (
     <>
-      <span
-        className="min-w-0 truncate text-sm font-medium text-muted-foreground"
-        title={taskId ?? undefined}
-      >
-        {isRunning ? (
-          <Shimmer as="span" duration={1} shineColor="var(--primary)">
+      <span className="flex min-w-0 flex-1 items-start gap-1">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span
+            className={cn(
+              "min-w-0 truncate font-medium",
+              isRunning ? "activity-shimmer" : "text-muted-foreground"
+            )}
+            title={taskId ?? undefined}
+          >
             {label}
-          </Shimmer>
-        ) : (
-          label
-        )}
+          </span>
+          {results.length > 1 && (
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              ×{results.length}
+            </span>
+          )}
+        </span>
+        {expandable ? <RowChevron open={open} /> : null}
       </span>
-      {results.length > 1 && (
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">
-          ×{results.length}
-        </span>
-      )}
-      {duration && (
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-          {duration}
-        </span>
-      )}
-      <StatusBadge status={badge.status} errorCode={badge.errorCode} />
-      {expandable &&
-        (expanded ? (
-          <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        ))}
+      <RowFigure>
+        <PollStatusWord
+          status={badge.status}
+          errorCode={badge.errorCode}
+          duration={duration}
+        />
+      </RowFigure>
     </>
   )
+  const headerClass =
+    "group/row flex w-full min-w-0 items-start py-0.5 text-start text-sm leading-6"
 
   return (
     <>
@@ -270,14 +276,15 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
           // renderer out of the collapsed tree), so only reference it then —
           // avoids a dangling `aria-controls` target while collapsed.
           aria-controls={expanded ? panelId : undefined}
-          className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 text-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={cn(
+            headerClass,
+            "cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          )}
         >
           {row}
         </button>
       ) : (
-        <div className="flex min-h-7 w-full items-center gap-2 py-0.5">
-          {row}
-        </div>
+        <div className={headerClass}>{row}</div>
       )}
       {expandable && expanded && (
         <div
@@ -354,3 +361,36 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
     </>
   )
 })
+
+/** The end of a check's row: `done · 1.2s`; red when it failed, amber while
+ *  the sub-agent waits on the user. */
+function PollStatusWord({
+  status,
+  errorCode,
+  duration,
+}: {
+  status: ResolvedBadge["status"]
+  errorCode?: string
+  duration: string | null
+}) {
+  const t = useTranslations("Folder.chat.delegation.status")
+  const time = duration ? ` · ${duration}` : ""
+  switch (status) {
+    case "err":
+      return (
+        <span className="text-tone-danger" title={errorCode}>
+          <ErrorLabel code={errorCode} />
+          {time}
+        </span>
+      )
+    case "waiting":
+      return <span className="text-tone-warning">{t("waiting")}</span>
+    default:
+      return (
+        <span>
+          {t(status)}
+          {time}
+        </span>
+      )
+  }
+}
