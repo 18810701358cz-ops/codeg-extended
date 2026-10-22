@@ -26,7 +26,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { isDesktop, openFileDialog } from "@/lib/platform"
-import { getCodegToken } from "@/lib/transport/web-auth"
+import {
+  codegAuthHeaders,
+  getCodegToken,
+  unauthorizedSource,
+} from "@/lib/transport/web-auth"
 import { notifyWebUnauthorized } from "@/lib/transport/web-connection-store"
 import {
   pluginHostCommitInstall,
@@ -54,8 +58,8 @@ export async function uploadPluginWeb(
     const token = getCodegToken()
     const xhr = new XMLHttpRequest()
     xhr.open("POST", `${window.location.origin}/api/plugin_host_stage_upload`)
-    if (token) {
-      xhr.setRequestHeader("Authorization", `Bearer ${token}`)
+    for (const [name, value] of Object.entries(codegAuthHeaders(token))) {
+      xhr.setRequestHeader(name, value)
     }
     if (onProgress) {
       xhr.upload.onprogress = (event) => {
@@ -64,7 +68,9 @@ export async function uploadPluginWeb(
     }
     xhr.onload = () => {
       if (xhr.status === 401) {
-        notifyWebUnauthorized()
+        notifyWebUnauthorized(
+          unauthorizedSource(xhr.getResponseHeader("www-authenticate"))
+        )
         reject(new Error("Unauthorized"))
         return
       }

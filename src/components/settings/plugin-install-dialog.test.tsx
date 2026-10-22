@@ -25,6 +25,10 @@ vi.mock("@/lib/platform", () => ({
 
 vi.mock("@/lib/transport/web-auth", () => ({
   getCodegToken: vi.fn().mockReturnValue("mock-token"),
+  codegAuthHeaders: vi
+    .fn()
+    .mockReturnValue({ Authorization: "Bearer mock-token" }),
+  unauthorizedSource: vi.fn().mockReturnValue("codeg"),
 }))
 
 vi.mock("@/lib/transport/web-connection-store", () => ({
