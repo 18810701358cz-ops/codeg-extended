@@ -180,7 +180,7 @@ function CommandLabel({ step }: { step: ToolStep }) {
         </span>
       ) : null}
       {scriptMeta?.label ? (
-        <span className="ms-2 inline-block rounded-full bg-muted px-1.5 align-[0.0625rem] text-3xs leading-4 text-muted-foreground ws-msg-chip">
+        <span className="ms-2 inline-block rounded-full bg-muted px-1.5 align-[0.0625rem] text-3xs leading-4 text-activity-muted-strong ws-msg-chip">
           {scriptMeta.label}
         </span>
       ) : null}
@@ -190,7 +190,7 @@ function CommandLabel({ step }: { step: ToolStep }) {
         </span>
       ) : null}
       {step.tool.background ? (
-        <span className="ms-2 inline-block rounded-full bg-muted px-1.5 align-[0.0625rem] font-mono text-3xs leading-4 text-muted-foreground ws-msg-chip">
+        <span className="ms-2 inline-block rounded-full bg-muted px-1.5 align-[0.0625rem] font-mono text-3xs leading-4 text-activity-muted-strong ws-msg-chip">
           {step.tool.background.taskId
             ? t("row.background", { id: step.tool.background.taskId })
             : t("row.backgroundShort")}
@@ -297,7 +297,7 @@ function CommandDetail({
             </p>
           ) : null}
           <pre
-            className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-[0.78125rem] leading-relaxed"
+            className="activity-ansi whitespace-pre-wrap break-words px-4 py-3 font-mono text-[0.78125rem] leading-relaxed"
             dir="ltr"
           >
             <Ansi>{output.text}</Ansi>

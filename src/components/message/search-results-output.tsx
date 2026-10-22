@@ -134,7 +134,7 @@ export function SearchResultsOutput({ text, query }: Props) {
                     <FilePathLink
                       filePath={group.path}
                       line={entry.line}
-                      className="w-10 shrink-0 text-right tabular-nums text-muted-foreground/60"
+                      className="w-10 shrink-0 text-right tabular-nums text-muted-foreground"
                     >
                       {entry.line}
                     </FilePathLink>

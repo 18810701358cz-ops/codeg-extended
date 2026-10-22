@@ -432,7 +432,7 @@ function ReadDetail({ step }: { step: ToolStep }) {
       >
         {visible.map((line, index) => (
           <div key={index} className="flex">
-            <span className="w-12 shrink-0 select-none pe-3 text-end text-muted-foreground/50 tabular-nums">
+            <span className="w-12 shrink-0 select-none pe-3 text-end text-muted-foreground tabular-nums">
               {parsed.startLine + index}
             </span>
             <span className="flex-1 whitespace-pre pe-4">{line}</span>

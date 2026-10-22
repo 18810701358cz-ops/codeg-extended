@@ -34,8 +34,8 @@ const CELL_TINT: Record<SplitCell["marker"], string> = {
 }
 
 const SIGN_CLASS: Record<ParsedDiffRow["sign"], string> = {
-  "+": "text-tone-success",
-  "-": "text-tone-danger",
+  "+": "text-diff-added-fg",
+  "-": "text-diff-deleted-fg",
   " ": "",
 }
 

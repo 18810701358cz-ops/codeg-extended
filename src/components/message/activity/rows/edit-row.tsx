@@ -287,7 +287,7 @@ function DiffFileBlock({
                 row.type === "deleted" && "bg-diff-deleted"
               )}
             >
-              <span className="w-11 shrink-0 select-none pe-2 text-end tabular-nums text-muted-foreground/60">
+              <span className="w-11 shrink-0 select-none pe-2 text-end tabular-nums text-muted-foreground">
                 {numbered
                   ? ((row.type === "deleted" ? row.oldLine : row.newLine) ?? "")
                   : ""}
@@ -295,8 +295,8 @@ function DiffFileBlock({
               <span
                 className={cn(
                   "w-4 shrink-0 select-none text-center",
-                  row.sign === "+" && "text-tone-success",
-                  row.sign === "-" && "text-tone-danger"
+                  row.sign === "+" && "text-diff-added-fg",
+                  row.sign === "-" && "text-diff-deleted-fg"
                 )}
               >
                 {row.sign === " " ? "" : row.sign === "-" ? "−" : row.sign}

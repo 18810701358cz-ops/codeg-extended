@@ -177,7 +177,7 @@ function BackgroundTaskRowView({
             }
           >
             <pre
-              className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-[0.78125rem] leading-relaxed"
+              className="activity-ansi whitespace-pre-wrap break-words px-4 py-3 font-mono text-[0.78125rem] leading-relaxed"
               dir="ltr"
             >
               <Ansi>{row.output ?? ""}</Ansi>

@@ -52,14 +52,14 @@ export function StepBar({
           aria-hidden="true"
           className={cn(
             "h-1.5 w-2.5 rounded-full",
-            mark === "failed" ? "bg-tone-danger" : "bg-foreground/25"
+            mark === "failed" ? "bg-tone-danger" : "bg-activity-ring"
           )}
         />
       ))}
       {live ? (
         <span
           aria-hidden="true"
-          className="h-1.5 w-2.5 rounded-full border border-dashed border-foreground/40"
+          className="h-1.5 w-2.5 rounded-full border border-dashed border-activity-ring"
         />
       ) : null}
     </span>

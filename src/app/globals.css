@@ -993,24 +993,45 @@
    独占红色。中性部分（轨道、圆环）从 --foreground 混色，跟随每套预设的明暗反转。
    混色一律在 oklab（直角坐标）里做：在 oklch 里和 transparent / 白色这类无色相的
    颜色混，旧内核会把缺失的色相当 0°（红）插值，绿色的 diff 底会混成粉色。
+   对比度按 12 套预设 × 明暗实测：文字 ≥ 4.5:1，圆环和图标 ≥ 3:1。亮色下绿 / 琥珀 /
+   MCP 青压得比直觉深，是为了在自己的 10% 底色上仍过 4.5；圆环 45% 是过 3:1 的下限。
    ========================================================================= */
 :root {
   --activity-rail: color-mix(in oklab, var(--foreground) 12%, transparent);
-  --activity-ring: color-mix(in oklab, var(--foreground) 32%, transparent);
+  --activity-ring: color-mix(in oklab, var(--foreground) 45%, transparent);
   --activity-surface: var(--muted);
-  --tone-success: oklch(0.58 0.14 150);
+  /* --muted-foreground 在 --muted 底上只有约 4.3:1：详情框和灰底小标签里的次要文字
+     改用它（向前景色略收），见下方 .activity-detail-box。 */
+  --activity-muted-strong: color-mix(
+    in oklab,
+    var(--muted-foreground) 88%,
+    var(--foreground)
+  );
+  --tone-success: oklch(0.52 0.13 150);
   --tone-danger: var(--destructive);
   --tone-danger-surface: color-mix(
     in oklab,
     var(--destructive) 8%,
     var(--background)
   );
-  --tone-warning: oklch(0.68 0.15 70);
-  --tone-mcp: oklch(0.56 0.09 190);
+  --tone-warning: oklch(0.53 0.12 65);
+  --tone-mcp: oklch(0.5 0.085 190);
   --tone-info: oklch(0.58 0.13 255);
   --diff-added-bg: color-mix(in oklab, var(--tone-success) 10%, transparent);
   --diff-deleted-bg: color-mix(in oklab, var(--tone-danger) 10%, transparent);
   --diff-modified-bg: color-mix(in oklab, var(--tone-info) 10%, transparent);
+  /* diff 行首的 + / −：画在同色系的行底上，向前景色收两成才够 4.5:1
+     （暗色下是提亮）。 */
+  --diff-added-fg: color-mix(
+    in oklab,
+    var(--tone-success) 80%,
+    var(--foreground)
+  );
+  --diff-deleted-fg: color-mix(
+    in oklab,
+    var(--tone-danger) 80%,
+    var(--foreground)
+  );
 }
 
 .dark {
@@ -1033,6 +1054,7 @@
   --color-activity-rail: var(--activity-rail);
   --color-activity-ring: var(--activity-ring);
   --color-activity-surface: var(--activity-surface);
+  --color-activity-muted-strong: var(--activity-muted-strong);
   --color-tone-success: var(--tone-success);
   --color-tone-danger: var(--tone-danger);
   --color-tone-danger-surface: var(--tone-danger-surface);
@@ -1042,6 +1064,8 @@
   --color-diff-added: var(--diff-added-bg);
   --color-diff-deleted: var(--diff-deleted-bg);
   --color-diff-modified: var(--diff-modified-bg);
+  --color-diff-added-fg: var(--diff-added-fg);
+  --color-diff-deleted-fg: var(--diff-deleted-fg);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -2048,6 +2072,75 @@
     #000 calc(100% - 1.5rem),
     transparent
   );
+}
+
+/* Inside a detail box the surface is darker than the page, so secondary text
+   (labels, line numbers, footers — the box's own and the components it hosts)
+   takes the slightly stronger muted tone to keep 4.5:1. Set on the children:
+   the token is resolved at the root, so this does not reference itself. */
+.activity-detail-box > * {
+  --muted-foreground: var(--activity-muted-strong);
+}
+
+/* Command output colours. ansi-to-react writes anser's xterm palette as
+   inline `color: rgb(…)` styles, made for a black terminal: on the light
+   surfaces yellow, cyan, white and every bright colour all but vanish, and on
+   the dark ones black, blue, red and magenta do. Remap the 16 base colours per
+   theme, as terminals do, and leave 256-colour / truecolour output as the
+   program chose it. Only spans without a background are remapped (their style
+   then starts with `color:`), so text on a coloured badge keeps its pair. */
+.activity-ansi {
+  --ansi-black: var(--foreground);
+  --ansi-white: var(--muted-foreground);
+  --ansi-red: oklch(0.52 0.19 27);
+  --ansi-green: oklch(0.5 0.13 145);
+  --ansi-yellow: oklch(0.5 0.1 90);
+  --ansi-blue: oklch(0.48 0.17 262);
+  --ansi-magenta: oklch(0.5 0.19 330);
+  --ansi-cyan: oklch(0.5 0.08 205);
+}
+.dark .activity-ansi {
+  --ansi-black: var(--muted-foreground);
+  --ansi-white: var(--foreground);
+  --ansi-red: oklch(0.7 0.17 25);
+  --ansi-green: oklch(0.75 0.17 145);
+  --ansi-yellow: oklch(0.82 0.15 95);
+  --ansi-blue: oklch(0.72 0.13 262);
+  --ansi-magenta: oklch(0.74 0.16 330);
+  --ansi-cyan: oklch(0.78 0.11 205);
+}
+.activity-ansi [style^="color: rgb(0, 0, 0)"] {
+  color: var(--ansi-black) !important;
+}
+.activity-ansi [style^="color: rgb(85, 85, 85)"] {
+  color: var(--muted-foreground) !important;
+}
+.activity-ansi [style^="color: rgb(255, 255, 255)"] {
+  color: var(--ansi-white) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(187, 0, 0)"], [style^="color: rgb(255, 85, 85)"]) {
+  color: var(--ansi-red) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(0, 187, 0)"], [style^="color: rgb(0, 255, 0)"]) {
+  color: var(--ansi-green) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(187, 187, 0)"], [style^="color: rgb(255, 255, 85)"]) {
+  color: var(--ansi-yellow) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(0, 0, 187)"], [style^="color: rgb(85, 85, 255)"]) {
+  color: var(--ansi-blue) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(187, 0, 187)"], [style^="color: rgb(255, 85, 255)"]) {
+  color: var(--ansi-magenta) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(0, 187, 187)"], [style^="color: rgb(85, 255, 255)"]) {
+  color: var(--ansi-cyan) !important;
 }
 
 /* Settings → Appearance → "Chat animations" off. <html> carries

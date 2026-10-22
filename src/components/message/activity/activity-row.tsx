@@ -91,7 +91,7 @@ export function ActivityRow({
           <ChevronRightIcon
             aria-hidden="true"
             className={cn(
-              "mt-[0.3125rem] size-3.5 shrink-0 text-muted-foreground/60 opacity-0 transition-[opacity,rotate] group-hover/row:opacity-100 group-focus-visible/row:opacity-100 rtl:-scale-x-100",
+              "mt-[0.3125rem] size-3.5 shrink-0 text-muted-foreground opacity-0 transition-[opacity,rotate] group-hover/row:opacity-100 group-focus-visible/row:opacity-100 rtl:-scale-x-100",
               open && "rotate-90 opacity-100"
             )}
           />

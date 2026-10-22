@@ -87,8 +87,8 @@ const ROW_CLASS: Record<RowMarker, string> = {
 }
 
 const SIGN_CLASS: Record<string, string> = {
-  "+": "text-tone-success",
-  "-": "text-tone-danger",
+  "+": "text-diff-added-fg",
+  "-": "text-diff-deleted-fg",
   " ": "text-muted-foreground/50",
 }
 

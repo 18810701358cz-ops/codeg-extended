@@ -80,7 +80,7 @@ export function DetailBox({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-[0.625rem]",
+        "activity-detail-box overflow-hidden rounded-[0.625rem]",
         tone === "neutral" && "bg-activity-surface ws-msg-card",
         tone === "danger" && "bg-tone-danger-surface",
         tone === "plain" && "border border-border bg-background ws-msg-card",
