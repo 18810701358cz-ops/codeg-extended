@@ -159,7 +159,29 @@ export const ActivityHeader = memo(function ActivityHeader({
           aria-controls={toggle.controls}
           onClick={toggle.onToggle}
         >
-          {toggle.open ? t("header.hide") : t("header.show")}
+          {/* Both labels share one cell, so the button is as wide as the
+              longer one whichever it shows: toggling moves nothing in the
+              header ("Show" is wider than "Hide"). */}
+          <span className="grid justify-items-end">
+            <span
+              className={cn(
+                "col-start-1 row-start-1",
+                !toggle.open && "invisible"
+              )}
+              aria-hidden={toggle.open ? undefined : true}
+            >
+              {t("header.hide")}
+            </span>
+            <span
+              className={cn(
+                "col-start-1 row-start-1",
+                toggle.open && "invisible"
+              )}
+              aria-hidden={toggle.open ? true : undefined}
+            >
+              {t("header.show")}
+            </span>
+          </span>
         </button>
       ) : null}
     </div>

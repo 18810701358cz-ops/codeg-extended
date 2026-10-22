@@ -211,6 +211,20 @@ describe("activity timeline: the reference turn", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show" }))
     expect(screen.getByText("Explored")).toBeTruthy()
   })
+
+  it("keeps the hide/show toggle one width by laying out both labels", () => {
+    // The labels differ in width; the one not shown keeps its space (hidden
+    // from assistive tech), so toggling moves nothing in the header.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const toggle = screen.getByRole("button", { name: "Hide" })
+    const labels = Array.from(toggle.querySelectorAll("span > span"))
+    expect(labels.map((label) => label.textContent)).toEqual(["Hide", "Show"])
+    expect(labels[1]).toHaveAttribute("aria-hidden", "true")
+    fireEvent.click(toggle)
+    expect(screen.getByRole("button", { name: "Show" })).toBe(toggle)
+    expect(labels[0]).toHaveAttribute("aria-hidden", "true")
+    expect(labels[1]).not.toHaveAttribute("aria-hidden")
+  })
 })
 
 describe("activity timeline: failures", () => {
