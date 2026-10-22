@@ -200,6 +200,11 @@ export const MOCKUP_ASSISTANT_TURN: MessageTurn = {
         status: "completed",
         text: "Snapshot updated. 48/48 passing, no regressions in audit artifacts.",
         duration_ms: 94000,
+        progress: {
+          steps: 5,
+          marks: ["ok", "ok", "failed", "ok", "ok"],
+          last_step: "pnpm --filter web test",
+        },
       })
     ),
     toolUse("t12", "Bash", {

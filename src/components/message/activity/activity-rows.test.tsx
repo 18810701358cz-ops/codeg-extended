@@ -144,6 +144,15 @@ describe("delegation row", () => {
     // The separate "Waiting for task … result" card is gone.
     expect(screen.queryByText(/Waiting for task/)).toBeNull()
   })
+
+  it("counts the steps it took and draws one segment per step", () => {
+    renderUi(<Round parts={parts(MOCKUP_ASSISTANT_TURN)} />)
+    const row = rowOf("Codex")
+    expect(within(row).getByText("· 5 steps")).toBeTruthy()
+    expect(
+      within(row).getByRole("img", { name: "5 steps, 1 failed" })
+    ).toBeTruthy()
+  })
 })
 
 describe("background task row", () => {
@@ -242,6 +251,7 @@ describe("agent row", () => {
       within(row).getByText("Only report.py assumes inactive bindings.")
     ).toBeTruthy()
     expect(within(row).getByText("48.0s")).toBeTruthy()
+    expect(within(row).getByRole("img", { name: "2 steps" })).toBeTruthy()
     fireEvent.click(within(row).getAllByRole("button")[0]!)
     expect(within(row).getByText("Explored")).toBeTruthy()
   })

@@ -6,6 +6,8 @@ import { ArrowUpRightIcon, BotIcon } from "lucide-react"
 
 import { MessageResponse } from "@/components/ai-elements/message"
 import { buildActivity } from "@/lib/activity/build-activity"
+import { describeToolCall } from "@/lib/activity/describe-tool-call"
+import { cleanTitle, tallySteps } from "@/lib/activity/progress"
 import { previewLine } from "@/lib/activity/format"
 import type { StepStatus } from "@/lib/activity/types"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
@@ -19,6 +21,7 @@ import { ActivityRow } from "../activity-row"
 import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { RailIcon } from "../rail-icon"
+import { StepBar } from "../step-bar"
 import { StatusFigure, useStatusText } from "../step-visuals"
 import {
   formatClock,
@@ -88,6 +91,29 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
       : null
   }, [m.hasTimeline, m.transcript, m.adaptedToolCalls, m.isRunning])
 
+  // Its finished steps, one segment each, from the calls it recorded.
+  const progress = useMemo(
+    () =>
+      tallySteps(
+        m.adaptedToolCalls.map((call) => {
+          const tool = describeToolCall(call)
+          return {
+            mark:
+              tool.status === "succeeded"
+                ? ("ok" as const)
+                : tool.status === "failed" || tool.status === "rejected"
+                  ? ("failed" as const)
+                  : null,
+            title:
+              cleanTitle(tool.command?.display) ??
+              cleanTitle(tool.target?.text) ??
+              tool.toolName,
+          }
+        })
+      ),
+    [m.adaptedToolCalls]
+  )
+
   const output =
     m.backgroundLifecycle?.result ??
     (m.taskOutcome || m.isLiveBackgroundLaunch ? null : step.part.output) ??
@@ -145,7 +171,7 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
           )
         }
         addon={
-          prompt || summaryLine || m.openChildSession ? (
+          prompt || summaryLine || m.openChildSession || progress ? (
             <div className="space-y-1 pb-0.5">
               {prompt ? (
                 <p
@@ -155,8 +181,11 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
                   {prompt}
                 </p>
               ) : null}
-              {summaryLine || m.openChildSession ? (
-                <div className="flex min-w-0 items-baseline gap-3 text-sm">
+              {summaryLine || m.openChildSession || progress ? (
+                <div className="flex min-w-0 items-center gap-3 text-sm">
+                  {progress ? (
+                    <StepBar progress={progress} live={live} />
+                  ) : null}
                   {summaryLine ? (
                     <span
                       dir="auto"

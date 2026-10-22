@@ -137,6 +137,38 @@ describe("parseStatusReports", () => {
     expect(reports[1]).toMatchObject({ status: "running", taskId: "t2" })
   })
 
+  it("carries each task's progress, from either copy of the batch", () => {
+    const progress = {
+      steps: 3,
+      marks: ["ok", "failed", "ok"],
+      last_step: "pnpm test",
+    }
+    const expected = {
+      steps: 3,
+      marks: ["ok", "failed", "ok"],
+      lastStep: "pnpm test",
+    }
+    const structured = parseStatusReports(
+      batchEnvelope([{ task_id: "t1", status: "running", progress }]),
+      null
+    )
+    expect(structured[0]!.progress).toEqual(expected)
+    // Claude Code keeps only the content text: the same JSON.
+    const contentOnly = parseStatusReports(
+      JSON.stringify({
+        tasks: [{ task_id: "t1", status: "completed", text: "ok", progress }],
+      }),
+      null
+    )
+    expect(contentOnly[0]!.progress).toEqual(expected)
+    // A report from before the field has none.
+    const old = parseStatusReports(
+      batchEnvelope([{ task_id: "t1", status: "completed", text: "ok" }]),
+      null
+    )
+    expect(old[0]!.progress).toBeNull()
+  })
+
   it("recovers a tasks array from content-only JSON (no structuredContent)", () => {
     // Hosts that persist only CallToolResult.content text get the JSON itself.
     const text = JSON.stringify({

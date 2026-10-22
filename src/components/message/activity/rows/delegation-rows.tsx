@@ -34,7 +34,9 @@ import { ActivityRow } from "../activity-row"
 import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { RailIcon } from "../rail-icon"
+import { StepBar } from "../step-bar"
 import { useStatusText } from "../step-visuals"
+import { useChildProgress } from "../use-child-progress"
 import {
   formatClock,
   LIVE_CLOCK_AFTER_MS,
@@ -159,6 +161,14 @@ export const DelegationRow = memo(function DelegationRow({
   )
   const latest = pollRows[pollRows.length - 1]
   const status = stepStatusOf(model.status)
+  const working = status === "running" || status === "awaiting"
+  // While it works, its own connection is the freshest source; the reports
+  // its checks returned cover the rest (and, once it is done, say how it
+  // ended).
+  const liveProgress = useChildProgress(
+    working ? model.childConnectionId : null
+  )
+  const progress = liveProgress ?? latest?.report.progress ?? null
   const [open, setOpen] = useDisclosure(step.key, {
     defaultOpen: false,
     force: model.status === "waiting",
@@ -172,6 +182,9 @@ export const DelegationRow = memo(function DelegationRow({
     model.status === "ok" || model.status === "err"
       ? previewLine(latest?.report.text, RESULT_PREVIEW_CHARS)
       : null
+  // While it works, what it is doing now stands where the result will be.
+  const current = working && status !== "awaiting" ? progress?.lastStep : null
+  const summary = result ?? current ?? null
   const openSession =
     model.childConversationId != null
       ? () =>
@@ -211,7 +224,7 @@ export const DelegationRow = memo(function DelegationRow({
           />
         }
         addon={
-          hasTask || result || openSession ? (
+          hasTask || summary || openSession || progress ? (
             <div className="space-y-1 pb-0.5">
               {hasTask ? (
                 <p
@@ -221,15 +234,21 @@ export const DelegationRow = memo(function DelegationRow({
                   {model.task}
                 </p>
               ) : null}
-              {result || openSession ? (
-                <div className="flex min-w-0 items-baseline gap-3 text-sm">
-                  {result ? (
+              {summary || openSession || progress ? (
+                <div className="flex min-w-0 items-center gap-3 text-sm">
+                  {progress ? (
+                    <StepBar progress={progress} live={status === "running"} />
+                  ) : null}
+                  {summary ? (
                     <span
                       dir="auto"
-                      className="min-w-0 flex-1 truncate text-muted-foreground"
-                      title={result}
+                      className={cn(
+                        "min-w-0 flex-1 truncate",
+                        result ? "text-muted-foreground" : "activity-shimmer"
+                      )}
+                      title={summary}
                     >
-                      {result}
+                      {summary}
                     </span>
                   ) : (
                     <span className="flex-1" />
@@ -280,6 +299,11 @@ export const DelegationRow = memo(function DelegationRow({
               dir="ltr"
             >
               #{model.taskId.slice(0, 8)}
+            </span>
+          ) : null}
+          {progress && progress.steps > 0 ? (
+            <span className="shrink-0 text-muted-foreground">
+              {`· ${t("header.steps", { count: progress.steps })}`}
             </span>
           ) : null}
         </span>

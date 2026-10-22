@@ -8,7 +8,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::acp::delegation::types::{BlockedKind, BlockedOn};
+use crate::acp::delegation::types::{
+    BlockedKind, BlockedOn, DelegationProgress, StepMark, LAST_STEP_CAP, MAX_STEP_MARKS,
+};
 use crate::acp::event_stream::{
     images_slice_size, json_str_len, json_value_size, opt_json_size, opt_str_size,
     ConnectionEventStream, RecentEventsBuffer,
@@ -672,6 +674,13 @@ pub struct SessionState {
     /// `delegation_call_id`-bound child outcome. Cleared on the next prompt.
     pub last_assistant_text: Option<String>,
 
+    /// The just-completed turn's tool-call progress ([`Self::turn_progress`]),
+    /// captured at TurnComplete beside `last_assistant_text` — by the time the
+    /// delegation broker records a finished child's result, the turn's tool
+    /// calls are already cleared. Backend-internal, like
+    /// `last_assistant_text`.
+    pub last_turn_progress: Option<DelegationProgress>,
+
     /// The in-flight user prompt for the current turn, captured from
     /// `AcpEvent::UserMessage` and cleared on `TurnComplete` (alongside
     /// `live_message`). Carried on `to_snapshot()` so a client attaching
@@ -892,6 +901,7 @@ impl SessionState {
             async_tasks: BTreeMap::new(),
             async_task_activity_at: None,
             last_assistant_text: None,
+            last_turn_progress: None,
             pending_user_message: None,
             pending_user_message_started_at: None,
             turn_in_flight: false,
@@ -1332,6 +1342,7 @@ impl SessionState {
                 // captured.
                 if self.turn_in_flight || self.live_message.is_some() {
                     self.last_assistant_text = None;
+                    self.last_turn_progress = self.turn_progress();
                 }
                 if let Some(live) = self.live_message.as_ref() {
                     let after_last_tool_call = live
@@ -1896,6 +1907,55 @@ impl SessionState {
         }
 
         None
+    }
+
+    /// How far the turn in flight has got, as its tool calls show: how many
+    /// finished, how the latest [`MAX_STEP_MARKS`] of them ended (in the order
+    /// the agent started them), and the latest call's title. `None` while the
+    /// turn has called no tool. Read by the delegation broker for a running
+    /// child's status report.
+    pub fn turn_progress(&self) -> Option<DelegationProgress> {
+        let live = self.live_message.as_ref()?;
+        let mut steps: u32 = 0;
+        let mut marks = std::collections::VecDeque::with_capacity(MAX_STEP_MARKS);
+        let mut latest: Option<&ToolCallState> = None;
+        for block in &live.content {
+            let LiveContentBlock::ToolCallRef { tool_call_id } = block else {
+                continue;
+            };
+            let Some(call) = self.active_tool_calls.get(tool_call_id) else {
+                continue;
+            };
+            latest = Some(call);
+            let mark = match call.status {
+                ToolCallStatus::Completed => StepMark::Ok,
+                ToolCallStatus::Failed => StepMark::Failed,
+                ToolCallStatus::Pending | ToolCallStatus::InProgress => continue,
+            };
+            steps = steps.saturating_add(1);
+            if marks.len() == MAX_STEP_MARKS {
+                marks.pop_front();
+            }
+            marks.push_back(mark);
+        }
+        let latest = latest?;
+        let label = latest.label.trim();
+        Some(DelegationProgress {
+            steps,
+            marks: marks.into(),
+            last_step: (!label.is_empty()).then(|| truncate_one_line(label, LAST_STEP_CAP)),
+        })
+    }
+
+    /// [`Self::turn_progress`] while a turn runs, else what the last turn
+    /// ended with — a delegation child's progress whichever side of its
+    /// `TurnComplete` the broker asks from.
+    pub fn delegation_progress(&self) -> Option<DelegationProgress> {
+        if self.live_message.is_some() {
+            self.turn_progress()
+        } else {
+            self.last_turn_progress.clone()
+        }
     }
 
     /// The prompt this session is parked on, if any — a permission, an
@@ -3698,6 +3758,98 @@ mod tests {
             s.latest_live_reply(100).as_deref(),
             Some("running tool: grep files")
         );
+    }
+
+    fn tool_call(id: &str, title: &str, status: &str) -> AcpEvent {
+        AcpEvent::ToolCall {
+            tool_call_id: id.into(),
+            title: title.into(),
+            kind: "execute".into(),
+            status: status.into(),
+            content: None,
+            raw_input: None,
+            raw_output: None,
+            locations: None,
+            meta: None,
+            images: None,
+        }
+    }
+
+    fn settle(id: &str, status: &str) -> AcpEvent {
+        AcpEvent::ToolCallUpdate {
+            tool_call_id: id.into(),
+            title: None,
+            status: Some(status.into()),
+            content: None,
+            raw_input: None,
+            raw_output: None,
+            raw_output_append: None,
+            locations: None,
+            meta: None,
+            images: None,
+        }
+    }
+
+    #[test]
+    fn turn_progress_counts_finished_calls_in_the_order_they_started() {
+        let mut s = fresh_state();
+        assert_eq!(s.turn_progress(), None, "no turn, no progress");
+        s.apply_event(&AcpEvent::ContentDelta {
+            text: "on it".into(),
+            parent_tool_use_id: None,
+        });
+        assert_eq!(s.turn_progress(), None, "no tool called yet");
+        // Ids sort the other way round from the order they started in.
+        s.apply_event(&tool_call("z-1", "read a.rs", "in_progress"));
+        s.apply_event(&tool_call("a-2", "pnpm test", "in_progress"));
+        s.apply_event(&tool_call("m-3", "edit a.rs", "in_progress"));
+        s.apply_event(&settle("a-2", "failed"));
+        s.apply_event(&settle("z-1", "completed"));
+        let progress = s.turn_progress().expect("progress");
+        assert_eq!(progress.steps, 2);
+        assert_eq!(progress.marks, vec![StepMark::Ok, StepMark::Failed]);
+        // The latest call, finished or not.
+        assert_eq!(progress.last_step.as_deref(), Some("edit a.rs"));
+    }
+
+    #[test]
+    fn turn_progress_keeps_only_the_latest_marks() {
+        let mut s = fresh_state();
+        for i in 0..MAX_STEP_MARKS + 3 {
+            let id = format!("tc-{i:02}");
+            s.apply_event(&tool_call(&id, "step", "in_progress"));
+            s.apply_event(&settle(&id, if i == 0 { "failed" } else { "completed" }));
+        }
+        let progress = s.turn_progress().expect("progress");
+        assert_eq!(progress.steps as usize, MAX_STEP_MARKS + 3);
+        assert_eq!(progress.marks.len(), MAX_STEP_MARKS);
+        assert!(
+            progress.marks.iter().all(|m| *m == StepMark::Ok),
+            "the oldest (failed) mark fell off the front"
+        );
+    }
+
+    #[test]
+    fn a_finished_turn_keeps_its_progress_for_the_broker() {
+        let mut s = fresh_state();
+        s.apply_event(&tool_call("tc-1", "pnpm build", "in_progress"));
+        s.apply_event(&settle("tc-1", "completed"));
+        let live = s.delegation_progress().expect("live progress");
+        s.apply_event(&AcpEvent::TurnComplete {
+            session_id: "ext".into(),
+            stop_reason: "end_turn".into(),
+            agent_type: "codex".into(),
+        });
+        assert!(s.active_tool_calls.is_empty());
+        assert_eq!(s.turn_progress(), None);
+        assert_eq!(s.delegation_progress(), Some(live));
+        // A repeated TurnComplete (the cancel path's late response) keeps it.
+        s.apply_event(&AcpEvent::TurnComplete {
+            session_id: "ext".into(),
+            stop_reason: "end_turn".into(),
+            agent_type: "codex".into(),
+        });
+        assert!(s.delegation_progress().is_some());
     }
 
     #[test]

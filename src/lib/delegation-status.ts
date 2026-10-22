@@ -24,6 +24,7 @@
  * ever face the result itself.
  */
 
+import { progressFromReport, type StepProgress } from "@/lib/activity/progress"
 import { extractEmbeddedJsonObject } from "@/lib/embedded-json"
 import { peelMcpResultEnvelope } from "@/lib/mcp-result-envelope"
 import { isUnsettledToolCall } from "@/lib/tool-call-lifecycle"
@@ -80,6 +81,11 @@ export type StatusReport = {
    *  either "genuinely working" or "host dropped structuredContent" — the
    *  message text's own blocked line covers the latter. */
   blockedOn: BlockedKind | null
+  /** How far the sub-agent had got when this report was taken (Rust
+   *  `DelegationTaskReport.progress`): live on a running report, final on a
+   *  terminal one. `null` when the report predates the field or the sub-agent
+   *  called no tool. */
+  progress: StepProgress | null
 }
 
 /**
@@ -412,6 +418,7 @@ export function parseStatusReport(
     errorCode: null,
     durationMs: null,
     blockedOn: null,
+    progress: null,
   }
   const raw = (output ?? errorText ?? "").trim()
   if (!raw) return empty
@@ -464,6 +471,7 @@ export function parseStatusReport(
         report,
         text ?? str(report, "message") ?? contentText
       ),
+      progress: progressFromReport(report.progress),
     }
   }
 
@@ -492,6 +500,7 @@ function reportFromObject(report: Record<string, unknown>): StatusReport {
     errorCode: str(report, "error_code"),
     durationMs: num(report, "duration_ms"),
     blockedOn: parseBlockedOn(report, text),
+    progress: progressFromReport(report.progress),
   }
 }
 
@@ -648,6 +657,7 @@ const EMPTY_STATUS_REPORT: StatusReport = {
   errorCode: null,
   durationMs: null,
   blockedOn: null,
+  progress: null,
 }
 
 /**

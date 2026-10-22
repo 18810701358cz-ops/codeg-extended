@@ -381,6 +381,38 @@ pub struct BlockedOn {
     pub title: Option<String>,
 }
 
+/// How far a sub-agent has got with its task, as far as its tool calls show:
+/// how many it has finished, how the latest of them ended, and what it did
+/// last. Taken from the child's live session — the turn in flight, or the one
+/// that just ended — so it is only ever as good as what the agent reported.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationProgress {
+    /// Tool calls the child has finished in this task.
+    pub steps: u32,
+    /// How each of the last [`MAX_STEP_MARKS`] finished calls ended, oldest
+    /// first — what the parent's card draws as one segment per step.
+    pub marks: Vec<StepMark>,
+    /// The title of the child's latest tool call (finished or not), one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_step: Option<String>,
+}
+
+/// How a finished tool call ended. Wire-stable: it ships to the frontend and to
+/// the parent LLM's context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepMark {
+    Ok,
+    Failed,
+}
+
+/// How many [`DelegationProgress::marks`] a report carries: the card draws at
+/// most this many segments and counts the rest.
+pub const MAX_STEP_MARKS: usize = 12;
+
+/// Char budget for [`DelegationProgress::last_step`].
+pub const LAST_STEP_CAP: usize = 120;
+
 /// Unified response the broker hands the listener for every delegation tool
 /// (`delegate_to_agent` / `get_delegation_status` / `cancel_delegation`). The
 /// listener serializes it into `BrokerResponse.outcome`; the companion renders
@@ -428,6 +460,11 @@ pub struct DelegationTaskReport {
     pub assistant_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assistant_name: Option<String>,
+    /// The child's tool-call progress: live on a `Running` report, as it
+    /// stood at the end on a terminal one. Absent when the child called no
+    /// tool, or the session it ran in is no longer in memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<DelegationProgress>,
 }
 
 impl DelegationTaskReport {
