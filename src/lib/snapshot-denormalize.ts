@@ -42,6 +42,11 @@ export interface SnapshotPatch {
   // a freshly-started replacement at the same contextKey.
   connectionId: string
   status: ConnectionStatus
+  /** Whether a turn has run on the connection: it is mid-turn, or it is
+   *  linked to its conversation row (`conversation_id`), which the backend
+   *  does at the connection's first prompt (or a fork), never at connect.
+   *  Latched in `ConnectionState.hasPrompted`. */
+  hasPrompted: boolean
   sessionId: string | null
   modes: SessionModeStateInfo | null
   configOptions: SessionConfigOptionInfo[] | null
@@ -125,6 +130,7 @@ export function denormalizeSnapshot(wire: LiveSessionSnapshot): SnapshotPatch {
   return {
     connectionId: wire.connection_id,
     status: wire.status,
+    hasPrompted: wire.status === "prompting" || wire.conversation_id != null,
     sessionId: wire.external_id,
     modes: wire.modes,
     configOptions: wire.config_options,

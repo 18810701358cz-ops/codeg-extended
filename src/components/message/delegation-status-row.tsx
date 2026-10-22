@@ -21,9 +21,19 @@
  * by itself, and carries the prompt, answered through the sub-agent's own
  * connection (#973). Once it is answered the row goes back to what the polls
  * said, minus the stale "awaiting approval" of a poll that predates the answer.
+ *
+ * Only the task's newest row in the transcript does that (see
+ * `@/lib/delegation-status-index`). An agent re-polls a parked sub-agent until
+ * it is answered, and whatever it says in between leaves one card per poll;
+ * were every one of them to carry the prompt, the same decision would be
+ * mounted, opened and re-rendered once per card. An older row is a superseded
+ * check: it stays out of the live state, and its "awaiting approval" reads as
+ * "checked", the newest row speaking for the task now. The one exception is a
+ * row the user has started answering in: it keeps the decision until that is
+ * answered, so a re-poll does not pull it — and an unsent answer — away.
  */
 
-import { useId, useMemo, useState } from "react"
+import { memo, useEffect, useId, useMemo, useState } from "react"
 import {
   Activity,
   Ban,
@@ -44,6 +54,7 @@ import { MessageResponse } from "@/components/ai-elements/message"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { ConnectionBlockingPrompts } from "@/components/chat/connection-blocking-prompts"
 import { StatusBadge } from "@/components/message/delegation-status-badge"
+import { useDelegationStatusContext } from "@/components/message/delegation-status-index-context"
 import { useDelegationTaskLive } from "@/hooks/use-delegation-task-live"
 
 interface DelegationStatusRowProps {
@@ -63,38 +74,90 @@ interface DelegationStatusRowProps {
   results?: (string | null)[]
   /** The backend vouched for `taskId` by reporting it running to one of these
    *  polls (`DelegationTaskRow.runningConfirmed`) — required before the row
-   *  reaches the live sub-agent behind it. */
+   *  reaches the live sub-agent behind it. The transcript's index can vouch
+   *  for the task as well, from a poll drawn in another card. */
   runningConfirmed?: boolean
+  /** The call id of the row's latest poll (`DelegationTaskRow.latestPollId`):
+   *  matched against the transcript's index to tell the task's newest row
+   *  from a superseded one. Without it the row is its own newest. */
+  latestPollId?: string | null
 }
 
-export function DelegationStatusRow({
+// Memoized: the rows of a card that keeps its polls are the same objects
+// across the parent's streaming batches, so they skip those re-renders.
+export const DelegationStatusRow = memo(function DelegationStatusRow({
   kind,
   taskId,
   report,
   badge: polledBadge,
   results: resultsProp,
   runningConfirmed = false,
+  latestPollId = null,
 }: DelegationStatusRowProps) {
   const t = useTranslations("Folder.chat.delegation")
   const panelId = useId()
 
+  // A later card of this transcript polled the same task: this row is a
+  // superseded check. Unknown to the index (a card drawn outside a
+  // transcript), the row is its own newest.
+  const transcript = useDelegationStatusContext()
+  const statusTaskId = kind === "status" ? taskId : null
+  const indexed =
+    statusTaskId != null ? transcript?.index.get(statusTaskId) : undefined
+  const superseded =
+    indexed != null &&
+    latestPollId != null &&
+    indexed.latestPollId !== latestPollId
+  // The row the user is answering the task's decision in, if any.
+  const hold =
+    statusTaskId != null ? transcript?.held.get(statusTaskId) : undefined
+  const holding = hold?.token === panelId
+
   // A wait that is over (the task finished, failed, or is unknown) is history:
-  // only an open one looks at the live sub-agent.
+  // only an open one looks at the live sub-agent, and only from the newest row
+  // or the one holding its decision.
   const waitOpen = polledBadge.status !== "ok" && polledBadge.status !== "err"
   const live = useDelegationTaskLive(
-    kind === "status" && waitOpen ? taskId : null,
-    runningConfirmed
+    waitOpen && (!superseded || holding) ? statusTaskId : null,
+    runningConfirmed || indexed?.runningConfirmed === true
   )
   const childConnectionId = live.childConnectionId
-  const prompts = childConnectionId != null ? live.prompts : null
+  const pending = childConnectionId != null ? live.prompts : null
+  // A hold stands while a decision it was taken on is still pending; then the
+  // decision stays in that row, the newest row included.
+  const holdStands =
+    hold != null &&
+    pending != null &&
+    hold.ids.some((id) => pending.ids.includes(id))
+  const prompts =
+    pending != null && (holdStands ? holding : !superseded) ? pending : null
   // Live beats the poll: parked now is "waiting" even under a still-spinning
   // re-poll, and a poll's "waiting" is stale once the sub-agent is known to
-  // wait no more (answered, or its delegation over).
-  const badge: ResolvedBadge = prompts
+  // wait no more (answered, or its delegation over) — or once a newer row
+  // speaks for the task.
+  const badge: ResolvedBadge = pending
     ? { status: "waiting" }
-    : live.notWaiting && polledBadge.status === "waiting"
+    : (superseded || live.notWaiting) && polledBadge.status === "waiting"
       ? { status: "checked" }
       : polledBadge
+
+  // The user reaching into the decision holds it here. Let go once nothing it
+  // was taken on is pending, and when the row goes.
+  const takeHold = () => {
+    if (prompts && statusTaskId != null) {
+      transcript?.hold(statusTaskId, panelId, prompts.ids)
+    }
+  }
+  const release = transcript?.release
+  useEffect(() => {
+    if (holding && !holdStands && statusTaskId != null) {
+      release?.(statusTaskId, panelId)
+    }
+  }, [holding, holdStands, release, statusTaskId, panelId])
+  useEffect(() => {
+    if (!release || statusTaskId == null) return
+    return () => release(statusTaskId, panelId)
+  }, [release, statusTaskId, panelId])
 
   // Opens by itself for each decision the sub-agent asks for, unless the user
   // closed it with that very decision showing; otherwise it is the user's last
@@ -222,6 +285,8 @@ export function DelegationStatusRow({
             <div
               data-testid="delegation-status-prompts"
               className={cn(hasAnyResultText && "border-b border-border")}
+              onPointerDownCapture={takeHold}
+              onFocusCapture={takeHold}
             >
               <ConnectionBlockingPrompts
                 connectionId={childConnectionId}
@@ -283,4 +348,4 @@ export function DelegationStatusRow({
       )}
     </>
   )
-}
+})

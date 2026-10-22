@@ -1197,11 +1197,53 @@ describe("SidebarConversationList — Recent section", () => {
     ).toHaveLength(2)
   })
 
+  it("orders by last activity even though the sidebar sorts by creation time", () => {
+    // The list under test is `sortMode="created"`. conv-11 was created first
+    // but touched last; conv-12 is newer but idle. A section called "Recent"
+    // must lead with conv-11 and show its activity stamp, not its birth date.
+    // Timestamps hang off the real clock: this suite runs on real timers.
+    const t0 = Date.now()
+    // The collapse test above persists `{recent: true}` into
+    // `workspace:sidebar-section-collapsed`, and the list hydrates from it.
+    localStorage.clear()
+    useAppWorkspaceStore.setState({
+      conversations: [
+        conv(11, 1, {
+          created_at: new Date(t0 - 5 * MINUTE).toISOString(),
+          updated_at: new Date(t0 - 30_000).toISOString(),
+        }),
+        conv(12, 1, {
+          created_at: new Date(t0 - 4 * MINUTE).toISOString(),
+          updated_at: new Date(t0 - 3 * MINUTE).toISOString(),
+        }),
+      ],
+    })
+    render(recentTree(true))
+
+    // The Folders section emits the canonical copies first (creation order:
+    // conv-12 is newer); everything after them is the Recent duplicate, in
+    // activity order (conv-11 was touched last). Each row's text is its title
+    // followed by its age label: the Folders copies keep their creation age
+    // ("4m", "5m"), while the Recent copies read their last activity ("now"
+    // for 30s ago, "3m"), so each row's position is explained by what it shows.
+    const rows = Array.from(document.querySelectorAll("[data-conv-key]"))
+    expect(rows.map((el) => el.textContent)).toEqual([
+      "conv-124m",
+      "conv-115m",
+      "conv-11now",
+      "conv-123m",
+    ])
+  })
+
   describe("paging", () => {
     // `recentLimit` starts at RECENT_PAGE_SIZE and only ever grew, so a list
     // expanded a few pages deep stayed that way for the rest of the session.
     // These cover the way back out.
-    const PAGE = 15
+    //
+    // A literal rather than the constant: ten rows a page is the product
+    // decision these assertions pin, so a changed page size has to be a
+    // deliberate edit here too.
+    const PAGE = 10
     const TOTAL = PAGE + 4
 
     // Recent duplicates every canonical row, so total cards = canonical + recent
@@ -1432,6 +1474,68 @@ describe("SidebarConversationList — Recent section", () => {
       expect(cardsFor(11)).toBe(2)
       expect(cardsFor(12)).toBe(2)
     })
+  })
+})
+
+describe("SidebarConversationList — time labels", () => {
+  beforeEach(() => {
+    // Section collapse and folder expansion persist across tests otherwise.
+    localStorage.clear()
+    const folders = [folder(1, "Repo")]
+    store.activeTabId = null
+    store.tabSpec = []
+    useAppWorkspaceStore.setState({ folders, allFolders: folders })
+  })
+
+  it("labels Chat rows with the last activity they are ordered by", () => {
+    // The list under test is `sortMode="created"`, and Chat orders by last
+    // activity regardless. Timestamps hang off the real clock: this suite runs
+    // on real timers, and the list's `now` is read at mount.
+    const t0 = Date.now()
+    const HOUR = 60 * MINUTE
+    useAppWorkspaceStore.setState({
+      conversations: [
+        // Started two days ago, used 30s ago: Chat lists it first.
+        conv(21, 99, {
+          kind: "chat",
+          created_at: new Date(t0 - 48 * HOUR).toISOString(),
+          updated_at: new Date(t0 - 30_000).toISOString(),
+        }),
+        conv(22, 99, {
+          kind: "chat",
+          created_at: new Date(t0 - HOUR).toISOString(),
+          updated_at: new Date(t0 - HOUR).toISOString(),
+        }),
+        // Pinned (ordered by pin time) and Folders (ordered by creation here)
+        // keep the creation age.
+        conv(23, 99, {
+          kind: "chat",
+          created_at: new Date(t0 - 3 * HOUR).toISOString(),
+          updated_at: new Date(t0 - 30_000).toISOString(),
+          pinned_at: new Date(t0 - 30_000).toISOString(),
+        }),
+        conv(24, 1, {
+          created_at: new Date(t0 - 5 * MINUTE).toISOString(),
+          updated_at: new Date(t0 - 30_000).toISOString(),
+        }),
+      ],
+    })
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <SidebarConversationList showCompleted sortMode="created" />
+      </NextIntlClientProvider>
+    )
+
+    // Pinned, Folders, then Chat; each row's text is its title followed by
+    // its age label. Chat reads "now" above "1h" (its order), not "2d" above
+    // "1h".
+    const rows = Array.from(document.querySelectorAll("[data-conv-key]"))
+    expect(rows.map((el) => el.textContent)).toEqual([
+      "conv-233h",
+      "conv-245m",
+      "conv-21now",
+      "conv-221h",
+    ])
   })
 })
 

@@ -488,6 +488,18 @@ export interface ConnectionState {
    */
   outOfTurnToolCalls: ReadonlyMap<string, ToolCallInfo> | null
   /**
+   * Whether a turn has run on this connection: it has been `prompting` at
+   * least once, or the snapshot it was hydrated from says one has (it is
+   * mid-turn, or a prompt has linked it to its conversation row, which the
+   * backend does at the first prompt). Never goes back to `false`.
+   *
+   * Until then, whatever the agent sends outside a turn is its start-up output
+   * and not a turn of its own (see `isUnrenderedAgentTurnContent`), so it must
+   * not raise the "load background activity" notice. Read at event time, never
+   * rendered.
+   */
+  hasPrompted: boolean
+  /**
    * A turn the user stopped, while the agent may still be reporting on it.
    * codeg ends a stopped turn the moment the user asks
    * (`ConnectionCommand::Cancel` emits `turn_complete` before the agent
@@ -1902,6 +1914,7 @@ function connectionsReducer(
         configStaleDismissed: false,
         backgroundOutstanding: 0,
         outOfTurnToolCalls: null,
+        hasPrompted: false,
         cancelledTurn: null,
       })
       return next
@@ -1966,6 +1979,7 @@ function connectionsReducer(
         configStaleDismissed: false,
         backgroundOutstanding: 0,
         outOfTurnToolCalls: null,
+        hasPrompted: false,
         cancelledTurn: null,
       })
       return next
@@ -2011,6 +2025,9 @@ function connectionsReducer(
         current.availableCommands ?? action.patch.availableCommands
       const mergedPromptCapabilities =
         action.patch.promptCapabilities ?? current.promptCapabilities
+      // Latched like `selectorsReady`: a turn that ran stays run, however old
+      // the snapshot that reports it.
+      const mergedHasPrompted = action.patch.hasPrompted || current.hasPrompted
 
       // Race guard: the snapshot may have been generated BEFORE events
       // that have since arrived and been applied to in-memory state.
@@ -2067,6 +2084,7 @@ function connectionsReducer(
           mergedConfigOptions === current.configOptions &&
           mergedAvailableCommands === current.availableCommands &&
           mergedPromptCapabilities === current.promptCapabilities &&
+          mergedHasPrompted === current.hasPrompted &&
           mergedSessionFailures === current.sessionFailures &&
           mergedAsyncTasks === current.asyncTasks
         ) {
@@ -2081,6 +2099,7 @@ function connectionsReducer(
           promptCapabilities: mergedPromptCapabilities,
           selectorsReady: mergedSelectorsReady,
           supportsFork: mergedSupportsFork,
+          hasPrompted: mergedHasPrompted,
           sessionFailures: mergedSessionFailures,
           asyncTasks: mergedAsyncTasks,
         })
@@ -2136,6 +2155,7 @@ function connectionsReducer(
         promptCapabilities: mergedPromptCapabilities,
         selectorsReady: mergedSelectorsReady,
         supportsFork: mergedSupportsFork,
+        hasPrompted: mergedHasPrompted,
         // Staleness is a current-state field (like status): apply the snapshot's
         // value on the fresh path. `configStaleDismissed` is client-local and
         // preserved via `...current`.
@@ -2199,6 +2219,7 @@ function connectionsReducer(
         updated.remoteControl = null
       }
       if (action.status === "prompting") {
+        updated.hasPrompted = true
         updated.liveMessage = {
           id: randomUUID(),
           role: "assistant",
@@ -3587,6 +3608,20 @@ export function useAcpEvent(handler: EventSubscriberHandler): void {
   }, [ctx])
 }
 
+/**
+ * The turn `conn` was streaming ended without this client receiving its end —
+ * a re-attach after a disconnect found it over. The part of the reply that
+ * came before the gap is all this client has, so the conversations showing
+ * this session read the reply from the transcript when they settle the turn
+ * (`markTurnEndUnseen`), instead of keeping that part as the whole reply.
+ */
+function noteTurnEndedUnseen(conn: ConnectionState): void {
+  if (!conn.sessionId) return
+  useConversationRuntimeStore
+    .getState()
+    .actions.markTurnEndUnseen(conn.sessionId)
+}
+
 // ── Helper: extract affected key from action ──
 
 function getAffectedKey(action: Action): string | null {
@@ -4216,6 +4251,17 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       } else {
         const key = getAffectedKey(action)
         if (key) {
+          // A snapshot that takes the connection out of a turn ended a turn
+          // this client did not see end: the gap was too long to replay, and
+          // the events in it — the rest of the reply among them — are skipped.
+          // Marked BEFORE the listeners hear of it, so the turn-end edge that
+          // their re-render fires finds the mark.
+          if (action.type === "HYDRATE_FROM_SNAPSHOT") {
+            const before = prev.get(key)
+            const after = next.get(key)
+            if (before?.status === "prompting" && after?.status !== "prompting")
+              noteTurnEndedUnseen(before)
+          }
           mirrorLiveMessage(key)
           notifyKeyListeners(key)
           rememberCommands(key)
@@ -5970,7 +6016,8 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // Localize via the stable `code` field ("resource_not_found" —
           // JSON-RPC -32002 — plus "session_unavailable" and
           // "session_archived", both matched on the wire message, and
-          // "session_busy", read from codex-acp's typed error reason). Fall back
+          // "session_busy", read from codex-acp's typed error reason or
+          // matched on Kimi Code's session-lock message). Fall back
           // to the raw agent message so an unknown future code still surfaces
           // something intelligible rather than getting swallowed.
           const nc = storeRef.current.connections.get(contextKey)
@@ -6021,7 +6068,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
               // IDE extension), where freeing it can take quitting that client
               // because closing its tab does not always unload the thread; or
               // a fork codeg just made from it, which closes the parent and
-              // leaves codex to unload it about a minute later.
+              // leaves codex to unload it about a minute later. For Kimi Code
+              // the holder is another Kimi process on the same home (its CLI,
+              // `kimi web`, another codeg), which lets go 3 s after it goes
+              // idle; the same advice holds.
               case "session_busy":
                 return t("backendErrors.sessionLoadBusy", {
                   agent: agentLabel,
@@ -6380,6 +6430,12 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // so the user sees the conversation tab go away rather than
           // staring at stale state forever.
           attachSubscriptionsRef.current.delete(contextKey)
+          // Still in a turn here: the turn ended without this client — a
+          // connection that ends while attached reports its status first, so
+          // this is a re-attach that found nothing left (the idle sweep takes
+          // a connection nobody touches once its turn is over).
+          const gone = storeRef.current.connections.get(contextKey)
+          if (gone?.status === "prompting") noteTurnEndedUnseen(gone)
           // The composer that survives this is exactly the one whose Reconnect
           // button has to resume the session rather than start a new one.
           captureIdentityBeforeRemoval(contextKey)

@@ -2058,6 +2058,9 @@ export interface ForgeSourceMeta {
   head_repo?: string | null
   /** URL of the PR created by the delivery acceptance path (P1). */
   result_pr?: string | null
+  /** PR head the task's last push-back went onto (where the PR ended below
+   *  the task's own work); absent until a push-back. */
+  pushed_onto?: string | null
   /** The trigger dialog's write-back answer, frozen at trigger time. Absent on
    *  rows minted before the choice lived here — those stay silent. */
   writeback?: boolean | null
@@ -2356,6 +2359,12 @@ export interface ForgeRemote {
   server_host: string
   owner_repo: string
   remote_url: string
+  /** The instance's web root — scheme, host, port and mount path — as the
+   *  account the backend reads this host with spells it (`https://{host}`
+   *  when there is none). What an SSH remote's repository link is built on.
+   *  Absent from a server that predates the field — a remote codeg-server can
+   *  be older than the app connected to it. */
+  web_origin?: string
   /** Which forge this host is — decided by the backend from the configured
    *  accounts and the hostname, never chosen here. */
   provider: ForgeProviderId
@@ -3155,8 +3164,9 @@ export type AcpEvent =
        * The first three mean the session is gone. `"session_busy"` does not —
        * another live holder has it open (another Codex client — the app, the
        * CLI or an IDE extension — or, for about a minute after a fork, the
-       * forking session, until codex unloads the parent it closed), and it
-       * clears when that one lets go.
+       * forking session, until codex unloads the parent it closed; for Kimi
+       * Code, another Kimi process on the same home until it has been idle
+       * for 3 s), and it clears when that one lets go.
        */
       code: string
     }
@@ -3966,6 +3976,11 @@ export interface GrokSettings {
   custom_api_backend: string | null
   /** [model.<id>].context_window — context size in tokens. */
   custom_context_window: number | null
+  /** [model.<id>].reasoning_efforts — the levels the custom model declares,
+   * each the lowercased `value` Grok sends to the provider, in file order.
+   * Empty when absent: Grok then only has its own model catalog's levels for
+   * this id (never the custom base_url's model list). */
+  custom_reasoning_efforts: string[]
   /** [session].auto_compact_threshold_percent — 0–100 (Grok default 85). */
   auto_compact_threshold_percent: number | null
 }
@@ -3983,6 +3998,11 @@ export interface GrokStructuredConfig {
   customApiKey: string | null
   customApiBackend: string | null
   customContextWindow: number | null
+  /** The custom model's reasoning_efforts levels. Unlike the fields above,
+   * null leaves the key as it is (the panel sends levels only once its chips
+   * moved, so a list typed into the raw editor survives); an empty list
+   * removes it. */
+  customReasoningEfforts: string[] | null
   autoCompactThresholdPercent: number | null
 }
 
@@ -4629,6 +4649,10 @@ export interface FolderCommand {
   name: string
   command: string
   sort_order: number
+  /** Run by the desktop app on its own machine, detached, instead of in a
+   *  terminal on the folder's host. Absent from older servers' rows (then
+   *  treated as `false`). */
+  run_local?: boolean
   created_at: string
   updated_at: string
 }
@@ -4765,6 +4789,27 @@ export interface GitConflictFileVersions {
 
 export interface GitCommitResult {
   committed_files: number
+}
+
+/** How the commit message generator runs (`commit_message` on the backend).
+ *  With no agent it follows the active session, then the folder's default. */
+/** How commit messages are written: globally, or for one project folder,
+ *  whose own settings replace the global ones whole. */
+export interface CommitMessageSettings {
+  /** The agent that writes them with every option it offers picked — an
+   *  assistant's kind of selection. `null` follows the active session. */
+  agent: AssistantAgentConfig | null
+  /** Standing instructions, e.g. "write in Chinese". */
+  instructions: string
+  /** Commit as soon as the message is written. */
+  auto_commit: boolean
+}
+
+export interface GeneratedCommitMessage {
+  message: string
+  agent_type: AgentType
+  /** The settings the run used want the message committed right away. */
+  auto_commit: boolean
 }
 
 export interface GitRemote {

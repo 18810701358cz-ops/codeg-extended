@@ -11,7 +11,7 @@
  * (`ConversationShell`), wired to its own handlers.
  */
 
-import { useCallback } from "react"
+import { memo, useCallback } from "react"
 
 import { AskQuestionCard } from "@/components/chat/ask-question-card"
 import { PermissionDialog } from "@/components/chat/permission-dialog"
@@ -30,7 +30,7 @@ interface Props {
   itemClassName?: string
 }
 
-export function ConnectionBlockingPrompts({
+function ConnectionBlockingPromptsImpl({
   connectionId,
   prompts,
   agentType,
@@ -87,3 +87,7 @@ export function ConnectionBlockingPrompts({
     </>
   )
 }
+
+// Memoized: the hosts re-render with their transcripts, the prompts only when
+// the connection asks something else.
+export const ConnectionBlockingPrompts = memo(ConnectionBlockingPromptsImpl)

@@ -1,12 +1,21 @@
 import { type ReactElement } from "react"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { DelegationStatusCard } from "./delegation-status-card"
 import { DelegationStatusGroupCard } from "./delegation-status-group-card"
+import { DelegationStatusIndexProvider } from "./delegation-status-index-context"
 import enMessages from "@/i18n/messages/en.json"
 import type { DelegationBinding } from "@/contexts/delegation-context"
-import type { AdaptedToolCallPart } from "@/lib/adapters/ai-elements-adapter"
+import type {
+  AdaptedContentPart,
+  AdaptedToolCallPart,
+} from "@/lib/adapters/ai-elements-adapter"
+import {
+  buildDelegationStatusIndex,
+  collectDelegationStatusTasks,
+} from "@/lib/delegation-status-index"
 
 // A `get_delegation_status` row whose sub-agent is parked on the user must let
 // the user answer right there (#973): the card used to badge "awaiting
@@ -104,12 +113,17 @@ vi.mock("@/components/chat/ask-question-card", () => ({
     question: { question_id: string }
     onAnswer: (questionId: string, answer: unknown) => void
   }) => (
-    <button
-      data-testid="ask-question-card"
-      onClick={() => onAnswer(question.question_id, { answers: [] })}
-    >
-      question {question.question_id}
-    </button>
+    <>
+      <button
+        data-testid="ask-question-card"
+        onClick={() => onAnswer(question.question_id, { answers: [] })}
+      >
+        question {question.question_id}
+      </button>
+      {/* Uncontrolled, like the real card's unsent answer: it survives only
+          as long as this instance does. */}
+      <input data-testid="ask-question-draft" aria-label="answer" />
+    </>
   ),
 }))
 vi.mock("@/components/chat/plan-approval-card", () => ({
@@ -535,5 +549,275 @@ describe("DelegationStatusGroupCard — answering a parked sub-agent (#973)", ()
 
     expect(screen.getByText("done")).toBeInTheDocument()
     expect(screen.queryByTestId("permission-dialog")).not.toBeInTheDocument()
+  })
+})
+
+/** A re-poll of `taskId` that is still waiting on the backend. */
+function inflightPoll(taskId: string, id: string): AdaptedToolCallPart {
+  return {
+    type: "tool-call",
+    toolCallId: id,
+    toolName: "get_delegation_status",
+    input: JSON.stringify({ task_ids: [taskId] }),
+    state: "input-available",
+    output: null,
+  }
+}
+
+/**
+ * Status cards as one transcript draws them — a grouped card per entry, or a
+ * bare call drawn as its own card — under the transcript's index, built the
+ * way `MessageListView` builds it: over the whole thread, including the cards
+ * the virtualized list has not mounted (`unmounted`, by first poll id).
+ */
+function renderTranscript(
+  cards: Array<AdaptedToolCallPart[] | AdaptedToolCallPart>
+) {
+  const firstId = (c: (typeof cards)[number]) =>
+    Array.isArray(c) ? c[0].toolCallId : c.toolCallId
+  const ui = (cs: typeof cards, unmounted: string[] = []): ReactElement => {
+    const parts: AdaptedContentPart[] = cs.map((c) =>
+      Array.isArray(c) ? { type: "delegation-status-group", polls: c } : c
+    )
+    const index = buildDelegationStatusIndex(
+      parts.map((part) => collectDelegationStatusTasks([part]))
+    )
+    return (
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <DelegationStatusIndexProvider value={index}>
+          {cs
+            .filter((c) => !unmounted.includes(firstId(c)))
+            .map((c) =>
+              Array.isArray(c) ? (
+                <section
+                  key={c[0].toolCallId}
+                  data-testid={`card-${c[0].toolCallId}`}
+                >
+                  <DelegationStatusGroupCard polls={c} />
+                </section>
+              ) : (
+                <section
+                  key={c.toolCallId}
+                  data-testid={`card-${c.toolCallId}`}
+                >
+                  <DelegationStatusCard
+                    kind="status"
+                    toolCallId={c.toolCallId}
+                    input={c.input}
+                    output={c.output}
+                    state={c.state}
+                  />
+                </section>
+              )
+            )}
+        </DelegationStatusIndexProvider>
+      </NextIntlClientProvider>
+    )
+  }
+  const result = render(ui(cards))
+  return {
+    ...result,
+    rerenderCards: (cs: typeof cards, unmounted?: string[]) =>
+      result.rerender(ui(cs, unmounted)),
+  }
+}
+
+function card(id: string) {
+  return within(screen.getByTestId(`card-${id}`))
+}
+
+describe("Status cards of one transcript — one prompt per task", () => {
+  beforeEach(() => {
+    bindings.clear()
+    connections.clear()
+    storeCallbacks = []
+    respondPermission.mockReset()
+    answerQuestion.mockReset()
+    answerPlanApproval.mockReset()
+  })
+
+  it("carries the decision in the task's newest card only; the older ones read 'checked' and stay out of the live state", () => {
+    // The agent told the user about the decision between polls, so each poll
+    // is a card of its own.
+    bindingFor(TASK, CHILD)
+    connections.set(CHILD, childState({ pendingPermission: PERMISSION }))
+    renderTranscript([
+      [blockedPoll(TASK, "p1")],
+      [blockedPoll(TASK, "p2")],
+      [blockedPoll(TASK, "p3")],
+    ])
+
+    expect(screen.getAllByTestId("permission-dialog")).toHaveLength(1)
+    expect(card("p3").getByTestId("permission-dialog")).toBeInTheDocument()
+    expect(card("p3").getByText("awaiting approval")).toBeInTheDocument()
+    for (const older of ["p1", "p2"]) {
+      expect(card(older).getByText("checked")).toBeInTheDocument()
+      expect(
+        card(older).getByRole("button", { expanded: false })
+      ).toBeInTheDocument()
+    }
+    // Only the newest row watches the sub-agent.
+    expect(storeCallbacks).toHaveLength(1)
+  })
+
+  it("moves an untouched decision to the card the agent polls in next", () => {
+    bindingFor(TASK, CHILD)
+    connections.set(CHILD, childState({ pendingPermission: PERMISSION }))
+    const { rerenderCards } = renderTranscript([[blockedPoll(TASK, "p1")]])
+    expect(card("p1").getByTestId("permission-dialog")).toBeInTheDocument()
+
+    // The re-poll is still in flight: its own polls vouch for nothing yet,
+    // the earlier card's `running` answer does.
+    rerenderCards([[blockedPoll(TASK, "p1")], [inflightPoll(TASK, "p2")]])
+
+    expect(screen.getAllByTestId("permission-dialog")).toHaveLength(1)
+    expect(card("p2").getByTestId("permission-dialog")).toBeInTheDocument()
+    expect(card("p2").getByText("awaiting approval")).toBeInTheDocument()
+    expect(card("p1").getByText("checked")).toBeInTheDocument()
+    fireEvent.click(card("p2").getByTestId("permission-dialog"))
+    expect(respondPermission).toHaveBeenCalledWith(CHILD, "req-1", "approve")
+  })
+
+  it("keeps a decision the user has started answering where it is when the agent polls again", () => {
+    bindingFor(TASK, CHILD)
+    const question = {
+      question_id: "q-1",
+      questions: [
+        {
+          id: "q",
+          question: "Which DB?",
+          header: "DB",
+          multi_select: false,
+          options: [],
+        },
+      ],
+      created_at: "2026-10-18T00:00:00Z",
+    }
+    connections.set(CHILD, childState({ pendingAskQuestion: question }))
+    const { rerenderCards } = renderTranscript([[blockedPoll(TASK, "p1")]])
+    // The user starts on the answer…
+    const draft = card("p1").getByTestId("ask-question-draft")
+    fireEvent.pointerDown(draft)
+    fireEvent.change(draft, { target: { value: "Postgres" } })
+
+    // …and the agent polls again meanwhile.
+    rerenderCards([[blockedPoll(TASK, "p1")], [inflightPoll(TASK, "p2")]])
+    expect(screen.getAllByTestId("ask-question-card")).toHaveLength(1)
+    expect(card("p1").getByTestId("ask-question-card")).toBeInTheDocument()
+    // Not moved, not remounted: the unsent answer is still there.
+    expect(card("p1").getByTestId("ask-question-draft")).toHaveValue("Postgres")
+    // The newest row still says what the sub-agent is waiting on.
+    expect(card("p2").getByText("awaiting approval")).toBeInTheDocument()
+
+    // Answered: the hold goes with it, and the next decision opens in the
+    // newest card again.
+    act(() => {
+      connections.set(CHILD, childState())
+      notifyStore()
+    })
+    expect(screen.queryByTestId("ask-question-card")).not.toBeInTheDocument()
+    act(() => {
+      connections.set(
+        CHILD,
+        childState({
+          pendingPermission: { ...PERMISSION, request_id: "req-2" },
+        })
+      )
+      notifyStore()
+    })
+    expect(screen.getAllByTestId("permission-dialog")).toHaveLength(1)
+    expect(card("p2").getByTestId("permission-dialog")).toBeInTheDocument()
+  })
+
+  it("hands a held decision to the newest card once the holding card is gone", () => {
+    bindingFor(TASK, CHILD)
+    connections.set(CHILD, childState({ pendingPermission: PERMISSION }))
+    const { rerenderCards } = renderTranscript([[blockedPoll(TASK, "p1")]])
+    fireEvent.focus(card("p1").getByTestId("permission-dialog"))
+    rerenderCards([[blockedPoll(TASK, "p1")], [inflightPoll(TASK, "p2")]])
+    expect(card("p1").getByTestId("permission-dialog")).toBeInTheDocument()
+
+    // Scrolled out of the virtualized thread.
+    rerenderCards(
+      [[blockedPoll(TASK, "p1")], [inflightPoll(TASK, "p2")]],
+      ["p1"]
+    )
+    expect(screen.getAllByTestId("permission-dialog")).toHaveLength(1)
+    expect(card("p2").getByTestId("permission-dialog")).toBeInTheDocument()
+  })
+
+  it("names a bare status call's row by its own call id", () => {
+    bindingFor(TASK, CHILD)
+    connections.set(CHILD, childState({ pendingPermission: PERMISSION }))
+    renderTranscript([[blockedPoll(TASK, "p1")], blockedPoll(TASK, "p2")])
+
+    expect(screen.getAllByTestId("permission-dialog")).toHaveLength(1)
+    expect(card("p2").getByTestId("permission-dialog")).toBeInTheDocument()
+    expect(card("p1").getByText("checked")).toBeInTheDocument()
+  })
+
+  it("keeps one newest row per task when the agent waits on several", () => {
+    const OTHER = "7bd4d6ff-0000-4000-8000-000000000002"
+    const OTHER_CHILD = "child-conn-2"
+    bindingFor(TASK, CHILD)
+    bindingFor(OTHER, OTHER_CHILD)
+    connections.set(CHILD, childState({ pendingPermission: PERMISSION }))
+    connections.set(OTHER_CHILD, {
+      ...childState({
+        pendingPermission: { ...PERMISSION, request_id: "req-other" },
+      }),
+      connectionId: OTHER_CHILD,
+      contextKey: OTHER_CHILD,
+    })
+    const both: AdaptedToolCallPart = {
+      ...blockedPoll(TASK, "p1"),
+      input: JSON.stringify({ task_ids: [TASK, OTHER] }),
+    }
+    const reports = [TASK, OTHER].map((taskId) => ({
+      task_id: taskId,
+      status: "running",
+      message: BLOCKED_TEXT,
+      blocked_on: { kind: "permission" },
+    }))
+    both.output = JSON.stringify({
+      content: [{ type: "text", text: JSON.stringify({ tasks: reports }) }],
+      isError: false,
+      structuredContent: { tasks: reports },
+    })
+    renderTranscript([[both], [inflightPoll(TASK, "p2")]])
+
+    expect(screen.getAllByTestId("permission-dialog")).toHaveLength(2)
+    expect(card("p2").getByText("permission req-1")).toBeInTheDocument()
+    expect(card("p1").getByText("permission req-other")).toBeInTheDocument()
+    expect(card("p1").queryByText("permission req-1")).not.toBeInTheDocument()
+  })
+
+  it("never reaches a sub-agent no poll of the transcript found running", () => {
+    // The backend answered the id `unknown` (another conversation's task),
+    // and the agent is polling it again: nothing in the transcript vouches.
+    bindingFor(TASK, CHILD)
+    connections.set(CHILD, childState({ pendingPermission: PERMISSION }))
+    const unknown = {
+      task_id: TASK,
+      status: "unknown",
+      message: "Unknown task id.",
+    }
+    renderTranscript([
+      [
+        {
+          ...inflightPoll(TASK, "p1"),
+          state: "output-available",
+          output: JSON.stringify({
+            content: [{ type: "text", text: unknown.message }],
+            isError: false,
+            structuredContent: { tasks: [unknown] },
+          }),
+        },
+      ],
+      [inflightPoll(TASK, "p2")],
+    ])
+
+    expect(screen.queryByTestId("permission-dialog")).not.toBeInTheDocument()
+    expect(screen.queryByText("awaiting approval")).not.toBeInTheDocument()
   })
 })
