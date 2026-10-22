@@ -61,7 +61,7 @@ function renderBlock(block: QuoteBlock, key: number) {
       <div
         key={key}
         data-testid="user-message-quote"
-        className="my-1.5 border-l-2 border-foreground/25 pl-3 first:mt-0 last:mb-0"
+        className="my-1.5 border-s-2 border-foreground/25 ps-3 first:mt-0 last:mb-0"
       >
         {block.children.map(renderBlock)}
       </div>
@@ -92,7 +92,9 @@ function renderBlock(block: QuoteBlock, key: number) {
  *
  * `whitespace-pre-wrap` preserves the sender's newlines (replacing the old
  * `remark-breaks` path); `break-words` keeps long unbroken tokens from
- * overflowing the bubble.
+ * overflowing the bubble. `dir="auto"` reads the message in the direction of
+ * its own text, like everything else a person typed: an English message in the
+ * Arabic interface keeps its full stop at the end.
  */
 export const PlainTextWithBadges = memo(function PlainTextWithBadges({
   text,
@@ -107,14 +109,17 @@ export const PlainTextWithBadges = memo(function PlainTextWithBadges({
   // one prose run, rendered by exactly the markup this component always emitted.
   if (blocks.length === 1 && blocks[0].kind === "text") {
     return (
-      <div className={cn("whitespace-pre-wrap break-words", className)}>
+      <div
+        className={cn("whitespace-pre-wrap break-words", className)}
+        dir="auto"
+      >
         <TextRun text={blocks[0].text} />
       </div>
     )
   }
 
   return (
-    <div className={cn("break-words", className)}>
+    <div className={cn("break-words", className)} dir="auto">
       {blocks.map(renderBlock)}
     </div>
   )

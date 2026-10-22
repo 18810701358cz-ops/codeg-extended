@@ -8,17 +8,20 @@ vi.mock("streamdown", () => ({
     className,
     mode,
     parseIncompleteMarkdown,
+    dir,
   }: {
     children: ReactNode
     className?: string
     mode?: string
     parseIncompleteMarkdown?: boolean
+    dir?: string
   }) => (
     <div
       className={className}
       data-testid="streamdown-root"
       data-mode={mode}
       data-parse-incomplete={String(parseIncompleteMarkdown)}
+      data-dir={dir}
     >
       {children}
     </div>
@@ -51,7 +54,17 @@ describe("MessageResponse", () => {
 
     expect(screen.getByTestId("streamdown-root")).toHaveClass(
       "[&_ol]:list-decimal",
-      "[&_ol]:pl-3"
+      "[&_ol]:ps-3",
+      "[&_li]:text-start"
+    )
+  })
+
+  it("reads each block in the direction of its own text", () => {
+    render(<MessageResponse>{"Hello."}</MessageResponse>)
+
+    expect(screen.getByTestId("streamdown-root")).toHaveAttribute(
+      "data-dir",
+      "auto"
     )
   })
 
@@ -81,12 +94,15 @@ describe("MessageResponse", () => {
     // Streamdown sets `border-l-4 border-muted-foreground/30 … italic` on
     // blockquotes from inside node_modules, which Tailwind v4 does not scan — so
     // those utilities generate no CSS and a quote renders with no rule at all.
-    // Declaring them here (scanned source) is what actually paints them.
+    // Declaring them here (scanned source) is what actually paints them — on
+    // the quote's start side, which follows the direction of its text.
     render(<MessageResponse>{"> quoted"}</MessageResponse>)
 
     expect(screen.getByTestId("streamdown-root")).toHaveClass(
-      "[&_blockquote]:border-l-2",
+      "[&_blockquote]:border-s-2",
       "[&_blockquote]:border-border",
+      "[&_blockquote]:ps-4",
+      "[&_blockquote]:pe-0",
       "[&_blockquote]:not-italic"
     )
   })

@@ -11,6 +11,7 @@ import { markdownLinkComponents } from "./markdown-link"
 import { mermaidComponents } from "./mermaid-block"
 import { LIVE_REMEND, normalizeMathDelimiters } from "./message"
 import { rehypePluginsAllowingCodeg } from "./rehype-allow-codeg"
+import { rehypeListDirection } from "./rehype-list-direction"
 import { remarkTrimCjkAutolinkTail } from "./remark-cjk-autolink-tail"
 import { withRelativeFileLinks } from "./rehype-relative-file-links"
 import { remarkRewriteFileUriLinks } from "./remark-file-uri-links"
@@ -29,10 +30,12 @@ const remarkPlugins = [
 // their href through sanitize (rehype-allow-codeg), which would otherwise leave
 // "@Codex [blocked]", and relative local links keep theirs through harden —
 // without that `./a.md` would leave harden as `/a.md` and a bare `a.md` would
-// be blocked (rehype-relative-file-links).
-const rehypePlugins = rehypePluginsAllowingCodeg(
-  withRelativeFileLinks(defaultRehypePlugins)
-)
+// be blocked (rehype-relative-file-links). Lists take their text's direction,
+// as every block does here (rehype-list-direction).
+const rehypePlugins = [
+  ...rehypePluginsAllowingCodeg(withRelativeFileLinks(defaultRehypePlugins)),
+  rehypeListDirection,
+]
 
 const reasoningComponents = { ...markdownLinkComponents, ...mermaidComponents }
 
@@ -72,6 +75,11 @@ export const ReasoningMarkdown = memo(function ReasoningMarkdown({
       // An unclosed link shows as text, as in MessageResponse — see
       // LIVE_REMEND for why the default placeholder cannot be used.
       remend={LIVE_REMEND}
+      // Each block reads in the direction of its own text, as in
+      // MessageResponse; an item keeps its own side against the UA's
+      // `-webkit-match-parent`.
+      dir="auto"
+      className="[&_li]:text-start"
       // The link icon + safety override, and the diagram blocks.
       components={reasoningComponents}
     >

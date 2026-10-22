@@ -155,7 +155,10 @@ export const FeedbackRow = memo(function FeedbackRow({
             {entries.map((entry, i) => {
               const time = formatTime(timeFormat, entry.createdAt)
               return (
-                <li key={i} className="flex items-start gap-3 px-4 py-2">
+                <li
+                  key={i}
+                  className="flex items-start gap-3 px-4 py-2 text-start"
+                >
                   <span
                     dir="auto"
                     className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm text-foreground/90"
