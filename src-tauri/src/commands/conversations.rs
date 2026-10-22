@@ -3614,6 +3614,7 @@ mod tests {
                 is_error: false,
                 agent_stats: None,
                 images: Vec::new(),
+                exit_code: None,
             }],
             timestamp: chrono::Utc::now(),
             usage: None,

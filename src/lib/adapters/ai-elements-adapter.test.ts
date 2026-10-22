@@ -562,6 +562,19 @@ describe("adaptMessageTurn — agent timeline passthrough", () => {
     if (part.type !== "tool-call") throw new Error("expected a tool-call")
     expect(part.agentTranscript).toBeUndefined()
   })
+
+  it("carries an exit code the transcript kept as a field", () => {
+    const part = adaptAgentTurn({
+      output_preview: "boom",
+      is_error: true,
+      exit_code: 2,
+    }).content[0]
+    if (part.type !== "tool-call") throw new Error("expected a tool-call")
+    expect(part.exitCode).toBe(2)
+    const unknown = adaptAgentTurn({ output_preview: "ok" }).content[0]
+    if (unknown.type !== "tool-call") throw new Error("expected a tool-call")
+    expect(unknown.exitCode).toBeUndefined()
+  })
 })
 
 describe("groupGoalRuns", () => {

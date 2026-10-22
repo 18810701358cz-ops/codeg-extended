@@ -100,6 +100,9 @@ export type AdaptedToolCallPart = {
    * markers index into `agentStats.tool_calls`.
    */
   agentTranscript?: AgentTranscriptEntry[] | null
+  /** The command's exit code, when the transcript keeps it as a field
+   *  (`ContentBlock.tool_result.exit_code`). */
+  exitCode?: number | null
 }
 
 /**
@@ -2531,6 +2534,7 @@ export function adaptMessageTurn(
               ? matchedResult.output_preview || undefined
               : undefined,
           agentStats: matchedResult.agent_stats ?? undefined,
+          exitCode: matchedResult.exit_code ?? undefined,
           meta: block.meta ?? null,
           // The settled card keeps its interleaved view from whichever source
           // survives: the live transcript while localTurns still holds it, the
@@ -2581,6 +2585,7 @@ export function adaptMessageTurn(
                 ? positionalResult.output_preview || undefined
                 : undefined,
             agentStats: positionalResult.agent_stats ?? undefined,
+            exitCode: positionalResult.exit_code ?? undefined,
             meta: block.meta ?? null,
             // Same dual source as the id-matched branch above.
             agentTranscript: positionalResult.agent_transcript?.length

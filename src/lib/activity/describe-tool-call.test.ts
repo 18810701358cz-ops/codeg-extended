@@ -201,6 +201,22 @@ describe("describeToolCall: commands", () => {
     expect(tool.exit).toEqual({ code: 1, signal: null })
   })
 
+  it("prefers the exit code the transcript kept as a field", () => {
+    const tool = describeToolCall(
+      call(
+        "bash",
+        { command: "make" },
+        {
+          state: "output-error",
+          output: "boom\n\nExit code 1",
+          errorText: "boom\n\nExit code 1",
+          exitCode: 2,
+        }
+      )
+    )
+    expect(tool.exit).toEqual({ code: 2, signal: null })
+  })
+
   it("leaves the exit unknown when a failure reports none", () => {
     const tool = describeToolCall(
       call(

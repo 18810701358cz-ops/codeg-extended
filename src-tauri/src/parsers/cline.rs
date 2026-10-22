@@ -945,6 +945,7 @@ fn parse_user_message_parts(content: &serde_json::Value) -> UserMessageParts {
                 is_error,
                 agent_stats: None,
                 images: Vec::new(),
+                exit_code: None,
             });
 
             // If the tool result also contains <feedback>, extract it
@@ -1159,6 +1160,7 @@ fn parse_content_blocks(
                             is_error,
                             agent_stats: None,
                             images: Vec::new(),
+                            exit_code: None,
                         });
                     }
                     "thinking" => {
@@ -1314,6 +1316,7 @@ fn parse_session_user_parts(content: &serde_json::Value) -> UserMessageParts {
                                 .unwrap_or(false),
                             agent_stats: None,
                             images: Vec::new(),
+                            exit_code: None,
                         });
                     }
                     _ => {}

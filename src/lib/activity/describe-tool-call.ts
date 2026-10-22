@@ -38,6 +38,7 @@ import { approvalFromMeta } from "./approval"
 import {
   detectHeredoc,
   extractCommandExit,
+  type CommandExit,
   extractDisplayCommandFromToolInput,
   extractWallTimeMs,
   simplifyShellCommand,
@@ -302,6 +303,14 @@ function readNotes(parsed: Record<string, unknown> | null): ToolNote[] {
   return notes
 }
 
+/** The exit code the transcript kept as a field, ahead of any read from the
+ *  output text. */
+function structuredExit(part: AdaptedToolCallPart): CommandExit | null {
+  return typeof part.exitCode === "number"
+    ? { code: part.exitCode, signal: null }
+    : null
+}
+
 function describeCommand(
   part: AdaptedToolCallPart,
   payload: Payload,
@@ -337,7 +346,9 @@ function describeCommand(
       ? { taskId: null }
       : null
   const exit =
-    base.status === "failed" ? extractCommandExit(payload.output) : null
+    base.status === "failed"
+      ? (structuredExit(part) ?? extractCommandExit(payload.output))
+      : null
   return {
     ...base,
     command,
@@ -376,7 +387,8 @@ function describeShellSession(
     },
     exit:
       base.status === "failed"
-        ? extractCommandExit(part.output ?? part.errorText)
+        ? (structuredExit(part) ??
+          extractCommandExit(part.output ?? part.errorText))
         : null,
   }
 }

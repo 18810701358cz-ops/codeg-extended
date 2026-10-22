@@ -264,6 +264,13 @@ export type ContentBlock =
        */
       images?: ImageData[] | null
       /**
+       * The exit code of a command call's process, when the transcript keeps
+       * it as a field (pi, Cursor, Antigravity). Mirror of Rust
+       * `ContentBlock::ToolResult.exit_code`; absent means unknown, and the
+       * code is read from the output text instead.
+       */
+      exit_code?: number | null
+      /**
        * LIVE-stream data: the in-flight transcript of a native subagent —
        * a marker per child tool call, plus (Claude Code only) the text/
        * thinking chunks attributed to this Agent tool call via
