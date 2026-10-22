@@ -4,10 +4,13 @@ import {
   adaptMessageTurn,
   type AdaptedContentPart,
 } from "@/lib/adapters/ai-elements-adapter"
+import type { MessageTurn } from "@/lib/types"
 import {
   MOCKUP_ADAPTER_TEXT,
   MOCKUP_ASSISTANT_TURN,
   MOCKUP_LIVE_TURN,
+  toolResult,
+  toolUse,
 } from "./__fixtures__/mockup-turn"
 import { buildActivity } from "./build-activity"
 import type { ActivityItem } from "./types"
@@ -64,6 +67,54 @@ describe("buildActivity on the reference turn", () => {
         ? delegation.polls?.map((p) => p.toolCallId)
         : null
     ).toEqual(["t11"])
+  })
+
+  it("hands a delegation the checks that came after other work", () => {
+    // The agent said something between its checks, so the second one is a
+    // row of its own — but it is the newer word on the same task.
+    const TASK = "a1b2c3d4"
+    const status = (id: string) =>
+      toolUse(id, "mcp__codeg-mcp__get_delegation_status", {
+        task_ids: [TASK],
+        wait_ms: 3000,
+      })
+    const turn: MessageTurn = {
+      id: "turn-later-check",
+      role: "assistant",
+      timestamp: "2026-10-22T09:00:00Z",
+      blocks: [
+        toolUse("d1", "mcp__codeg-mcp__delegate_to_agent", {
+          agent_type: "claude_code",
+          task: "Run the four checks.",
+        }),
+        toolResult("d1", JSON.stringify({ task_id: TASK, status: "started" })),
+        status("d2"),
+        toolResult("d2", JSON.stringify({ task_id: TASK, status: "running" })),
+        { type: "text", text: "Still waiting on the sub-agent." },
+        status("d3"),
+        toolResult(
+          "d3",
+          JSON.stringify({ task_id: TASK, status: "completed", text: "Done." })
+        ),
+        { type: "text", text: "All done." },
+      ],
+    }
+    const later = buildActivity(
+      adaptMessageTurn(turn, MOCKUP_ADAPTER_TEXT).content,
+      { isStreaming: false }
+    )
+    expect(rows(later.items)).toEqual([
+      "delegation:d1",
+      "note",
+      "delegation-polls",
+    ])
+    const step = later.steps[0]
+    expect(
+      step?.type === "tool" ? step.polls?.map((p) => p.toolCallId) : null
+    ).toEqual(["d2"])
+    expect(
+      step?.type === "tool" ? step.laterPolls?.map((p) => p.toolCallId) : null
+    ).toEqual(["d3"])
   })
 
   it("keeps the closing prose as the answer", () => {

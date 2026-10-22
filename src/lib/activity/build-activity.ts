@@ -145,6 +145,35 @@ function mergeDelegationPolls(steps: ActivityStep[]): ActivityStep[] {
   return out
 }
 
+/**
+ * A delegation's later status checks — after other work, so drawn as rows of
+ * their own — still say how it stands: hand the delegation step the later polls
+ * about its task, so its step bar and result read the newest report instead of
+ * the one it was folded with.
+ */
+function linkLaterDelegationPolls(steps: ActivityStep[]): ActivityStep[] {
+  const tasksOf = new Map<AdaptedToolCallPart[], Set<string | null>>()
+  const tasksIn = (polls: AdaptedToolCallPart[]): Set<string | null> => {
+    const cached = tasksOf.get(polls)
+    if (cached) return cached
+    const tasks = new Set(buildDelegationTaskRows(polls).map((r) => r.taskId))
+    tasksOf.set(polls, tasks)
+    return tasks
+  }
+  return steps.map((step, index) => {
+    if (step.type !== "tool" || step.tool.kind !== "delegation") return step
+    const taskId = delegationTaskId(step.part)
+    if (taskId === null) return step
+    const later: AdaptedToolCallPart[] = []
+    for (const next of steps.slice(index + 1)) {
+      if (next.type === "delegation-polls" && tasksIn(next.polls).has(taskId)) {
+        later.push(...next.polls)
+      }
+    }
+    return later.length > 0 ? { ...step, laterPolls: later } : step
+  })
+}
+
 /** The broker task id a `delegate_to_agent` call was given. */
 function delegationTaskId(part: AdaptedToolCallPart): string | null {
   return (
@@ -242,7 +271,9 @@ function buildActivityUncached(
   const { body, trailing } = splitAnswer
     ? splitTrailingAnswerParts(parts)
     : { body: parts, trailing: [] }
-  const steps = mergeDelegationPolls(collectSteps(body, isStreaming))
+  const steps = linkLaterDelegationPolls(
+    mergeDelegationPolls(collectSteps(body, isStreaming))
+  )
   return {
     steps,
     items: groupActivitySteps(steps.filter((s) => !isBlankInterruption(s))),

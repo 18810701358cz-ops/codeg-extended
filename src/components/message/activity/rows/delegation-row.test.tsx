@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
 import type { DelegationBinding } from "@/contexts/delegation-context"
-import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
+import type {
+  AdaptedContentPart,
+  AdaptedToolCallPart,
+} from "@/lib/adapters/ai-elements-adapter"
 import type { AssistantInfo } from "@/lib/types"
 import {
   resetAssistantsStore,
@@ -637,6 +640,70 @@ describe("delegation row: an assistant's delegation", () => {
     expect(row()).toHaveTextContent("Codex")
     expect(row()).not.toHaveTextContent("·")
     expect(row().querySelector('[data-slot="assistant-avatar"]')).toBeNull()
+  })
+})
+
+describe("delegation row: a check that came after other work", () => {
+  it("reads its step bar and result from the newest report on its task", () => {
+    // The first check was folded into the row; the agent wrote a line before
+    // the second, so that one is a row of its own — yet it is the one that
+    // says the sub-agent finished, and how.
+    const TASK = "a1b2c3d4"
+    const check = (
+      id: string,
+      report: Record<string, unknown>
+    ): AdaptedToolCallPart => ({
+      type: "tool-call",
+      toolCallId: id,
+      toolName: "mcp__codeg-mcp__get_delegation_status",
+      input: JSON.stringify({ task_ids: [TASK], wait_ms: 3000 }),
+      output: JSON.stringify({ task_id: TASK, ...report }),
+      state: "output-available",
+    })
+    bind(
+      bindingOf({ status: "ok", task: "Run the four checks.", taskId: TASK })
+    )
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <ContentPartsRenderer
+          parts={[
+            delegation({
+              state: "output-available",
+              output: JSON.stringify({ task_id: TASK, status: "started" }),
+            }),
+            {
+              type: "delegation-status-group",
+              polls: [
+                check("c1", {
+                  status: "running",
+                  progress: { steps: 1, marks: ["ok"] },
+                }),
+              ],
+            },
+            { type: "text", text: "Still waiting on the sub-agent." },
+            {
+              type: "delegation-status-group",
+              polls: [
+                check("c2", {
+                  status: "completed",
+                  text: "Checked all four; one path is missing.",
+                  progress: { steps: 4, marks: ["ok", "ok", "failed", "ok"] },
+                }),
+              ],
+            },
+          ]}
+          role="assistant"
+        />
+      </NextIntlClientProvider>
+    )
+    const delegationRow = row()
+    expect(delegationRow).toHaveTextContent("4 steps")
+    expect(
+      within(delegationRow).getByRole("img", { name: /4 steps/ })
+    ).toHaveAccessibleName("4 steps, 1 failed")
+    expect(delegationRow).toHaveTextContent(
+      "Checked all four; one path is missing."
+    )
   })
 })
 

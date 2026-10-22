@@ -160,7 +160,15 @@ export const DelegationRow = memo(function DelegationRow({
     () => (step.polls ? buildDelegationTaskRows(step.polls) : []),
     [step.polls]
   )
-  const latest = pollRows[pollRows.length - 1]
+  // The newest report on its task, folded in or checked later after other
+  // work: what its step bar and result read once it is no longer working.
+  const latest = useMemo(() => {
+    const polls = [...(step.polls ?? []), ...(step.laterPolls ?? [])]
+    const rows = polls.length > 0 ? buildDelegationTaskRows(polls) : []
+    return (
+      rows.find((row) => row.taskId === model.taskId) ?? rows[rows.length - 1]
+    )
+  }, [step.polls, step.laterPolls, model.taskId])
   const status = stepStatusOf(model.status)
   const working = status === "running" || status === "awaiting"
   // While it works, its own connection is the freshest source; the reports
