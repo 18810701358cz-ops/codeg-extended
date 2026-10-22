@@ -985,8 +985,55 @@
   }
 }
 
+/* ===========================================================================
+   Activity timeline tokens（会话消息「执行过程」时间线）
+   语义色只在这里定义一份（亮/暗各一），不进 12 套主题预设：预设只换中性色和主色，
+   这些令牌与主色解耦 —— red / rose 预设的 --primary 色相（25° / 16°）几乎等于
+   --destructive（27°），所以「运行中」从不用主色表达（靠转动的虚线圆环），失败
+   独占红色。中性部分（轨道、圆环）从 --foreground 混色，跟随每套预设的明暗反转。
+   ========================================================================= */
+:root {
+  --activity-rail: color-mix(in oklch, var(--foreground) 12%, transparent);
+  --activity-ring: color-mix(in oklch, var(--foreground) 32%, transparent);
+  --activity-surface: var(--muted);
+  --tone-success: oklch(0.58 0.14 150);
+  --tone-danger: var(--destructive);
+  --tone-danger-surface: color-mix(
+    in oklch,
+    var(--destructive) 8%,
+    var(--background)
+  );
+  --tone-warning: oklch(0.68 0.15 70);
+  --tone-mcp: oklch(0.56 0.09 190);
+  --diff-added-bg: color-mix(in oklch, var(--tone-success) 10%, transparent);
+  --diff-deleted-bg: color-mix(in oklch, var(--tone-danger) 10%, transparent);
+}
+
+.dark {
+  --tone-success: oklch(0.74 0.15 150);
+  --tone-danger-surface: color-mix(
+    in oklch,
+    var(--destructive) 12%,
+    var(--background)
+  );
+  --tone-warning: oklch(0.8 0.14 80);
+  --tone-mcp: oklch(0.74 0.1 190);
+  --diff-added-bg: color-mix(in oklch, var(--tone-success) 14%, transparent);
+  --diff-deleted-bg: color-mix(in oklch, var(--tone-danger) 14%, transparent);
+}
+
 @theme inline {
   --font-sans: var(--font-sans);
+  --color-activity-rail: var(--activity-rail);
+  --color-activity-ring: var(--activity-ring);
+  --color-activity-surface: var(--activity-surface);
+  --color-tone-success: var(--tone-success);
+  --color-tone-danger: var(--tone-danger);
+  --color-tone-danger-surface: var(--tone-danger-surface);
+  --color-tone-warning: var(--tone-warning);
+  --color-tone-mcp: var(--tone-mcp);
+  --color-diff-added: var(--diff-added-bg);
+  --color-diff-deleted: var(--diff-deleted-bg);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

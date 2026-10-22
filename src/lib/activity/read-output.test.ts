@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import {
-  codexCommandReadOutput,
-  parseReadOutput,
-} from "./content-parts-renderer"
+import { codexCommandReadOutput, parseReadOutput } from "./explore"
 
 describe("parseReadOutput", () => {
   it("keeps the structured Claude read shape { start_line, content }", () => {

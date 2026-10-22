@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { shortPath } from "./content-parts-renderer"
+import { shortPath } from "./format"
 
 describe("shortPath", () => {
   it("keeps the last two segments of a POSIX path", () => {

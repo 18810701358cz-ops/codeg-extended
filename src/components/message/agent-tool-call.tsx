@@ -5,7 +5,7 @@ import type {
   AgentTranscriptEntry,
   AgentType,
 } from "@/lib/types"
-import { tryParseJson, extractJsonField } from "./content-parts-renderer"
+import { extractJsonField, tryParseJson } from "@/lib/activity/json"
 import {
   groupConsecutiveToolRuns,
   ToolGroupPart,
