@@ -21,21 +21,21 @@ const MAX_ROWS = 400
 
 const ROW_TINT: Record<ParsedDiffRow["type"], string> = {
   context: "",
-  added: "bg-green-500/10",
-  deleted: "bg-red-500/10",
-  modified: "bg-blue-500/10",
+  added: "bg-diff-added",
+  deleted: "bg-diff-deleted",
+  modified: "bg-diff-modified",
 }
 
 const CELL_TINT: Record<SplitCell["marker"], string> = {
   none: "",
-  added: "bg-green-500/10",
-  deleted: "bg-red-500/10",
-  modified: "bg-blue-500/10",
+  added: "bg-diff-added",
+  deleted: "bg-diff-deleted",
+  modified: "bg-diff-modified",
 }
 
 const SIGN_CLASS: Record<ParsedDiffRow["sign"], string> = {
-  "+": "text-green-700 dark:text-green-400",
-  "-": "text-red-700 dark:text-red-400",
+  "+": "text-tone-success",
+  "-": "text-tone-danger",
   " ": "",
 }
 
