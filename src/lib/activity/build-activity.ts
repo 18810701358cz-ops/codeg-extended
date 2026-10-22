@@ -224,7 +224,10 @@ function collectSteps(
           type: "goal",
           key: `goal:${part.start.toolCallId}`,
           part,
-          model: buildActivityUncached(part.items, part.isRunning),
+          // The goal row has no answer slot: whatever prose the run holds
+          // (the answer streaming inside a live run, notes before its closing
+          // update_goal) stays a step, or it would never be drawn.
+          model: buildActivityUncached(part.items, part.isRunning, false),
         })
         return
       case "plan":

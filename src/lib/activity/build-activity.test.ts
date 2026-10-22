@@ -161,6 +161,41 @@ describe("buildActivity on a live turn", () => {
 })
 
 describe("buildActivity edge cases", () => {
+  it("keeps a goal run's prose inside the run, where it is drawn", () => {
+    const start: AdaptedContentPart = {
+      type: "tool-call",
+      toolCallId: "g1",
+      toolName: "create_goal",
+      input: '{"objective":"Ship it"}',
+      state: "output-available",
+      output: "ok",
+    }
+    const parts: AdaptedContentPart[] = [
+      {
+        type: "goal-run",
+        start: start as Extract<AdaptedContentPart, { type: "tool-call" }>,
+        end: null,
+        isRunning: true,
+        items: [
+          {
+            type: "tool-call",
+            toolCallId: "r1",
+            toolName: "Read",
+            input: '{"file_path":"/r/a.ts"}',
+            state: "output-available",
+            output: "x",
+          },
+          { type: "text", text: "Halfway there." },
+        ],
+      },
+    ]
+    const model = buildActivity(parts, { isStreaming: true })
+    const goal = model.steps.find((s) => s.type === "goal")
+    if (goal?.type !== "goal") throw new Error("expected a goal step")
+    expect(goal.model.answer).toEqual([])
+    expect(rows(goal.model.items)).toEqual(["read:r1", "note"])
+  })
+
   it("returns an empty timeline for a text-only reply", () => {
     const parts: AdaptedContentPart[] = [{ type: "text", text: "Hi" }]
     const model = buildActivity(parts, { isStreaming: false })
