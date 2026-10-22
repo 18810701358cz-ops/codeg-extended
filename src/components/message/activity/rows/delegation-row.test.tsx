@@ -13,7 +13,7 @@ import {
   resetAssistantsStore,
   useAssistantsStore,
 } from "@/stores/assistants-store"
-import { mockClampLayout } from "@/test-layout"
+import { mockTruncateLayout } from "@/test-layout"
 
 /**
  * The delegation row: one `delegate_to_agent` call, start to finish — who it
@@ -710,22 +710,34 @@ describe("delegation row: its checks", () => {
 })
 
 describe("delegation row: the task it was handed", () => {
-  // More than the row's two clamped lines show: line breaks included.
+  // Longer than the title line shows: line breaks included.
   const TASK =
     "Audit the sidebar width logic.\n\n1. Read sidebar-context.tsx\n2. Compare the Windows and macOS minimums"
 
-  // jsdom lays nothing out, so every node reads 0 tall — a task that fits.
-  // Taller content than box makes the clamp actually cut it.
+  // jsdom lays nothing out, so every node reads 0 wide — a task that fits.
+  // Wider content than box makes the title line actually cut it.
   let restoreMetrics: (() => void) | null = null
   function clipTheTask() {
-    restoreMetrics = mockClampLayout(120, 40)
+    restoreMetrics = mockTruncateLayout(600, 200)
   }
   afterEach(() => {
     restoreMetrics?.()
     restoreMetrics = null
   })
 
-  it("has nothing to open when the task fits in its two lines", () => {
+  it("says the task on its title line, as one line", () => {
+    renderRow(
+      delegation({ input: JSON.stringify({ agent_type: "codex", task: TASK }) })
+    )
+    const header = row().querySelector(":scope > div")!
+    const line = within(header as HTMLElement).getByText(
+      "Audit the sidebar width logic. 1. Read sidebar-context.tsx 2. Compare the Windows and macOS minimums"
+    )
+    expect(line).toHaveClass("truncate")
+    expect(line).toHaveAttribute("dir", "auto")
+  })
+
+  it("has nothing to open when the task fits on its title line", () => {
     // The panel would only say it again.
     renderRow(
       delegation({

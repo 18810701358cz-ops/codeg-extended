@@ -3,6 +3,8 @@
  * tall, and the ResizeObserver stub in `test-setup.ts` never reports.
  */
 
+type Metric = "scrollHeight" | "clientHeight" | "scrollWidth" | "clientWidth"
+
 /**
  * Lay out a clamped block: every element reads the given `scrollHeight` and
  * `clientHeight`, and a ResizeObserver reports each element as it starts
@@ -13,18 +15,33 @@ export function mockClampLayout(
   scrollHeight: number,
   clientHeight: number
 ): () => void {
-  const descriptors = (["scrollHeight", "clientHeight"] as const).map(
+  return mockLayout({ scrollHeight, clientHeight })
+}
+
+/**
+ * Lay out a one-line `truncate`d node: every element reads the given
+ * `scrollWidth` and `clientWidth` — wider content than box cuts the text
+ * short — and a ResizeObserver reports as in `mockClampLayout`.
+ */
+export function mockTruncateLayout(
+  scrollWidth: number,
+  clientWidth: number
+): () => void {
+  return mockLayout({ scrollWidth, clientWidth })
+}
+
+function mockLayout(metrics: Partial<Record<Metric, number>>): () => void {
+  const props = Object.keys(metrics) as Metric[]
+  const descriptors = props.map(
     (prop) =>
       [prop, Object.getOwnPropertyDescriptor(Element.prototype, prop)] as const
   )
-  Object.defineProperty(Element.prototype, "scrollHeight", {
-    configurable: true,
-    get: () => scrollHeight,
-  })
-  Object.defineProperty(Element.prototype, "clientHeight", {
-    configurable: true,
-    get: () => clientHeight,
-  })
+  for (const prop of props) {
+    Object.defineProperty(Element.prototype, prop, {
+      configurable: true,
+      get: () => metrics[prop],
+    })
+  }
   const InertResizeObserver = globalThis.ResizeObserver
   globalThis.ResizeObserver = class {
     constructor(private readonly callback: ResizeObserverCallback) {}

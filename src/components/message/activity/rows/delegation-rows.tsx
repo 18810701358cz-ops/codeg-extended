@@ -11,11 +11,11 @@ import { ErrorLabel } from "@/components/message/delegation-status-badge"
 import { DelegationStatusRow } from "@/components/message/delegation-status-row"
 import { useSessionViewerHost } from "@/components/message/session-viewer-host-context"
 import { SubAgentSessionDialog } from "@/components/message/sub-agent-session-dialog"
-import { useCollapsibleOverflow } from "@/hooks/use-collapsible-overflow"
 import {
   useDelegationCardModel,
   type DelegationIdentity,
 } from "@/hooks/use-delegation-card-model"
+import { useTruncation } from "@/hooks/use-truncation"
 import { previewLine } from "@/lib/activity/format"
 import type { ActivityStep, StepStatus } from "@/lib/activity/types"
 import type { AdaptedToolCallPart } from "@/lib/adapters/ai-elements-adapter"
@@ -124,12 +124,13 @@ function DelegationStatusWord({
 }
 
 /**
- * One delegation, start to finish: `Codex  #14be49e7  done · 1m 34s`, the task
- * it was handed (two lines), and — once it reports back — the first line of
- * its result beside "Open conversation ↗" (usable while it still runs). The
- * panel holds the whole task, when two lines cut it short. The agent's
- * `get_delegation_status` checks are rows of their own (`DelegationPollsRow`);
- * the newest says how it ended.
+ * One delegation, start to finish: `Codex  #14be49e7  Update the stale
+ * snapshot…  done · 1m 34s` — the task it was handed on the title line — and,
+ * once it reports back, the first line of its result beside "Open
+ * conversation ↗" (usable while it still runs). The panel holds the whole
+ * task, when the title line cuts it short. The agent's `get_delegation_status`
+ * checks are rows of their own (`DelegationPollsRow`); the newest says how it
+ * ended.
  */
 export const DelegationRow = memo(function DelegationRow({
   step,
@@ -173,9 +174,11 @@ export const DelegationRow = memo(function DelegationRow({
   )
   const progress = liveProgress ?? latest?.report.progress ?? null
   const [open, setOpen] = useDisclosure(step.key, { defaultOpen: false })
-  // The panel repeats the task only when the two lines above cut it short.
-  const { contentRef: taskRef, isOverflowing: taskClipped } =
-    useCollapsibleOverflow<HTMLParagraphElement>(model.task)
+  // The task on the title line, as one line; the panel repeats it only when
+  // that line cuts it short (and holds it while open, whatever the width).
+  const taskLine = model.task?.replace(/\s+/g, " ").trim() || null
+  const { ref: taskRef, truncated: taskCut } =
+    useTruncation<HTMLSpanElement>(taskLine)
   const elapsed = useLiveElapsed(step.key, status === "running")
 
   if (!model.hasModel) return pinnedOnly ? null : <GenericRow step={step} />
@@ -195,7 +198,6 @@ export const DelegationRow = memo(function DelegationRow({
             ? viewerHost.open({ kind: "delegation", source })
             : setDialogOpen(true)
       : null
-  const hasTask = !!model.task?.trim()
 
   return (
     <>
@@ -210,10 +212,9 @@ export const DelegationRow = memo(function DelegationRow({
             label={`${t("kind.delegation")}, ${statusText(status)}`}
           />
         }
-        expandable={hasTask && taskClipped}
+        expandable={taskLine !== null && (taskCut || open)}
         expanded={open}
         onExpandedChange={setOpen}
-        title={model.taskId ?? undefined}
         trailing={
           <DelegationStatusWord
             status={model.status}
@@ -227,50 +228,37 @@ export const DelegationRow = memo(function DelegationRow({
           />
         }
         addon={
-          hasTask || summary || openSession || progress ? (
-            <div className="space-y-1 pb-0.5">
-              {hasTask ? (
-                <p
-                  ref={taskRef}
-                  dir="auto"
-                  className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-foreground/90"
-                >
-                  {model.task}
-                </p>
+          summary || openSession || progress ? (
+            <div className="flex min-w-0 items-center gap-3 pb-0.5 text-sm">
+              {progress ? (
+                <StepBar progress={progress} live={status === "running"} />
               ) : null}
-              {summary || openSession || progress ? (
-                <div className="flex min-w-0 items-center gap-3 text-sm">
-                  {progress ? (
-                    <StepBar progress={progress} live={status === "running"} />
-                  ) : null}
-                  {summary ? (
-                    <span
-                      dir="auto"
-                      className={cn(
-                        "min-w-0 flex-1 truncate",
-                        result ? "text-muted-foreground" : "activity-shimmer"
-                      )}
-                      title={summary}
-                    >
-                      {summary}
-                    </span>
-                  ) : (
-                    <span className="flex-1" />
+              {summary ? (
+                <span
+                  dir="auto"
+                  className={cn(
+                    "min-w-0 flex-1 truncate",
+                    result ? "text-muted-foreground" : "activity-shimmer"
                   )}
-                  {openSession ? (
-                    <button
-                      type="button"
-                      onClick={openSession}
-                      className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-sm text-foreground/80 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {tDelegation("openDetail")}
-                      <ArrowUpRightIcon
-                        aria-hidden="true"
-                        className="size-3.5 rtl:-scale-x-100"
-                      />
-                    </button>
-                  ) : null}
-                </div>
+                  title={summary}
+                >
+                  {summary}
+                </span>
+              ) : (
+                <span className="flex-1" />
+              )}
+              {openSession ? (
+                <button
+                  type="button"
+                  onClick={openSession}
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-sm text-foreground/80 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {tDelegation("openDetail")}
+                  <ArrowUpRightIcon
+                    aria-hidden="true"
+                    className="size-3.5 rtl:-scale-x-100"
+                  />
+                </button>
               ) : null}
             </div>
           ) : null
@@ -289,7 +277,7 @@ export const DelegationRow = memo(function DelegationRow({
         <span className="flex min-w-0 items-baseline gap-2">
           <DelegationIdentityName
             identity={model.identity}
-            className="min-w-0 truncate font-semibold text-foreground"
+            className="max-w-[60%] shrink-0 truncate font-semibold text-foreground"
           />
           {model.taskId ? (
             <span
@@ -303,6 +291,15 @@ export const DelegationRow = memo(function DelegationRow({
           {progress && progress.steps > 0 ? (
             <span className="shrink-0 text-muted-foreground">
               {`· ${t("header.steps", { count: progress.steps })}`}
+            </span>
+          ) : null}
+          {taskLine ? (
+            <span
+              ref={taskRef}
+              dir="auto"
+              className="min-w-0 truncate text-muted-foreground"
+            >
+              {taskLine}
             </span>
           ) : null}
         </span>

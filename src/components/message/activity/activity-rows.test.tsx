@@ -143,6 +143,15 @@ describe("delegation row", () => {
     expect(wait.textContent).toContain("done · 1m 34s")
   })
 
+  it("says the task on its title line, not on a line of its own", () => {
+    renderUi(<Round parts={parts(MOCKUP_ASSISTANT_TURN)} />)
+    const row = rowOf("Codex")
+    const header = row.querySelector(":scope > div, :scope > button")!
+    expect(
+      within(header as HTMLElement).getByText(/^Update the stale snapshot/)
+    ).toHaveClass("truncate")
+  })
+
   it("counts the steps it took and draws one segment per step", () => {
     renderUi(<Round parts={parts(MOCKUP_ASSISTANT_TURN)} />)
     const row = rowOf("Codex")
