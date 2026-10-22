@@ -396,6 +396,25 @@ describe("dropEmptyInFlightToolCalls", () => {
     expect(dropEmptyInFlightToolCalls(lanes)).toEqual(lanes)
   })
 
+  it("keeps a context compaction that is still running", () => {
+    // codex-acp 1.3.0 streams the compaction as an arg-less call, in_progress
+    // until it completes; it is the "compacting" divider, not an orphan.
+    const compacting = running("Compact conversation", {
+      input: null,
+      toolStatus: "in_progress",
+      meta: { contextCompaction: { version: 1 } },
+    })
+    const legacy = running("context_compaction", {
+      input: null,
+      toolStatus: "in_progress",
+      meta: { contextCompaction: true },
+    })
+    expect(dropEmptyInFlightToolCalls([compacting, legacy])).toEqual([
+      compacting,
+      legacy,
+    ])
+  })
+
   it("collapses the phantom scenario to a single one-command group", () => {
     // Live turn: one real completed build + two orphaned arg-less bash blocks
     // left by an interrupted/retried attempt. Settled transcript has only the
@@ -468,6 +487,41 @@ describe("dropEmptyInFlightToolCalls", () => {
     if (group.type !== "tool-group") throw new Error("expected a tool-group")
     expect(group.items).toHaveLength(1)
     expect(group.items[0].toolCallId).toBe("tc-real")
+  })
+})
+
+describe("adaptMessageTurn — a running context compaction", () => {
+  it("keeps the compaction call while it is still in progress", () => {
+    const adapted = adaptMessageTurn(
+      {
+        id: "compacting-turn",
+        role: "assistant" as const,
+        timestamp: "2026-10-22T00:00:00.000Z",
+        blocks: [
+          {
+            type: "tool_use" as const,
+            tool_use_id: "compact-live",
+            tool_name: "Compact conversation",
+            input_preview: null,
+            status: "in_progress",
+            meta: { contextCompaction: { version: 1 } },
+          },
+        ],
+      },
+      {
+        attachedResources: "Attached resources",
+        toolCallFailed: "Tool failed",
+        pageHandoffName,
+      },
+      true,
+      new Set(["compact-live"])
+    )
+    expect(adapted.content).toHaveLength(1)
+    expect(adapted.content[0]).toMatchObject({
+      type: "tool-call",
+      toolCallId: "compact-live",
+      state: "input-available",
+    })
   })
 })
 
