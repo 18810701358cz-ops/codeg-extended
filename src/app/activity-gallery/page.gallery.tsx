@@ -321,6 +321,88 @@ const WORKFLOW_TURN: MessageTurn = {
   ],
 }
 
+const POLLED_TASK_ID = "9e82cbc1-5d0e-4f6a-8b3c-2a1d0e9f8c7b"
+const POLLED_TASK =
+  "Run `pnpm build` in /Users/me/work/my-app without changing any files. Report whether it succeeded (exit code), the key output, and — if it failed — the full error with file paths and line numbers."
+
+const DELEGATION_TURN: MessageTurn = {
+  id: "turn-delegation",
+  role: "assistant",
+  timestamp: "2026-10-22T10:00:00Z",
+  duration_ms: 64000,
+  blocks: [
+    toolUse(
+      "d1",
+      "mcp__codeg-mcp__delegate_to_agent",
+      { agent_type: "codex", task: POLLED_TASK },
+      {
+        "codeg.delegation": {
+          status: "completed",
+          child_conversation_id: 78,
+          task_id: POLLED_TASK_ID,
+          task_preview: POLLED_TASK,
+        },
+      }
+    ),
+    toolResult(
+      "d1",
+      JSON.stringify({ task_id: POLLED_TASK_ID, status: "started" })
+    ),
+    {
+      type: "text",
+      text: "Codex is waiting for you to approve `pnpm build`; it will not go on until you confirm in Codeg. I'll keep waiting.",
+    },
+    toolUse("d2", "mcp__codeg-mcp__get_delegation_status", {
+      task_ids: [POLLED_TASK_ID],
+      wait_ms: 60000,
+    }),
+    toolResult(
+      "d2",
+      JSON.stringify({
+        task_id: POLLED_TASK_ID,
+        status: "completed",
+        text: "pnpm build succeeded, exit code 0.",
+        duration_ms: 42000,
+      })
+    ),
+    {
+      type: "plan",
+      entries: [
+        {
+          content: "Survey the project layout",
+          priority: "high",
+          status: "completed",
+        },
+        {
+          content: "Read the core entry points",
+          priority: "high",
+          status: "completed",
+        },
+        {
+          content: "Run the existing tests",
+          priority: "medium",
+          status: "completed",
+        },
+        {
+          content: "Design the new feature",
+          priority: "medium",
+          status: "in_progress",
+        },
+        {
+          content: "Write the implementation",
+          priority: "medium",
+          status: "pending",
+        },
+        { content: "Add tests and verify", priority: "low", status: "pending" },
+      ],
+    },
+    {
+      type: "text",
+      text: "The build passes; three of the six steps are done.",
+    },
+  ],
+}
+
 const TEXT_TURN: MessageTurn = {
   id: "turn-text",
   role: "assistant",
@@ -374,6 +456,7 @@ const SCENARIOS: Scenario[] = [
   { id: "codex", title: "Codex", turn: CODEX_TURN },
   { id: "agent", title: "Sub-agent", turn: AGENT_TURN },
   { id: "workflow", title: "Plans, questions and tasks", turn: WORKFLOW_TURN },
+  { id: "delegation", title: "Delegation checks", turn: DELEGATION_TURN },
   { id: "text", title: "Text-only reply", turn: TEXT_TURN },
 ]
 
