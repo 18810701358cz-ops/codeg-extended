@@ -5,16 +5,18 @@
  * once from the call: title, status label, prompt, model and effort, the
  * child's timeline, the background lifecycle, the child session to open.
  *
- * Shared by the classic `AgentToolCallPart` capsule and the activity
- * timeline's agent row, so the two read every agent's wire quirks (Cursor's
- * task envelope, codex's launch-only capsules, Grok's progress ticker, Claude
- * Code's background launches) the same way.
+ * Read by the activity timeline's sub-agent row, which keeps every agent's
+ * wire quirks (Cursor's task envelope, codex's launch-only capsules, Grok's
+ * progress ticker, Claude Code's background launches) in this one place.
  */
 
 import { useMemo, useState } from "react"
 import { useTranslations } from "next-intl"
 
-import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
+import type {
+  AdaptedContentPart,
+  AdaptedToolCallPart,
+} from "@/lib/adapters/ai-elements-adapter"
 import type { AgentToolCall, AgentType } from "@/lib/types"
 import { extractJsonField, tryParseJson } from "@/lib/activity/json"
 import {
@@ -22,7 +24,6 @@ import {
   parseBackgroundTaskMarker,
 } from "@/lib/background-agent"
 import { useSessionViewerHost } from "./session-viewer-host-context"
-import type { AdaptedToolCallPart } from "./tool-group-part"
 
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -31,7 +32,8 @@ export function formatDuration(ms: number): string {
   return `${(sec / 60).toFixed(1)}m`
 }
 
-/** Convert AgentToolCall[] to AdaptedContentPart[] for reuse with ToolCallPart */
+/** Convert AgentToolCall[] to tool-call parts: the sub-agent's own steps, as
+ *  its nested timeline draws them. */
 export function adaptToolCalls(
   calls: AgentToolCall[],
   parentId: string
@@ -112,16 +114,6 @@ function parseTaskOutcomeEnvelope(
   }
   return null
 }
-
-/** Render bound for the RUNNING card's PROSE — the DATA is uncapped. While the
- *  card runs only the newest thinking/text entries render (prose splits at
- *  every child tool call, so a long sub-agent outgrows any fixed count; this
- *  keeps the live view a tail). The child's tool-call markers are never
- *  dropped: every call stays reachable in its pill, as it was before the
- *  timeline existed. Once the card settles the bound does NOT apply: the full
- *  arrival order is the point of the settled view, so history renders every
- *  entry. */
-export const AGENT_TRANSCRIPT_RENDER_TAIL = 20
 
 interface GrokSubagentProgress {
   durationMs: number | null

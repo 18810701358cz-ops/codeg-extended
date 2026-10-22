@@ -3255,7 +3255,7 @@ export type AcpEvent =
    * A `delegate_to_agent` MCP tool call from the parent agent has spawned a
    * child sub-session and the child's prompt is in flight. Emitted as soon as
    * the broker registers the pending call. Frontend uses this to build the
-   * parent ↔ child mapping for inline ToolCallBlock rendering.
+   * parent ↔ child mapping the delegation row reads.
    */
   | {
       type: "delegation_started"
@@ -3278,7 +3278,7 @@ export type AcpEvent =
   /**
    * The child sub-session has finished (or errored / timed out / been
    * canceled). The MCP tool_result has been delivered to the parent agent;
-   * frontend updates the ToolCallBlock badge from "running" to ok/err.
+   * frontend settles the delegation row from "running" to ok/err.
    */
   | {
       type: "delegation_completed"

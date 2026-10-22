@@ -10,11 +10,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/instant-collapsible"
-import { Shimmer } from "@/components/ai-elements/shimmer"
 import { normalizeToolName } from "@/lib/tool-call-normalization"
 import { cn } from "@/lib/utils"
 import { unwrapWholeFence } from "@/lib/fenced-text"
-import { ChevronRightIcon, PauseIcon, XIcon } from "lucide-react"
+import { PauseIcon, XIcon } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { useGoalControl } from "./goal-control-context"
 
@@ -28,8 +27,6 @@ type ParsedGoal = {
   timeUsedSeconds: number | null
   remainingTokens: number | null
 }
-
-type RenderGoalPart = (part: AdaptedContentPart, key: string) => ReactNode
 
 function parseJsonObject(
   raw: string | null | undefined
@@ -201,28 +198,25 @@ function formatGoalHeaderText(title: string, objective: string | null): string {
   return title.endsWith("：") ? `${title}${objective}` : `${title} ${objective}`
 }
 
+/**
+ * A goal (`create_goal` … `update_goal`) on the activity timeline's rail: a
+ * plain row header (the rail's ring carries the state) that opens to the
+ * objective, the run's own steps, its budget and the controls.
+ */
 function GoalCard({
   startPart,
   endPart,
   items = [],
   forceRunning,
-  renderPart,
   renderBody,
-  layout = "card",
 }: {
   startPart: GoalToolPart
   endPart: GoalToolPart | null
   items?: AdaptedContentPart[]
   forceRunning?: boolean
-  renderPart?: RenderGoalPart
-  /** Draws the run's steps instead of `renderPart` per item — the activity
-   *  timeline's nested timeline. */
+  /** Draws the run's steps — the activity timeline's nested timeline. */
   renderBody?: () => ReactNode
-  /** `timeline`: drawn on the activity timeline's rail — a plain row header
-   *  instead of the pill (the rail's ring carries the state). */
-  layout?: "card" | "timeline"
 }) {
-  const timeline = layout === "timeline"
   const t = useTranslations("Folder.chat.contentParts.goal")
   const inferredRunning =
     startPart.state === "input-available" ||
@@ -285,38 +279,14 @@ function GoalCard({
     <Collapsible open={bodyOpen} onOpenChange={setUserOpen} className="w-full">
       <CollapsibleTrigger
         className={cn(
-          timeline
-            ? "group flex min-h-7 w-full max-w-full items-center gap-2 rounded-sm py-0.5 text-start text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            : "group inline-flex max-w-full items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-medium transition-colors",
-          !timeline && "bg-primary/10 text-foreground hover:bg-primary/15",
-          !timeline &&
-            tone === "error" &&
-            "bg-destructive/10 text-destructive hover:bg-destructive/15",
-          !timeline &&
-            tone === "muted" &&
-            "bg-muted/70 text-foreground hover:bg-muted",
-          timeline && tone === "error" && "text-tone-danger"
+          "group flex min-h-7 w-full max-w-full items-center gap-2 rounded-sm py-0.5 text-start text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          tone === "error" && "text-tone-danger"
         )}
         aria-label={headerText}
       >
-        {timeline ? null : (
-          <ChevronRightIcon
-            aria-hidden="true"
-            className={cn(
-              "size-3 shrink-0 opacity-60 transition-transform",
-              bodyOpen && "rotate-90"
-            )}
-          />
-        )}
-        <span className={cn("min-w-0 truncate", timeline && "font-medium")}>
+        <span className="min-w-0 truncate font-medium">
           {isRunning ? (
-            timeline ? (
-              <span className="activity-shimmer">{headerText}</span>
-            ) : (
-              <Shimmer as="span" duration={1} shineColor="var(--primary)">
-                {headerText}
-              </Shimmer>
-            )
+            <span className="activity-shimmer">{headerText}</span>
           ) : (
             headerText
           )}
@@ -341,14 +311,7 @@ function GoalCard({
           "data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1"
         )}
       >
-        <div
-          className={cn(
-            "w-full text-sm",
-            timeline
-              ? "mt-1 mb-1.5"
-              : "mt-3 rounded-md border border-border/60 px-3.5 py-3"
-          )}
-        >
+        <div className="mt-1 mb-1.5 w-full text-sm">
           <div className="space-y-3">
             {goal.objective && (
               <div>
@@ -359,16 +322,7 @@ function GoalCard({
               </div>
             )}
 
-            {renderBody
-              ? renderBody()
-              : items.length > 0 &&
-                renderPart && (
-                  <div className="space-y-3">
-                    {items.map((item, index) =>
-                      renderPart(item, `goal-run-item-${index}`)
-                    )}
-                  </div>
-                )}
+            {renderBody?.()}
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
               {statusLabel && (
@@ -452,24 +406,18 @@ function GoalCard({
 
 export const GoalToolCallPart = memo(function GoalToolCallPart({
   part,
-  layout,
 }: {
   part: GoalToolPart
-  layout?: "card" | "timeline"
 }) {
-  return <GoalCard startPart={part} endPart={null} layout={layout} />
+  return <GoalCard startPart={part} endPart={null} />
 })
 
 export const GoalRunPart = memo(function GoalRunPart({
   part,
-  renderPart,
   renderBody,
-  layout,
 }: {
   part: AdaptedGoalRunPart
-  renderPart?: RenderGoalPart
   renderBody?: () => ReactNode
-  layout?: "card" | "timeline"
 }) {
   return (
     <GoalCard
@@ -477,9 +425,7 @@ export const GoalRunPart = memo(function GoalRunPart({
       endPart={part.end}
       items={part.items}
       forceRunning={part.isRunning}
-      renderPart={renderPart}
       renderBody={renderBody}
-      layout={layout}
     />
   )
 })

@@ -35,16 +35,15 @@ const EXACT_TOOL_NAME_ALIASES: Record<string, string> = {
   // matcher below cannot help: its `\bshell\b` needs a word boundary that
   // "powershell" does not have.
   //
-  // Without the alias the name only half-resolved — `getToolIcon` and
-  // `classifyToolKind` matched it, so the call drew a terminal icon and counted
-  // as a command, while every dispatch keyed on the NORMALIZED name
-  // (`isCommandTool`, `deriveToolTitle`, `StructuredToolInput`) fell through to
-  // the generic renderer and dumped the input as raw JSON with no command line
-  // and no terminal body. The live ACP path was rescued only once `rawInput`
-  // streamed and `inferFromInput` found a `command` key in it; the history path
-  // never is, because `parsers/claude.rs` and `parsers/pi.rs` both read the raw
-  // tool name back out of the transcript — so the same call rendered one way
-  // while it ran and another way on reload.
+  // Without the alias the name only half-resolved — what matched the raw name
+  // drew a terminal icon and counted a command, while everything keyed on the
+  // NORMALIZED name fell through to the generic renderer and dumped the input
+  // as raw JSON with no command line and no terminal body. The live ACP path
+  // was rescued only once `rawInput` streamed and `inferFromInput` found a
+  // `command` key in it; the history path never is, because
+  // `parsers/claude.rs` and `parsers/pi.rs` both read the raw tool name back
+  // out of the transcript — so the same call rendered one way while it ran and
+  // another way on reload.
   powershell: "bash",
   exec_command: "exec_command",
   "functions.exec_command": "exec_command",
@@ -657,9 +656,9 @@ export function inferLiveToolName(params: {
   // `title` MUTATES across the lifecycle (`enter_plan_mode` → "Plan: Enter" →
   // "Plan mode entered"). Resolve them to the canonical name here, ahead of the
   // title-based fallbacks below, so the live stream routes into the same
-  // <PlanModeCard> (and its tool-group run-break) the historical path resolves
-  // from `x.ai/tool.name`. Scoped to plan-mode so every other Grok tool keeps
-  // its existing resolution. See `extractGrokPlanModeToolName`.
+  // plan-mode row the historical path resolves from `x.ai/tool.name`. Scoped
+  // to plan-mode so every other Grok tool keeps its existing resolution. See
+  // `extractGrokPlanModeToolName`.
   const grokPlanMode = extractGrokPlanModeToolName(params.meta)
   if (grokPlanMode) return grokPlanMode
 

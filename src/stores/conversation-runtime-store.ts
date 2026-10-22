@@ -1398,9 +1398,9 @@ export function buildStreamingTurnsFromLiveMessage(
         )
         break
       case "plan": {
-        // Carry the live plan through as a first-class `plan` block so it
-        // renders in a dedicated <PlanCard> instead of being down-converted
-        // into a `thinking`/reasoning block. For a Kimi Code session, prefer the
+        // Carry the live plan through as a first-class `plan` block so it is
+        // drawn as a plan instead of being down-converted into a
+        // `thinking`/reasoning block. For a Kimi Code session, prefer the
         // latest TodoList write's todos over this (possibly one-event-stale)
         // collapsed plan, so a new write's content shows immediately rather than
         // the previous write's until Kimi's own `plan` update catches up.
@@ -1476,12 +1476,12 @@ export function buildStreamingTurnsFromLiveMessage(
 
         // Kimi Code emits BOTH a `TodoList` tool_call AND a canonical `plan`
         // update for the same write (claude-code-acp instead replaces the
-        // tool_call with the plan). Render exactly one <PlanCard> with no
-        // duplicate-card flash: once Kimi's own `plan` block is in this live
+        // tool_call with the plan). Render exactly one plan with no
+        // duplicate flash: once Kimi's own `plan` block is in this live
         // message, drop the redundant tool card (the synthetic plan renders it);
         // in the one-frame window before that plan block arrives (the tool_call
         // is processed one event earlier), render the plan from the call's own
-        // todos so a PlanCard — never a generic tool card — shows immediately and
+        // todos so a plan — never a generic tool call — shows immediately and
         // continues seamlessly (identical entries) when the synthetic block takes
         // over. Fail-safe: if Kimi never emitted the plan, the converted plan
         // still shows (no data loss). Identity is the exact Kimi todo-write input
@@ -1510,8 +1510,8 @@ export function buildStreamingTurnsFromLiveMessage(
           status: block.info.status ?? null,
           // Forward the ACP `meta` field downstream so the renderer can
           // read delegation state (`meta["codeg.delegation"]`) for
-          // pre-binding / post-refresh fallback rendering of
-          // <DelegatedSubThread>. Opaque pass-through — adapter layer
+          // pre-binding / post-refresh fallback rendering of the
+          // delegation row. Opaque pass-through — adapter layer
           // does not interpret.
           meta: block.info.meta,
         })
@@ -2038,7 +2038,7 @@ function steeredContentKey(
 
 /**
  * Rewrite the launching tool call's `[[codeg-background-task]]` marker in a turn
- * list so `AgentToolCallPart` flips from "running in background" to its
+ * list so the sub-agent row flips from "running in background" to its
  * completed/result form — the same marker shape the disk parser
  * (`apply_background_lifecycle`) produces, so live and cold-open render
  * identically. Locates the `tool_result` block by `toolUseId` (how the adapter's
@@ -2053,7 +2053,7 @@ function steeredContentKey(
  *
  * Only a sub-agent's launch card is rewritten: one still showing its launch ack,
  * or the marker a cold parse or an earlier settlement left there — the same
- * cards `AgentToolCallPart` reads a lifecycle from. A background shell's
+ * calls the sub-agent row reads a lifecycle from. A background shell's
  * notification names the `Bash` call that started it as well, so its
  * settlement matches that command card, which shows the command and its launch
  * notice rather than a lifecycle: it is `matched` (handled, never queued) and

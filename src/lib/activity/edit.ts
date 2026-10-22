@@ -20,7 +20,6 @@ import { generateUnifiedDiff } from "@/lib/unified-diff-generator"
 import { countLines } from "./format"
 import {
   asObjectLike,
-  decodeJsonEscapedString,
   findObjectFieldDeep,
   findStringFieldDeep,
   num,
@@ -134,12 +133,6 @@ export function parseApplyPatchInput(input: string): {
   }
 }
 
-function hasLineChanges(
-  stats: LineChangeStats | null | undefined
-): stats is LineChangeStats {
-  return !!stats && (stats.additions > 0 || stats.deletions > 0)
-}
-
 export function looksLikeDiffPayload(input: string): boolean {
   if (!input.trim()) return false
   const normalized = unescapeInlineEscapes(input)
@@ -153,78 +146,6 @@ export function looksLikeDiffPayload(input: string): boolean {
   )
 }
 
-export function extractEditLineChangeStats(
-  input: string | null | undefined
-): LineChangeStats | null {
-  if (!input || input.trim().length === 0) return null
-
-  const parsed = tryParseJson(input)
-  const patchInput = extractApplyPatchTextFromUnknownInput(input, parsed)
-  if (patchInput) {
-    const patchStats = parseApplyPatchInput(patchInput)
-    const stats = {
-      additions: patchStats.additions,
-      deletions: patchStats.deletions,
-    }
-    if (hasLineChanges(stats)) return stats
-  }
-
-  if (parsed) {
-    const changesPayload = extractEditChangesPayload(parsed)
-    if (changesPayload.length > 0) {
-      let additions = 0
-      let deletions = 0
-
-      for (const change of changesPayload) {
-        if (change.unifiedDiff && change.unifiedDiff.trim().length > 0) {
-          const diffStats = countUnifiedDiffLineChanges(change.unifiedDiff)
-          additions += diffStats.additions
-          deletions += diffStats.deletions
-          continue
-        }
-
-        const estimated = estimateChangedLineStats(
-          change.oldText,
-          change.newText
-        )
-        additions += estimated.additions
-        deletions += estimated.deletions
-      }
-
-      const stats = { additions, deletions }
-      if (hasLineChanges(stats)) return stats
-    }
-
-    if (isCanonicalEditPayload(parsed)) {
-      const oldString =
-        str(parsed, "old_string") ?? str(parsed, "old_text") ?? ""
-      const newString =
-        str(parsed, "new_string") ?? str(parsed, "new_text") ?? ""
-      const stats = estimateChangedLineStats(oldString, newString)
-      if (hasLineChanges(stats)) return stats
-    }
-
-    const parsedDiff =
-      findStringFieldDeep(parsed, "unified_diff") ??
-      findStringFieldDeep(parsed, "unifiedDiff") ??
-      findStringFieldDeep(parsed, "patch") ??
-      findStringFieldDeep(parsed, "diff")
-    if (parsedDiff && looksLikeDiffPayload(parsedDiff)) {
-      const stats = countUnifiedDiffLineChanges(
-        unescapeInlineEscapes(parsedDiff)
-      )
-      if (hasLineChanges(stats)) return stats
-    }
-  }
-
-  if (looksLikeDiffPayload(input)) {
-    const stats = countUnifiedDiffLineChanges(unescapeInlineEscapes(input))
-    if (hasLineChanges(stats)) return stats
-  }
-
-  return null
-}
-
 export function unescapeInlineEscapes(text: string): string {
   return text
     .replace(/\\r\\n/g, "\n")
@@ -232,7 +153,7 @@ export function unescapeInlineEscapes(text: string): string {
     .replace(/\\t/g, "\t")
 }
 
-export function extractApplyPatchTextFromUnknownInput(
+function extractApplyPatchTextFromUnknownInput(
   input: string,
   parsed: Record<string, unknown> | null
 ): string | null {
@@ -269,31 +190,7 @@ export function extractApplyPatchTextFromUnknownInput(
   return null
 }
 
-export function parseApplyPatchFilesFromUnknownInput(
-  input: string,
-  parsed: Record<string, unknown> | null
-): ApplyPatchFile[] {
-  const patchText = extractApplyPatchTextFromUnknownInput(input, parsed)
-  if (patchText) {
-    const fromPatchText = parseApplyPatchInput(patchText)
-    if (fromPatchText.files.length > 0) return fromPatchText.files
-  }
-
-  const direct = parseApplyPatchInput(input)
-  if (direct.files.length > 0) return direct.files
-
-  const unescaped = unescapeInlineEscapes(input)
-  if (unescaped !== input) {
-    const normalized = parseApplyPatchInput(unescaped)
-    if (normalized.files.length > 0) return normalized.files
-  }
-
-  return []
-}
-
-export function isCanonicalEditPayload(
-  parsed: Record<string, unknown>
-): boolean {
+function isCanonicalEditPayload(parsed: Record<string, unknown>): boolean {
   return (
     typeof parsed.file_path === "string" ||
     typeof parsed.path === "string" ||
@@ -303,7 +200,7 @@ export function isCanonicalEditPayload(
   )
 }
 
-export type EditChangePreview = {
+type EditChangePreview = {
   path: string
   oldText: string
   newText: string
@@ -457,7 +354,7 @@ function parseEditChangeValue(
   }
 }
 
-export function extractEditChangesPayload(
+function extractEditChangesPayload(
   parsed: Record<string, unknown>
 ): EditChangePreview[] {
   const changes = findObjectFieldDeep(parsed, "changes")
@@ -474,35 +371,6 @@ export function extractEditChangesPayload(
   }
 
   return items
-}
-
-export function extractEditPathsFromChangesPayload(
-  input: string,
-  parsed: Record<string, unknown> | null
-): string[] {
-  const changes = findObjectFieldDeep(parsed, "changes")
-  if (changes) {
-    const paths = Object.keys(changes)
-      .map((path) => path.trim())
-      .filter((path) => path.length > 0)
-    if (paths.length > 0) return paths
-  }
-
-  const firstPathMatch = input.match(/"changes"\s*:\s*\{\s*"((?:[^"\\]|\\.)+)"/)
-  if (!firstPathMatch?.[1]) return []
-
-  return [decodeJsonEscapedString(firstPathMatch[1])]
-}
-
-export function extractPathFromDiffText(
-  text: string | null | undefined
-): string | null {
-  if (!text) return null
-  const match = text.match(/^(?:---|\+\+\+)\s+([^\n]+)$/m)
-  if (!match?.[1]) return null
-  const raw = match[1].trim()
-  if (!raw || raw === "/dev/null") return null
-  return raw.replace(/^[ab]\//, "")
 }
 
 // ── per-file description (activity rows) ──────────────────────────────────
@@ -656,8 +524,7 @@ export function describeEditFiles(
     : null
   // The patch may arrive with its newlines still JSON-escaped (a patch string
   // nested in a JSON envelope the extractor could not unwrap), so the
-  // unescaped form is tried too — as `parseApplyPatchFilesFromUnknownInput`
-  // does for the legacy card title.
+  // unescaped form is tried too.
   const patchCandidates = patchText
     ? [patchText, unescapeInlineEscapes(patchText)]
     : []
@@ -832,9 +699,9 @@ const NUMBERED_HUNK_RE = /^@@ -\d+/m
 
 /**
  * The unified diff (or `*** Begin Patch` text) an edit-like call's detail
- * panel draws: the same sources, in the same order, the legacy edit card
- * used — a patch in the input, codex's changes map, a diff with real line
- * numbers in the output, then a diff generated from the old/new strings.
+ * panel draws, from the first source that has one: a patch in the input,
+ * codex's changes map, a diff with real line numbers in the output, then a
+ * diff generated from the old/new strings.
  * Write and notebook edits draw their new content as added lines.
  */
 export function editDiffText(

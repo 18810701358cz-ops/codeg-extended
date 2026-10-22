@@ -357,7 +357,6 @@ function PollRow({
   return (
     <DelegationStatusRow
       kind="status"
-      layout="timeline"
       taskId={row.taskId}
       report={row.report}
       badge={row.badge}
@@ -449,7 +448,6 @@ export const DelegationCancelRow = memo(function DelegationCancelRow({
       />
       <DelegationStatusRow
         kind="cancel"
-        layout="timeline"
         taskId={taskId}
         report={report}
         badge={badge}

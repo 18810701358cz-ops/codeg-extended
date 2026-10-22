@@ -308,27 +308,6 @@ function rawWallTime(source: string): string | null {
   return match ? match[1].trim() : null
 }
 
-/**
- * Codex's wall time as a short label: "0.0519 seconds" → "52ms",
- * "1.234 seconds" → "1.2s". A value that does not read as seconds is returned
- * as written.
- */
-export function formatWallTime(
-  source: string | null | undefined
-): string | null {
-  if (!source) return null
-  const raw = rawWallTime(source)
-  if (!raw) return null
-  const numMatch = raw.match(/^([\d.]+)\s*s/)
-  if (!numMatch) return raw
-  const sec = parseFloat(numMatch[1])
-  if (Number.isNaN(sec)) return raw
-  if (sec < 0.001) return "<1ms"
-  if (sec < 1) return `${Math.round(sec * 1000)}ms`
-  if (sec < 60) return `${sec.toFixed(1)}s`
-  return `${(sec / 60).toFixed(1)}m`
-}
-
 /** Codex's wall time in milliseconds, or null when absent or unreadable. */
 export function extractWallTimeMs(
   source: string | null | undefined

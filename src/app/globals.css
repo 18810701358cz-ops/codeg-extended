@@ -1802,11 +1802,9 @@
   transition: none !important;
 }
 
-/* Tool collapsible: fade-in on expand (height must change instantly for virtualizer) */
-.tool-collapsible-content[data-state="open"] > * {
-  animation: tool-content-fade 150ms ease-out;
-}
-
+/* A fade for content that appears under a timeline row without moving it
+   (a running command's live tail, a thought's first text): opacity only, so
+   the row's height changes at once and the virtual list measures it right. */
 @keyframes tool-content-fade {
   from {
     opacity: 0;
@@ -1816,8 +1814,8 @@
   }
 }
 
-/* Reply fold body — the "Worked for …" header's progress section
-   (`CompletedTurnContent`). Unlike the tool collapsibles above, this one DOES
+/* Reply fold body — the activity header's progress section
+   (`CompletedTurnContent`). Unlike the row fades above, this one DOES
    animate its height: it is the one fold per reply the reader toggles by hand,
    and the answer below reading as pushed down / pulled back up is the whole
    point of the affordance.

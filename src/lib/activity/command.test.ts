@@ -5,7 +5,6 @@ import {
   extractCommandExit,
   extractDisplayCommandFromToolInput,
   extractWallTimeMs,
-  formatWallTime,
   normalizeCommandOutput,
   simplifyShellCommand,
 } from "./command"
@@ -128,12 +127,6 @@ describe("extractCommandExit", () => {
 
 describe("wall time", () => {
   const framed = "Chunk ID: x\nWall time: 12.5 seconds\nOutput:\nok"
-
-  it("formats the label the legacy card showed", () => {
-    expect(formatWallTime(framed)).toBe("12.5s")
-    expect(formatWallTime("Wall time: 0.0519 seconds\nOutput:\n")).toBe("52ms")
-    expect(formatWallTime("plain output")).toBeNull()
-  })
 
   it("reports milliseconds", () => {
     expect(extractWallTimeMs(framed)).toBe(12500)

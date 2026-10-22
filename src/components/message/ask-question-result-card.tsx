@@ -4,8 +4,9 @@
  * Read-only inline view of the codeg-mcp `ask_user_question` tool in the message
  * stream (historical transcripts + the in-flight tool marker).
  *
- * The answered / declined record is collapsed by default into a capsule that
- * summarizes the picks; expanding it reveals the live `AskQuestionCard` in its
+ * Drawn on the activity timeline's rail: the answered / declined record is a
+ * plain row (the rail's ring carries the icon) that summarizes the picks;
+ * expanding it reveals the live `AskQuestionCard` in its
  * `readOnly` mode, so the layout (tabs, headers, option cards) stays identical
  * to the interactive card the user actually answered — it just renders the
  * selection as disabled and drops the footer. The Q&A is reconstructed from the
@@ -44,9 +45,6 @@ interface Props {
   output?: string | null
   errorText?: string | null
   state?: ToolCallState
-  /** `timeline`: drawn on the activity timeline's rail — the answered
-   *  capsule becomes a plain row (the rail's ring carries the icon). */
-  layout?: "card" | "timeline"
 }
 
 export function AskQuestionResultCard({
@@ -54,9 +52,7 @@ export function AskQuestionResultCard({
   output,
   errorText,
   state,
-  layout = "card",
 }: Props) {
-  const timeline = layout === "timeline"
   const t = useTranslations("Folder.chat.askQuestionResult")
   const [expanded, setExpanded] = useState(false)
 
@@ -227,7 +223,7 @@ export function AskQuestionResultCard({
     )
   }
 
-  // Answered / declined. Collapsed by default into a capsule that summarizes the
+  // Answered / declined. Collapsed by default into a row that summarizes the
   // picks; expanding reveals the live card (so the layout matches exactly).
   const picks = (outcome?.answers ?? [])
     .flatMap((a) => a.selected)
@@ -244,35 +240,13 @@ export function AskQuestionResultCard({
       onClick={() => setExpanded((v) => !v)}
       aria-expanded={expanded}
       data-testid="ask-question-result-card"
-      className={cn(
-        timeline
-          ? "flex min-h-7 w-full max-w-full items-center gap-2 rounded-sm py-0.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          : "flex w-fit max-w-full items-center gap-2 rounded-full border border-primary/30 bg-card ws-msg-card px-3 py-1.5 text-left transition-colors hover:bg-muted/40",
-        !expanded && !timeline && "mb-2"
-      )}
+      className="flex min-h-7 w-full max-w-full items-center gap-2 rounded-sm py-0.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      {timeline ? null : (
-        <MessageCircleQuestionMark className="size-4 shrink-0 text-primary" />
-      )}
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate",
-          timeline ? "text-sm" : "text-xs"
-        )}
-      >
-        <span
-          className={cn(
-            "me-1",
-            timeline ? "font-medium text-foreground" : "text-muted-foreground"
-          )}
-        >
+      <span className="min-w-0 flex-1 truncate text-sm">
+        <span className="me-1 font-medium text-foreground">
           {t("answeredLabel")}
         </span>
-        <span
-          className={timeline ? "text-muted-foreground" : "text-foreground/90"}
-        >
-          {summary}
-        </span>
+        <span className="text-muted-foreground">{summary}</span>
       </span>
       {expanded ? (
         <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
@@ -285,7 +259,7 @@ export function AskQuestionResultCard({
   if (!expanded) return capsule
 
   return (
-    <div className={timeline ? "space-y-1" : "mb-2 space-y-1.5"}>
+    <div className="space-y-1">
       {capsule}
       <AskQuestionCard
         readOnly

@@ -79,9 +79,10 @@ export function readLineCount(
 
 /**
  * The text a search printed, with codex's command envelope unwrapped and
- * nothing else touched — see the `searchOutput` memo in the legacy tool card
- * for why no further cleanup is safe on search output. `""` is a real result
- * (no matches); null means there is no result to read yet.
+ * nothing else touched: a search prints the files' own lines, which can read
+ * like CLI framing (`Wall time:`, `Output:`) or be the code fences it was
+ * looking for, so the command-output cleanup would delete real matches. `""`
+ * is a real result (no matches); null means there is no result to read yet.
  */
 export function searchResultText(
   toolName: string,

@@ -2182,7 +2182,7 @@ describe("buildStreamingTurnsFromLiveMessage — Kimi TodoList suppression", () 
   const toolResults = (b: ContentBlock[]) =>
     b.filter((x) => x.type === "tool_result")
 
-  it("renders a PlanCard from the call's own todos before Kimi's plan arrives (no tool card, no flash)", () => {
+  it("renders a plan checklist from the call's own todos before Kimi's plan arrives (no tool row, no flash)", () => {
     const blocks = buildBlocks([
       kimiToolCall(
         write([
@@ -2203,7 +2203,7 @@ describe("buildStreamingTurnsFromLiveMessage — Kimi TodoList suppression", () 
     ])
   })
 
-  it("drops the redundant tool card once Kimi's own plan block is present (single PlanCard)", () => {
+  it("drops the redundant tool call once Kimi's own plan block is present (single plan)", () => {
     const blocks = buildBlocks([
       kimiToolCall(write([{ title: "A", status: "pending" }])),
       planBlock([{ content: "A", status: "pending", priority: "medium" }]),
@@ -2216,7 +2216,7 @@ describe("buildStreamingTurnsFromLiveMessage — Kimi TodoList suppression", () 
   it("shows the latest write's content, not an earlier write's stale plan block", () => {
     // Pre-plan window of a SECOND write: tool_call(write2 = {A,B}) is present,
     // but the reducer's collapsed plan block still reflects write1 ({A}) until
-    // write2's own `plan` update lands. The single PlanCard must reflect write2.
+    // write2's own `plan` update lands. The single plan must reflect write2.
     const blocks = buildBlocks([
       kimiToolCall(write([{ title: "A", status: "pending" }]), {
         tool_call_id: "w1",

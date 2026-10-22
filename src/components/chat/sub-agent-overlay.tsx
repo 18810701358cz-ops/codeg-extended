@@ -14,9 +14,9 @@
  * rows in the Session Details side panel instead.
  *
  * Each row (`SubAgentRow`, shared with that panel) resolves its agent type /
- * task / status / child ids from the same `useDelegationCardModel` the inline
- * `DelegatedSubThread` card uses, so the overlay and the message-stream card
- * never disagree. Clicking a row opens the child's full conversation via
+ * task / status / child ids from the same `useDelegationCardModel` the
+ * timeline's delegation row uses, so the overlay and the transcript never
+ * disagree. Clicking a row opens the child's full conversation via
  * `SubAgentSessionDialog` ("查看会话").
  */
 
@@ -140,8 +140,8 @@ export const SubAgentRow = memo(function SubAgentRow({
     childConnectionId,
   } = useDelegationCardModel(source)
 
-  // Unlike the inline DelegatedSubThread (which falls through to the generic
-  // tool renderer when nothing resolves), the overlay always renders one row
+  // Unlike the delegation row (which falls back to a plain tool row when
+  // nothing resolves), the overlay always renders one row
   // per real delegation so the collapsed count never disagrees with the list,
   // and meta/output-only states (e.g. after a refresh) still surface. Rows
   // degrade gracefully: unknown agent → neutral dot + "Sub-agent" label,

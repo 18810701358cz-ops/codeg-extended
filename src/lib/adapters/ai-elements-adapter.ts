@@ -85,9 +85,10 @@ export type AdaptedToolCallPart = {
   /**
    * ACP extensibility metadata forwarded from `ContentBlock.tool_use.meta`.
    * Opaque pass-through, read by narrow accessors rather than interpreted here:
-   * `<DelegatedSubThread>` takes `meta["codeg.delegation"]` as a binding
+   * the delegation row takes `meta["codeg.delegation"]` as a binding
    * fallback when the live DelegationContext entry is missing (page refresh,
-   * late mount), and the command card takes
+   * late mount), every row takes `meta["codeg.approval"]` for the approval
+   * the user gave the call, and the command row takes
    * `meta.jetbrains.air.asyncTasks.backgrounded` (`toolCallMovedToBackground`)
    * to explain a call that will never settle inside the turn.
    */
@@ -136,8 +137,8 @@ export type AdaptedGoalRunPart = {
 }
 
 /**
- * A plan / todo checklist, rendered by the dedicated `<PlanCard>` instead of
- * the generic tool card (and never as a `reasoning`/thinking block). Produced
+ * A plan / todo checklist, drawn as the timeline's plan row instead of a
+ * generic tool call (and never as a `reasoning`/thinking block). Produced
  * from two converging sources:
  *   - the LIVE synthetic `ContentBlock.plan` (ACP PlanUpdate → reducer), and
  *   - a persisted plan-like `TodoWrite` tool_use (converted in
@@ -2456,14 +2457,14 @@ export function adaptMessageTurn(
     }
 
     if (block.type === "tool_use") {
-      // Persisted plan-like tool calls (TodoWrite, *plan*) render as the same
-      // dedicated <PlanCard> the live stream produces, so live and historical
-      // look identical. Gated on `!isStreaming`: while streaming, the plan's
-      // single source of truth is the synthetic `plan` block (ACP PlanUpdate),
-      // so converting a live TodoWrite tool call here would double-render it.
+      // Persisted plan-like tool calls (TodoWrite, *plan*) become the same plan
+      // part the live stream produces, so live and historical look identical.
+      // Gated on `!isStreaming`: while streaming, the plan's single source of
+      // truth is the synthetic `plan` block (ACP PlanUpdate), so converting a
+      // live TodoWrite tool call here would double-render it.
       // Gated on BOTH a plan-like name AND successfully parsed entries so
       // unrelated tools (e.g. "explain") never convert — unparsable input
-      // falls through to the normal tool-card path below.
+      // falls through to the normal tool-call path below.
       const planEntries =
         !isStreaming && isPlanLikeToolName(block.tool_name)
           ? parseTodosFromJson(block.input_preview ?? "")

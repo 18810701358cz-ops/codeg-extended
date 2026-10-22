@@ -93,7 +93,7 @@ function BackgroundTaskRowView({
   launch: BackgroundTasksStep["launches"][string] | undefined
 }) {
   const t = useTranslations("Folder.chat.activity")
-  const tLegacy = useTranslations("Folder.chat.contentParts.backgroundTask")
+  const tParts = useTranslations("Folder.chat.contentParts.backgroundTask")
   const statusText = useStatusText()
   const status = rowStatus(row)
   const failed = row.badge === "failed"
@@ -140,7 +140,7 @@ function BackgroundTaskRowView({
       onExpandedChange={setOpen}
       title={
         row.pollCount > 1
-          ? tLegacy("polledTimes", { count: row.pollCount })
+          ? tParts("polledTimes", { count: row.pollCount })
           : (row.command ?? undefined)
       }
       trailing={

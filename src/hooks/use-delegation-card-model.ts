@@ -4,9 +4,9 @@
  * Resolves a unified "delegation card model" — agent type, task, status,
  * child ids — from a `delegate_to_agent` tool call, in priority order:
  *   live `DelegationContext` binding → persisted `meta["codeg.delegation"]`
- *   → parsed tool input/output. The same model drives both the inline
- *   `DelegatedSubThread` card and the top-right `SubAgentOverlay`, so the two
- *   never disagree on what a sub-agent is doing.
+ *   → parsed tool input/output. The same model drives the timeline's
+ *   delegation row, the resumed-delegation card and the top-right
+ *   `SubAgentOverlay`, so they never disagree on what a sub-agent is doing.
  *
  * Pure parsing lives in `@/lib/delegation-card`; this hook adds the two
  * React-state reads it can't do on its own: the live binding
@@ -35,8 +35,8 @@ import {
   type ParsedToolOutput,
 } from "@/lib/delegation-card"
 
-/** The raw inputs a `delegate_to_agent` tool call carries — the props
- *  `DelegatedSubThread` already receives, and the shape `SubAgentOverlay`
+/** The raw inputs a `delegate_to_agent` tool call carries — what the
+ *  delegation row reads off its call, and the shape `SubAgentOverlay`
  *  extracts from the last assistant turn's tool-call parts. */
 export interface DelegationCardSource {
   parentToolUseId: string

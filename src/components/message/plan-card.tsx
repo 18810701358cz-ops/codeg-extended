@@ -3,21 +3,19 @@
 import { memo } from "react"
 import { useTranslations } from "next-intl"
 import { Badge } from "@/components/ui/badge"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import type { PlanEntryInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import {
   CheckCircle2Icon,
   CircleDashedIcon,
   CircleDotIcon,
-  ListTodoIcon,
   Loader2Icon,
 } from "lucide-react"
 
 // ── Shared status/priority label + style helpers ──────────────────────
-// Single source of truth for plan entry labels/colors, shared by <PlanCard>
-// (inline message rendering) and <AgentPlanOverlay> (floating chip) so the
-// two surfaces never drift.
+// Single source of truth for plan entry labels/colors, shared by the timeline's
+// plan row and <AgentPlanOverlay> (floating chip) so the two surfaces never
+// drift.
 
 export type StatusKey =
   | "status.completed"
@@ -93,8 +91,8 @@ function StatusIcon({
 }
 
 /**
- * The plan entry rows (checklist body). Shared by <PlanCard> and the
- * historical TodoWrite fallback so every plan surface renders identically.
+ * The plan entry rows (checklist body), shared by every plan surface so they
+ * render identically.
  */
 export const PlanEntriesList = memo(function PlanEntriesList({
   entries,
@@ -138,43 +136,6 @@ export const PlanEntriesList = memo(function PlanEntriesList({
           </Badge>
         </div>
       ))}
-    </div>
-  )
-})
-
-/**
- * Inline plan / todo checklist card rendered in the message stream. Replaces
- * the previous behavior of showing the plan as a "Thinking…" reasoning block.
- */
-export const PlanCard = memo(function PlanCard({
-  entries,
-  isStreaming = false,
-}: {
-  entries: PlanEntryInfo[]
-  isStreaming?: boolean
-}) {
-  const t = useTranslations("Folder.chat.agentPlanOverlay")
-
-  if (entries.length === 0) return null
-
-  const completedCount = entries.filter(
-    (entry) => entry.status === "completed"
-  ).length
-
-  return (
-    <div className="overflow-hidden rounded-lg border bg-card/50 ws-msg-card">
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <ListTodoIcon className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">
-          {t("title")}
-        </span>
-        <Badge variant="secondary" className="h-5 shrink-0">
-          {completedCount}/{entries.length}
-        </Badge>
-      </div>
-      <ScrollArea className="max-h-72 px-2 py-2">
-        <PlanEntriesList entries={entries} isStreaming={isStreaming} />
-      </ScrollArea>
     </div>
   )
 })

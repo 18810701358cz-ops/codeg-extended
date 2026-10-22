@@ -205,7 +205,6 @@ function StepView({ step }: { step: ActivityStep }) {
         >
           <GoalRunPart
             part={step.part}
-            layout="timeline"
             renderBody={() => renderNested(step.model, step.part.isRunning)}
           />
         </HostedRow>
@@ -275,7 +274,6 @@ function ToolStepView({ step: given }: { step: ToolStep }) {
           inset={false}
         >
           <AskQuestionResultCard
-            layout="timeline"
             input={part.input ?? null}
             output={part.output ?? null}
             errorText={part.errorText ?? null}
@@ -316,10 +314,7 @@ function ToolStepView({ step: given }: { step: ToolStep }) {
           kindLabel={t("kind.goal")}
           inset={false}
         >
-          <GoalToolCallPart
-            part={{ ...part, toolName: tool.toolName }}
-            layout="timeline"
-          />
+          <GoalToolCallPart part={{ ...part, toolName: tool.toolName }} />
         </HostedRow>
       )
   }

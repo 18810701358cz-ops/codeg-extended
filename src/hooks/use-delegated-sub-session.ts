@@ -2,7 +2,7 @@
  * Resolves a delegation binding by `parent_tool_use_id` (or, for a
  * `resume_delegation` card, by the broker task id) and fetches the child
  * conversation's persisted detail (turns + session stats) so the parent's
- * ToolCallBlock can render a preview inline.
+ * delegation row can show a preview inline.
  *
  * Returns `{ binding, detail, loading, error }`. `binding` may be undefined
  * if the parent UI mounted before the `delegation_started` event was

@@ -9,7 +9,7 @@
  * #2122", "进度：tests passing", "任务完成 · 成功"), with a status badge and an
  * inline expansion for the result text — for a work-task report, the whole
  * report plus what the board did with it. Deliberately the same shape and visual
- * language as `DelegationStatusCard` / `DelegationStatusRow` so every codeg-mcp
+ * language as `DelegationStatusRow` so every codeg-mcp
  * companion reads as one family in the transcript instead of these five landing
  * on the generic tool shell as a raw `{"message": "…"}` argument dump.
  *

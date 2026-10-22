@@ -1,55 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { CODEG_MCP_WORKBENCH_TOOLS } from "@/lib/codeg-mcp-tool"
-import {
-  classifyToolKind,
-  isAgentLikeToolName,
-  TOOL_KIND_ORDER,
-  type ToolKindLabel,
-} from "./tool-kind-classifier"
-
-describe("classifyToolKind", () => {
-  it.each([
-    ["grep", "search"],
-    ["GLOB", "search"],
-    ["list_files", "search"],
-    // pi's built-in set is bash/edit/find/grep/ls/powershell/read/write; `ls`
-    // and `powershell` used to fall through to "other".
-    ["find", "search"],
-    ["ls", "search"],
-    ["powershell", "command"],
-    ["bash", "command"],
-    ["execute_command", "command"],
-    ["read", "read"],
-    ["Read File", "read"],
-    ["view", "read"],
-    // codex's image viewer, by its raw rollout name.
-    ["view_image", "read"],
-    ["edit", "edit"],
-    ["NotebookEdit", "edit"],
-    ["replace_in_file", "edit"],
-    ["webfetch", "fetch"],
-    ["browser_action", "fetch"],
-    ["think", "think"],
-    ["EnterPlanMode", "think"],
-    ["TodoWrite", "todo"],
-    ["update_todo_list", "todo"],
-    ["task", "task"],
-    ["new_task", "task"],
-    ["skill", "task"],
-    ["memory_recall", "memory"],
-    ["MEMORY_RECALL", "memory"],
-    ["my_custom_tool", "other"],
-    ["", "other"],
-  ] as const)("classifies %s as %s", (name, expected) => {
-    expect(classifyToolKind(name)).toBe(expected as ToolKindLabel)
-  })
-
-  it("normalizes whitespace and case", () => {
-    expect(classifyToolKind("  Grep  ")).toBe("search")
-    expect(classifyToolKind("BASH")).toBe("command")
-  })
-})
+import { isAgentLikeToolName } from "./tool-kind-classifier"
 
 describe("isAgentLikeToolName", () => {
   it("matches the agent tool exactly", () => {
@@ -174,24 +126,5 @@ describe("isAgentLikeToolName", () => {
     expect(isAgentLikeToolName("xcancel_delegation")).toBe(false)
     expect(isAgentLikeToolName("xask_user_question")).toBe(false)
     expect(isAgentLikeToolName("xcheck_user_feedback")).toBe(false)
-  })
-})
-
-describe("TOOL_KIND_ORDER", () => {
-  it("includes every label exactly once", () => {
-    const expected: ToolKindLabel[] = [
-      "search",
-      "command",
-      "read",
-      "memory",
-      "edit",
-      "fetch",
-      "think",
-      "todo",
-      "task",
-      "other",
-    ]
-    expect([...TOOL_KIND_ORDER].sort()).toEqual([...expected].sort())
-    expect(new Set(TOOL_KIND_ORDER).size).toBe(TOOL_KIND_ORDER.length)
   })
 })

@@ -29,7 +29,7 @@ import {
 import type { ToolStep } from "./explore-rows"
 import { useAwaitedStep, useLiveToolStep } from "../use-live-step"
 
-/** Tail of a running command's output kept for display (as the legacy card). */
+/** Tail of a running command's output kept for display. */
 const LIVE_OUTPUT_CHARS = 24_000
 /** Settled output rendered in full up to this many lines; then only the end. */
 const MAX_OUTPUT_LINES = 2_000
@@ -103,7 +103,7 @@ function useCommandOutput(step: ToolStep): CommandOutput | null {
 /** The command line a row shows: `$ cmd`, a heredoc's opener, a session verb. */
 function CommandLabel({ step }: { step: ToolStep }) {
   const t = useTranslations("Folder.chat.activity")
-  const tLegacy = useTranslations("Folder.chat.contentParts")
+  const tParts = useTranslations("Folder.chat.contentParts")
   const command = step.tool.command
   const scriptMeta = useMemo(
     () => parseCodexScriptMeta(step.part.meta),
@@ -186,7 +186,7 @@ function CommandLabel({ step }: { step: ToolStep }) {
       ) : null}
       {command.announcedSession ? (
         <span className="ms-2 font-mono text-xs text-muted-foreground">
-          {tLegacy("shellSession", { id: command.announcedSession })}
+          {tParts("shellSession", { id: command.announcedSession })}
         </span>
       ) : null}
       {step.tool.background ? (
@@ -208,7 +208,7 @@ function CommandDetail({
   output: CommandOutput | null
 }) {
   const t = useTranslations("Folder.chat.activity")
-  const tLegacy = useTranslations("Folder.chat.contentParts")
+  const tParts = useTranslations("Folder.chat.contentParts")
   const { tool } = step
   const command = tool.command
   const failed = tool.status === "failed" || tool.status === "rejected"
@@ -254,25 +254,25 @@ function CommandDetail({
           <CodeBlock code={script.source} language="javascript" />
           {script.callCount > 0 ? (
             <p className="px-4 pb-2 text-xs text-muted-foreground">
-              {tLegacy("scriptToolCalls", { count: script.callCount })}
+              {tParts("scriptToolCalls", { count: script.callCount })}
             </p>
           ) : null}
         </div>
       ) : null}
       {scriptMeta?.sharedWith.length ? (
         <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
-          {tLegacy("codexScript.sharedWith", {
+          {tParts("codexScript.sharedWith", {
             commands: scriptMeta.sharedWith.join(", "),
           })}
         </p>
       ) : null}
       {scriptMeta?.outputMissing ? (
         <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
-          {tLegacy("codexScript.outputMissing")}
+          {tParts("codexScript.outputMissing")}
         </p>
       ) : scriptMeta?.truncated && !scriptMeta.sharedWith.length ? (
         <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
-          {tLegacy("codexScript.truncated")}
+          {tParts("codexScript.truncated")}
         </p>
       ) : null}
       {command?.description ? (

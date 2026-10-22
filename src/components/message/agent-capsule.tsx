@@ -1,13 +1,10 @@
 "use client"
 
 /**
- * Shared visual shell for sub-agent capsules. Both the history "Agent" capsule
- * (`agent-tool-call.tsx`, reconstructed from the on-disk rollout) and the live
- * codex collab capsule (`collab-agent-card.tsx`, streamed) render through this
- * same chrome so the two are visually consistent: a collapsible pill trigger
- * (chevron + shimmering title while running + an optional right-aligned suffix)
- * over a bordered, scrollable body. Each caller supplies its own body for the
- * data it actually has.
+ * Visual shell for the live codex collab capsule (`collab-agent-card.tsx`,
+ * streamed): a collapsible pill trigger (chevron + shimmering title while
+ * running + an optional right-aligned suffix) over a bordered, scrollable body.
+ * The caller supplies its own body for the data it actually has.
  */
 
 import { Children, useState, type ReactNode } from "react"
@@ -168,7 +165,7 @@ export function AgentCapsule({
 
   return (
     <Collapsible open={bodyOpen} onOpenChange={setBodyOpen} className="w-full">
-      {/* Pill trigger — matches ToolGroupPart structure with themed emphasis. */}
+      {/* Pill trigger, with themed emphasis. */}
       {headerRow(
         <CollapsibleTrigger className={pillClass} aria-label={statusLabel}>
           {pillInner}

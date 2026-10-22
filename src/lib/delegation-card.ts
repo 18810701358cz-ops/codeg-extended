@@ -2,9 +2,9 @@
  * Shared parsing + state-resolution helpers for `delegate_to_agent`
  * delegation cards.
  *
- * Extracted from `DelegatedSubThread` so the inline message-stream card AND
- * the top-right sub-agent overlay resolve the same agent type / task / status /
- * child ids from the exact same logic — one source of truth, no drift.
+ * Shared so the timeline's delegation row AND the top-right sub-agent overlay
+ * resolve the same agent type / task / status / child ids from the exact same
+ * logic — one source of truth, no drift.
  *
  * Everything here is pure (no React). The React-specific binding/permission
  * lookups live in `useDelegationCardModel`.
@@ -824,8 +824,7 @@ export function isDelegateToAgentToolName(name: string): boolean {
 
 /**
  * Resolve the card status from the live binding / persisted meta / parsed tool
- * output, in priority order. Pure mirror of the resolution that used to live
- * inline in `DelegatedSubThread`.
+ * output, in priority order.
  *
  *   waiting (child blocked on permission) > live binding > snapshot meta
  *   > error channel > running ack > terminal outcome > output-available > starting

@@ -11,9 +11,9 @@
  *
  * The row takes a pre-resolved `report` + `badge` (the latest poll) plus the
  * per-poll `results` list (one entry per check, `null` where a check returned
- * no text), so both the single `DelegationStatusCard` and the merged
- * `DelegationStatusGroupCard` (which groups polls per task) share one row. The
- * outer card owns the border / rounded shape / error tint.
+ * no text), so a lone check and a task's grouped checks share one row. It is
+ * drawn on the activity timeline's rail, whose ring carries the icon and the
+ * state.
  *
  * One thing it reads live: a status row whose wait is not over looks at the
  * sub-agent itself (`useDelegationTaskLive`). While that sub-agent is parked on
@@ -34,13 +34,7 @@
  */
 
 import { memo, useEffect, useId, useMemo, useState } from "react"
-import {
-  Activity,
-  Ban,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { cn } from "@/lib/utils"
@@ -81,9 +75,6 @@ interface DelegationStatusRowProps {
    *  matched against the transcript's index to tell the task's newest row
    *  from a superseded one. Without it the row is its own newest. */
   latestPollId?: string | null
-  /** `timeline`: drawn on the activity timeline's rail — no icon of its own
-   *  (the rail's ring carries it), no inset padding, no frame lines. */
-  layout?: "card" | "timeline"
   /** Told the status the row shows whenever it changes — the polled one, or
    *  what the live sub-agent overrides it with — so the rail it sits on can
    *  agree with it. */
@@ -100,10 +91,8 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
   results: resultsProp,
   runningConfirmed = false,
   latestPollId = null,
-  layout = "card",
   onStatusChange,
 }: DelegationStatusRowProps) {
-  const timeline = layout === "timeline"
   const t = useTranslations("Folder.chat.delegation")
   const panelId = useId()
 
@@ -215,7 +204,6 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
   const hasAnyResultText = results.some((r) => r != null && r.trim() !== "")
   const expandable = hasAnyResultText || prompts != null
 
-  const isError = badge.status === "err"
   const isRunning = badge.status === "running"
   const duration =
     report.durationMs != null ? formatDuration(report.durationMs) : null
@@ -230,23 +218,10 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
         ? t("waitForResult", { task: `#${shortId}` })
         : t("waitForResultNoTask")
 
-  const Icon = kind === "cancel" ? Ban : Activity
-
   const row = (
     <>
-      {timeline ? null : (
-        <Icon
-          className={cn(
-            "h-3.5 w-3.5 shrink-0",
-            isError ? "text-destructive" : "text-muted-foreground"
-          )}
-        />
-      )}
       <span
-        className={cn(
-          "min-w-0 truncate font-medium",
-          timeline ? "text-sm text-muted-foreground" : "text-xs text-foreground"
-        )}
+        className="min-w-0 truncate text-sm font-medium text-muted-foreground"
         title={taskId ?? undefined}
       >
         {isRunning ? (
@@ -288,33 +263,19 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
           // renderer out of the collapsed tree), so only reference it then —
           // avoids a dangling `aria-controls` target while collapsed.
           aria-controls={expanded ? panelId : undefined}
-          className={cn(
-            "flex w-full items-center gap-2 text-start transition-colors",
-            timeline
-              ? "min-h-7 rounded-sm py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              : "px-3 py-2 hover:bg-muted/50"
-          )}
+          className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 text-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {row}
         </button>
       ) : (
-        <div
-          className={cn(
-            "flex w-full items-center gap-2",
-            timeline ? "min-h-7 py-0.5" : "px-3 py-2"
-          )}
-        >
+        <div className="flex min-h-7 w-full items-center gap-2 py-0.5">
           {row}
         </div>
       )}
       {expandable && expanded && (
         <div
           id={panelId}
-          className={
-            timeline
-              ? "mt-1 mb-1.5 overflow-hidden rounded-[0.625rem] border border-border bg-background ws-msg-card"
-              : "border-t border-border"
-          }
+          className="mt-1 mb-1.5 overflow-hidden rounded-[0.625rem] border border-border bg-background ws-msg-card"
         >
           {/* Above the results and outside their scroll area: the decision is
               why the row opened, and its buttons must not scroll away. */}
