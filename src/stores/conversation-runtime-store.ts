@@ -1423,8 +1423,6 @@ export function buildStreamingTurnsFromLiveMessage(
         //     ContentBlock variant (zero asymmetry)
         //   - the user sees one labeled "Image generation" card instead of
         //     a generic tool card sitting above a detached image
-        //   - the new card is not folded into `groupConsecutiveToolCalls`
-        //     (which only consumes `tool-call` parts)
         if (isImageGenerationToolCall(block.info)) {
           // codex-acp emits one image per ToolCall (each `call_id` is a
           // single ImageGenerationBegin/End pair). One block per image —

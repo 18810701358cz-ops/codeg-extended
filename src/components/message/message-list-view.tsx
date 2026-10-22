@@ -29,7 +29,6 @@ import {
 import {
   createMessageTurnAdapter,
   groupGoalRuns,
-  mergeAdjacentToolGroups,
   mergeAdjacentDelegationStatusGroups,
   mergeAdjacentBackgroundTaskGroups,
   type AdaptedContentPart,
@@ -469,9 +468,7 @@ export function singletonSourceTurns(turn: MessageTurn): MessageTurn[] {
 }
 
 // Collect the sub-agent delegations within a turn's adapted parts, recursing
-// through tool-groups and goal-runs (both kinds are normally standalone parts —
-// `isAgentLikeToolName` keeps them out of tool-groups — but we scan nested
-// containers defensively so a delegation is never missed).
+// into goal runs (a delegation made while a goal runs sits in the run's items).
 //
 // Two kinds qualify:
 //   - `delegate_to_agent`, which STARTED a sub-agent, keyed by its own
@@ -530,8 +527,6 @@ function collectDelegationSources(
           meta: part.meta ?? null,
         })
       }
-    } else if (part.type === "tool-group") {
-      collectDelegationSources(part.items, out, seenTaskIds)
     } else if (part.type === "goal-run") {
       collectDelegationSources(part.items, out, seenTaskIds)
     }
@@ -880,10 +875,10 @@ export function dedupeCompactionItems(
 
 /**
  * Collapse runs of consecutive assistant turn render items into a single
- * synthetic turn so tool-groups straddling a turn boundary fold into one
- * collapsible. Empty (no-content) turn items are treated as transparent and
- * do not break the run — that handles cases where parsers leave empty
- * placeholder turns between tool exchanges.
+ * synthetic turn, so a reply the agent split across turns (one per tool round
+ * trip) draws as one timeline. Empty (no-content) turn items are treated as
+ * transparent and do not break the run — that handles cases where parsers
+ * leave empty placeholder turns between tool exchanges.
  *
  * Exported for tests.
  */
@@ -933,12 +928,11 @@ export function mergeConsecutiveAssistantTurns(
       // the unfinished-run shimmer must stop. Mirror groupGoalRuns' per-turn
       // isStreaming gate at the merge layer.
       const mergedStreaming = buffer.some((it) => it.phase === "streaming")
-      // Fold tool-groups straddling the turn boundary, then collapse runs of
-      // single-poll delegation-status and background-task groups (each polling
-      // round is its own turn) into one merged card.
+      // Collapse runs of single-poll delegation-status and background-task
+      // groups (each polling round is its own turn) into one.
       const mergedParts = groupGoalRuns(
         mergeAdjacentBackgroundTaskGroups(
-          mergeAdjacentDelegationStatusGroups(mergeAdjacentToolGroups(allParts))
+          mergeAdjacentDelegationStatusGroups(allParts)
         ),
         mergedStreaming
       )
@@ -1534,7 +1528,7 @@ export function MessageListView({
     })
 
     // Collapse consecutive assistant turn render items into a single rendered
-    // turn, so tool-groups straddling a turn boundary fold into one collapsible.
+    // turn, so a reply split across turns draws as one timeline.
     // Compaction dividers are deduped FIRST: the live and persisted copies of
     // one compaction arrive under different ids, and only one of them should
     // reach the merge.

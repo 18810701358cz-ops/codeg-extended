@@ -107,7 +107,7 @@ function collect(
         singlePollByCall.set(part, polls)
       }
       out.push(...refsOfPolls(polls))
-    } else if (part.type === "tool-group" || part.type === "goal-run") {
+    } else if (part.type === "goal-run") {
       collect(part.items, out)
     }
   }

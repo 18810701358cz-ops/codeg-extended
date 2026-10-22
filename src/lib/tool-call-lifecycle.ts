@@ -1,6 +1,6 @@
 /**
  * Small, dependency-light lifecycle predicates for an adapted tool-call part,
- * shared by the generic tool-group filter (`dropEmptyInFlightToolCalls`) and the
+ * shared by the generic empty-call filter (`dropEmptyInFlightToolCalls`) and the
  * specialized lane row-builders (`buildDelegationTaskRows`,
  * `buildBackgroundTaskRows`). Kept in its own module — with a TYPE-ONLY import
  * of `AdaptedToolCallPart` (erased at runtime) — so `background-task.ts` can use

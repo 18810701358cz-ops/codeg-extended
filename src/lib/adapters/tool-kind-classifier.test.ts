@@ -44,8 +44,7 @@ describe("isAgentLikeToolName", () => {
 
   // The classifier keeps its own copy of the workbench list; when
   // `resume_delegation` was added to `CODEG_MCP_WORKBENCH_TOOLS` the copy was
-  // not updated, so the resume card spent its life wrapped in a spurious
-  // "工具 ×1" group shell. Pin the relationship so it can't drift again.
+  // not updated once already. Pin the relationship so it can't drift again.
   it("covers every tool that owns a CodegMcpToolCard", () => {
     for (const tool of CODEG_MCP_WORKBENCH_TOOLS) {
       expect(isAgentLikeToolName(tool)).toBe(true)
@@ -53,8 +52,7 @@ describe("isAgentLikeToolName", () => {
   })
 
   it("matches the codeg-mcp workbench companions across host naming conventions", () => {
-    // Each owns a CodegMcpToolCard, so it breaks the tool-group run and renders
-    // standalone rather than folding into a "工具 ×N" tally.
+    // Each owns a CodegMcpToolCard.
     for (const tool of [
       "get_session_info",
       "task_progress",
@@ -93,14 +91,13 @@ describe("isAgentLikeToolName", () => {
 
   it("matches codex's Plan-mode request_user_input", () => {
     // History keeps the raw name (the live path collapses it to "question"); it
-    // owns the AskQuestionResultCard, so it must render standalone, not folded.
+    // owns the AskQuestionResultCard.
     expect(isAgentLikeToolName("request_user_input")).toBe(true)
   })
 
   it("matches Kimi's native AskUserQuestion history name", () => {
     // The Kimi Code wire.jsonl (and Claude's SDK) record the camel-case tool
-    // name; history passes it raw, so without this the answered capsule was
-    // wrapped inside a generic tool-group (the reported bug).
+    // name, and history passes it raw.
     expect(isAgentLikeToolName("AskUserQuestion")).toBe(true)
     expect(isAgentLikeToolName("askuserquestion")).toBe(true)
   })

@@ -4,9 +4,8 @@
  *
  * Runs after the adapter and the cross-turn merge, so every lane those
  * produce — delegation polls, background-task polls, goal runs, plans — is
- * already settled and this only reshapes it: the generic `tool-group` wrapper
- * is opened back up into single calls (grouping is redone here, by kind), the
- * specialized lanes stay whole.
+ * already settled and this only reshapes it: plain tool calls are grouped
+ * here, by kind; the specialized lanes stay whole.
  */
 
 import {
@@ -82,9 +81,6 @@ function replyAnchor(parts: AdaptedContentPart[]): string {
   }
   for (const part of parts) {
     if (part.type === "tool-call") return part.toolCallId
-    if (part.type === "tool-group" && part.items[0]) {
-      return part.items[0].toolCallId
-    }
     if (
       (part.type === "delegation-status-group" ||
         part.type === "background-task-group") &&
@@ -189,9 +185,6 @@ function collectSteps(
       }
       case "tool-call":
         steps.push(toolStep(part))
-        return
-      case "tool-group":
-        for (const item of part.items) steps.push(toolStep(item))
         return
       case "tool-result":
         steps.push({

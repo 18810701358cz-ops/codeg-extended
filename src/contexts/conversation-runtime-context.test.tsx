@@ -1779,7 +1779,7 @@ describe("buildStreamingTurnsFromLiveMessage — orphan status provenance", () =
   // The forward that lets the render layer drop an interrupted arg-less orphan
   // after it is promoted into localTurns at COMPLETE_TURN (see
   // dropEmptyInFlightToolCalls). Without it, the promoted block loses its ACP
-  // status and the orphan re-inflates the "运行 N 个命令" count post-completion.
+  // status and the orphan re-inflates the reply's command count post-completion.
   it("forwards the ACP tool status onto the promoted tool_use block", () => {
     const blocks = buildStreamingTurnsFromLiveMessage(1, {
       id: "lm-orphan",

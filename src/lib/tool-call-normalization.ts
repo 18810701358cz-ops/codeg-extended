@@ -558,7 +558,7 @@ export function normalizeToolName(toolName: string): string {
   // codex-acp command-action tool calls (`createCommandActionEvent`) carry no
   // tool name and no rawInput — only a human title — so the search / list-files
   // identity has to be read back out of it. Without this the whole title becomes
-  // the "tool name": no search icon, an "other" tool-group tally, and a body
+  // the "tool name": no search icon, an "other" tool tally, and a body
   // that dumps the raw `{formatted_output, exit_code}` envelope. The sibling
   // `Read file '<path>'` shape already resolves via the `^read` freeform rule.
   //
