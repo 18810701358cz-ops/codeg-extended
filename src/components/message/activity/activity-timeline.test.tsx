@@ -257,6 +257,14 @@ describe("activity timeline: failures", () => {
     expect(within(row).getByText("exit 2")).toBeTruthy()
     expect(within(row).getByText(/Type error/)).toBeTruthy()
   })
+
+  it("keeps the rail beside the last row while it is open", () => {
+    renderSettled(partsOf(FAILURE))
+    const row = rowOf("pnpm build")
+    expect(row).toHaveAttribute("data-open")
+    fireEvent.click(within(row).getAllByRole("button")[0]!)
+    expect(row).not.toHaveAttribute("data-open")
+  })
 })
 
 describe("activity timeline: a live turn", () => {

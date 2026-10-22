@@ -338,19 +338,26 @@ export const DelegationRow = memo(function DelegationRow({
 type BadgeStatus = DelegationTaskRow["badge"]["status"]
 
 /** A delegation's checks, as the status rows that carry their results and any
- *  pending decision. `onStatusChange` hears what each row shows, keyed by
- *  row. */
+ *  pending decision. `onStatusChange` hears what each row shows and
+ *  `onOpenChange` whether its panel is open, keyed by row. */
 function PollRows({
   rows,
   onStatusChange,
+  onOpenChange,
 }: {
   rows: DelegationTaskRow[]
   onStatusChange?: (key: string, status: BadgeStatus) => void
+  onOpenChange?: (key: string, open: boolean) => void
 }) {
   return (
     <div className="space-y-0.5">
       {rows.map((row) => (
-        <PollRow key={row.key} row={row} onStatusChange={onStatusChange} />
+        <PollRow
+          key={row.key}
+          row={row}
+          onStatusChange={onStatusChange}
+          onOpenChange={onOpenChange}
+        />
       ))}
     </div>
   )
@@ -359,13 +366,19 @@ function PollRows({
 function PollRow({
   row,
   onStatusChange,
+  onOpenChange,
 }: {
   row: DelegationTaskRow
   onStatusChange?: (key: string, status: BadgeStatus) => void
+  onOpenChange?: (key: string, open: boolean) => void
 }) {
   const report = useCallback(
     (status: BadgeStatus) => onStatusChange?.(row.key, status),
     [onStatusChange, row.key]
+  )
+  const reportOpen = useCallback(
+    (open: boolean) => onOpenChange?.(row.key, open),
+    [onOpenChange, row.key]
   )
   return (
     <DelegationStatusRow
@@ -377,6 +390,7 @@ function PollRow({
       runningConfirmed={row.runningConfirmed}
       latestPollId={row.latestPollId}
       onStatusChange={onStatusChange ? report : undefined}
+      onOpenChange={onOpenChange ? reportOpen : undefined}
     />
   )
 }
@@ -414,18 +428,33 @@ export const DelegationPollsRow = memo(function DelegationPollsRow({
       prev.get(key) === status ? prev : new Map(prev).set(key, status)
     )
   }, [])
+  // Which rows have their panel open: the rail runs beside an open one.
+  const [openKeys, setOpenKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const onOpenChange = useCallback((key: string, open: boolean) => {
+    setOpenKeys((prev) => {
+      if (prev.has(key) === open) return prev
+      const next = new Set(prev)
+      if (open) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }, [])
   if (rows.length === 0) return null
   const status = pollsStatus(
     rows.map((row) => shown.get(row.key) ?? row.badge.status)
   )
   return (
-    <PollsLi stepKey={step.key} status={status}>
+    <PollsLi stepKey={step.key} status={status} open={openKeys.size > 0}>
       <RailIcon
         icon={ActivityIcon}
         status={status}
         label={`${t("kind.delegation")}, ${statusText(status)}`}
       />
-      <PollRows rows={rows} onStatusChange={onStatusChange} />
+      <PollRows
+        rows={rows}
+        onStatusChange={onStatusChange}
+        onOpenChange={onOpenChange}
+      />
     </PollsLi>
   )
 })
@@ -446,6 +475,7 @@ export const DelegationCancelRow = memo(function DelegationCancelRow({
   )
   const taskId = parseTaskId(part.input) ?? report.taskId
   const badge = deriveBadge("cancel", report, part.state, !!part.errorText)
+  const [open, setOpen] = useState(false)
   const status: StepStatus =
     badge.status === "err"
       ? "failed"
@@ -453,7 +483,7 @@ export const DelegationCancelRow = memo(function DelegationCancelRow({
         ? "running"
         : "succeeded"
   return (
-    <PollsLi stepKey={stepKey} status={status}>
+    <PollsLi stepKey={stepKey} status={status} open={open}>
       <RailIcon
         icon={BanIcon}
         status={status}
@@ -464,6 +494,7 @@ export const DelegationCancelRow = memo(function DelegationCancelRow({
         taskId={taskId}
         report={report}
         badge={badge}
+        onOpenChange={setOpen}
       />
     </PollsLi>
   )
@@ -472,10 +503,13 @@ export const DelegationCancelRow = memo(function DelegationCancelRow({
 function PollsLi({
   stepKey,
   status,
+  open,
   children,
 }: {
   stepKey: string
   status: StepStatus
+  /** A row's panel is open: as the last row, the rail runs beside it. */
+  open: boolean
   children: [React.ReactNode, React.ReactNode]
 }) {
   const [marker, body] = children
@@ -485,6 +519,7 @@ function PollsLi({
       data-marker="ring"
       data-status={status}
       data-step-key={stepKey}
+      data-open={open ? "" : undefined}
     >
       <span className="absolute start-0.5 top-1 flex size-5 items-center justify-center">
         {marker}
