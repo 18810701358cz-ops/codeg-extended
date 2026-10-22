@@ -280,7 +280,7 @@ describe("jumping to a failure", () => {
     ])
     renderUi(<Round parts={parts(FAILING)} />)
     // Folded, and the failed read sits inside the Explored group.
-    fireEvent.click(screen.getByRole("button", { name: "Hide" }))
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }))
     expect(screen.queryByText("Permission denied")).toBeNull()
     fireEvent.click(screen.getByRole("button", { name: "1 failed" }))
     expect(screen.getByText("Permission denied")).toBeTruthy()

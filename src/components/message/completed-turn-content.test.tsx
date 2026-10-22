@@ -41,10 +41,11 @@ const COMPLETED_PARTS: AdaptedContentPart[] = [
 // between tests. Render tests take a fresh copy.
 const freshCompletedParts = (): AdaptedContentPart[] => [...COMPLETED_PARTS]
 
-/** The header's Hide / Show control. */
-const toggle = () => screen.getByRole("button", { name: /^(Hide|Show)$/ })
+/** The header's fold control: its label. */
+const toggle = () =>
+  screen.getByRole("button", { name: /^(Activity|Working)$/ })
 const queryToggle = () =>
-  screen.queryByRole("button", { name: /^(Hide|Show)$/ })
+  screen.queryByRole("button", { name: /^(Activity|Working)$/ })
 
 describe("splitAssistantTurnParts", () => {
   it("keeps only the trailing final response outside progress", () => {

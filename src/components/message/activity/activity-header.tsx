@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl"
 
 import type { ActivitySummary } from "@/lib/activity/types"
 import { cn } from "@/lib/utils"
+import { RowChevron } from "./activity-row"
 
 /** Categories the header names, most telling first; at most three are shown
  *  (the full breakdown is in the tooltip) so the line never reads like a
@@ -32,10 +33,11 @@ const CATEGORY_KEY = {
 const MAX_CATEGORIES = 3
 
 /**
- * The turn's activity header: `Activity  3m 34s · 14 steps · 6 commands ·
- * 1 edit · 1 agent · 1 failed, recovered ———— Hide`. While the turn runs it
- * reads `Working · 6 steps` with a shimmer; a reply with no steps keeps a
- * `Reply · 3s` header so the slot never blinks in and out as a turn settles.
+ * The turn's activity header: `Activity  14 steps · 6 commands · 1 edit ·
+ * 1 agent · 1 failed, recovered › ———— 3m 34s` — laid out like a timeline
+ * row, its chevron after the text and its time at the end. While the turn runs
+ * it reads `Working  6 steps` with a shimmer; a reply with no steps keeps a
+ * `Reply ———— 3s` header so the slot never blinks in and out as a turn settles.
  *
  * An unrecovered failure is red and, when `onJumpToFailure` is given, a button
  * that opens the turn at that step.
@@ -52,22 +54,22 @@ export const ActivityHeader = memo(function ActivityHeader({
   completed: boolean
   hasSteps: boolean
   elapsed: string | null
-  /** The Hide / Show control, when the turn can fold. */
+  /** Folding the turn away, when it can fold. */
   toggle?: { open: boolean; onToggle: () => void; controls?: string }
   onJumpToFailure?: () => void
 }) {
   const t = useTranslations("Folder.chat.activity")
   const separator = t("header.separator")
 
-  const { visible, full } = useMemo(() => {
-    if (!summary) return { visible: [] as string[], full: [] as string[] }
+  const { pieces, full } = useMemo(() => {
+    if (!summary) return { pieces: [] as string[], full: [] as string[] }
     const categories = CATEGORY_ORDER.filter(
       (key) => summary.counts[key] > 0
     ).map((key) => t(CATEGORY_KEY[key], { count: summary.counts[key] }))
     const lead =
       summary.steps > 0 ? [t("header.steps", { count: summary.steps })] : []
     return {
-      visible: [...lead, ...categories.slice(0, MAX_CATEGORIES)],
+      pieces: [...lead, ...categories.slice(0, MAX_CATEGORIES)],
       full: [...lead, ...categories],
     }
   }, [summary, t])
@@ -95,13 +97,16 @@ export const ActivityHeader = memo(function ActivityHeader({
       ? t("header.interrupted", { count: summary.interrupted })
       : null
 
-  const pieces = [...(elapsed && completed ? [elapsed] : []), ...visible]
-  const tooltip = [...(elapsed ? [elapsed] : []), ...full].join(separator)
+  const tooltip = full.join(separator)
+  const labelClass = cn(
+    "shrink-0 font-semibold",
+    completed ? "text-foreground" : "activity-shimmer"
+  )
 
-  // The whole header folds and unfolds the reply, not only the Hide / Show
-  // word at its end — that word stays the control for the keyboard and screen
-  // readers. A press on a button inside (that word, the failure link) is the
-  // button's own, and one that ends a text selection is not a toggle.
+  // The whole header folds and unfolds the reply; its label is the control
+  // for the keyboard and screen readers. A press on a button inside (that
+  // label, the failure link) is the button's own, and one that ends a text
+  // selection is not a toggle.
   const onHeaderClick = toggle
     ? (event: MouseEvent<HTMLDivElement>) => {
         if ((event.target as Element | null)?.closest("button")) return
@@ -114,93 +119,76 @@ export const ActivityHeader = memo(function ActivityHeader({
     <div
       className={cn(
         "flex w-full min-w-0 items-center gap-3 pb-1 text-sm leading-6",
-        toggle && "group/header cursor-pointer"
+        toggle && "group/row cursor-pointer"
       )}
       onClick={onHeaderClick}
     >
-      <span className="flex min-w-0 items-baseline gap-2.5">
-        <span
-          className={cn(
-            "shrink-0 font-semibold",
-            completed ? "text-foreground" : "activity-shimmer"
+      <span className="flex min-w-0 items-start gap-1">
+        <span className="flex min-w-0 items-baseline gap-2.5">
+          {toggle ? (
+            <button
+              type="button"
+              className={cn(
+                labelClass,
+                "cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              )}
+              aria-expanded={toggle.open}
+              aria-controls={toggle.controls}
+              onClick={toggle.onToggle}
+            >
+              {label}
+            </button>
+          ) : (
+            <span className={labelClass}>{label}</span>
           )}
-        >
-          {label}
+          {pieces.length > 0 || failureClause || interruptedClause ? (
+            <span
+              className="activity-mono min-w-0 truncate text-xs text-muted-foreground"
+              title={tooltip || undefined}
+            >
+              {pieces.join(separator)}
+              {failureClause ? (
+                <>
+                  {pieces.length > 0 ? separator : null}
+                  {failureClause.danger && onJumpToFailure ? (
+                    <button
+                      type="button"
+                      className="rounded-sm text-tone-danger underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      title={t("header.jumpToFailure")}
+                      onClick={onJumpToFailure}
+                    >
+                      {failureClause.text}
+                    </button>
+                  ) : (
+                    <span
+                      className={
+                        failureClause.danger ? "text-tone-danger" : undefined
+                      }
+                    >
+                      {failureClause.text}
+                    </span>
+                  )}
+                </>
+              ) : null}
+              {interruptedClause ? (
+                <>
+                  {pieces.length > 0 || failureClause ? separator : null}
+                  {interruptedClause}
+                </>
+              ) : null}
+            </span>
+          ) : null}
         </span>
-        {pieces.length > 0 || failureClause || interruptedClause ? (
-          <span
-            className="activity-mono min-w-0 truncate text-xs text-muted-foreground"
-            title={tooltip || undefined}
-          >
-            {pieces.join(separator)}
-            {failureClause ? (
-              <>
-                {pieces.length > 0 ? separator : null}
-                {failureClause.danger && onJumpToFailure ? (
-                  <button
-                    type="button"
-                    className="rounded-sm text-tone-danger underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    title={t("header.jumpToFailure")}
-                    onClick={onJumpToFailure}
-                  >
-                    {failureClause.text}
-                  </button>
-                ) : (
-                  <span
-                    className={
-                      failureClause.danger ? "text-tone-danger" : undefined
-                    }
-                  >
-                    {failureClause.text}
-                  </span>
-                )}
-              </>
-            ) : null}
-            {interruptedClause ? (
-              <>
-                {pieces.length > 0 || failureClause ? separator : null}
-                {interruptedClause}
-              </>
-            ) : null}
-          </span>
-        ) : null}
+        {toggle ? <RowChevron open={toggle.open} /> : null}
       </span>
       <span
         aria-hidden="true"
         className="h-px min-w-6 flex-1 bg-foreground/10"
       />
-      {toggle ? (
-        <button
-          type="button"
-          className="shrink-0 rounded-sm text-sm text-muted-foreground group-hover/header:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-expanded={toggle.open}
-          aria-controls={toggle.controls}
-          onClick={toggle.onToggle}
-        >
-          {/* Both labels share one cell, so the button is as wide as the
-              longer one whichever it shows: toggling moves nothing in the
-              header ("Show" is wider than "Hide"). */}
-          <span className="grid justify-items-end">
-            <span
-              className={cn(
-                "col-start-1 row-start-1",
-                !toggle.open && "invisible"
-              )}
-              aria-hidden={toggle.open ? undefined : true}
-            >
-              {t("header.hide")}
-            </span>
-            <span
-              className={cn(
-                "col-start-1 row-start-1",
-                toggle.open && "invisible"
-              )}
-              aria-hidden={toggle.open ? true : undefined}
-            >
-              {t("header.show")}
-            </span>
-          </span>
-        </button>
+      {elapsed && completed ? (
+        <span className="activity-mono shrink-0 text-xs text-muted-foreground">
+          {elapsed}
+        </span>
       ) : null}
     </div>
   )

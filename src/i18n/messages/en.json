@@ -3892,8 +3892,6 @@
           "label": "Activity",
           "working": "Working",
           "reply": "Reply",
-          "hide": "Hide",
-          "show": "Show",
           "steps": "{count, plural, one {# step} other {# steps}}",
           "commands": "{count, plural, one {# command} other {# commands}}",
           "edits": "{count, plural, one {# edit} other {# edits}}",

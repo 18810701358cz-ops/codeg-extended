@@ -3892,8 +3892,6 @@
           "label": "执行过程",
           "working": "进行中",
           "reply": "回复",
-          "hide": "收起",
-          "show": "展开",
           "steps": "{count} 步",
           "commands": "{count} 条命令",
           "edits": "{count} 次编辑",

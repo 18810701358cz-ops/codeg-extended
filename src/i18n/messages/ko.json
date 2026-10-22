@@ -3892,8 +3892,6 @@
           "label": "실행 과정",
           "working": "진행 중",
           "reply": "답변",
-          "hide": "접기",
-          "show": "펼치기",
           "steps": "{count}단계",
           "commands": "명령 {count}개",
           "edits": "편집 {count}건",

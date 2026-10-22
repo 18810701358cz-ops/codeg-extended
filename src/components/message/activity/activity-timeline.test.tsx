@@ -102,6 +102,10 @@ function renderSettled(parts: AdaptedContentPart[], durationMs = 214000) {
   )
 }
 
+/** The header's fold control: its label. */
+const foldControl = (label = "Activity") =>
+  screen.getByRole("button", { name: label })
+
 /** The timeline row whose header contains `text`. */
 function rowOf(text: string | RegExp): HTMLElement {
   const row = screen.getByText(text).closest("li")
@@ -114,14 +118,15 @@ beforeEach(() => {
 })
 
 describe("activity timeline: the reference turn", () => {
-  it("summarizes the turn in the header", () => {
+  it("summarizes the turn in the header, its time at the end", () => {
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
-    expect(screen.getByText("Activity")).toBeTruthy()
-    const header = screen.getByText("Activity").parentElement!
+    const time = screen.getByText("3m 34s")
+    const header = time.parentElement!
     expect(header.textContent).toBe(
-      "Activity3m 34s · 14 steps · 6 commands · 1 edit · 1 agent · 1 failed, recovered"
+      "Activity14 steps · 6 commands · 1 edit · 1 agent · 1 failed, recovered3m 34s"
     )
-    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy()
+    expect(header.lastElementChild).toBe(time)
+    expect(foldControl()).toHaveAttribute("aria-expanded", "true")
   })
 
   it("folds the reads and the grep into one Explored row", () => {
@@ -204,35 +209,37 @@ describe("activity timeline: the reference turn", () => {
 
   it("hides and shows the process, keeping the answer", () => {
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
-    fireEvent.click(screen.getByRole("button", { name: "Hide" }))
-    expect(screen.getByRole("button", { name: "Show" })).toBeTruthy()
+    fireEvent.click(foldControl())
+    expect(foldControl()).toHaveAttribute("aria-expanded", "false")
     expect(screen.queryByText("Explored")).toBeNull()
     expect(screen.getByText(/The web build is clean/)).toBeTruthy()
-    fireEvent.click(screen.getByRole("button", { name: "Show" }))
+    fireEvent.click(foldControl())
+    expect(foldControl()).toHaveAttribute("aria-expanded", "true")
     expect(screen.getByText("Explored")).toBeTruthy()
   })
 
-  it("keeps the hide/show toggle one width by laying out both labels", () => {
-    // The labels differ in width; the one not shown keeps its space (hidden
-    // from assistive tech), so toggling moves nothing in the header.
+  it("draws the header's chevron after its text, turned while open", () => {
+    // Like a row's: after the summary, pointing down while the process shows.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
-    const toggle = screen.getByRole("button", { name: "Hide" })
-    const labels = Array.from(toggle.querySelectorAll("span > span"))
-    expect(labels.map((label) => label.textContent)).toEqual(["Hide", "Show"])
-    expect(labels[1]).toHaveAttribute("aria-hidden", "true")
-    fireEvent.click(toggle)
-    expect(screen.getByRole("button", { name: "Show" })).toBe(toggle)
-    expect(labels[0]).toHaveAttribute("aria-hidden", "true")
-    expect(labels[1]).not.toHaveAttribute("aria-hidden")
+    const summary = screen.getByText(/14 steps/)
+    const header = screen.getByText("3m 34s").parentElement!
+    const chevron = header.querySelector("svg.lucide-chevron-right")!
+    expect(
+      summary.compareDocumentPosition(chevron) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(chevron.getAttribute("class")).toMatch(/\brotate-90\b/)
+    fireEvent.click(foldControl())
+    expect(chevron.getAttribute("class")).not.toMatch(/\brotate-90\b/)
   })
 
   it("folds and unfolds from anywhere on the header", () => {
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
-    fireEvent.click(screen.getByText("Activity"))
-    expect(screen.getByRole("button", { name: "Show" })).toBeTruthy()
-    expect(screen.queryByText("Explored")).toBeNull()
     fireEvent.click(screen.getByText(/14 steps/))
-    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy()
+    expect(foldControl()).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByText("Explored")).toBeNull()
+    fireEvent.click(screen.getByText("3m 34s"))
+    expect(foldControl()).toHaveAttribute("aria-expanded", "true")
     expect(screen.getByText("Explored")).toBeTruthy()
   })
 
@@ -294,12 +301,12 @@ describe("activity timeline: failures", () => {
   it("leaves the failure link and a text selection to themselves", () => {
     renderSettled(partsOf(FAILURE))
     fireEvent.click(screen.getByText("1 failed"))
-    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy()
+    expect(foldControl()).toHaveAttribute("aria-expanded", "true")
     vi.spyOn(window, "getSelection").mockReturnValue({
-      toString: () => "Activity",
+      toString: () => "1 failed",
     } as Selection)
-    fireEvent.click(screen.getByText("Activity"))
-    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy()
+    fireEvent.click(screen.getByText("3m 34s"))
+    expect(foldControl()).toHaveAttribute("aria-expanded", "true")
   })
 })
 
@@ -322,6 +329,8 @@ describe("activity timeline: replies without steps", () => {
   it("keeps a Reply header with no fold control", () => {
     renderSettled([{ type: "text", text: "Already on main." }], 3000)
     expect(screen.getByText("Reply")).toBeTruthy()
-    expect(screen.queryByRole("button", { name: "Hide" })).toBeNull()
+    expect(screen.getByText("3s")).toBeTruthy()
+    expect(screen.queryByRole("button")).toBeNull()
+    expect(document.querySelector("svg.lucide-chevron-right")).toBeNull()
   })
 })

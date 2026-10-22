@@ -3892,8 +3892,6 @@
           "label": "Ablauf",
           "working": "Läuft",
           "reply": "Antwort",
-          "hide": "Ausblenden",
-          "show": "Einblenden",
           "steps": "{count, plural, one {# Schritt} other {# Schritte}}",
           "commands": "{count, plural, one {# Befehl} other {# Befehle}}",
           "edits": "{count, plural, one {# Änderung} other {# Änderungen}}",

@@ -3892,8 +3892,6 @@
           "label": "سير التنفيذ",
           "working": "قيد التنفيذ",
           "reply": "الرد",
-          "hide": "إخفاء",
-          "show": "إظهار",
           "steps": "{count, plural, zero {لا خطوات} one {خطوة واحدة} two {خطوتان} few {# خطوات} many {# خطوة} other {# خطوة}}",
           "commands": "{count, plural, zero {لا أوامر} one {أمر واحد} two {أمران} few {# أوامر} many {# أمراً} other {# أمر}}",
           "edits": "{count, plural, zero {لا تعديلات} one {تعديل واحد} two {تعديلان} few {# تعديلات} many {# تعديلاً} other {# تعديل}}",

@@ -3892,8 +3892,6 @@
           "label": "実行過程",
           "working": "実行中",
           "reply": "返信",
-          "hide": "閉じる",
-          "show": "開く",
           "steps": "{count} ステップ",
           "commands": "コマンド {count} 件",
           "edits": "編集 {count} 件",
