@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useMemo, useState } from "react"
+import { memo, useCallback, useMemo, useState } from "react"
 import { useTranslations } from "next-intl"
 import { ActivityIcon, ArrowUpRightIcon, BanIcon } from "lucide-react"
 
@@ -322,32 +322,57 @@ export const DelegationRow = memo(function DelegationRow({
   )
 })
 
+type BadgeStatus = DelegationTaskRow["badge"]["status"]
+
 /** A delegation's checks, as the status rows that carry their results and any
- *  pending decision. */
-function PollRows({ rows }: { rows: DelegationTaskRow[] }) {
+ *  pending decision. `onStatusChange` hears what each row shows, keyed by
+ *  row. */
+function PollRows({
+  rows,
+  onStatusChange,
+}: {
+  rows: DelegationTaskRow[]
+  onStatusChange?: (key: string, status: BadgeStatus) => void
+}) {
   return (
     <div className="space-y-0.5">
       {rows.map((row) => (
-        <DelegationStatusRow
-          key={row.key}
-          kind="status"
-          layout="timeline"
-          taskId={row.taskId}
-          report={row.report}
-          badge={row.badge}
-          results={row.results}
-          runningConfirmed={row.runningConfirmed}
-          latestPollId={row.latestPollId}
-        />
+        <PollRow key={row.key} row={row} onStatusChange={onStatusChange} />
       ))}
     </div>
   )
 }
 
-function pollsStatus(rows: DelegationTaskRow[]): StepStatus {
-  if (rows.some((r) => r.badge.status === "waiting")) return "awaiting"
-  if (rows.some((r) => r.badge.status === "running")) return "running"
-  if (rows.some((r) => r.badge.status === "err")) return "failed"
+function PollRow({
+  row,
+  onStatusChange,
+}: {
+  row: DelegationTaskRow
+  onStatusChange?: (key: string, status: BadgeStatus) => void
+}) {
+  const report = useCallback(
+    (status: BadgeStatus) => onStatusChange?.(row.key, status),
+    [onStatusChange, row.key]
+  )
+  return (
+    <DelegationStatusRow
+      kind="status"
+      layout="timeline"
+      taskId={row.taskId}
+      report={row.report}
+      badge={row.badge}
+      results={row.results}
+      runningConfirmed={row.runningConfirmed}
+      latestPollId={row.latestPollId}
+      onStatusChange={onStatusChange ? report : undefined}
+    />
+  )
+}
+
+function pollsStatus(statuses: BadgeStatus[]): StepStatus {
+  if (statuses.includes("waiting")) return "awaiting"
+  if (statuses.includes("running")) return "running"
+  if (statuses.includes("err")) return "failed"
   return "succeeded"
 }
 
@@ -366,8 +391,21 @@ export const DelegationPollsRow = memo(function DelegationPollsRow({
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
   const rows = useMemo(() => buildDelegationTaskRows(step.polls), [step.polls])
+  // What each row shows, which the live sub-agent can override (parked on
+  // the user under a still-spinning re-poll, or answered since): the rail
+  // follows the rows, not the polls alone.
+  const [shown, setShown] = useState<ReadonlyMap<string, BadgeStatus>>(
+    () => new Map()
+  )
+  const onStatusChange = useCallback((key: string, status: BadgeStatus) => {
+    setShown((prev) =>
+      prev.get(key) === status ? prev : new Map(prev).set(key, status)
+    )
+  }, [])
   if (rows.length === 0) return null
-  const status = pollsStatus(rows)
+  const status = pollsStatus(
+    rows.map((row) => shown.get(row.key) ?? row.badge.status)
+  )
   return (
     <PollsLi stepKey={step.key} status={status}>
       <RailIcon
@@ -375,7 +413,7 @@ export const DelegationPollsRow = memo(function DelegationPollsRow({
         status={status}
         label={`${t("kind.delegation")}, ${statusText(status)}`}
       />
-      <PollRows rows={rows} />
+      <PollRows rows={rows} onStatusChange={onStatusChange} />
     </PollsLi>
   )
 })

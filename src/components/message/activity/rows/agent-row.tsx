@@ -51,7 +51,21 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
   const m = useAgentCallModel(step.part)
   const live = m.isRunning || m.isLiveBackgroundLaunch || m.outcomeBackground
   const failed = m.isError || m.backgroundFailed || m.outcomeError != null
-  const status: StepStatus = live ? "running" : failed ? "failed" : "succeeded"
+  // A codex native sub-agent's card settles when codex acknowledges the
+  // launch, not when the child ends; how it ended arrives (if ever) as a
+  // separate state. An interrupted one is drawn as interrupted.
+  const codexInterrupted =
+    m.isCodexSubagent && m.codexSubagentState === "interrupted"
+  // …and until codex says, the panel explains why the outcome is unknown.
+  const launchCaveat =
+    m.isCodexSubagent && !m.isRunning && m.codexSubagentState === null
+  const status: StepStatus = live
+    ? "running"
+    : failed
+      ? "failed"
+      : codexInterrupted
+        ? "cancelled"
+        : "succeeded"
   const [open, setOpen] = useDisclosure(step.key, {
     defaultOpen: false,
     force: failed,
@@ -153,19 +167,49 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
             label={`${tActivity("kind.agent")}, ${statusText(status)}`}
           />
         }
-        expandable={!!prompt || !!childModel || !!output || failed}
+        expandable={
+          !!prompt ||
+          !!m.model ||
+          !!m.effort ||
+          !!childModel ||
+          !!output ||
+          failed ||
+          launchCaveat ||
+          !!m.backgroundLifecycle
+        }
         expanded={open}
         onExpandedChange={setOpen}
         title={m.title}
         trailing={
           failed ? (
-            <StatusFigure status="failed" />
+            m.backgroundFailed && m.backgroundLifecycle?.status ? (
+              <span className="text-tone-danger">
+                {m.backgroundLifecycle.status}
+              </span>
+            ) : (
+              <StatusFigure status="failed" />
+            )
           ) : live ? (
             m.isLiveBackgroundLaunch || m.outcomeBackground ? (
               tBg("cardRunning")
             ) : clock ? (
               <span aria-hidden="true">{clock}</span>
             ) : null
+          ) : m.isCodexSubagent ? (
+            // Never a quiet "done" for a launch codex has not reported on.
+            m.codexSubagentState === "completed" ? (
+              tActivity("metric.done")
+            ) : codexInterrupted ? (
+              <StatusFigure status="cancelled" />
+            ) : (
+              tActivity("metric.outcomeUnknown")
+            )
+          ) : m.backgroundLifecycle && !m.backgroundSettled ? (
+            // Launched; its result has not come back yet.
+            tActivity("metric.launched")
+          ) : m.backgroundLifecycle?.interim ? (
+            // It said it will report again: what it sent is not final.
+            tActivity("metric.interim")
           ) : (
             m.durationSuffix
           )
@@ -244,9 +288,7 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
               </DetailBox>
             ) : null}
             {childModel ? renderNested(childModel, m.isRunning) : null}
-            {m.isCodexSubagent &&
-            !m.isRunning &&
-            m.codexSubagentState === null ? (
+            {launchCaveat ? (
               <p className="text-xs text-muted-foreground">
                 {t("agentCodexLaunchOnly")}
               </p>
@@ -282,6 +324,13 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
             {m.backgroundLifecycle && !m.isError && !m.backgroundSettled ? (
               <p className="text-xs text-muted-foreground">
                 {tBg("cardResultPending")}
+              </p>
+            ) : null}
+            {/* What its notification said about how it ended — for an interim
+                result, why it is not final. */}
+            {m.backgroundLifecycle?.summary && !m.isError ? (
+              <p dir="auto" className="text-xs text-muted-foreground">
+                {m.backgroundLifecycle.summary}
               </p>
             ) : null}
             {output && !m.isError ? (

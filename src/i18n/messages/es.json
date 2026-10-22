@@ -4134,7 +4134,10 @@
           "lineRange": "L{start}–{end}",
           "line": "L{line}",
           "done": "hecho",
-          "stopped": "detenido"
+          "stopped": "detenido",
+          "outcomeUnknown": "resultado desconocido",
+          "interim": "resultado parcial",
+          "launched": "iniciado"
         },
         "status": {
           "succeeded": "hecho",

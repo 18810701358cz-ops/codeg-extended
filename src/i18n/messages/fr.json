@@ -4134,7 +4134,10 @@
           "lineRange": "L{start}–{end}",
           "line": "L{line}",
           "done": "terminé",
-          "stopped": "arrêté"
+          "stopped": "arrêté",
+          "outcomeUnknown": "issue inconnue",
+          "interim": "résultat provisoire",
+          "launched": "lancé"
         },
         "status": {
           "succeeded": "terminé",

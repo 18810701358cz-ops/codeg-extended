@@ -84,6 +84,10 @@ interface DelegationStatusRowProps {
   /** `timeline`: drawn on the activity timeline's rail — no icon of its own
    *  (the rail's ring carries it), no inset padding, no frame lines. */
   layout?: "card" | "timeline"
+  /** Told the status the row shows whenever it changes — the polled one, or
+   *  what the live sub-agent overrides it with — so the rail it sits on can
+   *  agree with it. */
+  onStatusChange?: (status: ResolvedBadge["status"]) => void
 }
 
 // Memoized: the rows of a card that keeps its polls are the same objects
@@ -97,6 +101,7 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
   runningConfirmed = false,
   latestPollId = null,
   layout = "card",
+  onStatusChange,
 }: DelegationStatusRowProps) {
   const timeline = layout === "timeline"
   const t = useTranslations("Folder.chat.delegation")
@@ -145,6 +150,9 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
     : (superseded || live.notWaiting) && polledBadge.status === "waiting"
       ? { status: "checked" }
       : polledBadge
+  useEffect(() => {
+    onStatusChange?.(badge.status)
+  }, [onStatusChange, badge.status])
 
   // The user reaching into the decision holds it here. Let go once nothing it
   // was taken on is pending, and when the row goes.

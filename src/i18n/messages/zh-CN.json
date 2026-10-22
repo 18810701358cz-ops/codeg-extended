@@ -4134,7 +4134,10 @@
           "lineRange": "L{start}–{end}",
           "line": "L{line}",
           "done": "完成",
-          "stopped": "已停止"
+          "stopped": "已停止",
+          "outcomeUnknown": "结果未知",
+          "interim": "阶段性结果",
+          "launched": "已启动"
         },
         "status": {
           "succeeded": "完成",

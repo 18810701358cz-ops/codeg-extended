@@ -3,13 +3,19 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it, vi } from "vitest"
 
-import { DelegationStatusCard } from "./delegation-status-card"
 import enMessages from "@/i18n/messages/en.json"
+import type { ToolCallState } from "@/lib/adapters/ai-elements-adapter"
+import { ContentPartsRenderer } from "../../content-parts-renderer"
+
+/**
+ * One `get_delegation_status` (or `cancel_delegation`) call, as the timeline
+ * draws it when it stands apart from the delegation it is about.
+ */
 
 // MessageResponse (Streamdown) pulls in the link-safety hook (workspace
 // context + toasts) and async Shiki highlighting — too heavy for a unit test,
 // and its Markdown correctness is covered by its own lib. Stub it to a sentinel
-// that echoes its source so we can assert the card routes the result THROUGH
+// that echoes its source so we can assert the row routes the result THROUGH
 // the Markdown renderer (rather than a raw <pre>), and that the text reaches it.
 vi.mock("@/components/ai-elements/message", () => ({
   MessageResponse: ({ children }: { children: string }) => (
@@ -23,6 +29,42 @@ function renderWithIntl(ui: ReactElement) {
       {ui}
     </NextIntlClientProvider>
   )
+}
+
+/** The call, drawn by the reply renderer. */
+function StatusCall({
+  kind,
+  input,
+  output,
+  state,
+}: {
+  kind: "status" | "cancel"
+  input?: string
+  output?: string
+  state: ToolCallState
+}) {
+  return (
+    <ContentPartsRenderer
+      parts={[
+        {
+          type: "tool-call",
+          toolCallId: "call-status",
+          toolName:
+            kind === "cancel" ? "cancel_delegation" : "get_delegation_status",
+          input: input ?? null,
+          state,
+          output: output ?? null,
+          ...(state === "output-error" ? { errorText: output } : {}),
+        },
+      ]}
+      role="assistant"
+    />
+  )
+}
+
+/** The row's state, as its rail draws it. */
+function rowStatus(): string | null {
+  return document.querySelector("li")?.getAttribute("data-status") ?? null
 }
 
 // The MCP CallToolResult envelope the companion emits (render_task_report):
@@ -39,10 +81,10 @@ function envelope(report: Record<string, unknown>, isError = false): string {
   })
 }
 
-describe("DelegationStatusCard", () => {
+describe("delegation status call", () => {
   it("shows a single-line waiting label + spinner while the poll is in flight", () => {
     const { container } = renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345", wait_ms: 5000 })}
         state="input-available"
@@ -59,7 +101,7 @@ describe("DelegationStatusCard", () => {
 
   it("uses the cancel label for the cancel tool", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="cancel"
         input={JSON.stringify({ task_id: "abc12345" })}
         state="input-available"
@@ -72,7 +114,7 @@ describe("DelegationStatusCard", () => {
     // A settled poll that returned a note but no resolvable id still shows the
     // task-less label (there is content to surface).
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         output="Interim note from the sub-agent."
         state="output-available"
@@ -88,9 +130,9 @@ describe("DelegationStatusCard", () => {
     // row (that stacked into visible duplicates); it appears once its id or a
     // report resolves.
     const { container } = renderWithIntl(
-      <DelegationStatusCard kind="status" state="input-available" />
+      <StatusCall kind="status" state="input-available" />
     )
-    expect(container.firstChild).toBeNull()
+    expect(container.querySelector("li")).toBeNull()
     expect(
       screen.queryByText("Waiting for task result")
     ).not.toBeInTheDocument()
@@ -98,7 +140,7 @@ describe("DelegationStatusCard", () => {
 
   it("expands a plain streamed result inline (no child-session button)", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output="The sub-agent finished the migration."
@@ -121,7 +163,7 @@ describe("DelegationStatusCard", () => {
 
   it("reveals a completed structuredContent result on expand", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={envelope({
@@ -138,9 +180,9 @@ describe("DelegationStatusCard", () => {
     expect(screen.getByText("All tests pass.")).toBeInTheDocument()
   })
 
-  it("tints the card destructive for a failed status and shows the message on expand", () => {
+  it("draws a failed status as failed and shows the message on expand", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={envelope(
@@ -155,18 +197,14 @@ describe("DelegationStatusCard", () => {
         state="output-available"
       />
     )
-    expect(screen.getByTestId("delegation-status-card")).toHaveClass(
-      "bg-destructive/5",
-      // Destructive card still gets the workspace-bg frosted surface.
-      "ws-msg-card"
-    )
+    expect(rowStatus()).toBe("failed")
     fireEvent.click(screen.getByRole("button"))
     expect(screen.getByText("timed out")).toBeInTheDocument()
   })
 
-  it("treats a canceled task as success (no destructive tint) for the cancel action", () => {
+  it("treats a canceled task as success (not failed) for the cancel action", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="cancel"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={envelope({
@@ -179,37 +217,31 @@ describe("DelegationStatusCard", () => {
       />
     )
     expect(screen.getByText("Canceling task #abc12345")).toBeInTheDocument()
-    expect(screen.getByTestId("delegation-status-card")).not.toHaveClass(
-      "bg-destructive/5"
-    )
+    expect(rowStatus()).not.toBe("failed")
   })
 
   it("treats a canceled task as a terminal error for a status query", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={envelope({ task_id: "abc12345", status: "canceled" })}
         state="output-available"
       />
     )
-    expect(screen.getByTestId("delegation-status-card")).toHaveClass(
-      "bg-destructive/5"
-    )
+    expect(rowStatus()).toBe("failed")
   })
 
   it("treats an unknown task id as terminal error, not an endless spinner", () => {
     const { container } = renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "deadbeef" })}
         output={envelope({ task_id: "deadbeef", status: "unknown" })}
         state="output-available"
       />
     )
-    expect(screen.getByTestId("delegation-status-card")).toHaveClass(
-      "bg-destructive/5"
-    )
+    expect(rowStatus()).toBe("failed")
     // Terminal, with no message → no spinner and nothing to expand.
     expect(container.querySelector(".animate-spin")).not.toBeInTheDocument()
     expect(screen.queryByRole("button")).not.toBeInTheDocument()
@@ -219,7 +251,7 @@ describe("DelegationStatusCard", () => {
     const report = JSON.stringify({ task_id: "abc12345", status: "unknown" })
     const wrapped = `Wall time: 1 seconds\nOutput:\n${report}_`
     const { container } = renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={wrapped}
@@ -227,9 +259,7 @@ describe("DelegationStatusCard", () => {
       />
     )
     // A plain-text fallback would have rendered a non-error row — must not.
-    expect(screen.getByTestId("delegation-status-card")).toHaveClass(
-      "bg-destructive/5"
-    )
+    expect(rowStatus()).toBe("failed")
     expect(container.querySelector(".animate-spin")).not.toBeInTheDocument()
   })
 
@@ -244,16 +274,14 @@ describe("DelegationStatusCard", () => {
       isError: true,
     })
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={output}
         state="output-available"
       />
     )
-    expect(screen.getByTestId("delegation-status-card")).toHaveClass(
-      "bg-destructive/5"
-    )
+    expect(rowStatus()).toBe("failed")
     fireEvent.click(screen.getByRole("button"))
     // Shows the report's own message, not the raw inlined JSON.
     expect(screen.getByText("boom")).toBeInTheDocument()
@@ -263,7 +291,7 @@ describe("DelegationStatusCard", () => {
     // A poll that RETURNED "still running" is a stale snapshot, not live work:
     // it must not keep spinning, but its interim message is still revealable.
     const { container } = renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={envelope({
@@ -285,7 +313,7 @@ describe("DelegationStatusCard", () => {
     // sentinel sentence. Without structured status it must still read as the
     // neutral 'checked' (no spinner), never 'done'.
     const { container } = renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output="Sub-agent is still running in the background."
@@ -304,11 +332,7 @@ describe("DelegationStatusCard", () => {
   it("parses a double-encoded task_id input", () => {
     const input = JSON.stringify(JSON.stringify({ task_id: "abc12345" }))
     renderWithIntl(
-      <DelegationStatusCard
-        kind="status"
-        input={input}
-        state="input-available"
-      />
+      <StatusCall kind="status" input={input} state="input-available" />
     )
     expect(
       screen.getByText("Waiting for task #abc12345 result")
@@ -320,11 +344,7 @@ describe("DelegationStatusCard", () => {
       arguments: JSON.stringify({ task_id: "abc12345" }),
     })
     renderWithIntl(
-      <DelegationStatusCard
-        kind="status"
-        input={input}
-        state="input-available"
-      />
+      <StatusCall kind="status" input={input} state="input-available" />
     )
     expect(
       screen.getByText("Waiting for task #abc12345 result")
@@ -333,7 +353,7 @@ describe("DelegationStatusCard", () => {
 
   it("shows the execution time and a status badge on the title line for a completed result", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={envelope({
@@ -352,7 +372,7 @@ describe("DelegationStatusCard", () => {
 
   it("renders the expanded result through the Markdown renderer (not a <pre>)", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={envelope({
@@ -378,16 +398,14 @@ describe("DelegationStatusCard", () => {
       message: "child said so",
     })
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={childOutput}
         state="output-available"
       />
     )
-    expect(screen.getByTestId("delegation-status-card")).not.toHaveClass(
-      "bg-destructive/5"
-    )
+    expect(rowStatus()).not.toBe("failed")
     fireEvent.click(screen.getByRole("button"))
     expect(screen.getByTestId("markdown-response")).toHaveTextContent(
       "child said so"
@@ -396,7 +414,7 @@ describe("DelegationStatusCard", () => {
 
   it("links the disclosure button to its panel via aria-controls when expanded", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output="The sub-agent finished the migration."
@@ -419,7 +437,7 @@ describe("DelegationStatusCard", () => {
 
   it("formats a near-minute duration without rolling over to 60 seconds", () => {
     renderWithIntl(
-      <DelegationStatusCard
+      <StatusCall
         kind="status"
         input={JSON.stringify({ task_id: "abc12345" })}
         output={envelope({

@@ -4134,7 +4134,10 @@
           "lineRange": "Z.{start}–{end}",
           "line": "Z.{line}",
           "done": "erledigt",
-          "stopped": "gestoppt"
+          "stopped": "gestoppt",
+          "outcomeUnknown": "Ergebnis unbekannt",
+          "interim": "Zwischenergebnis",
+          "launched": "gestartet"
         },
         "status": {
           "succeeded": "erledigt",

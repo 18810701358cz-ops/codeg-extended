@@ -3,15 +3,20 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it, vi } from "vitest"
 
-import { DelegationStatusGroupCard } from "./delegation-status-group-card"
 import type {
   AdaptedToolCallPart,
   ToolCallState,
 } from "@/lib/adapters/ai-elements-adapter"
 import enMessages from "@/i18n/messages/en.json"
+import { ContentPartsRenderer } from "../../content-parts-renderer"
 
-// Same rationale as delegation-status-card.test.tsx: stub the heavy Markdown
-// renderer to a sentinel that echoes its source.
+/**
+ * An agent's `get_delegation_status` checks, as the timeline draws them when
+ * they stand apart from the delegation they check on: one row per task, its
+ * latest result and how many times it was checked.
+ */
+
+// Stub the heavy Markdown renderer to a sentinel that echoes its source.
 vi.mock("@/components/ai-elements/message", () => ({
   MessageResponse: ({ children }: { children: string }) => (
     <div data-testid="markdown-response">{children}</div>
@@ -23,6 +28,16 @@ function renderWithIntl(ui: ReactElement) {
     <NextIntlClientProvider locale="en" messages={enMessages}>
       {ui}
     </NextIntlClientProvider>
+  )
+}
+
+/** A run of checks, as the adapter groups them, drawn by the reply renderer. */
+function PollRows({ polls }: { polls: AdaptedToolCallPart[] }) {
+  return (
+    <ContentPartsRenderer
+      parts={[{ type: "delegation-status-group", polls }]}
+      role="assistant"
+    />
   )
 }
 
@@ -87,10 +102,10 @@ function batchPoll(
   }
 }
 
-describe("DelegationStatusGroupCard", () => {
+describe("delegation status checks", () => {
   it("collapses N polls of one task into a single row with its final outcome", () => {
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("abc12345", {
             output: envelope({ task_id: "abc12345", status: "running" }),
@@ -130,7 +145,7 @@ describe("DelegationStatusGroupCard", () => {
 
   it("shows the neutral 'checked' badge (no spinner) when the latest poll returned still-running", () => {
     const { container } = renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("abc12345", {
             output: envelope({
@@ -148,9 +163,7 @@ describe("DelegationStatusGroupCard", () => {
 
   it("keeps the live spinner for a poll still in flight", () => {
     const { container } = renderWithIntl(
-      <DelegationStatusGroupCard
-        polls={[poll("abc12345", { state: "input-available" })]}
-      />
+      <PollRows polls={[poll("abc12345", { state: "input-available" })]} />
     )
     expect(container.querySelector(".animate-spin")).toBeInTheDocument()
   })
@@ -161,11 +174,9 @@ describe("DelegationStatusGroupCard", () => {
     // poll has neither an input id nor an output report. It must NOT render as an
     // anonymous "waiting for a task's result" row.
     const { container } = renderWithIntl(
-      <DelegationStatusGroupCard
-        polls={[poll("", { input: "{}", state: "input-available" })]}
-      />
+      <PollRows polls={[poll("", { input: "{}", state: "input-available" })]} />
     )
-    expect(container.firstChild).toBeNull()
+    expect(container.querySelector("li")).toBeNull()
     expect(
       screen.queryByText("Waiting for task result")
     ).not.toBeInTheDocument()
@@ -177,7 +188,7 @@ describe("DelegationStatusGroupCard", () => {
     // its returned report and three id-less in-flight checks, only the attributed
     // row survives.
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("abc12345", {
             output: envelope({ task_id: "abc12345", status: "running" }),
@@ -198,7 +209,7 @@ describe("DelegationStatusGroupCard", () => {
 
   it("renders one row per task for parallel waits", () => {
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("aaaa1111", {
             output: envelope({ task_id: "aaaa1111", status: "running" }),
@@ -234,7 +245,7 @@ describe("DelegationStatusGroupCard", () => {
 
   it("expands a single batch poll into one row per task", () => {
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           batchPoll(
             ["aaaa1111", "bbbb2222"],
@@ -263,7 +274,7 @@ describe("DelegationStatusGroupCard", () => {
     // rather than a bare single report. It must still resolve to ONE row, with
     // the task's badge + result, and no ×N (polled once).
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           batchPoll(
             ["abc12345"],
@@ -283,7 +294,7 @@ describe("DelegationStatusGroupCard", () => {
 
   it("groups a task across mixed batch + single polls and counts ×N", () => {
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           batchPoll(
             ["aaaa1111", "bbbb2222"],
@@ -318,7 +329,7 @@ describe("DelegationStatusGroupCard", () => {
     // Neither the input nor the per-task reports carry a task_id — keyed by
     // toolCallId:index, they must not collapse into one row.
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           {
             type: "tool-call",
@@ -348,7 +359,7 @@ describe("DelegationStatusGroupCard", () => {
     // empty report. Both tasks must still appear (as spinners) — not just the
     // first — so a pending fan-out doesn't hide siblings until it resolves.
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           {
             type: "tool-call",
@@ -373,7 +384,7 @@ describe("DelegationStatusGroupCard", () => {
     // Historical reload: only the backend running sentinel survives (no
     // structuredContent). It must not read as a false 'done'.
     const { container } = renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("abc12345", {
             output: "Sub-agent is still running in the background.",
@@ -391,7 +402,7 @@ describe("DelegationStatusGroupCard", () => {
     // does — distinct tasks must NOT collapse into one row where the latest
     // hides the others.
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("", {
             input: null,
@@ -424,7 +435,7 @@ describe("DelegationStatusGroupCard", () => {
     // Neither input nor output yields a task_id — keep each poll as its own row
     // rather than letting the latest hide the earlier interim notes.
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("", { input: null, output: "first interim note" }),
           poll("", { input: null, output: "second interim note" }),
@@ -434,9 +445,9 @@ describe("DelegationStatusGroupCard", () => {
     expect(screen.getAllByText("Waiting for task result")).toHaveLength(2)
   })
 
-  it("tints the card destructive when the only task failed", () => {
-    renderWithIntl(
-      <DelegationStatusGroupCard
+  it("draws the row as failed when the only task failed", () => {
+    const { container } = renderWithIntl(
+      <PollRows
         polls={[
           poll("abc12345", {
             state: "output-error",
@@ -448,16 +459,15 @@ describe("DelegationStatusGroupCard", () => {
         ]}
       />
     )
-    expect(screen.getByTestId("delegation-status-group")).toHaveClass(
-      "bg-destructive/5",
-      // Destructive card still gets the workspace-bg frosted surface.
-      "ws-msg-card"
+    expect(container.querySelector("li")).toHaveAttribute(
+      "data-status",
+      "failed"
     )
   })
 
   it("paginates through distinct poll results, latest shown first", () => {
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("abc12345", {
             output: envelope({
@@ -509,7 +519,7 @@ describe("DelegationStatusGroupCard", () => {
 
   it("shows one page per poll — ×N is the check count, repeats included", () => {
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("abc12345", {
             output: envelope({
@@ -553,7 +563,7 @@ describe("DelegationStatusGroupCard", () => {
 
   it("shows no pager and no ×N when the task was polled only once", () => {
     renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("abc12345", {
             output: envelope({
@@ -576,7 +586,7 @@ describe("DelegationStatusGroupCard", () => {
     // The row is keyed by task id and survives rerenders, so a default page
     // pinned at mount would strand a row first seen with one result on 1/M.
     const { rerender } = renderWithIntl(
-      <DelegationStatusGroupCard
+      <PollRows
         polls={[
           poll("abc12345", {
             output: envelope({
@@ -591,7 +601,7 @@ describe("DelegationStatusGroupCard", () => {
     // More polls arrive for the SAME task before the user expands anything.
     rerender(
       <NextIntlClientProvider locale="en" messages={enMessages}>
-        <DelegationStatusGroupCard
+        <PollRows
           polls={[
             poll("abc12345", {
               output: envelope({

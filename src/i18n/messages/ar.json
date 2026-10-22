@@ -4134,7 +4134,10 @@
           "lineRange": "L{start}–{end}",
           "line": "L{line}",
           "done": "تم",
-          "stopped": "أوقف"
+          "stopped": "أوقف",
+          "outcomeUnknown": "النتيجة غير معروفة",
+          "interim": "نتيجة مؤقتة",
+          "launched": "بدأ"
         },
         "status": {
           "succeeded": "تم",

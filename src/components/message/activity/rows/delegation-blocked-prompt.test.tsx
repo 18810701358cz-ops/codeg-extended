@@ -3,9 +3,8 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { DelegationStatusCard } from "./delegation-status-card"
-import { DelegationStatusGroupCard } from "./delegation-status-group-card"
-import { DelegationStatusIndexProvider } from "./delegation-status-index-context"
+import { ContentPartsRenderer } from "../../content-parts-renderer"
+import { DelegationStatusIndexProvider } from "../../delegation-status-index-context"
 import enMessages from "@/i18n/messages/en.json"
 import type { DelegationBinding } from "@/contexts/delegation-context"
 import type {
@@ -18,9 +17,9 @@ import {
 } from "@/lib/delegation-status-index"
 
 // A `get_delegation_status` row whose sub-agent is parked on the user must let
-// the user answer right there (#973): the card used to badge "awaiting
-// approval" and offer nothing to approve with — the prompt only lived in the
-// sub-agent's own session drawer, opened from a different card.
+// the user answer right there (#973): the row once badged "awaiting approval"
+// and offered nothing to approve with — the prompt only lived in the
+// sub-agent's own session drawer, opened from a different row.
 
 vi.mock("@/components/ai-elements/message", () => ({
   MessageResponse: ({ children }: { children: string }) => (
@@ -223,7 +222,10 @@ function blockedPoll(taskId: string, id = "poll-blocked"): AdaptedToolCallPart {
 function renderCard(polls: AdaptedToolCallPart[]) {
   const ui = (p: AdaptedToolCallPart[]): ReactElement => (
     <NextIntlClientProvider locale="en" messages={enMessages}>
-      <DelegationStatusGroupCard polls={p} />
+      <ContentPartsRenderer
+        parts={[{ type: "delegation-status-group", polls: p }]}
+        role="assistant"
+      />
     </NextIntlClientProvider>
   )
   const result = render(ui(polls))
@@ -233,7 +235,7 @@ function renderCard(polls: AdaptedToolCallPart[]) {
   }
 }
 
-describe("DelegationStatusGroupCard — answering a parked sub-agent (#973)", () => {
+describe("delegation status checks — answering a parked sub-agent (#973)", () => {
   beforeEach(() => {
     bindings.clear()
     connections.clear()
@@ -593,20 +595,17 @@ function renderTranscript(
                   key={c[0].toolCallId}
                   data-testid={`card-${c[0].toolCallId}`}
                 >
-                  <DelegationStatusGroupCard polls={c} />
+                  <ContentPartsRenderer
+                    parts={[{ type: "delegation-status-group", polls: c }]}
+                    role="assistant"
+                  />
                 </section>
               ) : (
                 <section
                   key={c.toolCallId}
                   data-testid={`card-${c.toolCallId}`}
                 >
-                  <DelegationStatusCard
-                    kind="status"
-                    toolCallId={c.toolCallId}
-                    input={c.input}
-                    output={c.output}
-                    state={c.state}
-                  />
+                  <ContentPartsRenderer parts={[c]} role="assistant" />
                 </section>
               )
             )}
@@ -626,7 +625,7 @@ function card(id: string) {
   return within(screen.getByTestId(`card-${id}`))
 }
 
-describe("Status cards of one transcript — one prompt per task", () => {
+describe("status checks of one transcript — one prompt per task", () => {
   beforeEach(() => {
     bindings.clear()
     connections.clear()
