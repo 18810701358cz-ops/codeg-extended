@@ -14,7 +14,7 @@ import {
   type AdaptedToolCallPart,
 } from "@/lib/adapters/ai-elements-adapter"
 import { buildBackgroundTaskRows } from "@/lib/background-task"
-import { parseDelegateTaskId, parseDelegationMeta } from "@/lib/delegation-card"
+import { delegateCallTaskId } from "@/lib/delegation-card"
 import { buildDelegationTaskRows } from "@/lib/delegation-status"
 import { describeToolCall } from "./describe-tool-call"
 import { groupActivitySteps } from "./group"
@@ -114,42 +114,10 @@ function launchesBefore(
 }
 
 /**
- * Fold a delegation's status polls into the delegation's own step when they
- * come right after it and are all about its task: the agent handed the task
- * over, then waited on it — one lifecycle. Polls separated from their
- * delegation by other work, or about several tasks, keep their own row.
- */
-function mergeDelegationPolls(steps: ActivityStep[]): ActivityStep[] {
-  const out: ActivityStep[] = []
-  for (const step of steps) {
-    const previous = out[out.length - 1]
-    if (
-      step.type === "delegation-polls" &&
-      previous?.type === "tool" &&
-      previous.tool.kind === "delegation" &&
-      !previous.polls
-    ) {
-      const taskId = delegationTaskId(previous.part)
-      const rows = buildDelegationTaskRows(step.polls)
-      if (
-        taskId !== null &&
-        rows.length > 0 &&
-        rows.every((row) => row.taskId === taskId)
-      ) {
-        out[out.length - 1] = { ...previous, polls: step.polls }
-        continue
-      }
-    }
-    out.push(step)
-  }
-  return out
-}
-
-/**
- * A delegation's later status checks — after other work, so drawn as rows of
- * their own — still say how it stands: hand the delegation step the later polls
- * about its task, so its step bar and result read the newest report instead of
- * the one it was folded with.
+ * A delegation's status checks are rows of their own — the agent waiting on
+ * the task, right after handing it over or after other work — yet the newest
+ * of them says how the delegation stands: hand the delegation step the polls
+ * about its task, so its step bar and result read that report.
  */
 function linkLaterDelegationPolls(steps: ActivityStep[]): ActivityStep[] {
   const tasksOf = new Map<AdaptedToolCallPart[], Set<string | null>>()
@@ -162,7 +130,7 @@ function linkLaterDelegationPolls(steps: ActivityStep[]): ActivityStep[] {
   }
   return steps.map((step, index) => {
     if (step.type !== "tool" || step.tool.kind !== "delegation") return step
-    const taskId = delegationTaskId(step.part)
+    const taskId = delegateCallTaskId(step.part)
     if (taskId === null) return step
     const later: AdaptedToolCallPart[] = []
     for (const next of steps.slice(index + 1)) {
@@ -172,15 +140,6 @@ function linkLaterDelegationPolls(steps: ActivityStep[]): ActivityStep[] {
     }
     return later.length > 0 ? { ...step, laterPolls: later } : step
   })
-}
-
-/** The broker task id a `delegate_to_agent` call was given. */
-function delegationTaskId(part: AdaptedToolCallPart): string | null {
-  return (
-    parseDelegateTaskId(part.output ?? null, part.errorText ?? null) ??
-    parseDelegationMeta(part.meta ?? null)?.taskId ??
-    null
-  )
 }
 
 function collectSteps(
@@ -271,9 +230,7 @@ function buildActivityUncached(
   const { body, trailing } = splitAnswer
     ? splitTrailingAnswerParts(parts)
     : { body: parts, trailing: [] }
-  const steps = linkLaterDelegationPolls(
-    mergeDelegationPolls(collectSteps(body, isStreaming))
-  )
+  const steps = linkLaterDelegationPolls(collectSteps(body, isStreaming))
   return {
     steps,
     items: groupActivitySteps(steps.filter((s) => !isBlankInterruption(s))),

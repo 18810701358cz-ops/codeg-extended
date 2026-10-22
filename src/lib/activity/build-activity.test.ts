@@ -52,26 +52,27 @@ describe("buildActivity on the reference turn", () => {
       "command:t9",
       "note",
       "delegation:t10",
+      "delegation-polls",
       "command(t12,t13)",
       "background-tasks",
       "command:t15",
     ])
   })
 
-  it("folds the delegation's own status poll into its row", () => {
+  it("hands a delegation its status poll, drawn as a row of its own", () => {
     const delegation = model.steps.find(
       (s) => s.type === "tool" && s.part.toolCallId === "t10"
     )
     expect(
       delegation?.type === "tool"
-        ? delegation.polls?.map((p) => p.toolCallId)
+        ? delegation.laterPolls?.map((p) => p.toolCallId)
         : null
     ).toEqual(["t11"])
   })
 
-  it("hands a delegation the checks that came after other work", () => {
-    // The agent said something between its checks, so the second one is a
-    // row of its own — but it is the newer word on the same task.
+  it("hands a delegation every check on its task, before or after other work", () => {
+    // Each check is a row of its own, the one right after the hand-over too;
+    // the delegation reads the newest.
     const TASK = "a1b2c3d4"
     const status = (id: string) =>
       toolUse(id, "mcp__codeg-mcp__get_delegation_status", {
@@ -105,16 +106,14 @@ describe("buildActivity on the reference turn", () => {
     )
     expect(rows(later.items)).toEqual([
       "delegation:d1",
+      "delegation-polls",
       "note",
       "delegation-polls",
     ])
     const step = later.steps[0]
     expect(
-      step?.type === "tool" ? step.polls?.map((p) => p.toolCallId) : null
-    ).toEqual(["d2"])
-    expect(
       step?.type === "tool" ? step.laterPolls?.map((p) => p.toolCallId) : null
-    ).toEqual(["d3"])
+    ).toEqual(["d2", "d3"])
   })
 
   it("keeps the closing prose as the answer", () => {

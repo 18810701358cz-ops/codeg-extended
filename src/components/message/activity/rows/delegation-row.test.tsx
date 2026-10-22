@@ -644,11 +644,11 @@ describe("delegation row: an assistant's delegation", () => {
   })
 })
 
-describe("delegation row: a check that came after other work", () => {
+describe("delegation row: its checks", () => {
   it("reads its step bar and result from the newest report on its task", () => {
-    // The first check was folded into the row; the agent wrote a line before
-    // the second, so that one is a row of its own — yet it is the one that
-    // says the sub-agent finished, and how.
+    // Each check is a row of its own, the one right after the hand-over and
+    // the one after a line of prose alike — and the newest says the sub-agent
+    // finished, and how.
     const TASK = "a1b2c3d4"
     const check = (
       id: string,
@@ -698,6 +698,7 @@ describe("delegation row: a check that came after other work", () => {
       </NextIntlClientProvider>
     )
     const delegationRow = row()
+    expect(document.querySelectorAll("li")).toHaveLength(4)
     expect(delegationRow).toHaveTextContent("4 steps")
     expect(
       within(delegationRow).getByRole("img", { name: /4 steps/ })

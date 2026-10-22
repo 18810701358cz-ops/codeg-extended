@@ -15,6 +15,7 @@
  */
 
 import { buildBackgroundTaskRows } from "@/lib/background-task"
+import { delegateCallTaskId } from "@/lib/delegation-card"
 import { buildDelegationTaskRows } from "@/lib/delegation-status"
 import { isFailureStatus, isLiveStatus } from "./status"
 import type {
@@ -111,15 +112,18 @@ export function summarizeActivity(steps: ActivityStep[]): ActivitySummary {
       if (isLiveStatus(step.status)) running = true
       return
     }
-    if (step.type === "tool" && step.polls) {
-      // A delegation with its polls folded in: the wait is part of it.
-      for (const row of buildDelegationTaskRows(step.polls)) {
-        if (row.badge.status === "running" || row.badge.status === "starting") {
-          running = true
-        }
-        if (row.badge.status === "err") {
-          failures.push({ key: step.key, signature: null, index })
-        }
+    if (step.type === "tool" && step.laterPolls) {
+      // A delegation stands where its task's newest check says. The checks
+      // are rows of their own, but a task that failed is the delegation's
+      // failure — counted once, on its row.
+      const taskId = delegateCallTaskId(step.part)
+      const task = buildDelegationTaskRows(step.laterPolls).find(
+        (row) => row.taskId === taskId
+      )
+      const badge = task?.badge.status
+      if (badge === "running" || badge === "starting") running = true
+      if (badge === "err") {
+        failures.push({ key: step.key, signature: null, index })
       }
     }
     if (step.type === "thought" && step.streaming) {

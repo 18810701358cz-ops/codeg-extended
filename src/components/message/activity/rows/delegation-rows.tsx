@@ -127,10 +127,9 @@ function DelegationStatusWord({
  * One delegation, start to finish: `Codex  #14be49e7  done · 1m 34s`, the task
  * it was handed (two lines), and — once it reports back — the first line of
  * its result beside "Open conversation ↗" (usable while it still runs). The
- * agent's own `get_delegation_status` polls are folded in when they came right
- * after the hand-over; those checks (with any decision the sub-agent is waiting
- * on) are in the panel — and the whole task, when two lines cut it short —
- * which opens by itself while the sub-agent waits for the user.
+ * panel holds the whole task, when two lines cut it short. The agent's
+ * `get_delegation_status` checks are rows of their own (`DelegationPollsRow`);
+ * the newest says how it ended.
  */
 export const DelegationRow = memo(function DelegationRow({
   step,
@@ -156,19 +155,14 @@ export const DelegationRow = memo(function DelegationRow({
   const model = useDelegationCardModel(source)
   const viewerHost = useSessionViewerHost()
   const [dialogOpen, setDialogOpen] = useState(false)
-  const pollRows = useMemo(
-    () => (step.polls ? buildDelegationTaskRows(step.polls) : []),
-    [step.polls]
-  )
-  // The newest report on its task, folded in or checked later after other
-  // work: what its step bar and result read once it is no longer working.
+  // The newest report on its task: what its step bar and result read once it
+  // is no longer working.
   const latest = useMemo(() => {
-    const polls = [...(step.polls ?? []), ...(step.laterPolls ?? [])]
-    const rows = polls.length > 0 ? buildDelegationTaskRows(polls) : []
+    const rows = step.laterPolls ? buildDelegationTaskRows(step.laterPolls) : []
     return (
       rows.find((row) => row.taskId === model.taskId) ?? rows[rows.length - 1]
     )
-  }, [step.polls, step.laterPolls, model.taskId])
+  }, [step.laterPolls, model.taskId])
   const status = stepStatusOf(model.status)
   const working = status === "running" || status === "awaiting"
   // While it works, its own connection is the freshest source; the reports
@@ -178,10 +172,7 @@ export const DelegationRow = memo(function DelegationRow({
     working ? model.childConnectionId : null
   )
   const progress = liveProgress ?? latest?.report.progress ?? null
-  const [open, setOpen] = useDisclosure(step.key, {
-    defaultOpen: false,
-    force: model.status === "waiting",
-  })
+  const [open, setOpen] = useDisclosure(step.key, { defaultOpen: false })
   // The panel repeats the task only when the two lines above cut it short.
   const { contentRef: taskRef, isOverflowing: taskClipped } =
     useCollapsibleOverflow<HTMLParagraphElement>(model.task)
@@ -219,7 +210,7 @@ export const DelegationRow = memo(function DelegationRow({
             label={`${t("kind.delegation")}, ${statusText(status)}`}
           />
         }
-        expandable={(hasTask && taskClipped) || pollRows.length > 0}
+        expandable={hasTask && taskClipped}
         expanded={open}
         onExpandedChange={setOpen}
         title={model.taskId ?? undefined}
@@ -285,19 +276,14 @@ export const DelegationRow = memo(function DelegationRow({
           ) : null
         }
         detail={() => (
-          <div className="space-y-2">
-            {hasTask && taskClipped ? (
-              <DetailBox tone="neutral">
-                <p
-                  dir="auto"
-                  className="whitespace-pre-wrap break-words px-4 py-3 text-sm text-foreground/90"
-                >
-                  {model.task}
-                </p>
-              </DetailBox>
-            ) : null}
-            {pollRows.length > 0 ? <PollRows rows={pollRows} /> : null}
-          </div>
+          <DetailBox tone="neutral">
+            <p
+              dir="auto"
+              className="whitespace-pre-wrap break-words px-4 py-3 text-sm text-foreground/90"
+            >
+              {model.task}
+            </p>
+          </DetailBox>
         )}
       >
         <span className="flex min-w-0 items-baseline gap-2">
@@ -346,8 +332,8 @@ function PollRows({
   onOpenChange,
 }: {
   rows: DelegationTaskRow[]
-  onStatusChange?: (key: string, status: BadgeStatus) => void
-  onOpenChange?: (key: string, open: boolean) => void
+  onStatusChange: (key: string, status: BadgeStatus) => void
+  onOpenChange: (key: string, open: boolean) => void
 }) {
   return (
     <div className="space-y-0.5">
@@ -369,15 +355,15 @@ function PollRow({
   onOpenChange,
 }: {
   row: DelegationTaskRow
-  onStatusChange?: (key: string, status: BadgeStatus) => void
-  onOpenChange?: (key: string, open: boolean) => void
+  onStatusChange: (key: string, status: BadgeStatus) => void
+  onOpenChange: (key: string, open: boolean) => void
 }) {
   const report = useCallback(
-    (status: BadgeStatus) => onStatusChange?.(row.key, status),
+    (status: BadgeStatus) => onStatusChange(row.key, status),
     [onStatusChange, row.key]
   )
   const reportOpen = useCallback(
-    (open: boolean) => onOpenChange?.(row.key, open),
+    (open: boolean) => onOpenChange(row.key, open),
     [onOpenChange, row.key]
   )
   return (
@@ -389,8 +375,8 @@ function PollRow({
       results={row.results}
       runningConfirmed={row.runningConfirmed}
       latestPollId={row.latestPollId}
-      onStatusChange={onStatusChange ? report : undefined}
-      onOpenChange={onOpenChange ? reportOpen : undefined}
+      onStatusChange={report}
+      onOpenChange={reportOpen}
     />
   )
 }
@@ -405,9 +391,9 @@ function pollsStatus(statuses: BadgeStatus[]): StepStatus {
 type PollsStep = Extract<ActivityStep, { type: "delegation-polls" }>
 
 /**
- * Checks on a delegation that did not come right after it (the agent did
- * other work in between): a thin `Waiting for task #… result · 1m 34s` row per
- * task, which keeps the decision a waiting sub-agent needs answered.
+ * The agent's checks on its delegations: a thin `Waiting for task #… result
+ * done · 1m 34s` row per task, which keeps the decision a waiting sub-agent
+ * needs answered — and stays under a folded turn while it does.
  */
 export const DelegationPollsRow = memo(function DelegationPollsRow({
   step,
@@ -416,6 +402,7 @@ export const DelegationPollsRow = memo(function DelegationPollsRow({
 }) {
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
+  const { pinnedOnly } = useActivityRender()
   const rows = useMemo(() => buildDelegationTaskRows(step.polls), [step.polls])
   // What each row shows, which the live sub-agent can override (parked on
   // the user under a still-spinning re-poll, or answered since): the rail
@@ -443,6 +430,7 @@ export const DelegationPollsRow = memo(function DelegationPollsRow({
   const status = pollsStatus(
     rows.map((row) => shown.get(row.key) ?? row.badge.status)
   )
+  if (pinnedOnly && status !== "awaiting" && status !== "running") return null
   return (
     <PollsLi stepKey={step.key} status={status} open={openKeys.size > 0}>
       <RailIcon

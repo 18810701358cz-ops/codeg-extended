@@ -155,11 +155,9 @@ export type ActivityStep =
       key: string
       part: AdaptedToolCallPart
       tool: ToolDescriptor
-      /** A delegation's own `get_delegation_status` polls, when they came
-       *  right after it: one lifecycle, drawn as one row. */
-      polls?: AdaptedToolCallPart[]
-      /** Its task's polls that came later, after other work — drawn as rows
-       *  of their own, but the newest says how the delegation stands now. */
+      /** A delegation's `get_delegation_status` polls about its task, which
+       *  came after it — drawn as rows of their own, but the newest says how
+       *  the delegation stands now. */
       laterPolls?: AdaptedToolCallPart[]
     }
   | {

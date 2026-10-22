@@ -810,6 +810,22 @@ export function parseDelegateTaskId(
 }
 
 /**
+ * The broker task id a `delegate_to_agent` call was given, from what the call
+ * itself carries: its ack, else the meta the broker stamped on it.
+ */
+export function delegateCallTaskId(call: {
+  output?: string | null
+  errorText?: string | null
+  meta?: Record<string, unknown> | null
+}): string | null {
+  return (
+    parseDelegateTaskId(call.output, call.errorText) ??
+    parseDelegationMeta(call.meta)?.taskId ??
+    null
+  )
+}
+
+/**
  * Whether a (already normalized or raw) tool name denotes the multi-agent
  * `delegate_to_agent` companion tool. Matches the bare canonical name plus any
  * host-specific server-prefixed form (`mcp__<server>__delegate_to_agent`,

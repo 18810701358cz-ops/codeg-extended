@@ -120,6 +120,41 @@ describe("summarizeActivity", () => {
     ).toBe(true)
   })
 
+  it("counts a delegation whose task failed once, on the delegation", () => {
+    // Its checks are rows of their own and may all say so; the newest is
+    // what the delegation reads, and the failure is the delegation's.
+    const TASK = "a1b2c3d4"
+    const check = (id: string, status: string): AdaptedToolCallPart => ({
+      type: "tool-call",
+      toolCallId: id,
+      toolName: "mcp__codeg-mcp__get_delegation_status",
+      input: JSON.stringify({ task_ids: [TASK] }),
+      state: "output-available",
+      output: JSON.stringify({ task_id: TASK, status }),
+    })
+    const polls = [check("c1", "running"), check("c2", "failed")]
+    const delegation = tool(
+      "mcp__codeg-mcp__delegate_to_agent",
+      { agent_type: "codex", task: "Run the checks." },
+      { output: JSON.stringify({ task_id: TASK, status: "started" }) }
+    )
+    const summary = summarizeActivity([
+      { ...delegation, laterPolls: polls } as ActivityStep,
+      ...polls.map(
+        (poll): ActivityStep => ({
+          type: "delegation-polls",
+          key: `dpoll:${poll.toolCallId}`,
+          polls: [poll],
+          status: "succeeded",
+        })
+      ),
+      tool("mcp__codeg-mcp__get_delegation_status", { task_ids: [TASK] }),
+    ])
+    expect(summary.failed).toBe(1)
+    expect(summary.firstUnrecoveredKey).toBe(delegation.key)
+    expect(summary.counts.agents).toBe(1)
+  })
+
   it("counts each background task once and its failure", () => {
     const poll = (id: string, status: string, exit: number) => {
       const part: AdaptedToolCallPart = {

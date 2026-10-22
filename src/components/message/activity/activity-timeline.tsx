@@ -121,14 +121,19 @@ export const ActivityTimeline = memo(function ActivityTimeline({
   )
 })
 
-/** Rows that can outlive their turn — kept in view when the turn folds. */
+/** Rows that can outlive their turn — kept in view when the turn folds (each
+ *  says itself whether it is still live). */
 function canOutliveTurn(item: ActivityItem): boolean {
   if (item.type !== "step") return false
   const { step } = item
-  if (step.type === "background-tasks") return true
+  if (step.type === "background-tasks" || step.type === "delegation-polls") {
+    return true
+  }
   return (
     step.type === "tool" &&
-    (step.tool.kind === "delegation" || step.tool.kind === "agent")
+    (step.tool.kind === "delegation" ||
+      step.tool.kind === "delegation-status" ||
+      step.tool.kind === "agent")
   )
 }
 

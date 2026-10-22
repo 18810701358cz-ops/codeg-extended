@@ -124,12 +124,11 @@ afterEach(() => {
 })
 
 describe("delegation row", () => {
-  it("draws the hand-over and its folded-in wait as one lifecycle", () => {
+  it("draws the hand-over and the wait for its result as rows of their own", () => {
     renderUi(<Round parts={parts(MOCKUP_ASSISTANT_TURN)} />)
     const row = rowOf("Codex")
     expect(within(row).getByText("#14be49e7")).toBeTruthy()
     expect(row.textContent).toContain("done · 1m 34s")
-    expect(within(row).getByText(/Update the stale snapshot/)).toBeTruthy()
     expect(
       within(row).getByText(
         "Snapshot updated. 48/48 passing, no regressions in audit artifacts."
@@ -138,8 +137,10 @@ describe("delegation row", () => {
     expect(
       within(row).getByRole("button", { name: /Open conversation/ })
     ).toBeTruthy()
-    // The separate "Waiting for task … result" card is gone.
-    expect(screen.queryByText(/Waiting for task/)).toBeNull()
+    // The agent's check on the task, right after it.
+    const wait = rowOf("Waiting for task #14be49e7 result")
+    expect(row.nextElementSibling).toBe(wait)
+    expect(wait.textContent).toContain("done · 1m 34s")
   })
 
   it("counts the steps it took and draws one segment per step", () => {
@@ -149,6 +150,55 @@ describe("delegation row", () => {
     expect(
       within(row).getByRole("img", { name: "5 steps, 1 failed" })
     ).toBeTruthy()
+  })
+})
+
+describe("a folded turn", () => {
+  const delegated = (id: string, taskId: string, status: string) => [
+    toolUse(
+      id,
+      "mcp__codeg-mcp__delegate_to_agent",
+      { agent_type: "codex", task: `Task ${taskId}` },
+      { "codeg.delegation": { status, task_id: taskId } }
+    ),
+    toolResult(id, JSON.stringify({ task_id: taskId, status: "started" })),
+  ]
+  const checked = (id: string, report: Record<string, unknown>) => [
+    toolUse(id, "mcp__codeg-mcp__get_delegation_status", {
+      task_ids: [report.task_id],
+    }),
+    toolResult(id, JSON.stringify(report)),
+  ]
+
+  it("keeps the check whose sub-agent waits on the user under its header", () => {
+    renderUi(
+      <Round
+        parts={parts(
+          turn([
+            ...delegated("d1", "aaaa1111", "running"),
+            ...checked("p1", {
+              task_id: "aaaa1111",
+              status: "running",
+              blocked_on: { kind: "permission" },
+            }),
+            ...delegated("d2", "bbbb2222", "completed"),
+            ...checked("p2", {
+              task_id: "bbbb2222",
+              status: "completed",
+              text: "Done.",
+            }),
+          ])
+        )}
+      />
+    )
+    expect(screen.getAllByText(/^Waiting for task/)).toHaveLength(2)
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }))
+    expect(screen.getByText("#aaaa1111")).toBeTruthy()
+    expect(
+      rowOf("Waiting for task #aaaa1111 result").getAttribute("data-status")
+    ).toBe("awaiting")
+    expect(screen.queryByText("#bbbb2222")).toBeNull()
+    expect(screen.queryByText("Waiting for task #bbbb2222 result")).toBeNull()
   })
 })
 
