@@ -133,26 +133,25 @@ function PlanModeMarker({ label }: { label: string }) {
  */
 const CODEX_PLAN_APPROVED_PREFIX = "User approved"
 
-export const PlanModeCard = memo(function PlanModeCard({
+/**
+ * What a plan-mode tool call says: its plan document (when it carries one),
+ * the marker label for the transition, and whether it failed. Shared by
+ * `PlanModeCard` and the activity timeline's plan-mode row.
+ */
+export function usePlanModeMarker({
   toolName,
   input,
-  output = null,
+  output,
   errorText,
   state,
 }: {
-  /** Normalized (tool-call-normalization) form: enterplanmode|exitplanmode|switch_mode|plan_review. */
   toolName: string
   input: string | null
-  /** Tool result text. Only read for `plan_review`, to report the decision. */
-  output?: string | null
+  output: string | null
   errorText: string | null
   state: ToolCallState
 }) {
   const t = useTranslations("Folder.chat.contentParts")
-  // The plan card's own title comes from the `proposedPlan` namespace so this
-  // card and `ProposedPlanPart` cannot be titled differently — they are the
-  // same plan document arriving by two routes.
-  const tPlan = useTranslations("Folder.chat.proposedPlan")
   const parsed = parseInput(input)
   const planMarkdown = parsed ? extractPlanMarkdown(parsed) : null
   const isError = state === "output-error" || !!errorText?.trim()
@@ -183,6 +182,36 @@ export const PlanModeCard = memo(function PlanModeCard({
     }
     return t("planMode.entered")
   })()
+
+  return { planMarkdown, markerLabel, isError }
+}
+
+export const PlanModeCard = memo(function PlanModeCard({
+  toolName,
+  input,
+  output = null,
+  errorText,
+  state,
+}: {
+  /** Normalized (tool-call-normalization) form: enterplanmode|exitplanmode|switch_mode|plan_review. */
+  toolName: string
+  input: string | null
+  /** Tool result text. Only read for `plan_review`, to report the decision. */
+  output?: string | null
+  errorText: string | null
+  state: ToolCallState
+}) {
+  // The plan card's own title comes from the `proposedPlan` namespace so this
+  // card and `ProposedPlanPart` cannot be titled differently — they are the
+  // same plan document arriving by two routes.
+  const tPlan = useTranslations("Folder.chat.proposedPlan")
+  const { planMarkdown, markerLabel, isError } = usePlanModeMarker({
+    toolName,
+    input,
+    output,
+    errorText,
+    state,
+  })
 
   // codex's review gate is the one plan-mode tool whose marker says something
   // the card does not: the plan is the card, the DECISION is the marker. Show

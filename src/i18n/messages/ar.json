@@ -4082,7 +4082,13 @@
           "todos": "حدّث قائمة المهام",
           "completion": "اكتملت المهمة",
           "toolResult": "النتيجة",
-          "listJoiner": "، "
+          "listJoiner": "، ",
+          "taskFinished": "انتهت المهمة",
+          "taskFailed": "فشلت المهمة",
+          "taskStopped": "أوقفت المهمة",
+          "taskRunning": "المهمة قيد التشغيل",
+          "planUpdated": "حدّث الخطة",
+          "showMoreSteps": "{count, plural, zero {لا خطوات أخرى} one {عرض خطوة أخرى} two {عرض خطوتين أخريين} few {عرض # خطوات أخرى} many {عرض # خطوة أخرى} other {عرض # خطوة أخرى}}"
         },
         "explore": {
           "files": "{count, plural, zero {لا ملفات} one {ملف واحد} two {ملفان} few {# ملفات} many {# ملفاً} other {# ملف}}",
@@ -4126,7 +4132,9 @@
           "allPassed": "نجحت جميعها",
           "someFailed": "{count, plural, zero {لا إخفاقات} one {فشل واحد} two {فشل اثنان} few {فشل #} many {فشل #} other {فشل #}}",
           "lineRange": "L{start}–{end}",
-          "line": "L{line}"
+          "line": "L{line}",
+          "done": "تم",
+          "stopped": "أوقف"
         },
         "status": {
           "succeeded": "تم",

@@ -48,7 +48,8 @@ export const McpRow = memo(function McpRow({ step }: { step: ToolStep }) {
   const failed = tool.status === "failed" || tool.status === "rejected"
   const [open, setOpen] = useDisclosure(step.key, {
     defaultOpen: false,
-    force: failed && !recoveredKeys.has(step.key),
+    force:
+      (failed && !recoveredKeys.has(step.key)) || tool.status === "awaiting",
   })
   const args = useMemo(() => prettyJson(part.input), [part.input])
   const result = useMemo(() => {

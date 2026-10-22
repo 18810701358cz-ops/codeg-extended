@@ -15,6 +15,7 @@
  */
 
 import { buildBackgroundTaskRows } from "@/lib/background-task"
+import { buildDelegationTaskRows } from "@/lib/delegation-status"
 import { isFailureStatus, isLiveStatus } from "./status"
 import type {
   ActivityCounts,
@@ -109,6 +110,17 @@ export function summarizeActivity(steps: ActivityStep[]): ActivitySummary {
     if (step.type === "delegation-polls") {
       if (isLiveStatus(step.status)) running = true
       return
+    }
+    if (step.type === "tool" && step.polls) {
+      // A delegation with its polls folded in: the wait is part of it.
+      for (const row of buildDelegationTaskRows(step.polls)) {
+        if (row.badge.status === "running" || row.badge.status === "starting") {
+          running = true
+        }
+        if (row.badge.status === "err") {
+          failures.push({ key: step.key, signature: null, index })
+        }
+      }
     }
     if (step.type === "thought" && step.streaming) {
       running = true

@@ -38,6 +38,7 @@ import type {
   StepStatus,
   ToolDescriptor,
   ToolMetric,
+  ToolNote,
   ToolStepKind,
 } from "@/lib/activity/types"
 import type { CommandExit } from "@/lib/activity/command"
@@ -223,4 +224,27 @@ export function ToolFigure({ tool }: { tool: ToolDescriptor }) {
     return <StatusFigure status={tool.status} exit={tool.exit} />
   }
   return tool.metric ? <MetricFigure metric={tool.metric} /> : null
+}
+
+/** A tool's argument notes ("Over size limit", "Pages: 1-3"), muted. */
+export function ToolNotes({ notes }: { notes: ToolNote[] }) {
+  const t = useTranslations("Folder.chat.contentParts")
+  if (notes.length === 0) return null
+  const text = notes
+    .map((note) => {
+      switch (note.kind) {
+        case "allowLarge":
+          return t("allowLarge")
+        case "pages":
+          return t("pages", { pages: note.value })
+        case "offset":
+          return t("offset", { offset: note.value })
+      }
+    })
+    .join(" · ")
+  return (
+    <span className="min-w-0 shrink truncate font-sans text-muted-foreground">
+      {text}
+    </span>
+  )
 }

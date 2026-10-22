@@ -65,7 +65,8 @@ export const EditRow = memo(function EditRow({ step }: { step: ToolStep }) {
   const live = tool.status === "running" || tool.status === "pending"
   const [open, setOpen] = useDisclosure(step.key, {
     defaultOpen: false,
-    force: failed && !recoveredKeys.has(step.key),
+    force:
+      (failed && !recoveredKeys.has(step.key)) || tool.status === "awaiting",
   })
   const diff = useMemo(
     () => editDiffText(tool.toolName, part.input, part.output ?? null),

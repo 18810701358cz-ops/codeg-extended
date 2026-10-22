@@ -12,7 +12,7 @@ import { useSyncExternalStore } from "react"
  */
 export const ACTIVITY_TIMELINE_STORAGE_KEY = "codeg.dev.activityTimeline"
 
-const DEFAULT_ENABLED = false
+const DEFAULT_ENABLED = true
 
 let cached: boolean | null = null
 const listeners = new Set<() => void>()
@@ -75,5 +75,14 @@ export function setActivityTimelineEnabled(value: boolean | null): void {
     // Storage unavailable: the in-memory value below still applies.
   }
   cached = value ?? DEFAULT_ENABLED
+  notify()
+}
+
+/**
+ * Set the switch for this window only, without touching storage — the test
+ * setup pins the classic renderer this way for the suites written against it.
+ */
+export function overrideActivityTimeline(value: boolean): void {
+  cached = value
   notify()
 }

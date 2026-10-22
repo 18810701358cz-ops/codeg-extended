@@ -4082,7 +4082,13 @@
           "todos": "Updated todos",
           "completion": "Completed",
           "toolResult": "Result",
-          "listJoiner": ", "
+          "listJoiner": ", ",
+          "taskFinished": "Task finished",
+          "taskFailed": "Task failed",
+          "taskStopped": "Task stopped",
+          "taskRunning": "Task running",
+          "planUpdated": "Updated plan",
+          "showMoreSteps": "{count, plural, one {Show # more step} other {Show # more steps}}"
         },
         "explore": {
           "files": "{count, plural, one {# file} other {# files}}",
@@ -4126,7 +4132,9 @@
           "allPassed": "all passed",
           "someFailed": "{count, plural, one {# failed} other {# failed}}",
           "lineRange": "L{start}–{end}",
-          "line": "L{line}"
+          "line": "L{line}",
+          "done": "done",
+          "stopped": "stopped"
         },
         "status": {
           "succeeded": "done",

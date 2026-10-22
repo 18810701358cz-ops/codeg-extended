@@ -507,12 +507,8 @@ function DiffStats({
         className
       )}
     >
-      {additions > 0 && (
-        <span className="text-green-600 dark:text-green-400">+{additions}</span>
-      )}
-      {deletions > 0 && (
-        <span className="text-red-600 dark:text-red-400">−{deletions}</span>
-      )}
+      {additions > 0 && <span className="text-tone-success">+{additions}</span>}
+      {deletions > 0 && <span className="text-tone-danger">−{deletions}</span>}
     </span>
   )
 }
@@ -765,9 +761,9 @@ const MODE_ICON: Record<FileMode, typeof FilePen> = {
 }
 
 const MODE_CLASS: Record<FileMode, string> = {
-  added: "text-green-600 dark:text-green-400",
+  added: "text-tone-success",
   modified: "text-muted-foreground",
-  deleted: "text-red-600 dark:text-red-400",
+  deleted: "text-tone-danger",
 }
 
 /**

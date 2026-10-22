@@ -77,6 +77,12 @@ export type ToolMetric =
   | { kind: "noMatch" }
   | { kind: "diff"; additions: number; deletions: number }
 
+/** Argument details a row names beside its target (localized there). */
+export type ToolNote =
+  | { kind: "allowLarge" }
+  | { kind: "pages"; value: string }
+  | { kind: "offset"; value: number }
+
 export interface CommandInfo {
   /** The command with shell wrappers removed, all lines. */
   display: string
@@ -92,6 +98,9 @@ export interface CommandInfo {
   } | null
   /** Wall time the agent reported, in milliseconds. */
   durationMs: number | null
+  /** The background shell session the command's own output announced
+   *  (`SESSION_ID=…`), which later `wait` calls address by id. */
+  announcedSession: string | null
 }
 
 export interface ToolTarget {
@@ -112,6 +121,7 @@ export interface ToolDescriptor {
   target: ToolTarget | null
   /** Muted text after the target. */
   detail: string | null
+  notes: ToolNote[]
   metric: ToolMetric | null
   /** A failed command's exit status, when the result reported one. */
   exit: CommandExit | null
@@ -140,6 +150,9 @@ export type ActivityStep =
       key: string
       part: AdaptedToolCallPart
       tool: ToolDescriptor
+      /** A delegation's own `get_delegation_status` polls, when they came
+       *  right after it: one lifecycle, drawn as one row. */
+      polls?: AdaptedToolCallPart[]
     }
   | {
       type: "thought"
@@ -162,6 +175,9 @@ export type ActivityStep =
       key: string
       polls: AdaptedToolCallPart[]
       status: StepStatus
+      /** The commands that started these tasks, by task id — earlier steps of
+       *  the same reply whose output announced the launch. */
+      launches: Readonly<Record<string, BackgroundLaunch>>
     }
   | {
       type: "goal"
@@ -171,6 +187,14 @@ export type ActivityStep =
       model: ActivityModel
     }
   | { type: "tool-result"; key: string; part: ToolResultPart }
+
+/** A command that moved its process to the background, as the task's row
+ *  names it ("Regenerate audit report"). */
+export interface BackgroundLaunch {
+  stepKey: string
+  command: string
+  description: string | null
+}
 
 export type GroupKind = "explore" | "command"
 

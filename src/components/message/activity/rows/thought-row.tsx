@@ -41,6 +41,13 @@ export const ThoughtRow = memo(function ThoughtRow({
     <ActivityRow
       stepKey={step.key}
       status={status}
+      // A thinking placeholder with nothing in it yet fades in late, so a
+      // block that ends at once never flashes a row.
+      className={
+        step.streaming && !step.part.content.trim()
+          ? "[animation:tool-content-fade_200ms_ease-out_500ms_both]"
+          : undefined
+      }
       variant={inGroup ? "child" : "main"}
       markerKind={inGroup ? "dot" : "ring"}
       marker={

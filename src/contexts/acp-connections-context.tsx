@@ -1084,7 +1084,7 @@ function parseClaudeApiRetryEvent(
   }
 }
 
-function extractPermissionToolCallId(toolCall: unknown): string | null {
+export function extractPermissionToolCallId(toolCall: unknown): string | null {
   const record = asRecord(toolCall)
   if (!record) return null
   const candidates = [

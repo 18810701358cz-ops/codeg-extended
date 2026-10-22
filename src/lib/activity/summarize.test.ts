@@ -138,6 +138,7 @@ describe("summarizeActivity", () => {
         key: "bg:p1",
         polls: [poll("p1", "running", 0), poll("p2", "completed", 2)],
         status: "failed",
+        launches: {},
       },
     ])
     expect(summary.steps).toBe(1)

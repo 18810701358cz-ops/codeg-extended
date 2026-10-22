@@ -44,3 +44,27 @@ export function countLines(text: string): number {
   }
   return text.endsWith("\n") ? count - 1 : count
 }
+
+/**
+ * The first non-blank line of a Markdown text, with the inline syntax a
+ * one-line preview should not show (headings, emphasis, code ticks, link
+ * targets) taken off, clipped to `maxLength`.
+ */
+export function previewLine(
+  text: string | null | undefined,
+  maxLength: number
+): string | null {
+  const line = text
+    ?.split("\n")
+    .map((l) =>
+      l
+        .replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|>\s*)/, "")
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/(\*\*|__)(.+?)\1/g, "$2")
+        .replace(/`([^`]*)`/g, "$1")
+        .trim()
+    )
+    .find((l) => l.length > 0)
+  if (!line) return null
+  return line.length > maxLength ? `${line.slice(0, maxLength - 1)}…` : line
+}

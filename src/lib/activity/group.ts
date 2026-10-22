@@ -97,3 +97,19 @@ export function groupActivitySteps(steps: ActivityStep[]): ActivityItem[] {
   flush()
   return items
 }
+
+/**
+ * The disclosure keys to open so the step `key` is in view: the step's own,
+ * and its group's when it is folded into one.
+ */
+export function disclosureKeysFor(
+  items: ActivityItem[],
+  key: string
+): string[] {
+  for (const item of items) {
+    if (item.type === "group" && item.steps.some((s) => s.key === key)) {
+      return [`group:${item.key}`, key]
+    }
+  }
+  return [key]
+}

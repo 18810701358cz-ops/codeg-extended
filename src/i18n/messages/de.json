@@ -4082,7 +4082,13 @@
           "todos": "To-dos aktualisiert",
           "completion": "Abgeschlossen",
           "toolResult": "Ergebnis",
-          "listJoiner": ", "
+          "listJoiner": ", ",
+          "taskFinished": "Aufgabe beendet",
+          "taskFailed": "Aufgabe fehlgeschlagen",
+          "taskStopped": "Aufgabe gestoppt",
+          "taskRunning": "Aufgabe läuft",
+          "planUpdated": "Plan aktualisiert",
+          "showMoreSteps": "{count, plural, one {# weiteren Schritt zeigen} other {# weitere Schritte zeigen}}"
         },
         "explore": {
           "files": "{count, plural, one {# Datei} other {# Dateien}}",
@@ -4126,7 +4132,9 @@
           "allPassed": "alle erfolgreich",
           "someFailed": "{count, plural, one {# fehlgeschlagen} other {# fehlgeschlagen}}",
           "lineRange": "Z.{start}–{end}",
-          "line": "Z.{line}"
+          "line": "Z.{line}",
+          "done": "erledigt",
+          "stopped": "gestoppt"
         },
         "status": {
           "succeeded": "erledigt",

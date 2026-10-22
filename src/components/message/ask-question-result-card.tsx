@@ -44,6 +44,9 @@ interface Props {
   output?: string | null
   errorText?: string | null
   state?: ToolCallState
+  /** `timeline`: drawn on the activity timeline's rail — the answered
+   *  capsule becomes a plain row (the rail's ring carries the icon). */
+  layout?: "card" | "timeline"
 }
 
 export function AskQuestionResultCard({
@@ -51,7 +54,9 @@ export function AskQuestionResultCard({
   output,
   errorText,
   state,
+  layout = "card",
 }: Props) {
+  const timeline = layout === "timeline"
   const t = useTranslations("Folder.chat.askQuestionResult")
   const [expanded, setExpanded] = useState(false)
 
@@ -240,14 +245,34 @@ export function AskQuestionResultCard({
       aria-expanded={expanded}
       data-testid="ask-question-result-card"
       className={cn(
-        "flex w-fit max-w-full items-center gap-2 rounded-full border border-primary/30 bg-card ws-msg-card px-3 py-1.5 text-left transition-colors hover:bg-muted/40",
-        !expanded && "mb-2"
+        timeline
+          ? "flex min-h-7 w-full max-w-full items-center gap-2 rounded-sm py-0.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          : "flex w-fit max-w-full items-center gap-2 rounded-full border border-primary/30 bg-card ws-msg-card px-3 py-1.5 text-left transition-colors hover:bg-muted/40",
+        !expanded && !timeline && "mb-2"
       )}
     >
-      <MessageCircleQuestionMark className="size-4 shrink-0 text-primary" />
-      <span className="min-w-0 flex-1 truncate text-xs">
-        <span className="mr-1 text-muted-foreground">{t("answeredLabel")}</span>
-        <span className="text-foreground/90">{summary}</span>
+      {timeline ? null : (
+        <MessageCircleQuestionMark className="size-4 shrink-0 text-primary" />
+      )}
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate",
+          timeline ? "text-sm" : "text-xs"
+        )}
+      >
+        <span
+          className={cn(
+            "me-1",
+            timeline ? "font-medium text-foreground" : "text-muted-foreground"
+          )}
+        >
+          {t("answeredLabel")}
+        </span>
+        <span
+          className={timeline ? "text-muted-foreground" : "text-foreground/90"}
+        >
+          {summary}
+        </span>
       </span>
       {expanded ? (
         <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
@@ -260,7 +285,7 @@ export function AskQuestionResultCard({
   if (!expanded) return capsule
 
   return (
-    <div className="mb-2 space-y-1.5">
+    <div className={timeline ? "space-y-1" : "mb-2 space-y-1.5"}>
       {capsule}
       <AskQuestionCard
         readOnly

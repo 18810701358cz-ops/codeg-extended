@@ -22,7 +22,7 @@ import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { RailDot, RailIcon } from "../rail-icon"
 import { ResultBody } from "../result-body"
-import { ToolFigure, toolIcon, useStatusText } from "../step-visuals"
+import { ToolFigure, ToolNotes, toolIcon, useStatusText } from "../step-visuals"
 import { ThoughtRow } from "./thought-row"
 
 type ToolStep = Extract<ActivityStep, { type: "tool" }>
@@ -247,7 +247,8 @@ export const ExploreChildRow = memo(function ExploreChildRow({
   const live = tool.status === "running" || tool.status === "pending"
   const [open, setOpen] = useDisclosure(step.key, {
     defaultOpen: false,
-    force: failed && !recoveredKeys.has(step.key),
+    force:
+      (failed && !recoveredKeys.has(step.key)) || tool.status === "awaiting",
   })
   const targetText = path ?? tool.target?.text ?? ""
 
@@ -283,7 +284,7 @@ export const ExploreChildRow = memo(function ExploreChildRow({
       <span
         className={cn(
           "flex min-w-0 items-baseline",
-          standalone ? "gap-2" : "gap-3 font-mono"
+          standalone ? "gap-2" : "gap-3"
         )}
       >
         {known ? (
@@ -292,15 +293,15 @@ export const ExploreChildRow = memo(function ExploreChildRow({
               {t(STEP_VERB_KEY[tool.kind as keyof typeof STEP_VERB_KEY])}
             </span>
           ) : (
-            <span className="w-14 shrink-0 text-muted-foreground">
+            <span className="activity-mono w-14 shrink-0 text-muted-foreground">
               {t(VERB_KEY[tool.kind as keyof typeof VERB_KEY])}
             </span>
           )
         ) : null}
         <span
           className={cn(
-            "min-w-0 truncate text-foreground",
-            standalone && "font-mono text-[0.8125rem]"
+            "min-w-0 truncate font-mono text-foreground",
+            standalone && "text-[0.8125rem]"
           )}
           dir="ltr"
         >
@@ -311,6 +312,7 @@ export const ExploreChildRow = memo(function ExploreChildRow({
             {tool.detail}
           </span>
         ) : null}
+        <ToolNotes notes={tool.notes} />
       </span>
     </ActivityRow>
   )

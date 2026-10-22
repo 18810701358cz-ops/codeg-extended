@@ -21,6 +21,7 @@ import { COLLAB_AGENT_TOOL_NAME } from "@/lib/collab-tool"
 import { isContextCompactionMeta } from "@/lib/context-compaction"
 import { isDelegateToAgentToolName } from "@/lib/delegation-card"
 import {
+  extractAnnouncedSessionId,
   isShellSessionToolName,
   parseShellSessionInput,
   WAIT_TOOL_NAME,
@@ -67,6 +68,7 @@ import type {
   CommandInfo,
   ToolDescriptor,
   ToolMetric,
+  ToolNote,
   ToolStepKind,
   ToolTarget,
 } from "./types"
@@ -249,6 +251,7 @@ function emptyDescriptor(
     status,
     target: null,
     detail: null,
+    notes: [],
     metric: null,
     exit: null,
     command: null,
@@ -282,6 +285,21 @@ function readRange(parsed: Record<string, unknown> | null): string | null {
   return `L${start}–${start + Math.max(limit, 1) - 1}`
 }
 
+/** Claude Code's Read flags worth naming: past the size limit (CLI
+ *  2.1.296+), and the PDF pages it read. */
+function readNotes(parsed: Record<string, unknown> | null): ToolNote[] {
+  if (!parsed) return []
+  const notes: ToolNote[] = []
+  const pages = parsed.pages
+  if (typeof pages === "string" && pages.trim()) {
+    notes.push({ kind: "pages", value: pages.trim() })
+  }
+  if (parsed.allow_large === true || parsed.allow_large === "true") {
+    notes.push({ kind: "allowLarge" })
+  }
+  return notes
+}
+
 function describeCommand(
   part: AdaptedToolCallPart,
   payload: Payload,
@@ -305,6 +323,10 @@ function describeCommand(
     description,
     session: null,
     durationMs: extractWallTimeMs(payload.output),
+    announcedSession:
+      base.toolName.toLowerCase() === "exec_command"
+        ? extractAnnouncedSessionId(payload.output)
+        : null,
   }
   const launch = parseBackgroundLaunch(payload.output)
   const background = launch
@@ -348,6 +370,7 @@ function describeShellSession(
         stdin: call?.chars ? call.chars : null,
       },
       durationMs: extractWallTimeMs(part.output ?? part.errorText),
+      announcedSession: null,
     },
     exit:
       base.status === "failed"
@@ -373,6 +396,7 @@ function describeScript(
       description: null,
       session: null,
       durationMs: extractWallTimeMs(part.output ?? part.errorText),
+      announcedSession: null,
     },
   }
 }
@@ -503,6 +527,7 @@ function describeUncached(part: AdaptedToolCallPart): ToolDescriptor {
         ...base,
         target: path ? pathTarget(path) : null,
         detail: readRange(payload.parsed),
+        notes: readNotes(payload.parsed),
         metric:
           status === "succeeded" && part.output
             ? lineMetric(readLineCount(part.output))
@@ -537,9 +562,15 @@ function describeUncached(part: AdaptedToolCallPart): ToolDescriptor {
     }
     case "fetch": {
       const url = payload.field("url")
+      const offset = payload.parsed ? num(payload.parsed, "offset") : undefined
       return {
         ...base,
         target: url ? textTarget(url.replace(/^https?:\/\//, ""), 60) : null,
+        // Claude Code's WebFetch reads on past its page window from here.
+        notes:
+          offset !== undefined && offset > 0
+            ? [{ kind: "offset", value: offset }]
+            : [],
       }
     }
     case "web-search": {

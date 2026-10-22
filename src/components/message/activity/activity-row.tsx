@@ -89,7 +89,7 @@ export function ActivityRow({
         ) : null}
       </span>
       {trailing ? (
-        <span className="ms-auto shrink-0 ps-3 font-mono text-xs leading-6 tabular-nums text-muted-foreground">
+        <span className="activity-mono ms-auto shrink-0 ps-3 text-xs leading-6 text-muted-foreground">
           {trailing}
         </span>
       ) : null}

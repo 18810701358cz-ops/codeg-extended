@@ -111,7 +111,7 @@ export const ActivityHeader = memo(function ActivityHeader({
         </span>
         {pieces.length > 0 || failureClause || interruptedClause ? (
           <span
-            className="min-w-0 truncate font-mono text-xs tabular-nums text-muted-foreground"
+            className="activity-mono min-w-0 truncate text-xs text-muted-foreground"
             title={tooltip || undefined}
           >
             {pieces.join(separator)}

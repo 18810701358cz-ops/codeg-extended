@@ -2329,9 +2329,12 @@ function useAssistantRenderPart(isStreaming: boolean) {
 export const ActivityParts = memo(function ActivityParts({
   model,
   isStreaming,
+  pinnedOnly = false,
 }: {
   model: ActivityModel
   isStreaming: boolean
+  /** Only the rows still running (see `ActivityTimeline`). */
+  pinnedOnly?: boolean
 }) {
   const renderPart = useAssistantRenderPart(isStreaming)
   return (
@@ -2339,6 +2342,7 @@ export const ActivityParts = memo(function ActivityParts({
       model={model}
       isStreaming={isStreaming}
       renderPart={renderPart}
+      pinnedOnly={pinnedOnly}
     />
   )
 })

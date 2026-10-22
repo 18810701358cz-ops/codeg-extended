@@ -109,7 +109,7 @@ export function DetailBox({
       {footer || actions ? (
         <div
           className={cn(
-            "flex min-h-7 items-center gap-3 border-t px-4 font-mono text-xs text-muted-foreground",
+            "activity-mono flex min-h-7 items-center gap-3 border-t px-4 text-xs text-muted-foreground",
             tone === "danger" ? "border-tone-danger/15" : "border-foreground/5"
           )}
         >

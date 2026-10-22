@@ -207,13 +207,22 @@ function GoalCard({
   items = [],
   forceRunning,
   renderPart,
+  renderBody,
+  layout = "card",
 }: {
   startPart: GoalToolPart
   endPart: GoalToolPart | null
   items?: AdaptedContentPart[]
   forceRunning?: boolean
   renderPart?: RenderGoalPart
+  /** Draws the run's steps instead of `renderPart` per item — the activity
+   *  timeline's nested timeline. */
+  renderBody?: () => ReactNode
+  /** `timeline`: drawn on the activity timeline's rail — a plain row header
+   *  instead of the pill (the rail's ring carries the state). */
+  layout?: "card" | "timeline"
 }) {
+  const timeline = layout === "timeline"
   const t = useTranslations("Folder.chat.contentParts.goal")
   const inferredRunning =
     startPart.state === "input-available" ||
@@ -276,26 +285,38 @@ function GoalCard({
     <Collapsible open={bodyOpen} onOpenChange={setUserOpen} className="w-full">
       <CollapsibleTrigger
         className={cn(
-          "group inline-flex max-w-full items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-medium transition-colors",
-          "bg-primary/10 text-foreground hover:bg-primary/15",
-          tone === "error" &&
+          timeline
+            ? "group flex min-h-7 w-full max-w-full items-center gap-2 rounded-sm py-0.5 text-start text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            : "group inline-flex max-w-full items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-medium transition-colors",
+          !timeline && "bg-primary/10 text-foreground hover:bg-primary/15",
+          !timeline &&
+            tone === "error" &&
             "bg-destructive/10 text-destructive hover:bg-destructive/15",
-          tone === "muted" && "bg-muted/70 text-foreground hover:bg-muted"
+          !timeline &&
+            tone === "muted" &&
+            "bg-muted/70 text-foreground hover:bg-muted",
+          timeline && tone === "error" && "text-tone-danger"
         )}
         aria-label={headerText}
       >
-        <ChevronRightIcon
-          aria-hidden="true"
-          className={cn(
-            "size-3 shrink-0 opacity-60 transition-transform",
-            bodyOpen && "rotate-90"
-          )}
-        />
-        <span className="min-w-0 truncate">
+        {timeline ? null : (
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={cn(
+              "size-3 shrink-0 opacity-60 transition-transform",
+              bodyOpen && "rotate-90"
+            )}
+          />
+        )}
+        <span className={cn("min-w-0 truncate", timeline && "font-medium")}>
           {isRunning ? (
-            <Shimmer as="span" duration={1} shineColor="var(--primary)">
-              {headerText}
-            </Shimmer>
+            timeline ? (
+              <span className="activity-shimmer">{headerText}</span>
+            ) : (
+              <Shimmer as="span" duration={1} shineColor="var(--primary)">
+                {headerText}
+              </Shimmer>
+            )
           ) : (
             headerText
           )}
@@ -320,7 +341,14 @@ function GoalCard({
           "data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1"
         )}
       >
-        <div className="mt-3 w-full rounded-md border border-border/60 px-3.5 py-3 text-sm">
+        <div
+          className={cn(
+            "w-full text-sm",
+            timeline
+              ? "mt-1 mb-1.5"
+              : "mt-3 rounded-md border border-border/60 px-3.5 py-3"
+          )}
+        >
           <div className="space-y-3">
             {goal.objective && (
               <div>
@@ -331,13 +359,16 @@ function GoalCard({
               </div>
             )}
 
-            {items.length > 0 && renderPart && (
-              <div className="space-y-3">
-                {items.map((item, index) =>
-                  renderPart(item, `goal-run-item-${index}`)
+            {renderBody
+              ? renderBody()
+              : items.length > 0 &&
+                renderPart && (
+                  <div className="space-y-3">
+                    {items.map((item, index) =>
+                      renderPart(item, `goal-run-item-${index}`)
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
               {statusLabel && (
@@ -421,18 +452,24 @@ function GoalCard({
 
 export const GoalToolCallPart = memo(function GoalToolCallPart({
   part,
+  layout,
 }: {
   part: GoalToolPart
+  layout?: "card" | "timeline"
 }) {
-  return <GoalCard startPart={part} endPart={null} />
+  return <GoalCard startPart={part} endPart={null} layout={layout} />
 })
 
 export const GoalRunPart = memo(function GoalRunPart({
   part,
   renderPart,
+  renderBody,
+  layout,
 }: {
   part: AdaptedGoalRunPart
-  renderPart: RenderGoalPart
+  renderPart?: RenderGoalPart
+  renderBody?: () => ReactNode
+  layout?: "card" | "timeline"
 }) {
   return (
     <GoalCard
@@ -441,6 +478,8 @@ export const GoalRunPart = memo(function GoalRunPart({
       items={part.items}
       forceRunning={part.isRunning}
       renderPart={renderPart}
+      renderBody={renderBody}
+      layout={layout}
     />
   )
 })

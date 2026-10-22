@@ -1,6 +1,6 @@
 "use client"
 
-import type { ComponentType, SVGProps } from "react"
+import type { ComponentType, ReactNode, SVGProps } from "react"
 
 import type { StepStatus } from "@/lib/activity/types"
 import { cn } from "@/lib/utils"
@@ -41,13 +41,16 @@ const ICON_CLASS: Record<StepStatus, string> = {
  */
 export function RailIcon({
   icon: Icon,
+  glyph,
   status,
   label,
   size = "md",
   className,
   iconClassName,
 }: {
-  icon: ActivityIcon
+  icon?: ActivityIcon
+  /** Drawn in the ring instead of `icon` — an agent's own logo. */
+  glyph?: ReactNode
   status: StepStatus
   /** What the ring says to a screen reader, e.g. "command failed, exit 1". */
   label: string
@@ -79,14 +82,17 @@ export function RailIcon({
             "animate-spin [animation-duration:2.4s] motion-reduce:animate-none"
         )}
       />
-      <Icon
-        aria-hidden="true"
-        className={cn(
-          size === "md" ? "size-3" : "size-2.5",
-          ICON_CLASS[status],
-          iconClassName
-        )}
-      />
+      {glyph ??
+        (Icon ? (
+          <Icon
+            aria-hidden="true"
+            className={cn(
+              size === "md" ? "size-3" : "size-2.5",
+              ICON_CLASS[status],
+              iconClassName
+            )}
+          />
+        ) : null)}
     </span>
   )
 }

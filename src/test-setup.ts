@@ -1,4 +1,13 @@
 import "@testing-library/jest-dom/vitest"
+import { beforeEach } from "vitest"
+
+import { overrideActivityTimeline } from "@/components/message/activity/use-activity-flag"
+
+// The component suites written against the classic tool cards keep testing
+// them; the activity timeline's own suites switch it on per test.
+beforeEach(() => {
+  overrideActivityTimeline(false)
+})
 
 // jsdom doesn't implement a few layout APIs that ProseMirror's EditorView
 // touches on mount (used by Tiptap-based editors such as the message composer).

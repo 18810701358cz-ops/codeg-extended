@@ -1975,6 +1975,22 @@
   bottom: -0.5625rem;
 }
 
+/* Figures and short labels the timeline sets in the monospace face (the
+   header summary, a row's end column, a detail box's footer). Words in a
+   script the monospace stack has no glyphs for — CJK, Arabic — fall back to a
+   letter-spaced substitute that reads badly, so those languages keep the
+   interface face. */
+.activity-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+:lang(zh) .activity-mono,
+:lang(ja) .activity-mono,
+:lang(ko) .activity-mono,
+:lang(ar) .activity-mono {
+  font-family: var(--font-sans);
+}
+
 /* Muted text with a foreground highlight sweeping across it, for the live
    label of a running step. The highlight is mixed from the foreground, never
    the primary: on the red and rose presets the primary reads as failure. */

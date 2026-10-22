@@ -245,6 +245,77 @@ const AGENT_TURN: MessageTurn = {
   ],
 }
 
+const WORKFLOW_TURN: MessageTurn = {
+  id: "turn-workflow",
+  role: "assistant",
+  timestamp: "2026-10-22T09:40:00Z",
+  duration_ms: 128000,
+  blocks: [
+    toolUse("w1", "TodoWrite", {
+      todos: [
+        { content: "Reproduce the report bug", status: "completed" },
+        { content: "Filter inactive bindings", status: "in_progress" },
+        { content: "Regenerate the audit report", status: "pending" },
+      ],
+    }),
+    toolResult("w1", "Todos have been modified successfully."),
+    toolUse("w2", "mcp__codeg-mcp__ask_user_question", {
+      questions: [
+        {
+          question: "Which report format?",
+          header: "Format",
+          multiSelect: false,
+          options: [
+            { label: "Markdown (Recommended)", description: "Readable" },
+            { label: "HTML", description: "Printable" },
+          ],
+        },
+      ],
+    }),
+    toolResult(
+      "w2",
+      JSON.stringify({
+        answers: [
+          {
+            header: "Format",
+            question: "Which report format?",
+            selected: ["Markdown (Recommended)"],
+          },
+        ],
+        declined: false,
+      })
+    ),
+    toolUse("w3", "mcp__codeg-mcp__check_user_feedback", {}),
+    toolResult(
+      "w3",
+      '{"count":1,"feedback":[{"created_at":"2026-10-22T09:41:12Z","text":"Also keep the CSV export working"}]}'
+    ),
+    toolUse("w4", "mcp__codeg-mcp__task_progress", {
+      message: "Bindings filtered; regenerating the report next",
+    }),
+    toolResult("w4", '{"recorded":true}'),
+    toolUse("w5", "Bash", {
+      command: "python scripts/export_csv.py",
+      description: "Export CSV",
+      run_in_background: true,
+    }),
+    toolResult(
+      "w5",
+      "Command running in background with ID: c0ffee12. Output is being written to: /tmp/claude/tasks/c0ffee12.output"
+    ),
+    toolUse("w6", "TaskOutput", { task_id: "c0ffee12", block: true }),
+    toolResult(
+      "w6",
+      "<retrieval_status>success</retrieval_status>\n<task_id>c0ffee12</task_id>\n<task_type>local_bash</task_type>\n<status>completed</status>\n<exit_code>2</exit_code>\n<output>Traceback (most recent call last):\n  File \"scripts/export_csv.py\", line 9\nKeyError: 'active'</output>"
+    ),
+    toolUse("w7", "ExitPlanMode", {
+      plan: "# Keep CSV export working\n\n1. Map `active` in the CSV writer\n2. Re-run the export\n3. Commit",
+    }),
+    toolResult("w7", "User has approved your plan."),
+    { type: "text", text: "Plan approved — fixing the CSV writer next." },
+  ],
+}
+
 const TEXT_TURN: MessageTurn = {
   id: "turn-text",
   role: "assistant",
@@ -273,6 +344,7 @@ const SCENARIOS: Scenario[] = [
   { id: "failure", title: "Failures", turn: FAILURE_TURN },
   { id: "codex", title: "Codex", turn: CODEX_TURN },
   { id: "agent", title: "Sub-agent", turn: AGENT_TURN },
+  { id: "workflow", title: "Plans, questions and tasks", turn: WORKFLOW_TURN },
   { id: "text", title: "Text-only reply", turn: TEXT_TURN },
 ]
 

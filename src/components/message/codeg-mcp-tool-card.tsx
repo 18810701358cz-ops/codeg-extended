@@ -51,9 +51,15 @@ interface Props {
   output?: string | null
   errorText?: string | null
   state?: ToolCallState
+  /** `timeline`: drawn on the activity timeline's rail — the rail's ring
+   *  carries the icon and the status, so the row drops both and its frame. */
+  layout?: "card" | "timeline"
 }
 
-const ICONS: Record<CodegMcpWorkbenchTool, typeof BookOpen> = {
+export const CODEG_MCP_TOOL_ICONS: Record<
+  CodegMcpWorkbenchTool,
+  typeof BookOpen
+> = {
   get_session_info: BookOpen,
   task_progress: Signpost,
   task_complete: CircleCheckBig,
@@ -82,7 +88,7 @@ function TaskAckLine({ ack }: { ack: TaskReportAck }) {
     )
   }
   return (
-    <div className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400">
+    <div className="flex items-start gap-1.5 text-tone-warning">
       <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
       <span className="min-w-0 break-words">
         {ack.note
@@ -99,7 +105,9 @@ export function CodegMcpToolCard({
   output,
   errorText,
   state,
+  layout = "card",
 }: Props) {
+  const timeline = layout === "timeline"
   const t = useTranslations("Folder.chat.codegMcpTool")
   const [expanded, setExpanded] = useState(false)
   const panelId = useId()
@@ -144,7 +152,7 @@ export function CodegMcpToolCard({
     }
   }, [t, tool, model])
 
-  const Icon = ICONS[tool]
+  const Icon = CODEG_MCP_TOOL_ICONS[tool]
   const isError = model.status === "err"
   const isRunning = model.status === "running"
   const resultText = model.resultText?.trim() ?? ""
@@ -165,18 +173,23 @@ export function CodegMcpToolCard({
 
   const row = (
     <>
-      <Icon
-        className={cn(
-          "h-3.5 w-3.5 shrink-0",
-          isError ? "text-destructive" : "text-muted-foreground"
-        )}
-      />
+      {timeline ? null : (
+        <Icon
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            isError ? "text-destructive" : "text-muted-foreground"
+          )}
+        />
+      )}
       {/* `title` restores the full text on hover: a long progress message or
           task summary is CSS-truncated here, and the panel below has to be
           opened to read it. */}
       <span
         title={label}
-        className="min-w-0 flex-1 truncate text-xs font-medium text-foreground"
+        className={cn(
+          "min-w-0 flex-1 truncate font-medium text-foreground",
+          timeline ? "text-sm" : "text-xs"
+        )}
       >
         {isRunning ? (
           <Shimmer as="span" duration={1} shineColor="var(--primary)">
@@ -186,7 +199,13 @@ export function CodegMcpToolCard({
           label
         )}
       </span>
-      <StatusBadge status={model.status} />
+      {timeline ? (
+        isError ? (
+          <StatusBadge status={model.status} />
+        ) : null
+      ) : (
+        <StatusBadge status={model.status} />
+      )}
       {expandable &&
         (expanded ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -201,10 +220,12 @@ export function CodegMcpToolCard({
       data-testid="codeg-mcp-tool-card"
       data-tool={tool}
       className={cn(
-        "overflow-hidden rounded-lg border text-xs ws-msg-card",
-        isError
-          ? "border-destructive/30 bg-destructive/5"
-          : "border-border bg-card"
+        "text-xs",
+        !timeline && "overflow-hidden rounded-lg border ws-msg-card",
+        !timeline &&
+          (isError
+            ? "border-destructive/30 bg-destructive/5"
+            : "border-border bg-card")
       )}
     >
       {expandable ? (
@@ -215,17 +236,34 @@ export function CodegMcpToolCard({
           // Only reference the panel while it is mounted — it is kept out of the
           // collapsed tree so the Markdown renderer isn't paid for unopened rows.
           aria-controls={expanded ? panelId : undefined}
-          className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/50"
+          className={cn(
+            "flex w-full items-center gap-2 text-start transition-colors",
+            timeline
+              ? "min-h-7 rounded-sm py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              : "px-3 py-2 hover:bg-muted/50"
+          )}
         >
           {row}
         </button>
       ) : (
-        <div className="flex w-full items-center gap-2 px-3 py-2">{row}</div>
+        <div
+          className={cn(
+            "flex w-full items-center gap-2",
+            timeline ? "min-h-7 py-0.5" : "px-3 py-2"
+          )}
+        >
+          {row}
+        </div>
       )}
       {expandable && expanded && (
         <div
           id={panelId}
-          className="flex flex-col gap-2 border-t border-border px-3 py-2"
+          className={cn(
+            "flex flex-col gap-2 px-3 py-2",
+            timeline
+              ? "mt-1 mb-1.5 rounded-[0.625rem] bg-activity-surface ws-msg-card"
+              : "border-t border-border"
+          )}
         >
           {/* The instruction the automation / board task will run. Shown as
               plain pre-wrapped text, NOT Markdown: it is an argument the user

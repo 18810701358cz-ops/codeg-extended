@@ -5,7 +5,12 @@ import Ansi from "ansi-to-react"
 import { useTranslations } from "next-intl"
 import { ChevronRightIcon } from "lucide-react"
 
+import { CodeBlock } from "@/components/ai-elements/code-block"
 import { normalizeCommandOutput } from "@/lib/activity/command"
+import {
+  parseCodexScriptCard,
+  parseCodexScriptMeta,
+} from "@/lib/codex-code-mode"
 import { countLines } from "@/lib/activity/format"
 import type { ActivityStep, StepStatus } from "@/lib/activity/types"
 import { describeStdinChars } from "@/lib/shell-session-tool"
@@ -16,6 +21,11 @@ import { CopyAction, DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { RailIcon } from "../rail-icon"
 import { ToolFigure, toolIcon, useStatusText } from "../step-visuals"
+import {
+  formatClock,
+  LIVE_CLOCK_AFTER_MS,
+  useLiveElapsed,
+} from "../use-live-elapsed"
 import type { ToolStep } from "./explore-rows"
 
 /** Tail of a running command's output kept for display (as the legacy card). */
@@ -92,7 +102,12 @@ function useCommandOutput(step: ToolStep): CommandOutput | null {
 /** The command line a row shows: `$ cmd`, a heredoc's opener, a session verb. */
 function CommandLabel({ step }: { step: ToolStep }) {
   const t = useTranslations("Folder.chat.activity")
+  const tLegacy = useTranslations("Folder.chat.contentParts")
   const command = step.tool.command
+  const scriptMeta = useMemo(
+    () => parseCodexScriptMeta(step.part.meta),
+    [step.part.meta]
+  )
   if (!command) return null
 
   if (command.session) {
@@ -163,6 +178,16 @@ function CommandLabel({ step }: { step: ToolStep }) {
           {t("row.moreLines", { count: extraLines })}
         </span>
       ) : null}
+      {scriptMeta?.label ? (
+        <span className="ms-2 inline-block rounded-full bg-muted px-1.5 align-[0.0625rem] text-3xs leading-4 text-muted-foreground ws-msg-chip">
+          {scriptMeta.label}
+        </span>
+      ) : null}
+      {command.announcedSession ? (
+        <span className="ms-2 font-mono text-xs text-muted-foreground">
+          {tLegacy("shellSession", { id: command.announcedSession })}
+        </span>
+      ) : null}
       {step.tool.background ? (
         <span className="ms-2 inline-block rounded-full bg-muted px-1.5 align-[0.0625rem] font-mono text-3xs leading-4 text-muted-foreground ws-msg-chip">
           {step.tool.background.taskId
@@ -182,13 +207,27 @@ function CommandDetail({
   output: CommandOutput | null
 }) {
   const t = useTranslations("Folder.chat.activity")
+  const tLegacy = useTranslations("Folder.chat.contentParts")
   const { tool } = step
   const command = tool.command
   const failed = tool.status === "failed" || tool.status === "rejected"
   const live = tool.status === "running" || tool.status === "pending"
+  const isScript = tool.kind === "script"
   const showCommand =
-    !!command && !command.session && command.lineCount > 1 && !!command.display
+    !isScript &&
+    !!command &&
+    !command.session &&
+    command.lineCount > 1 &&
+    !!command.display
   const fullCommand = command?.display ?? ""
+  const script = useMemo(
+    () => (isScript ? parseCodexScriptCard(step.part.input) : null),
+    [isScript, step.part.input]
+  )
+  const scriptMeta = useMemo(
+    () => parseCodexScriptMeta(step.part.meta),
+    [step.part.meta]
+  )
 
   return (
     <DetailBox
@@ -209,6 +248,32 @@ function CommandDetail({
         </>
       }
     >
+      {script ? (
+        <div className="border-b border-foreground/5">
+          <CodeBlock code={script.source} language="javascript" />
+          {script.callCount > 0 ? (
+            <p className="px-4 pb-2 text-xs text-muted-foreground">
+              {tLegacy("scriptToolCalls", { count: script.callCount })}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {scriptMeta?.sharedWith.length ? (
+        <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
+          {tLegacy("codexScript.sharedWith", {
+            commands: scriptMeta.sharedWith.join(", "),
+          })}
+        </p>
+      ) : null}
+      {scriptMeta?.outputMissing ? (
+        <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
+          {tLegacy("codexScript.outputMissing")}
+        </p>
+      ) : scriptMeta?.truncated && !scriptMeta.sharedWith.length ? (
+        <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
+          {tLegacy("codexScript.truncated")}
+        </p>
+      ) : null}
       {command?.description ? (
         <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
           {command.description}
@@ -288,12 +353,18 @@ export const CommandRow = memo(function CommandRow({
   const live = tool.status === "running" || tool.status === "pending"
   const [open, setOpen] = useDisclosure(step.key, {
     defaultOpen: false,
-    force: failed && !recoveredKeys.has(step.key),
+    force:
+      (failed && !recoveredKeys.has(step.key)) || tool.status === "awaiting",
   })
   const expandable =
     !!output ||
     !!tool.command?.description ||
     (tool.command?.lineCount ?? 0) > 1
+  const elapsed = useLiveElapsed(step.key, live)
+  const clock =
+    elapsed !== null && elapsed >= LIVE_CLOCK_AFTER_MS
+      ? formatClock(elapsed)
+      : null
   const duration =
     tool.status === "succeeded" &&
     tool.command?.durationMs != null &&
@@ -318,7 +389,14 @@ export const CommandRow = memo(function CommandRow({
       expanded={open}
       onExpandedChange={setOpen}
       title={tool.command?.description ?? tool.command?.display ?? undefined}
-      trailing={duration ?? <ToolFigure tool={tool} />}
+      trailing={
+        duration ??
+        (clock ? (
+          <span aria-hidden="true">{clock}</span>
+        ) : (
+          <ToolFigure tool={tool} />
+        ))
+      }
       addon={live && !open && output ? <LiveTail text={output.text} /> : null}
       detail={() => <CommandDetail step={step} output={output} />}
     >

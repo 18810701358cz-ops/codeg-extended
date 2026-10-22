@@ -2,6 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from "react"
 
+import type { ActivityModel } from "@/lib/activity/types"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
 
 /**
@@ -18,6 +19,11 @@ export interface ActivityRenderContextValue {
   isStreaming: boolean
   /** Failed steps a later step redid successfully (see `summarizeActivity`). */
   recoveredKeys: ReadonlySet<string>
+  /** Draw a nested timeline (a sub-agent's own steps) with the same wiring. */
+  renderNested: (model: ActivityModel, isStreaming: boolean) => ReactNode
+  /** Only rows still running are drawn — the folded turn's long-lived rows
+   *  (delegations, sub-agents, background tasks that outlive the turn). */
+  pinnedOnly: boolean
 }
 
 const ActivityRenderContext = createContext<ActivityRenderContextValue | null>(

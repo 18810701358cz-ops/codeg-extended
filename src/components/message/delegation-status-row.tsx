@@ -81,6 +81,9 @@ interface DelegationStatusRowProps {
    *  matched against the transcript's index to tell the task's newest row
    *  from a superseded one. Without it the row is its own newest. */
   latestPollId?: string | null
+  /** `timeline`: drawn on the activity timeline's rail — no icon of its own
+   *  (the rail's ring carries it), no inset padding, no frame lines. */
+  layout?: "card" | "timeline"
 }
 
 // Memoized: the rows of a card that keeps its polls are the same objects
@@ -93,7 +96,9 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
   results: resultsProp,
   runningConfirmed = false,
   latestPollId = null,
+  layout = "card",
 }: DelegationStatusRowProps) {
+  const timeline = layout === "timeline"
   const t = useTranslations("Folder.chat.delegation")
   const panelId = useId()
 
@@ -221,14 +226,19 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
 
   const row = (
     <>
-      <Icon
-        className={cn(
-          "h-3.5 w-3.5 shrink-0",
-          isError ? "text-destructive" : "text-muted-foreground"
-        )}
-      />
+      {timeline ? null : (
+        <Icon
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            isError ? "text-destructive" : "text-muted-foreground"
+          )}
+        />
+      )}
       <span
-        className="min-w-0 truncate text-xs font-medium text-foreground"
+        className={cn(
+          "min-w-0 truncate font-medium",
+          timeline ? "text-sm text-muted-foreground" : "text-xs text-foreground"
+        )}
         title={taskId ?? undefined}
       >
         {isRunning ? (
@@ -270,15 +280,34 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
           // renderer out of the collapsed tree), so only reference it then —
           // avoids a dangling `aria-controls` target while collapsed.
           aria-controls={expanded ? panelId : undefined}
-          className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/50"
+          className={cn(
+            "flex w-full items-center gap-2 text-start transition-colors",
+            timeline
+              ? "min-h-7 rounded-sm py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              : "px-3 py-2 hover:bg-muted/50"
+          )}
         >
           {row}
         </button>
       ) : (
-        <div className="flex w-full items-center gap-2 px-3 py-2">{row}</div>
+        <div
+          className={cn(
+            "flex w-full items-center gap-2",
+            timeline ? "min-h-7 py-0.5" : "px-3 py-2"
+          )}
+        >
+          {row}
+        </div>
       )}
       {expandable && expanded && (
-        <div id={panelId} className="border-t border-border">
+        <div
+          id={panelId}
+          className={
+            timeline
+              ? "mt-1 mb-1.5 overflow-hidden rounded-[0.625rem] border border-border bg-background ws-msg-card"
+              : "border-t border-border"
+          }
+        >
           {/* Above the results and outside their scroll area: the decision is
               why the row opened, and its buttons must not scroll away. */}
           {childConnectionId != null && prompts && (

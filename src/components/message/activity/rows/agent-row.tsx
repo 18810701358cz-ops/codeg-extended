@@ -1,0 +1,310 @@
+"use client"
+
+import { memo, useMemo } from "react"
+import { useTranslations } from "next-intl"
+import { ArrowUpRightIcon, BotIcon } from "lucide-react"
+
+import { MessageResponse } from "@/components/ai-elements/message"
+import { buildActivity } from "@/lib/activity/build-activity"
+import { previewLine } from "@/lib/activity/format"
+import type { StepStatus } from "@/lib/activity/types"
+import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
+import { shortAgentId } from "@/lib/collab-tool"
+import { unwrapWholeFence } from "@/lib/fenced-text"
+import { cn } from "@/lib/utils"
+import { SubagentSessionDialog } from "../../subagent-session-dialog"
+import { useAgentCallModel } from "../../use-agent-call-model"
+import { useActivityRender } from "../activity-context"
+import { ActivityRow } from "../activity-row"
+import { DetailBox } from "../detail-box"
+import { useDisclosure } from "../disclosure-store"
+import { RailIcon } from "../rail-icon"
+import { StatusFigure, useStatusText } from "../step-visuals"
+import {
+  formatClock,
+  LIVE_CLOCK_AFTER_MS,
+  useLiveElapsed,
+} from "../use-live-elapsed"
+import type { ToolStep } from "./explore-rows"
+
+/** Longest result line shown under a finished sub-agent. */
+const RESULT_PREVIEW_CHARS = 240
+
+/**
+ * A sub-agent the turn launched (Claude Code's Agent/Task, codex's spawned
+ * agents, Grok's sub-agents): `Explore · Find binding consumers   48s`, its
+ * prompt (two lines), and — while it runs — its latest step, or once done the
+ * first line of its result beside "Open conversation ↗" when it has a session
+ * of its own. The panel holds the full prompt, the sub-agent's own steps as a
+ * nested timeline, and its result.
+ */
+export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
+  const t = useTranslations("Folder.chat.contentParts")
+  const tActivity = useTranslations("Folder.chat.activity")
+  const tBg = useTranslations("Folder.chat.backgroundTasks")
+  const tDelegation = useTranslations("Folder.chat.delegation")
+  const statusText = useStatusText()
+  const { renderNested, pinnedOnly } = useActivityRender()
+  const m = useAgentCallModel(step.part)
+  const live = m.isRunning || m.isLiveBackgroundLaunch || m.outcomeBackground
+  const failed = m.isError || m.backgroundFailed || m.outcomeError != null
+  const status: StepStatus = live ? "running" : failed ? "failed" : "succeeded"
+  const [open, setOpen] = useDisclosure(step.key, {
+    defaultOpen: false,
+    force: failed,
+  })
+  const elapsed = useLiveElapsed(step.key, live)
+  const clock =
+    elapsed !== null && elapsed >= LIVE_CLOCK_AFTER_MS
+      ? formatClock(elapsed)
+      : null
+
+  // The sub-agent's own steps, as a timeline: its transcript in arrival order
+  // when there is prose to interleave, else its tool calls alone.
+  const childModel = useMemo(() => {
+    const parts: AdaptedContentPart[] = []
+    if (m.hasTimeline) {
+      m.transcript.forEach((entry, at) => {
+        if (entry.type === "tool_call") {
+          const call = m.adaptedToolCalls[entry.childIndex]
+          if (call) parts.push(call)
+        } else if (entry.type === "thinking") {
+          if (entry.text.trim()) {
+            parts.push({
+              type: "reasoning",
+              content: entry.text,
+              isStreaming: m.isRunning && at === m.transcript.length - 1,
+            })
+          }
+        } else if (entry.text.trim()) {
+          parts.push({ type: "text", text: entry.text })
+        }
+      })
+    } else {
+      parts.push(...m.adaptedToolCalls)
+    }
+    return parts.length > 0
+      ? buildActivity(parts, { isStreaming: m.isRunning, keepAnswer: true })
+      : null
+  }, [m.hasTimeline, m.transcript, m.adaptedToolCalls, m.isRunning])
+
+  const output =
+    m.backgroundLifecycle?.result ??
+    (m.taskOutcome || m.isLiveBackgroundLaunch ? null : step.part.output) ??
+    null
+  const latest = live
+    ? (m.grokProgressLine ??
+      (m.hasTimeline
+        ? previewLine(
+            [...m.transcript].reverse().find((e) => e.type !== "tool_call")
+              ?.text,
+            RESULT_PREVIEW_CHARS
+          )
+        : null))
+    : null
+  const summaryLine = live
+    ? latest
+    : failed
+      ? null
+      : previewLine(
+          output ?? m.backgroundLifecycle?.summary,
+          RESULT_PREVIEW_CHARS
+        )
+  const prompt = m.prompt?.trim() || null
+
+  if (pinnedOnly && !live) return null
+
+  return (
+    <>
+      <ActivityRow
+        stepKey={step.key}
+        status={status}
+        marker={
+          <RailIcon
+            icon={BotIcon}
+            status={status}
+            label={`${tActivity("kind.agent")}, ${statusText(status)}`}
+          />
+        }
+        expandable={!!prompt || !!childModel || !!output || failed}
+        expanded={open}
+        onExpandedChange={setOpen}
+        title={m.title}
+        trailing={
+          failed ? (
+            <StatusFigure status="failed" />
+          ) : live ? (
+            m.isLiveBackgroundLaunch || m.outcomeBackground ? (
+              tBg("cardRunning")
+            ) : clock ? (
+              <span aria-hidden="true">{clock}</span>
+            ) : null
+          ) : (
+            m.durationSuffix
+          )
+        }
+        addon={
+          prompt || summaryLine || m.openChildSession ? (
+            <div className="space-y-1 pb-0.5">
+              {prompt ? (
+                <p
+                  dir="auto"
+                  className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-foreground/90"
+                >
+                  {prompt}
+                </p>
+              ) : null}
+              {summaryLine || m.openChildSession ? (
+                <div className="flex min-w-0 items-baseline gap-3 text-sm">
+                  {summaryLine ? (
+                    <span
+                      dir="auto"
+                      className={cn(
+                        "min-w-0 flex-1 truncate",
+                        live ? "activity-shimmer" : "text-muted-foreground"
+                      )}
+                      title={summaryLine}
+                    >
+                      {summaryLine}
+                    </span>
+                  ) : (
+                    <span className="flex-1" />
+                  )}
+                  {m.openChildSession ? (
+                    <button
+                      type="button"
+                      onClick={m.openChildSession}
+                      className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-sm text-foreground/80 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {tDelegation("openDetail")}
+                      <ArrowUpRightIcon
+                        aria-hidden="true"
+                        className="size-3.5 rtl:-scale-x-100"
+                      />
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null
+        }
+        detail={() => (
+          <div className="space-y-2">
+            {m.model || m.effort ? (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                {m.model ? (
+                  <span>
+                    {t("agentModelLabel")}:{" "}
+                    <span className="font-mono">{m.model}</span>
+                  </span>
+                ) : null}
+                {m.effort ? (
+                  <span>
+                    {t("agentEffortLabel")}:{" "}
+                    <span className="font-mono">{m.effort}</span>
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {prompt ? (
+              <DetailBox tone="neutral">
+                <div className="prose prose-sm dark:prose-invert max-w-none px-4 py-3 text-sm [&_ol]:list-inside [&_ul]:list-inside">
+                  <MessageResponse>{prompt}</MessageResponse>
+                </div>
+              </DetailBox>
+            ) : null}
+            {childModel ? renderNested(childModel, m.isRunning) : null}
+            {m.isCodexSubagent &&
+            !m.isRunning &&
+            m.codexSubagentState === null ? (
+              <p className="text-xs text-muted-foreground">
+                {t("agentCodexLaunchOnly")}
+              </p>
+            ) : null}
+            {m.isError && step.part.errorText ? (
+              <DetailBox tone="danger" anchor="end">
+                <pre className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-[0.78125rem]">
+                  {unwrapWholeFence(step.part.errorText)}
+                </pre>
+              </DetailBox>
+            ) : null}
+            {m.isError &&
+            m.agentStats?.status === "completed" &&
+            m.agentStats.recovered_result ? (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  {t("agentRecoveredNote")}
+                </p>
+                <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
+                  <MessageResponse>
+                    {m.agentStats.recovered_result}
+                  </MessageResponse>
+                </div>
+              </div>
+            ) : null}
+            {m.outcomeError && !m.isError ? (
+              <DetailBox tone="danger">
+                <pre className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-[0.78125rem]">
+                  {m.outcomeError}
+                </pre>
+              </DetailBox>
+            ) : null}
+            {m.backgroundLifecycle && !m.isError && !m.backgroundSettled ? (
+              <p className="text-xs text-muted-foreground">
+                {tBg("cardResultPending")}
+              </p>
+            ) : null}
+            {output && !m.isError ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none text-sm [&_ol]:list-inside [&_ul]:list-inside">
+                <MessageResponse>{output}</MessageResponse>
+              </div>
+            ) : null}
+          </div>
+        )}
+      >
+        <span className="flex min-w-0 items-baseline gap-2">
+          {m.subagentType ? (
+            <>
+              <span className="shrink-0 font-semibold text-foreground">
+                {m.subagentType}
+              </span>
+              {m.description ? (
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {m.description}
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span
+              className={cn(
+                "min-w-0 truncate font-semibold",
+                live && !m.description ? "activity-shimmer" : "text-foreground"
+              )}
+            >
+              {m.title}
+            </span>
+          )}
+          {m.agentId ? (
+            <span
+              className="shrink-0 font-mono text-[0.8125rem] text-muted-foreground"
+              dir="ltr"
+            >
+              #{shortAgentId(m.agentId)}
+            </span>
+          ) : null}
+        </span>
+      </ActivityRow>
+      {m.childSession && m.viewerHost == null && m.sessionOpen ? (
+        <SubagentSessionDialog
+          open={m.sessionOpen}
+          onOpenChange={m.setSessionOpen}
+          sessionId={m.childSession.sessionId}
+          agentType={m.childSession.agentType}
+          subagentType={m.subagentType}
+          description={m.description}
+          live={m.isRunning || m.isLiveBackgroundLaunch}
+        />
+      ) : null}
+    </>
+  )
+})

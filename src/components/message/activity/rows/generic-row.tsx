@@ -59,7 +59,8 @@ export const GenericRow = memo(function GenericRow({
   const [open, setOpen] = useDisclosure(step.key, {
     // Cline's completion IS the turn's closing statement: shown open.
     defaultOpen: isCompletion,
-    force: failed && !recoveredKeys.has(step.key),
+    force:
+      (failed && !recoveredKeys.has(step.key)) || tool.status === "awaiting",
   })
   const args = useMemo(() => argumentsText(part.input), [part.input])
   const result = part.errorText ?? part.output ?? null

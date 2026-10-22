@@ -19,10 +19,12 @@ import {
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import {
+  extractPermissionToolCallId,
   getCachedSelectors,
   useAcpActions,
   useAcpEvent,
 } from "@/contexts/acp-connections-context"
+import { ActivityLiveProvider } from "@/components/message/activity/activity-live-context"
 import { useAcpAgents } from "@/hooks/use-acp-agents"
 import { useActiveFolder } from "@/contexts/active-folder-context"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
@@ -2107,51 +2109,65 @@ const ConversationTabView = memo(function ConversationTabView({
     [effectiveConversationId]
   )
 
+  // Which tool call a pending approval is about, so the activity timeline can
+  // mark that step as waiting on the user.
+  const awaitingToolCallId = extractPermissionToolCallId(
+    conn.pendingPermission?.tool_call
+  )
+  const activityLive = useMemo(
+    () => ({ awaitingToolCallId }),
+    [awaitingToolCallId]
+  )
+
   const messageListNode = (
     <GoalControlProvider value={goalControlValue}>
-      <MessageListView
-        conversationId={effectiveConversationId}
-        imageRoot={workingDirForConnection ?? null}
-        agentType={selectedAgent}
-        availableCommands={connectionCommands}
-        connStatus={connStatus}
-        isActive={isActive}
-        sendSignal={sendSignal}
-        detailLoading={detailLoading}
-        detailError={detailError}
-        acpLoadError={acpLoadError}
-        hideEmptyState={!hasPersistedConversation || hasSentMessage}
-        // The conversation page's navigator, plan and sub-agents show in the
-        // Session Details side panel rather than over the messages.
-        insightsInSidebar
-        onReload={canShowDetailErrorActions ? handleReloadDetail : undefined}
-        onNewSession={
-          canShowDetailErrorActions ? handleOpenNewSession : undefined
-        }
-        onQuoteSelection={composerAvailable ? handleQuoteSelection : undefined}
-        // Asking opens its own conversation, so it needs a folder to open it in
-        // rather than a usable composer here — a transcript whose composer is
-        // blocked (session/load failure) can still spawn the question elsewhere.
-        onAskSelection={canAskSelection ? handleAskSelection : undefined}
-        // Fork carries no draft, so — unlike a send — a non-empty queue is
-        // not at risk of being jumped and needs no guard here. A turn in
-        // flight is still rejected, by the backend, which is the only place
-        // that can see it without racing.
-        //
-        // "prompting" belongs on this side of the gate (same shape as the
-        // goal-control gate above): this answers "can this surface fork at
-        // all", and a turn in flight is a passing "not right now" that the
-        // view greys the button out for. Dropping the handler instead made
-        // every reply's fork icon disappear for the length of each reply.
-        // `handleForkFromTurn` re-checks liveness at click time.
-        onForkFromTurn={
-          (connStatus === "connected" || connStatus === "prompting") &&
-          hasPersistedConversation &&
-          conn.supportsFork
-            ? handleForkFromTurn
-            : undefined
-        }
-      />
+      <ActivityLiveProvider value={activityLive}>
+        <MessageListView
+          conversationId={effectiveConversationId}
+          imageRoot={workingDirForConnection ?? null}
+          agentType={selectedAgent}
+          availableCommands={connectionCommands}
+          connStatus={connStatus}
+          isActive={isActive}
+          sendSignal={sendSignal}
+          detailLoading={detailLoading}
+          detailError={detailError}
+          acpLoadError={acpLoadError}
+          hideEmptyState={!hasPersistedConversation || hasSentMessage}
+          // The conversation page's navigator, plan and sub-agents show in the
+          // Session Details side panel rather than over the messages.
+          insightsInSidebar
+          onReload={canShowDetailErrorActions ? handleReloadDetail : undefined}
+          onNewSession={
+            canShowDetailErrorActions ? handleOpenNewSession : undefined
+          }
+          onQuoteSelection={
+            composerAvailable ? handleQuoteSelection : undefined
+          }
+          // Asking opens its own conversation, so it needs a folder to open it in
+          // rather than a usable composer here — a transcript whose composer is
+          // blocked (session/load failure) can still spawn the question elsewhere.
+          onAskSelection={canAskSelection ? handleAskSelection : undefined}
+          // Fork carries no draft, so — unlike a send — a non-empty queue is
+          // not at risk of being jumped and needs no guard here. A turn in
+          // flight is still rejected, by the backend, which is the only place
+          // that can see it without racing.
+          //
+          // "prompting" belongs on this side of the gate (same shape as the
+          // goal-control gate above): this answers "can this surface fork at
+          // all", and a turn in flight is a passing "not right now" that the
+          // view greys the button out for. Dropping the handler instead made
+          // every reply's fork icon disappear for the length of each reply.
+          // `handleForkFromTurn` re-checks liveness at click time.
+          onForkFromTurn={
+            (connStatus === "connected" || connStatus === "prompting") &&
+            hasPersistedConversation &&
+            conn.supportsFork
+              ? handleForkFromTurn
+              : undefined
+          }
+        />
+      </ActivityLiveProvider>
     </GoalControlProvider>
   )
 

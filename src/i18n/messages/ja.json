@@ -4082,7 +4082,13 @@
           "todos": "ToDo を更新",
           "completion": "タスク完了",
           "toolResult": "結果",
-          "listJoiner": "、"
+          "listJoiner": "、",
+          "taskFinished": "タスク完了",
+          "taskFailed": "タスク失敗",
+          "taskStopped": "タスク停止",
+          "taskRunning": "タスク実行中",
+          "planUpdated": "計画を更新",
+          "showMoreSteps": "残り {count} ステップを表示"
         },
         "explore": {
           "files": "ファイル {count} 件",
@@ -4126,7 +4132,9 @@
           "allPassed": "すべて成功",
           "someFailed": "{count} 件失敗",
           "lineRange": "L{start}–{end}",
-          "line": "L{line}"
+          "line": "L{line}",
+          "done": "完了",
+          "stopped": "停止"
         },
         "status": {
           "succeeded": "完了",

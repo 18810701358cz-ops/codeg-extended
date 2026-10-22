@@ -49,11 +49,21 @@ describe("buildActivity on the reference turn", () => {
       "command:t9",
       "note",
       "delegation:t10",
-      "delegation-polls",
       "command(t12,t13)",
       "background-tasks",
       "command:t15",
     ])
+  })
+
+  it("folds the delegation's own status poll into its row", () => {
+    const delegation = model.steps.find(
+      (s) => s.type === "tool" && s.part.toolCallId === "t10"
+    )
+    expect(
+      delegation?.type === "tool"
+        ? delegation.polls?.map((p) => p.toolCallId)
+        : null
+    ).toEqual(["t11"])
   })
 
   it("keeps the closing prose as the answer", () => {

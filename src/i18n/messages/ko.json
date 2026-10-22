@@ -4082,7 +4082,13 @@
           "todos": "할 일 업데이트",
           "completion": "작업 완료",
           "toolResult": "결과",
-          "listJoiner": ", "
+          "listJoiner": ", ",
+          "taskFinished": "작업 완료",
+          "taskFailed": "작업 실패",
+          "taskStopped": "작업 중지됨",
+          "taskRunning": "작업 실행 중",
+          "planUpdated": "계획 업데이트",
+          "showMoreSteps": "나머지 {count}단계 보기"
         },
         "explore": {
           "files": "파일 {count}개",
@@ -4126,7 +4132,9 @@
           "allPassed": "모두 통과",
           "someFailed": "{count}건 실패",
           "lineRange": "L{start}–{end}",
-          "line": "L{line}"
+          "line": "L{line}",
+          "done": "완료",
+          "stopped": "중지됨"
         },
         "status": {
           "succeeded": "완료",

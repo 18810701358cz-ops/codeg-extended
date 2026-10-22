@@ -4082,7 +4082,13 @@
           "todos": "更新了待辦",
           "completion": "完成任務",
           "toolResult": "結果",
-          "listJoiner": "，"
+          "listJoiner": "，",
+          "taskFinished": "任務完成",
+          "taskFailed": "任務失敗",
+          "taskStopped": "任務已停止",
+          "taskRunning": "任務執行中",
+          "planUpdated": "更新了計畫",
+          "showMoreSteps": "顯示其餘 {count} 步"
         },
         "explore": {
           "files": "{count} 個檔案",
@@ -4126,7 +4132,9 @@
           "allPassed": "全部通過",
           "someFailed": "{count} 條失敗",
           "lineRange": "L{start}–{end}",
-          "line": "L{line}"
+          "line": "L{line}",
+          "done": "完成",
+          "stopped": "已停止"
         },
         "status": {
           "succeeded": "完成",

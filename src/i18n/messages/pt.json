@@ -4082,7 +4082,13 @@
           "todos": "Atualizou as tarefas",
           "completion": "Concluído",
           "toolResult": "Resultado",
-          "listJoiner": ", "
+          "listJoiner": ", ",
+          "taskFinished": "Tarefa concluída",
+          "taskFailed": "Tarefa falhou",
+          "taskStopped": "Tarefa interrompida",
+          "taskRunning": "Tarefa em execução",
+          "planUpdated": "Atualizou o plano",
+          "showMoreSteps": "{count, plural, one {Mostrar mais # etapa} other {Mostrar mais # etapas}}"
         },
         "explore": {
           "files": "{count, plural, one {# arquivo} other {# arquivos}}",
@@ -4126,7 +4132,9 @@
           "allPassed": "tudo certo",
           "someFailed": "{count, plural, one {# falhou} other {# falharam}}",
           "lineRange": "L{start}–{end}",
-          "line": "L{line}"
+          "line": "L{line}",
+          "done": "concluído",
+          "stopped": "interrompido"
         },
         "status": {
           "succeeded": "concluído",

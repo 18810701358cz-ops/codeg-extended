@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useCallback, useId, useMemo, useState } from "react"
+import { memo, useCallback, useId, useMemo, useRef, useState } from "react"
 import { ChevronRightIcon } from "lucide-react"
 import { useTranslations } from "next-intl"
 
@@ -17,8 +17,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/instant-collapsible"
 import { buildActivity } from "@/lib/activity/build-activity"
+import { disclosureKeysFor } from "@/lib/activity/group"
 import { ActivityParts, ContentPartsRenderer } from "./content-parts-renderer"
 import { ActivityHeader } from "./activity/activity-header"
+import { openDisclosures } from "./activity/disclosure-store"
 import { useActivityTimelineEnabled } from "./activity/use-activity-flag"
 
 export interface SplitAssistantTurnParts {
@@ -251,10 +253,29 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
   // and the body's renderer change.
   const timeline = useActivityTimelineEnabled()
   const bodyId = useId()
+  const turnRef = useRef<HTMLDivElement | null>(null)
   const activity = useMemo(
     () => (timeline ? buildActivity(parts, { isStreaming }) : null),
     [timeline, parts, isStreaming]
   )
+  // The header's red "N failed": open the turn at the first failure nothing
+  // redid — the row, and the group it is folded into.
+  const failureKey = activity?.summary.firstUnrecoveredKey ?? null
+  const jumpToFailure = useCallback(() => {
+    if (!activity || !failureKey) return
+    openDisclosures(disclosureKeysFor(activity.items, failureKey))
+    if (!open) handleOpenChange(true)
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const escaped = CSS.escape(failureKey)
+        turnRef.current
+          ?.querySelector(
+            `[data-step-key="${escaped}"], [data-step-key^="${escaped}:"]`
+          )
+          ?.scrollIntoView({ block: "center", behavior: "smooth" })
+      })
+    )
+  }, [activity, failureKey, open, handleOpenChange])
 
   if (activity) {
     const header = (
@@ -263,6 +284,7 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
         completed={completed}
         hasSteps={activity.items.length > 0}
         elapsed={elapsed}
+        onJumpToFailure={failureKey ? jumpToFailure : undefined}
         toggle={
           foldable
             ? {
@@ -300,13 +322,22 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
       )
     }
     return (
-      <div className="space-y-4">
+      <div ref={turnRef} className="space-y-4">
         <Collapsible
           className="w-full"
           open={open}
           onOpenChange={handleOpenChange}
         >
           {header}
+          {/* Folded: what can outlive the turn — a delegation or sub-agent
+              still running — stays in view under the header. */}
+          {!open ? (
+            <ActivityParts
+              model={activity}
+              isStreaming={isStreaming}
+              pinnedOnly
+            />
+          ) : null}
           <CollapsibleContent
             id={bodyId}
             className={cn(

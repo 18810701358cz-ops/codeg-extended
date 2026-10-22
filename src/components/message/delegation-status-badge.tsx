@@ -26,7 +26,7 @@ function StatusIcon({ status }: { status: DelegationStatusValue }) {
     case "starting":
       return <CircleDashed className="animate-spin text-muted-foreground" />
     case "waiting":
-      return <ShieldAlert className="text-amber-500" />
+      return <ShieldAlert className="text-tone-warning" />
     case "running":
       return <Loader2 className="animate-spin" />
     case "checked":
@@ -34,9 +34,9 @@ function StatusIcon({ status }: { status: DelegationStatusValue }) {
       // Neutral, non-spinning, so a superseded check stops spinning.
       return <Clock className="text-muted-foreground" />
     case "ok":
-      return <CheckCircleIcon className="text-green-600" />
+      return <CheckCircleIcon className="text-tone-success" />
     default:
-      return <XCircleIcon className="text-red-600" />
+      return <XCircleIcon className="text-tone-danger" />
   }
 }
 
@@ -78,7 +78,7 @@ export function StatusBadge({
   )
 }
 
-function ErrorLabel({ code }: { code?: string }) {
+export function ErrorLabel({ code }: { code?: string }) {
   const t = useTranslations("Folder.chat.delegation.status.err")
   switch (code) {
     case "delegation_disabled":

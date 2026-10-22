@@ -60,11 +60,11 @@ export function getPriorityKey(priority: string): PriorityKey {
 export function getPriorityClassName(priority: string): string {
   switch (priority) {
     case "high":
-      return "text-red-700 bg-red-500/10 border-red-500/20 dark:text-red-300"
+      return "text-tone-danger bg-tone-danger/10 border-tone-danger/20"
     case "medium":
-      return "text-amber-700 bg-amber-500/10 border-amber-500/20 dark:text-amber-300"
+      return "text-tone-warning bg-tone-warning/10 border-tone-warning/20"
     case "low":
-      return "text-slate-700 bg-slate-500/10 border-slate-500/20 dark:text-slate-300"
+      return "text-muted-foreground bg-muted border-border"
     default:
       return "text-muted-foreground"
   }
@@ -78,13 +78,13 @@ function StatusIcon({
   isStreaming: boolean
 }) {
   if (status === "completed") {
-    return <CheckCircle2Icon className="size-3.5 shrink-0 text-emerald-500" />
+    return <CheckCircle2Icon className="size-3.5 shrink-0 text-tone-success" />
   }
   if (status === "in_progress") {
     return isStreaming ? (
-      <Loader2Icon className="size-3.5 shrink-0 animate-spin text-blue-500" />
+      <Loader2Icon className="size-3.5 shrink-0 animate-spin text-foreground/70" />
     ) : (
-      <CircleDotIcon className="size-3.5 shrink-0 text-blue-500" />
+      <CircleDotIcon className="size-3.5 shrink-0 text-foreground/70" />
     )
   }
   return (

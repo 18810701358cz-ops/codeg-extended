@@ -15,12 +15,14 @@ import {
   type AdaptedToolCallPart,
 } from "@/lib/adapters/ai-elements-adapter"
 import { buildBackgroundTaskRows } from "@/lib/background-task"
+import { parseDelegateTaskId, parseDelegationMeta } from "@/lib/delegation-card"
+import { buildDelegationTaskRows } from "@/lib/delegation-status"
 import { describeToolCall } from "./describe-tool-call"
 import { groupActivitySteps } from "./group"
 import { combineStatuses, toolCallStatus, type StepStatus } from "./status"
 import { summarizeActivity } from "./summarize"
 import { thoughtTitle } from "./thought"
-import type { ActivityModel, ActivityStep } from "./types"
+import type { ActivityModel, ActivityStep, BackgroundLaunch } from "./types"
 
 function toolStep(part: AdaptedToolCallPart): ActivityStep {
   return {
@@ -97,6 +99,65 @@ function replyAnchor(parts: AdaptedContentPart[]): string {
 
 const ANCHOR_TEXT_LENGTH = 32
 
+/** Background launches among the steps so far, by task id. */
+function launchesBefore(
+  steps: ActivityStep[]
+): Record<string, BackgroundLaunch> {
+  const launches: Record<string, BackgroundLaunch> = {}
+  for (const step of steps) {
+    if (step.type !== "tool") continue
+    const taskId = step.tool.background?.taskId
+    if (!taskId || !step.tool.command) continue
+    launches[taskId] = {
+      stepKey: step.key,
+      command: step.tool.command.display,
+      description: step.tool.command.description,
+    }
+  }
+  return launches
+}
+
+/**
+ * Fold a delegation's status polls into the delegation's own step when they
+ * come right after it and are all about its task: the agent handed the task
+ * over, then waited on it — one lifecycle. Polls separated from their
+ * delegation by other work, or about several tasks, keep their own row.
+ */
+function mergeDelegationPolls(steps: ActivityStep[]): ActivityStep[] {
+  const out: ActivityStep[] = []
+  for (const step of steps) {
+    const previous = out[out.length - 1]
+    if (
+      step.type === "delegation-polls" &&
+      previous?.type === "tool" &&
+      previous.tool.kind === "delegation" &&
+      !previous.polls
+    ) {
+      const taskId = delegationTaskId(previous.part)
+      const rows = buildDelegationTaskRows(step.polls)
+      if (
+        taskId !== null &&
+        rows.length > 0 &&
+        rows.every((row) => row.taskId === taskId)
+      ) {
+        out[out.length - 1] = { ...previous, polls: step.polls }
+        continue
+      }
+    }
+    out.push(step)
+  }
+  return out
+}
+
+/** The broker task id a `delegate_to_agent` call was given. */
+function delegationTaskId(part: AdaptedToolCallPart): string | null {
+  return (
+    parseDelegateTaskId(part.output ?? null, part.errorText ?? null) ??
+    parseDelegationMeta(part.meta ?? null)?.taskId ??
+    null
+  )
+}
+
 function collectSteps(
   parts: AdaptedContentPart[],
   isStreaming: boolean
@@ -155,6 +216,7 @@ function collectSteps(
           key: `bg:${part.polls[0]!.toolCallId}`,
           polls: part.polls,
           status: backgroundStatus(part.polls),
+          launches: launchesBefore(steps),
         })
         return
       case "goal-run":
@@ -178,10 +240,13 @@ function collectSteps(
 
 function buildActivityUncached(
   parts: AdaptedContentPart[],
-  isStreaming: boolean
+  isStreaming: boolean,
+  splitAnswer = true
 ): ActivityModel {
-  const { body, trailing } = splitTrailingAnswerParts(parts)
-  const steps = collectSteps(body, isStreaming)
+  const { body, trailing } = splitAnswer
+    ? splitTrailingAnswerParts(parts)
+    : { body: parts, trailing: [] }
+  const steps = mergeDelegationPolls(collectSteps(body, isStreaming))
   return {
     steps,
     items: groupActivitySteps(steps.filter((s) => !isBlankInterruption(s))),
@@ -192,7 +257,12 @@ function buildActivityUncached(
 
 const cache = new WeakMap<
   AdaptedContentPart[],
-  { streaming?: ActivityModel; settled?: ActivityModel }
+  Partial<
+    Record<
+      "streaming" | "settled" | "streaming:all" | "settled:all",
+      ActivityModel
+    >
+  >
 >()
 
 /**
@@ -202,17 +272,23 @@ const cache = new WeakMap<
  */
 export function buildActivity(
   parts: AdaptedContentPart[],
-  opts: { isStreaming: boolean }
+  opts: {
+    isStreaming: boolean
+    /** Keep closing prose as steps instead of splitting it off as the
+     *  answer — for a sub-agent's own timeline, which has no answer slot. */
+    keepAnswer?: boolean
+  }
 ): ActivityModel {
   let entry = cache.get(parts)
   if (!entry) {
     entry = {}
     cache.set(parts, entry)
   }
-  const slot = opts.isStreaming ? "streaming" : "settled"
+  const slot =
+    `${opts.isStreaming ? "streaming" : "settled"}${opts.keepAnswer ? ":all" : ""}` as const
   const cached = entry[slot]
   if (cached) return cached
-  const model = buildActivityUncached(parts, opts.isStreaming)
+  const model = buildActivityUncached(parts, opts.isStreaming, !opts.keepAnswer)
   entry[slot] = model
   return model
 }

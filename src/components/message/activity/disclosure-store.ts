@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useReducer } from "react"
+import { useCallback, useSyncExternalStore } from "react"
 
 /**
  * Open/closed state of every expandable activity row, kept OUTSIDE the
@@ -22,6 +22,18 @@ const choices = new Map<string, boolean>()
 /** Rows that once demanded attention (a failure, a pending approval). They
  *  stay open by default even after the state that opened them is gone. */
 const latched = new Set<string>()
+const listeners = new Set<() => void>()
+
+function emit() {
+  for (const listener of listeners) listener()
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
 
 function remember(key: string, open: boolean) {
   choices.delete(key)
@@ -51,22 +63,32 @@ export function useDisclosure(
   key: string,
   opts: { defaultOpen: boolean; force?: boolean }
 ): [boolean, (open: boolean) => void] {
-  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  const choice = useSyncExternalStore(
+    subscribe,
+    () => choices.get(key),
+    () => undefined
+  )
   if (opts.force) latch(key)
-  const choice = choices.get(key)
   const open = choice ?? (latched.has(key) || opts.defaultOpen)
   const setOpen = useCallback(
     (next: boolean) => {
       remember(key, next)
-      rerender()
+      emit()
     },
     [key]
   )
   return [open, setOpen]
 }
 
+/** Open rows from outside them (the header's "show the failure"). */
+export function openDisclosures(keys: readonly string[]): void {
+  for (const key of keys) remember(key, true)
+  emit()
+}
+
 /** Forget every remembered choice. For tests. */
 export function resetDisclosureStore(): void {
   choices.clear()
   latched.clear()
+  emit()
 }

@@ -16,12 +16,16 @@ export const HostedRow = memo(function HostedRow({
   icon,
   status,
   kindLabel,
+  inset = true,
   children,
 }: {
   stepKey: string
   icon: ActivityIcon
   status: StepStatus
   kindLabel: string
+  /** Nudge a framed card down to the ring's line; off for content that is
+   *  already laid out as a timeline row. */
+  inset?: boolean
   children: ReactNode
 }) {
   const statusText = useStatusText()
@@ -39,7 +43,7 @@ export const HostedRow = memo(function HostedRow({
           label={`${kindLabel}, ${statusText(status)}`}
         />
       </span>
-      <div className="min-w-0 pt-0.5">{children}</div>
+      <div className={inset ? "min-w-0 pt-0.5" : "min-w-0"}>{children}</div>
     </li>
   )
 })
