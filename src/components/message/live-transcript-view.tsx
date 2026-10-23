@@ -285,10 +285,11 @@ export function LiveTranscriptView({
   const awaitingToolCallId = extractPermissionToolCallId(
     conn?.pendingPermission?.tool_call
   )
+  const awaitingUser = prompts !== null
   const approvals = conn?.toolApprovals ?? EMPTY_TOOL_APPROVALS
   const activityLive = useMemo(
-    () => ({ awaitingToolCallId, approvals }),
-    [awaitingToolCallId, approvals]
+    () => ({ awaitingToolCallId, awaitingUser, approvals }),
+    [awaitingToolCallId, awaitingUser, approvals]
   )
 
   return (

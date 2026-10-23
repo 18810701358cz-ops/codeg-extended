@@ -17,7 +17,9 @@ import { buildActivity } from "@/lib/activity/build-activity"
 import { disclosureKeysFor } from "@/lib/activity/group"
 import { ActivityParts, ContentPartsRenderer } from "./content-parts-renderer"
 import { ActivityHeader } from "./activity/activity-header"
+import { useActivityLive } from "./activity/activity-live-context"
 import { openDisclosures } from "./activity/disclosure-store"
+import { WorkingMark } from "./activity/rail-icon"
 
 export interface SplitAssistantTurnParts {
   progress: AdaptedContentPart[]
@@ -216,6 +218,19 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
     )
   }, [activity, failureKey, open, handleOpenChange])
 
+  // While its agent is at work — not while it waits on the user to answer a
+  // permission request — a live reply ends on a turning mark: at the foot of
+  // the rail when the open timeline is its last block, else under whatever
+  // does end it (the answer being written, a folded body, no steps yet).
+  const { awaitingUser } = useActivityLive()
+  const working = isStreaming && !awaitingUser
+  const workingOnRail =
+    working &&
+    foldable &&
+    open &&
+    activity.items.length > 0 &&
+    !hasVisibleAnswer(split.answer)
+
   const header = (
     <ActivityHeader
       summary={activity.summary}
@@ -262,6 +277,7 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
           role="assistant"
           isStreaming={isStreaming}
         />
+        {working ? <WorkingMark /> : null}
       </div>
     )
   }
@@ -295,7 +311,11 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
         >
           <div>
             <div className="pt-2">
-              <ActivityParts model={activity} isStreaming={isStreaming} />
+              <ActivityParts
+                model={activity}
+                isStreaming={isStreaming}
+                working={workingOnRail}
+              />
             </div>
           </div>
         </CollapsibleContent>
@@ -307,6 +327,7 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
           isStreaming={isStreaming}
         />
       )}
+      {working && !workingOnRail ? <WorkingMark /> : null}
     </div>
   )
 })

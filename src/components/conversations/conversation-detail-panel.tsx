@@ -101,6 +101,7 @@ import {
 import { TurnBusyError } from "@/lib/turn-busy"
 import { deliverQueuedSteer } from "@/lib/queued-steer"
 import { toErrorMessage } from "@/lib/app-error"
+import { blockingPrompts } from "@/lib/blocking-prompts"
 import { notify } from "@/lib/notify"
 import {
   claimRuntimeSession,
@@ -2110,15 +2111,17 @@ const ConversationTabView = memo(function ConversationTabView({
   )
 
   // Which tool call a pending approval is about, so the activity timeline can
-  // mark that step as waiting on the user; and how the connection's answered
-  // ones went, for the chips on their rows.
+  // mark that step as waiting on the user; whether any blocking prompt is
+  // open, so a live reply stops saying its agent is at work; and how the
+  // connection's answered approvals went, for the chips on their rows.
   const awaitingToolCallId = extractPermissionToolCallId(
     conn.pendingPermission?.tool_call
   )
+  const awaitingUser = blockingPrompts(conn) !== null
   const approvals = conn.toolApprovals
   const activityLive = useMemo(
-    () => ({ awaitingToolCallId, approvals }),
-    [awaitingToolCallId, approvals]
+    () => ({ awaitingToolCallId, awaitingUser, approvals }),
+    [awaitingToolCallId, awaitingUser, approvals]
   )
 
   const messageListNode = (

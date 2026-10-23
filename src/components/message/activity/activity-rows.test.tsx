@@ -81,7 +81,13 @@ function withProviders(
       <StaticConnectionStoreProvider store={STORE}>
         <StaticDelegationProvider value={DELEGATION}>
           <StaticWorkspaceActionsProvider value={WORKSPACE}>
-            <ActivityLiveProvider value={{ awaitingToolCallId, approvals }}>
+            <ActivityLiveProvider
+              value={{
+                awaitingToolCallId,
+                awaitingUser: awaitingToolCallId !== null,
+                approvals,
+              }}
+            >
               {ui}
             </ActivityLiveProvider>
           </StaticWorkspaceActionsProvider>

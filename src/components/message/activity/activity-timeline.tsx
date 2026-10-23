@@ -32,6 +32,7 @@ import { GenericRow, ToolResultRow } from "./rows/generic-row"
 import { HostedRow, NoteRow } from "./rows/hosted-row"
 import { McpRow } from "./rows/mcp-row"
 import { ThoughtRow } from "./rows/thought-row"
+import { WorkingSpinner } from "./rail-icon"
 import { useEndMarkLine } from "./use-end-mark-line"
 import { useLiveToolStep } from "./use-live-step"
 
@@ -48,17 +49,23 @@ const LONG_TIMELINE_TAIL = 50
 const LONG_TIMELINE_STEP = 200
 /** Where a long reply's hidden middle sits among its rows (and its key). */
 const FOLD = "fold"
+/** The turning mark at the foot of a live reply's rail (its key). */
+const WORKING = "working"
 
 export const ActivityTimeline = memo(function ActivityTimeline({
   model,
   isStreaming,
   renderPart,
   pinnedOnly = false,
+  working = false,
 }: {
   model: ActivityModel
   isStreaming: boolean
   renderPart: (part: AdaptedContentPart, key: string) => ReactNode
   pinnedOnly?: boolean
+  /** The reply ends on this list while its agent is at work: the rail runs
+   *  on past the last row to a turning mark. */
+  working?: boolean
 }) {
   const t = useTranslations("Folder.chat.activity")
   const context = useMemo(
@@ -137,6 +144,18 @@ export const ActivityTimeline = memo(function ActivityTimeline({
             <ActivityItemView key={item.key} item={item} />
           )
         )}
+        {/* Last, so the rows that join go in above it: the last row's segment
+            runs on to it like to a row's ring. */}
+        {working && isStreaming && !pinnedOnly ? (
+          <li
+            key={WORKING}
+            aria-hidden="true"
+            className="activity-item h-6"
+            data-marker="working"
+          >
+            <WorkingSpinner />
+          </li>
+        ) : null}
       </ol>
     </ActivityRenderProvider>
   )

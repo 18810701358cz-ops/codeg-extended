@@ -734,6 +734,7 @@ function ScenarioView({ scenario }: { scenario: Scenario }) {
   const live = useMemo<ActivityLiveValue>(
     () => ({
       awaitingToolCallId: null,
+      awaitingUser: false,
       approvals: scenario.approvals ?? EMPTY_TOOL_APPROVALS,
     }),
     [scenario]

@@ -94,6 +94,34 @@ export function RailIcon({
   )
 }
 
+/**
+ * The turning mark a live reply ends on while its agent is at work: at the
+ * foot of the rail, which runs down to it, or under the reply when the rail is
+ * not its last block: a ring like a step's, a quarter of it open. Placed for
+ * a 1.5rem slot, its centre on the rail. Like a running ring it keeps turning
+ * with chat animations off and stops under reduced motion; the header says
+ * "Working" in words either way. One plain element: a turning element is
+ * restyled every frame, its children with it, and an SVG's turn also lays
+ * the page out every frame — for as long as the reply streams.
+ */
+export function WorkingSpinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="absolute start-1 top-1 size-4 animate-spin rounded-full border-[1.5px] border-activity-ring border-t-transparent motion-reduce:animate-none"
+    />
+  )
+}
+
+/** The turning mark on its own, under a live reply (see `WorkingSpinner`). */
+export function WorkingMark() {
+  return (
+    <div aria-hidden="true" className="relative h-6" data-marker="working">
+      <WorkingSpinner />
+    </div>
+  )
+}
+
 /** The small dot that marks prose between steps, and explore group members. */
 export function RailDot({ className }: { className?: string }) {
   return (

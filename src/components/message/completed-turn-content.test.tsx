@@ -4,7 +4,9 @@ import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
+import { EMPTY_TOOL_APPROVALS } from "@/lib/activity/approval"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
+import { ActivityLiveProvider } from "./activity/activity-live-context"
 import {
   CompletedTurnContent,
   splitAssistantTurnParts,
@@ -357,5 +359,151 @@ describe("CompletedTurnContent", () => {
 
     expect(screen.queryByText("Reply")).not.toBeInTheDocument()
     expect(container.textContent).toBe("")
+  })
+})
+
+describe("CompletedTurnContent: the turning mark while the agent works", () => {
+  const RUNNING_PARTS = (): AdaptedContentPart[] => [
+    { type: "text", text: "Checking the component." },
+    {
+      type: "tool-call",
+      toolCallId: "call-run",
+      toolName: "Read",
+      input: '{"file_path":"src/app.tsx"}',
+      state: "input-available",
+    },
+  ]
+  const marks = (container: HTMLElement) =>
+    container.querySelectorAll('[data-marker="working"]')
+  const onRail = (container: HTMLElement) =>
+    container.querySelector('.activity-timeline > [data-marker="working"]')
+
+  it("hangs it off the rail while the timeline ends the reply", () => {
+    const { container } = renderWithIntl(
+      <CompletedTurnContent
+        parts={RUNNING_PARTS()}
+        durationMs={null}
+        completed={false}
+      />
+    )
+
+    expect(marks(container)).toHaveLength(1)
+    const mark = onRail(container)
+    // Last on the rail, so the steps that join go in above it.
+    expect(mark).not.toBeNull()
+    expect(mark!.parentElement!.lastElementChild).toBe(mark)
+    expect(mark).toHaveAttribute("aria-hidden", "true")
+    // One plain element turns: every frame restyles it and its children, and
+    // an SVG's turn would lay the page out too, for as long as it streams.
+    const turning = mark!.querySelector(".animate-spin")
+    expect(turning?.tagName).toBe("SPAN")
+    expect(turning?.childElementCount).toBe(0)
+  })
+
+  it("puts it under the answer being written", () => {
+    const { container } = renderWithIntl(
+      <CompletedTurnContent
+        parts={freshCompletedParts()}
+        durationMs={null}
+        completed={false}
+      />
+    )
+
+    expect(marks(container)).toHaveLength(1)
+    expect(onRail(container)).toBeNull()
+    const answer = screen.getByText("The fix is complete.")
+    expect(
+      answer.compareDocumentPosition(marks(container)[0]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it("puts it under a reply with no steps yet, or none at all", () => {
+    const view = renderWithIntl(
+      <CompletedTurnContent parts={[]} durationMs={null} completed={false} />
+    )
+    expect(marks(view.container)).toHaveLength(1)
+
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <CompletedTurnContent
+          parts={[{ type: "text", text: "Let me look." }]}
+          durationMs={null}
+          completed={false}
+        />
+      </NextIntlClientProvider>
+    )
+    expect(marks(view.container)).toHaveLength(1)
+    expect(
+      screen
+        .getByText("Let me look.")
+        .compareDocumentPosition(marks(view.container)[0]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it("moves it under the header when the reader folds the reply", () => {
+    const { container } = renderWithIntl(
+      <CompletedTurnContent
+        parts={RUNNING_PARTS()}
+        durationMs={null}
+        completed={false}
+      />
+    )
+
+    fireEvent.click(toggle())
+
+    expect(toggle()).toHaveAttribute("aria-expanded", "false")
+    expect(marks(container)).toHaveLength(1)
+    expect(onRail(container)).toBeNull()
+  })
+
+  it.each([
+    ["a permission request about one of its calls", "call-run"],
+    ["a question or a plan to approve", null],
+  ])("leaves it out while the agent waits on %s", (_, awaitingToolCallId) => {
+    const { container } = renderWithIntl(
+      <ActivityLiveProvider
+        value={{
+          awaitingToolCallId,
+          awaitingUser: true,
+          approvals: EMPTY_TOOL_APPROVALS,
+        }}
+      >
+        <CompletedTurnContent
+          parts={RUNNING_PARTS()}
+          durationMs={null}
+          completed={false}
+        />
+      </ActivityLiveProvider>
+    )
+
+    expect(marks(container)).toHaveLength(0)
+  })
+
+  it("drops it once the reply is done", () => {
+    const view = renderWithIntl(
+      <CompletedTurnContent
+        parts={RUNNING_PARTS()}
+        durationMs={null}
+        completed={false}
+        currentRound
+        roundOpen
+      />
+    )
+    expect(marks(view.container)).toHaveLength(1)
+
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <CompletedTurnContent
+          parts={RUNNING_PARTS()}
+          durationMs={4_000}
+          completed
+          currentRound
+          roundOpen
+        />
+      </NextIntlClientProvider>
+    )
+    expect(marks(view.container)).toHaveLength(0)
   })
 })
