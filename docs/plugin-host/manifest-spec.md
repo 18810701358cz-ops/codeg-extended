@@ -97,7 +97,7 @@
 | `version` | `string` | 插件语义化版本 | 必须符合 SemVer 2.0 规范（例如 `1.0.0`、`2.1.3-beta.1`）。 |
 | `apiVersion` | `number` | 插件系统 API 协议版本 | 当前版本必须为 `1`。 |
 | `engines` | `object` | 宿主环境依赖要求 | 必须包含 `pluginHost` 属性。 |
-| `engines.pluginHost` | `string` | 支持的宿主版本范围 | npm 风格语义化版本范围（例如 `>=1.0.0 <2.0.0`）。当前宿主版本为 `1.0.0`。 |
+| `engines.pluginHost` | `string` | 支持的宿主版本范围 | npm 风格语义化版本范围（例如 `>=1.0.0 <2.0.0`）。当前宿主版本为 `1.1.0`（1.1.0 起提供 `ctx.tokens`）。 |
 
 ### 3.2 元信息与分类（可选）
 

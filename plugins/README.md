@@ -10,6 +10,7 @@ Welcome to the Codeg Extended plugin repository. This directory contains officia
 |---|---|---|---|---|
 | [`workbuddy-connect/`](./workbuddy-connect) | `workbuddy-connect` | `model-provider` | Integrates authenticated WorkBuddy local/remote AI models into Codeg as a model provider. | [README](./workbuddy-connect/README.md) |
 | [`prompt-pack/`](./prompt-pack) | `prompt-pack` | `workflow` | Contributes a curated set of developer prompts to Codeg's Quick Messages. | [README](./prompt-pack/README.md) |
+| [`token-meter/`](./token-meter) | `token-meter` | `utility` | Shows the live output speed and the conversation's total tokens in the status bar. | [README](./token-meter/README.md) |
 | [`_template/`](./_template) | `sample-plugin` | `utility` | Starter template containing manifest, ESM entrypoint, CSS styling, and documentation. | [README](./_template/README.md) |
 
 ---

@@ -176,6 +176,27 @@ const logoUrl = ctx.assets.resolve("assets/logo.png");
 const { mime, base64 } = await ctx.assets.read("assets/icon.svg");
 ```
 
+### 3.9 令牌用量 `ctx.tokens`（宿主 ≥ 1.1.0）
+只读地获取当前聚焦会话的令牌用量，用于状态栏等挂件。用到它的插件要在清单里写 `"engines": { "pluginHost": ">=1.1.0 <2.0.0" }`：旧宿主会把插件标成「不兼容」，而不是在 `activate` 里因为 `ctx.tokens` 不存在而崩溃。
+```typescript
+interface TokenMeterSnapshot {
+  /** 智能体上报的整段会话累计令牌（输入 + 输出 + 缓存），与输入框下方用量弹窗的「合计」是同一个数；智能体从未上报时为 null。每轮结束后才更新。 */
+  totalTokens: number | null;
+  /** 正在生成的这一轮已输出的估计令牌数；空闲时为 0。 */
+  liveTokens: number;
+  /** 正在生成的这一轮的平滑输出速度 (tok/s)；空闲或首次读数尚在预热时为 null。 */
+  tokensPerSecond: number | null;
+  /** 当前会话是否正在生成回复。 */
+  streaming: boolean;
+}
+
+const now = ctx.tokens.get();         // 同步读取当前快照
+ctx.tokens.onChange((snapshot) => {   // 数值变化时调用（生成期间约每 500ms 一次）；停用插件时自动取消订阅
+  render(snapshot);
+});
+```
+注意：`liveTokens` 和 `tokensPerSecond` 是按字符数估算的（与聊天里「正在输出」那一行动用的是同一套算法）；`totalTokens` 是智能体上报的真实值。快照跟随当前聚焦的会话标签页；移动端布局的状态栏目前没有插件插槽。
+
 ---
 
 ## 4. 插槽系统规范 (Slot System)

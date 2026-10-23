@@ -176,7 +176,7 @@ fn test_manifest_incompatible_api_version() {
 fn test_manifest_incompatible_engine_version() {
     let tmp = tempdir().unwrap();
     let mut manifest = sample_manifest("test-plugin");
-    manifest.engines.plugin_host = ">=2.0.0".to_string(); // host is 1.0.0
+    manifest.engines.plugin_host = ">=2.0.0".to_string(); // host is 1.1.0
     let plugin_dir = create_plugin_dir(tmp.path(), "test-plugin", &manifest);
 
     let res = validate_manifest(&manifest, &plugin_dir);
@@ -185,6 +185,18 @@ fn test_manifest_incompatible_engine_version() {
     assert!(errs
         .iter()
         .any(|e| format!("{e:?}").contains("does not satisfy engine requirement")));
+}
+
+#[test]
+fn test_manifest_accepts_the_host_floor_that_ctx_tokens_needs() {
+    // Plugins that read `ctx.tokens` declare `>=1.1.0 <2.0.0`.
+    let tmp = tempdir().unwrap();
+    let mut manifest = sample_manifest("test-plugin");
+    manifest.engines.plugin_host = ">=1.1.0 <2.0.0".to_string();
+    let plugin_dir = create_plugin_dir(tmp.path(), "test-plugin", &manifest);
+
+    let res = validate_manifest(&manifest, &plugin_dir);
+    assert!(res.is_ok(), "validation should pass, got: {:?}", res.err());
 }
 
 #[test]
@@ -1630,4 +1642,30 @@ async fn test_wp7_backend_crashed_on_repeated_failure() {
 
     assert!(reached_crashed, "Backend should transition to Crashed after repeated failures (start_backend returned {started:?})");
     super::backend::stop_backend(plugin_id).await;
+}
+#[test]
+fn test_repo_token_meter_plugin_is_accepted_by_the_host() {
+    // The real manifest through the host's own scanner: it must need no more
+    // than the host offers, and its `position` setting must reach the plugin
+    // center as a form field.
+    let plugins_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("plugins");
+    let plugins = scan_plugins(&plugins_root, &PluginHostState::default(), false);
+
+    let info = plugins
+        .iter()
+        .find(|p| p.id == "token-meter")
+        .expect("plugins/token-meter should be scanned");
+    assert_eq!(
+        info.status,
+        PluginStatus::Ok,
+        "problems: {:?}",
+        info.problems
+    );
+    assert!(info.has_main);
+    assert!(info
+        .config_schema
+        .as_ref()
+        .is_some_and(|schema| schema.properties.contains_key("position")));
 }
