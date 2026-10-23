@@ -563,7 +563,7 @@ function MessageResponseImpl({
   return (
     <Streamdown
       className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:ps-3 [&_ol]:ps-3",
+        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:ps-2 [&_ol]:ps-2",
         // Each block takes the direction of its own text (`dir="auto"`
         // below), so indents and rules go on the logical start side. An item
         // re-states `text-align: start`: the UA gives <li>

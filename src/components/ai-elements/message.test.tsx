@@ -72,7 +72,7 @@ describe("MessageResponse", () => {
 
     expect(screen.getByTestId("streamdown-root")).toHaveClass(
       "[&_ol]:list-decimal",
-      "[&_ol]:ps-3",
+      "[&_ol]:ps-2",
       "[&_li]:text-start"
     )
   })
