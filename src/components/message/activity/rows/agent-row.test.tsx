@@ -373,6 +373,50 @@ describe("sub-agent row: the prompt it was handed", () => {
   })
 })
 
+describe("sub-agent row: while it runs", () => {
+  const skeleton = () => row().querySelector('[data-slot="skeleton"]')
+
+  it("holds the line under its title with a skeleton until it has something to show", () => {
+    renderRow(
+      agent(
+        JSON.stringify({
+          subagent_type: "general-purpose",
+          description: "run the build",
+          prompt: "Run pnpm build.",
+        }),
+        "input-available"
+      )
+    )
+    expect(skeleton()).not.toBeNull()
+  })
+
+  it("shows what it is doing instead, once it says", () => {
+    renderRow(
+      agent(
+        JSON.stringify({ subagent_type: "Explore", description: "scan" }),
+        "input-available",
+        { agentTranscript: [{ type: "text", text: "Reading the config" }] }
+      )
+    )
+    expect(within(row()).getByText("Reading the config")).toBeInTheDocument()
+    expect(skeleton()).toBeNull()
+  })
+
+  it("draws no skeleton under a sub-agent that has finished", () => {
+    renderRow(
+      agent(
+        JSON.stringify({
+          subagent_type: "Explore",
+          description: "scan",
+          prompt: "Scan.",
+        }),
+        "output-available"
+      )
+    )
+    expect(skeleton()).toBeNull()
+  })
+})
+
 describe("sub-agent row: codex native sub-agents", () => {
   const launch = (extra: Record<string, unknown>) =>
     JSON.stringify({

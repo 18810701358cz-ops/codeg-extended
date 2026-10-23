@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useMemo, useState } from "react"
 import { useTranslations } from "next-intl"
-import { ActivityIcon, ArrowUpRightIcon, BanIcon } from "lucide-react"
+import { ActivityIcon, BanIcon } from "lucide-react"
 
 import { AgentIcon } from "@/components/agent-icon"
 import { AssistantAvatar } from "@/components/assistants/assistant-avatar"
@@ -29,13 +29,12 @@ import {
   type DelegationTaskRow,
 } from "@/lib/delegation-status"
 import { useAssistant } from "@/stores/assistants-store"
-import { cn } from "@/lib/utils"
 import { useActivityRender } from "../activity-context"
 import { ActivityRow } from "../activity-row"
 import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
+import { ProgressLine } from "../progress-line"
 import { RailIcon } from "../rail-icon"
-import { StepBar } from "../step-bar"
 import { useStatusText } from "../step-visuals"
 import { useChildProgress } from "../use-child-progress"
 import {
@@ -127,10 +126,10 @@ function DelegationStatusWord({
  * One delegation, start to finish: `Codex  #14be49e7  Update the stale
  * snapshot…  done · 1m 34s` — the task it was handed on the title line — and,
  * once it reports back, the first line of its result beside "Open
- * conversation ↗" (usable while it still runs). The panel holds the whole
- * task, when the title line cuts it short. The agent's `get_delegation_status`
- * checks are rows of their own (`DelegationPollsRow`); the newest says how it
- * ended.
+ * conversation ↗" (usable while it still runs; until it has something to
+ * show, a skeleton holds that line). The panel holds the whole task, when the
+ * title line cuts it short. The agent's `get_delegation_status` checks are
+ * rows of their own (`DelegationPollsRow`); the newest says how it ended.
  */
 export const DelegationRow = memo(function DelegationRow({
   step,
@@ -138,7 +137,6 @@ export const DelegationRow = memo(function DelegationRow({
   step: ToolStep
 }) {
   const t = useTranslations("Folder.chat.activity")
-  const tDelegation = useTranslations("Folder.chat.delegation")
   const statusText = useStatusText()
   const { pinnedOnly } = useActivityRender()
   const { part } = step
@@ -228,40 +226,13 @@ export const DelegationRow = memo(function DelegationRow({
           />
         }
         addon={
-          summary || openSession || progress ? (
-            <div className="flex min-w-0 items-center gap-3 pb-0.5 text-sm">
-              {progress ? (
-                <StepBar progress={progress} live={status === "running"} />
-              ) : null}
-              {summary ? (
-                <span
-                  dir="auto"
-                  className={cn(
-                    "min-w-0 flex-1 truncate",
-                    result ? "text-muted-foreground" : "activity-shimmer"
-                  )}
-                  title={summary}
-                >
-                  {summary}
-                </span>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {openSession ? (
-                <button
-                  type="button"
-                  onClick={openSession}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-sm text-foreground/80 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {tDelegation("openDetail")}
-                  <ArrowUpRightIcon
-                    aria-hidden="true"
-                    className="size-3.5 rtl:-scale-x-100"
-                  />
-                </button>
-              ) : null}
-            </div>
-          ) : null
+          <ProgressLine
+            progress={progress}
+            working={status === "running"}
+            summary={summary}
+            summaryLive={!result}
+            onOpenSession={openSession}
+          />
         }
         detail={() => (
           <DetailBox tone="neutral">

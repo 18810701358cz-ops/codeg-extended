@@ -344,6 +344,49 @@ describe("delegation row: who and how it stands", () => {
   })
 })
 
+describe("delegation row: while it works", () => {
+  const skeleton = () => row().querySelector('[data-slot="skeleton"]')
+
+  it("holds the line under its title with a skeleton until it has something to show", () => {
+    bind(bindingOf({ status: "running", task: "Run the checks." }))
+    renderRow(delegation())
+    expect(skeleton()).not.toBeNull()
+    // Beside the way into its conversation, which it already has.
+    expect(openConversation()).toBeInTheDocument()
+  })
+
+  it("holds the place while it starts, before there is a way in", () => {
+    renderRow(
+      delegation({
+        input: JSON.stringify({ agent_type: "codex", task: "set things up" }),
+      })
+    )
+    expect(within(row()).getByText("starting")).toBeInTheDocument()
+    expect(skeleton()).not.toBeNull()
+  })
+
+  it("draws no skeleton once it is done", () => {
+    bind(bindingOf({ status: "ok", task: "Run the checks." }))
+    renderRow(delegation({ state: "output-available" }))
+    expect(skeleton()).toBeNull()
+  })
+
+  it("draws no skeleton while the child waits on the user", () => {
+    // Nothing is loading: the sub-agent is stopped until the user answers.
+    bind(bindingOf({ status: "running", task: "Run the checks." }))
+    mockChildConnection = childConnWith({
+      pendingPermission: {
+        request_id: "r1",
+        tool_call: { title: "Run bash", kind: "execute" },
+        options: [{ id: "approve", label: "Approve", kind: "allow_once" }],
+      },
+    })
+    renderRow(delegation())
+    expect(within(row()).getByText("awaiting approval")).toBeInTheDocument()
+    expect(skeleton()).toBeNull()
+  })
+})
+
 describe("delegation row: a child waiting on the user", () => {
   // Parked is parked, whatever the decision: the backend's `blocked_on` and
   // the status checks count all three, so the row must too.

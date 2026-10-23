@@ -2,7 +2,7 @@
 
 import { memo, useMemo } from "react"
 import { useTranslations } from "next-intl"
-import { ArrowUpRightIcon, BotIcon } from "lucide-react"
+import { BotIcon } from "lucide-react"
 
 import { MessageResponse } from "@/components/ai-elements/message"
 import { useTruncation } from "@/hooks/use-truncation"
@@ -21,8 +21,8 @@ import { useActivityRender } from "../activity-context"
 import { ActivityRow } from "../activity-row"
 import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
+import { ProgressLine } from "../progress-line"
 import { RailIcon } from "../rail-icon"
-import { StepBar } from "../step-bar"
 import { StatusFigure, useStatusText } from "../step-visuals"
 import {
   formatClock,
@@ -38,16 +38,15 @@ const RESULT_PREVIEW_CHARS = 240
  * A sub-agent the turn launched (Claude Code's Agent/Task, codex's spawned
  * agents, Grok's sub-agents): `Explore  Find binding consumers  Find every
  * consumer of…   48s` — the prompt it was handed on the title line — and,
- * while it runs, its latest step, or once done the first line of its result,
- * beside "Open conversation ↗" when it has a session of its own. The panel
- * holds the full prompt, the sub-agent's own steps as a nested timeline, and
- * its result.
+ * while it runs, its latest step (a skeleton until it has one), or once done
+ * the first line of its result, beside "Open conversation ↗" when it has a
+ * session of its own. The panel holds the full prompt, the sub-agent's own
+ * steps as a nested timeline, and its result.
  */
 export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
   const t = useTranslations("Folder.chat.contentParts")
   const tActivity = useTranslations("Folder.chat.activity")
   const tBg = useTranslations("Folder.chat.backgroundTasks")
-  const tDelegation = useTranslations("Folder.chat.delegation")
   const statusText = useStatusText()
   const { renderNested, pinnedOnly } = useActivityRender()
   const m = useAgentCallModel(step.part)
@@ -222,38 +221,13 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
           )
         }
         addon={
-          summaryLine || m.openChildSession || progress ? (
-            <div className="flex min-w-0 items-center gap-3 pb-0.5 text-sm">
-              {progress ? <StepBar progress={progress} live={live} /> : null}
-              {summaryLine ? (
-                <span
-                  dir="auto"
-                  className={cn(
-                    "min-w-0 flex-1 truncate",
-                    live ? "activity-shimmer" : "text-muted-foreground"
-                  )}
-                  title={summaryLine}
-                >
-                  {summaryLine}
-                </span>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {m.openChildSession ? (
-                <button
-                  type="button"
-                  onClick={m.openChildSession}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-sm text-foreground/80 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {tDelegation("openDetail")}
-                  <ArrowUpRightIcon
-                    aria-hidden="true"
-                    className="size-3.5 rtl:-scale-x-100"
-                  />
-                </button>
-              ) : null}
-            </div>
-          ) : null
+          <ProgressLine
+            progress={progress}
+            working={live}
+            summary={summaryLine}
+            summaryLive={live}
+            onOpenSession={m.openChildSession}
+          />
         }
         detail={() => (
           <div className="space-y-2">
