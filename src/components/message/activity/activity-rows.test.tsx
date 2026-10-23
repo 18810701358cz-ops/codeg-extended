@@ -557,6 +557,158 @@ describe("a command group in a reply being written", () => {
     expect(screen.getByText("pnpm lint")).toBeTruthy()
   })
 
+  describe("once the reply moves past it", () => {
+    const live = (blocks: ContentBlock[]): MessageTurn => ({
+      id: "t-fold",
+      role: "assistant",
+      timestamp: "2026-10-23T10:00:00Z",
+      blocks,
+    })
+    const DONE = [
+      toolUse("c1", "Bash", { command: "pnpm lint" }),
+      toolResult("c1", "ok"),
+      toolUse("c2", "Bash", { command: "pnpm test" }),
+      toolResult("c2", "ok"),
+    ]
+    const READ = toolUse("r1", "Read", { file_path: "/r/a.ts" })
+    const header = () => screen.getByRole("button", { name: /2 commands/ })
+
+    it("folds by itself when the next step comes", () => {
+      const view = renderUi(
+        <Round parts={parts(live(DONE), true)} completed={false} />
+      )
+      // Its commands done but still the reply's last row: the next command
+      // may join it.
+      expect(header()).toHaveAttribute("aria-expanded", "true")
+
+      view.rerender(
+        withProviders(
+          <Round
+            parts={parts(live([...DONE, READ]), true, ["r1"])}
+            completed={false}
+          />
+        )
+      )
+      expect(header()).toHaveAttribute("aria-expanded", "false")
+      expect(screen.queryByText("pnpm lint")).toBeNull()
+    })
+
+    it("folds by itself when the answer starts under it", () => {
+      const view = renderUi(
+        <Round
+          parts={parts(live([...DONE, { type: "text", text: " " }]), true)}
+          completed={false}
+        />
+      )
+      // Blank text is no answer yet.
+      expect(header()).toHaveAttribute("aria-expanded", "true")
+
+      view.rerender(
+        withProviders(
+          <Round
+            parts={parts(
+              live([...DONE, { type: "text", text: "Both pass." }]),
+              true
+            )}
+            completed={false}
+          />
+        )
+      )
+      expect(header()).toHaveAttribute("aria-expanded", "false")
+    })
+
+    it("stays open while one of its commands still runs", () => {
+      renderUi(
+        <Round
+          parts={parts(
+            live([
+              ...DONE.slice(0, 3),
+              { type: "text", text: "While that runs…" },
+              READ,
+            ]),
+            true,
+            ["c2", "r1"]
+          )}
+          completed={false}
+        />
+      )
+      expect(header()).toHaveAttribute("aria-expanded", "true")
+    })
+
+    it("stays open once the reader has opened it", () => {
+      const view = renderUi(
+        <Round parts={parts(live(DONE), true)} completed={false} />
+      )
+      fireEvent.click(header())
+      fireEvent.click(header())
+      view.rerender(
+        withProviders(
+          <Round
+            parts={parts(live([...DONE, READ]), true, ["r1"])}
+            completed={false}
+          />
+        )
+      )
+      expect(header()).toHaveAttribute("aria-expanded", "true")
+      expect(screen.getByText("pnpm lint")).toBeTruthy()
+    })
+
+    it("slides its members shut, and lets them go once the slide has run", () => {
+      // jsdom runs no animations: report the slide the stylesheet starts.
+      const computed = window.getComputedStyle
+      const spy = vi
+        .spyOn(window, "getComputedStyle")
+        .mockImplementation((element, pseudo) =>
+          element.classList.contains("activity-detail-shut")
+            ? ({
+                animationName: "activity-detail-shut",
+                animationDuration: "0.24s",
+              } as CSSStyleDeclaration)
+            : computed(element, pseudo)
+        )
+      try {
+        const view = renderUi(
+          <Round parts={parts(live(DONE), true)} completed={false} />
+        )
+        view.rerender(
+          withProviders(
+            <Round
+              parts={parts(live([...DONE, READ]), true, ["r1"])}
+              completed={false}
+            />
+          )
+        )
+        expect(header()).toHaveAttribute("aria-expanded", "false")
+        const panel = view.container.querySelector(".activity-detail-shut")!
+        expect(panel).toBeTruthy()
+        expect(within(panel as HTMLElement).getByText("pnpm lint")).toBeTruthy()
+        // The rail still runs beside it while it slides.
+        expect(rowOf("Ran 2 commands")).toHaveAttribute("data-body", "")
+        // A member's own animation ending is not the slide's.
+        fireEvent.animationEnd(rowOf("pnpm lint"))
+        expect(screen.getByText("pnpm lint")).toBeTruthy()
+
+        fireEvent.animationEnd(panel)
+        expect(screen.queryByText("pnpm lint")).toBeNull()
+        expect(rowOf("Ran 2 commands")).not.toHaveAttribute("data-body")
+      } finally {
+        spy.mockRestore()
+      }
+    })
+
+    it("folds at once when the reader closes it", () => {
+      const spy = vi.spyOn(window, "getComputedStyle")
+      try {
+        renderUi(<Round parts={parts(live(DONE), true)} completed={false} />)
+        fireEvent.click(header())
+        expect(screen.queryByText("pnpm lint")).toBeNull()
+        expect(document.querySelector(".activity-detail-shut")).toBeNull()
+      } finally {
+        spy.mockRestore()
+      }
+    })
+  })
+
   it("folded, shows the member that needs the user under its header", () => {
     renderUi(
       <Round parts={parts(LIVE, true, ["c3"])} completed={false} />,

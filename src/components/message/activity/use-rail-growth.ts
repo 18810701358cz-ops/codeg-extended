@@ -9,6 +9,11 @@ const ENTER = "data-rail-enter"
  *  stopped at its own line or body — or, `reached`, at the end mark of a
  *  group that was done until they joined — runs on to them. */
 const EXTEND = "data-rail-extend"
+/** With `data-rail-extend`: a body ran beside that row's line when the rows
+ *  joined, so only the part past it grows. Taken then, so a panel that closes
+ *  meanwhile — a group sliding shut as the reply moves past it — does not
+ *  start the segment over. */
+const BODY = "data-rail-body"
 /** How much longer each row's growth waits than the row above it, so one
  *  join draws down through its rows in turn. */
 const STAGGER_MS = 100
@@ -25,6 +30,7 @@ const GROWTH = new Set([
 function unmark(row: Element) {
   row.removeAttribute(ENTER)
   row.removeAttribute(EXTEND)
+  row.removeAttribute(BODY)
 }
 
 /** Holds back the growth the marks started on `row` (its own and its
@@ -85,6 +91,7 @@ export function useRailGrowth(
       if (joined.length === 0 || joined.length > MAX_JOIN) return
       for (const row of extended) {
         row.setAttribute(EXTEND, wasReached ? "reached" : "")
+        if (row.hasAttribute("data-body")) row.setAttribute(BODY, "")
       }
       for (const row of joined) row.setAttribute(ENTER, "")
       // Top to bottom, the rows a join touched take their turn.

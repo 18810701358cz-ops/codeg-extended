@@ -9,6 +9,7 @@ function List({
   live,
   foot = false,
   end,
+  body,
 }: {
   rows: string[]
   live: boolean
@@ -16,13 +17,19 @@ function List({
   foot?: boolean
   /** A group's `data-end`: whether it is done. */
   end?: "pending" | "reached"
+  /** The row with a body beside its line (an open panel). */
+  body?: string
 }) {
   const ref = useRef<HTMLUListElement>(null)
   useRailGrowth(ref, live)
   return (
     <ul ref={ref} data-end={end}>
       {rows.map((row) => (
-        <li key={row} data-row={row} />
+        <li
+          key={row}
+          data-row={row}
+          data-body={row === body ? "" : undefined}
+        />
       ))}
       {foot ? <li key="foot" data-row="foot" /> : null}
     </ul>
@@ -110,6 +117,35 @@ describe("useRailGrowth", () => {
     await act(async () => {})
     const c = view.container.querySelector('[data-row="c"]')!
     expect(c.getAttribute("data-rail-extend")).toBe("")
+  })
+
+  it("notes a body beside the row a join extends, and keeps it while the body goes", async () => {
+    const view = render(<List rows={["a", "b"]} live body="b" />)
+    // A row joins as b's panel starts to close (a group sliding shut).
+    view.rerender(<List rows={["a", "b", "c"]} live body="b" />)
+    await act(async () => {})
+    const b = view.container.querySelector('[data-row="b"]')!
+    expect(b).toHaveAttribute("data-rail-extend", "")
+    expect(b).toHaveAttribute("data-rail-body", "")
+
+    // The panel gone, its segment keeps growing as it started.
+    view.rerender(<List rows={["a", "b", "c"]} live />)
+    await act(async () => {})
+    expect(b).toHaveAttribute("data-rail-body", "")
+
+    b.dispatchEvent(
+      Object.assign(new Event("animationend", { bubbles: true }), {
+        animationName: "activity-rail-extend",
+      })
+    )
+    expect(b).not.toHaveAttribute("data-rail-extend")
+    expect(b).not.toHaveAttribute("data-rail-body")
+    // A row without a body gets no such note.
+    view.rerender(<List rows={["a", "b", "c", "d"]} live />)
+    await act(async () => {})
+    const c = view.container.querySelector('[data-row="c"]')!
+    expect(c).toHaveAttribute("data-rail-extend", "")
+    expect(c).not.toHaveAttribute("data-rail-body")
   })
 
   it("leaves the row before alone when rows join above the foot", async () => {

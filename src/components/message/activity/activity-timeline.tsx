@@ -4,6 +4,7 @@ import { memo, useMemo, useRef, useState, type ReactNode } from "react"
 import { useTranslations } from "next-intl"
 
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
+import { hasVisibleAnswer } from "@/lib/activity/build-activity"
 import type {
   ActivityItem,
   ActivityModel,
@@ -109,6 +110,10 @@ export const ActivityTimeline = memo(function ActivityTimeline({
     : 0
   if (items.length === 0) return null
   const headSize = LONG_TIMELINE_HEAD + revealed
+  // A group the reply has moved past — a row follows it, or the answer under
+  // the rows does — takes no more members.
+  const lastKey = items[items.length - 1]!.key
+  const answerFollows = hasVisibleAnswer(model.answer)
   // One list of children, the fold among them: a row that moves between the
   // head, the fold and the tail keeps its key's place, never remounting.
   const rows = items.flatMap<ActivityItem | typeof FOLD>((item, index) => {
@@ -144,7 +149,13 @@ export const ActivityTimeline = memo(function ActivityTimeline({
               </button>
             </li>
           ) : (
-            <ActivityItemView key={item.key} item={item} />
+            <ActivityItemView
+              key={item.key}
+              item={item}
+              followed={
+                item.type === "group" && (item.key !== lastKey || answerFollows)
+              }
+            />
           )
         )}
         {/* Last, so the rows that join go in above it: the last row's segment
@@ -182,8 +193,11 @@ function canOutliveTurn(item: ActivityItem): boolean {
 
 const ActivityItemView = memo(function ActivityItemView({
   item,
+  followed,
 }: {
   item: ActivityItem
+  /** A group with something after it in the reply (see `CommandGroupRow`). */
+  followed: boolean
 }) {
   const { pinnedOnly } = useActivityRender()
   if (pinnedOnly && !canOutliveTurn(item)) return null
@@ -199,6 +213,7 @@ const ActivityItemView = memo(function ActivityItemView({
         groupKey={item.key}
         steps={item.steps}
         status={item.status}
+        followed={followed}
       />
     )
   }

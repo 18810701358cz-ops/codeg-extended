@@ -464,19 +464,24 @@ export const CommandRow = memo(function CommandRow({
 
 /**
  * "Ran 2 commands · all passed". While the reply is being written it lists its
- * commands, one row each, as they run — its header names none of them; once
- * the reply is done it folds, unless a member failed without being redone.
- * Folded while live, the member waiting on the user or running shows under
- * the header.
+ * commands, one row each, as they run — its header names none of them — and
+ * folds, sliding shut, once it has ended: the reply has moved past it (a step
+ * or the answer follows, so no command joins it now) and none of its commands
+ * is still going. A reply that is done folds them all. A failed member that
+ * nothing redid keeps it open, and what the reader chose stands. Folded while
+ * live, the member waiting on the user or running shows under the header.
  */
 export const CommandGroupRow = memo(function CommandGroupRow({
   groupKey,
   steps,
   status: given,
+  followed = false,
 }: {
   groupKey: string
   steps: ToolStep[]
   status: StepStatus
+  /** Something follows the group in the reply: a row, or the answer. */
+  followed?: boolean
 }) {
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
@@ -486,12 +491,13 @@ export const CommandGroupRow = memo(function CommandGroupRow({
   )
   const unrecovered = failures.some((s) => !recoveredKeys.has(s.key))
   const awaited = useAwaitedStep(steps)
-  const [open, setOpen] = useDisclosure(`group:${groupKey}`, {
-    defaultOpen: isStreaming,
-    force: unrecovered,
-  })
   const status = awaited ? "awaiting" : given
   const live = status === "running" || status === "pending"
+  const ended = followed && !live && !awaited
+  const [open, setOpen] = useDisclosure(`group:${groupKey}`, {
+    defaultOpen: isStreaming && !ended,
+    force: unrecovered,
+  })
   // Folded, the member that needs the user — or else the one running — shows
   // under the header, so the current step is never hidden.
   const liveStep = open
@@ -520,6 +526,7 @@ export const CommandGroupRow = memo(function CommandGroupRow({
       expandable
       expanded={open}
       onExpandedChange={setOpen}
+      slideShut={isStreaming && ended}
       trailing={
         failures.length > 0 ? (
           <span className="text-tone-danger">

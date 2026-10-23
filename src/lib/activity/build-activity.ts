@@ -412,6 +412,17 @@ function buildActivityUncached(
   return model
 }
 
+/**
+ * Does a reply's answer leave anything for the reader? Whitespace-only text is
+ * not an answer: it renders as an empty markdown block, so a turn "kept
+ * visible" by it still reads as a blank reply.
+ */
+export function hasVisibleAnswer(answer: AdaptedContentPart[]): boolean {
+  return answer.some(
+    (part) => part.type !== "text" || part.text.trim().length > 0
+  )
+}
+
 const cache = new WeakMap<
   AdaptedContentPart[],
   Partial<

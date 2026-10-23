@@ -2145,8 +2145,9 @@
    row's segment — down to the next row, or to the turning mark at the foot of
    a reply's rail — and a dot's incoming one grow from the top, and so does the
    segment the last row gains once a row follows it. A last row with a body
-   already had a segment beside it: only the part past its line grows, the
-   clip let out from where the segment stopped. The rows one join touched take
+   already had a segment beside it (`data-rail-body`, noted as the rows join):
+   only the part past its line grows, the clip let out from where the segment
+   stopped. The rows one join touched take
    their turn top to bottom (the hook holds each one's growth back a little
    longer), so the rail draws down through them, and the turning mark fades in
    as it arrives. Transform and clip only, so no row changes size under the
@@ -2166,18 +2167,25 @@
 @media (prefers-reduced-motion: no-preference) {
   .activity-item[data-rail-enter]::before,
   .activity-item[data-rail-enter][data-marker="dot"]::after,
-  .activity-item[data-rail-extend]:not([data-rail-enter], [data-body])::before,
+  .activity-item[data-rail-extend]:not(
+      [data-rail-enter],
+      [data-rail-body]
+    )::before,
   .activity-child[data-rail-enter]::before,
   .activity-child[data-rail-extend]:not(
       [data-rail-enter],
-      [data-body]
+      [data-rail-body]
     )::before {
     transform-origin: top;
     animation: activity-rail-grow 0.26s cubic-bezier(0.33, 1, 0.68, 1) backwards;
   }
 
-  .activity-item[data-rail-extend][data-body]:not([data-rail-enter])::before,
-  .activity-child[data-rail-extend][data-body]:not([data-rail-enter])::before {
+  .activity-item[data-rail-extend][data-rail-body]:not(
+      [data-rail-enter]
+    )::before,
+  .activity-child[data-rail-extend][data-rail-body]:not(
+      [data-rail-enter]
+    )::before {
     animation: activity-rail-extend 0.26s cubic-bezier(0.33, 1, 0.68, 1)
       backwards;
   }
@@ -2207,6 +2215,39 @@
 
   .activity-item[data-marker="working"][data-rail-enter] {
     animation: tool-content-fade 0.2s ease-out 0.12s both;
+  }
+}
+
+/* A row's panel that closes by itself — a group folding once the reply has
+   moved past it (`slideShut`, activity-row.tsx) — slides shut rather than
+   vanishing, so what follows it rises instead of jumping, on a grid track like
+   the reply's own fold: no layout read, the engine interpolates the track. The
+   row holds the panel mounted until the animation ends; with no animation
+   (reduced motion, chat animations off) it drops it at once. */
+@media (prefers-reduced-motion: no-preference) {
+  .activity-detail-shut {
+    display: grid;
+    grid-template-rows: 1fr;
+    animation: activity-detail-shut 0.24s cubic-bezier(0.65, 0, 0.35, 1)
+      forwards;
+  }
+
+  /* The panel's one child. In flow its margins collapsed into the panel's
+     own; a grid item's do not, so they go — the track would start taller and
+     never reach zero. */
+  .activity-detail-shut > * {
+    min-height: 0;
+    margin-block: 0;
+    overflow: hidden;
+  }
+}
+
+@keyframes activity-detail-shut {
+  to {
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    margin-bottom: 0;
+    opacity: 0;
   }
 }
 

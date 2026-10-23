@@ -13,7 +13,7 @@ import {
   Collapsible,
   CollapsibleContent,
 } from "@/components/ui/instant-collapsible"
-import { buildActivity } from "@/lib/activity/build-activity"
+import { buildActivity, hasVisibleAnswer } from "@/lib/activity/build-activity"
 import { disclosureKeysFor } from "@/lib/activity/group"
 import { ActivityParts, ContentPartsRenderer } from "./content-parts-renderer"
 import { ActivityHeader } from "./activity/activity-header"
@@ -42,17 +42,6 @@ export function splitAssistantTurnParts(
 ): SplitAssistantTurnParts {
   const { body, trailing } = splitTrailingAnswerParts(parts)
   return { progress: body, answer: trailing }
-}
-
-/**
- * Does the split leave anything for the reader once the progress is folded
- * away? Whitespace-only text is not an answer: it renders as an empty markdown
- * block, so a turn "kept visible" by it still reads as a blank reply.
- */
-function hasVisibleAnswer(answer: AdaptedContentPart[]): boolean {
-  return answer.some(
-    (part) => part.type !== "text" || part.text.trim().length > 0
-  )
 }
 
 /**
