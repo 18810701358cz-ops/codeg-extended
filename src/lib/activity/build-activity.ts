@@ -21,7 +21,13 @@ import { groupActivitySteps } from "./group"
 import { combineStatuses, toolCallStatus, type StepStatus } from "./status"
 import { summarizeActivity } from "./summarize"
 import { thoughtTitle } from "./thought"
-import type { ActivityModel, ActivityStep, BackgroundLaunch } from "./types"
+import type {
+  ActivityItem,
+  ActivityModel,
+  ActivityStep,
+  BackgroundLaunch,
+  NotePart,
+} from "./types"
 
 function toolStep(part: AdaptedToolCallPart): ActivityStep {
   return {
@@ -30,6 +36,82 @@ function toolStep(part: AdaptedToolCallPart): ActivityStep {
     part,
     tool: describeToolCall(part),
   }
+}
+
+/** Whether two parts carry the same fields, each holding the same value. */
+function sameFields(a: object, b: object): boolean {
+  if (a === b) return true
+  const left = a as Record<string, unknown>
+  const right = b as Record<string, unknown>
+  const keys = Object.keys(left)
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => key in right && left[key] === right[key])
+  )
+}
+
+function sameEach(a: readonly object[], b: readonly object[]): boolean {
+  return a.length === b.length && a.every((item, i) => sameFields(item, b[i]!))
+}
+
+function sameLaunches(
+  a: Readonly<Record<string, BackgroundLaunch>>,
+  b: Readonly<Record<string, BackgroundLaunch>>
+): boolean {
+  const keys = Object.keys(a)
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => b[key] !== undefined && sameFields(a[key]!, b[key]!))
+  )
+}
+
+/**
+ * What a rebuild of a reply keeps from the model built for it before. A reply
+ * that streams is rebuilt from fresh parts on every token, and so is one handed
+ * over from the stream to history: a step whose part reads the same keeps its
+ * object (and the tool call it describes), and a row whose steps did not change
+ * keeps its item, so the memoized rows they feed skip rendering — only what
+ * changed draws again.
+ */
+interface Previous {
+  steps: Map<string, ActivityStep>
+  items: Map<string, ActivityItem>
+  recoveredKeys: ReadonlySet<string>
+}
+
+function previousOf(model: ActivityModel): Previous {
+  return {
+    steps: new Map(model.steps.map((step) => [step.key, step])),
+    items: new Map(model.items.map((item) => [item.key, item])),
+    recoveredKeys: model.summary.recoveredKeys,
+  }
+}
+
+/** The rows of the build before whose steps are the same objects. */
+function keepItems(
+  items: ActivityItem[],
+  previous: Previous | null
+): ActivityItem[] {
+  if (!previous) return items
+  return items.map((item) => {
+    const prev = previous.items.get(item.key)
+    if (item.type === "step") {
+      return prev?.type === "step" && prev.step === item.step ? prev : item
+    }
+    return prev?.type === "group" &&
+      prev.kind === item.kind &&
+      prev.status === item.status &&
+      prev.steps.length === item.steps.length &&
+      prev.steps.every((step, i) => step === item.steps[i])
+      ? prev
+      : item
+  })
+}
+
+function sameKeys(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const key of a) if (!b.has(key)) return false
+  return true
 }
 
 function backgroundStatus(polls: AdaptedToolCallPart[]): StepStatus {
@@ -131,75 +213,125 @@ function linkLaterDelegationPolls(steps: ActivityStep[]): ActivityStep[] {
   return steps.map((step, index) => {
     if (step.type !== "tool" || step.tool.kind !== "delegation") return step
     const taskId = delegateCallTaskId(step.part)
-    if (taskId === null) return step
     const later: AdaptedToolCallPart[] = []
-    for (const next of steps.slice(index + 1)) {
-      if (next.type === "delegation-polls" && tasksIn(next.polls).has(taskId)) {
-        later.push(...next.polls)
+    if (taskId !== null) {
+      for (const next of steps.slice(index + 1)) {
+        if (
+          next.type === "delegation-polls" &&
+          tasksIn(next.polls).has(taskId)
+        ) {
+          later.push(...next.polls)
+        }
       }
     }
-    return later.length > 0 ? { ...step, laterPolls: later } : step
+    // A step kept from the build before still carries the polls it had then.
+    if (sameEach(step.laterPolls ?? [], later)) return step
+    return { ...step, laterPolls: later.length > 0 ? later : undefined }
   })
 }
 
 function collectSteps(
   parts: AdaptedContentPart[],
-  isStreaming: boolean
+  isStreaming: boolean,
+  anchor: string,
+  previous: Previous | null
 ): ActivityStep[] {
   const steps: ActivityStep[] = []
-  const anchor = replyAnchor(parts)
+  const prior = (key: string) => previous?.steps.get(key)
+  const note = (key: string, part: NotePart): ActivityStep => {
+    const prev = prior(key)
+    return prev?.type === "note" && sameFields(prev.part, part)
+      ? prev
+      : { type: "note", key, part }
+  }
   parts.forEach((part, index) => {
     switch (part.type) {
       case "text":
         if (part.text.trim().length > 0) {
-          steps.push({ type: "note", key: `note:${anchor}:${index}`, part })
+          steps.push(note(`note:${anchor}:${index}`, part))
         }
         return
       case "proposed-plan":
       case "turn-error":
-        steps.push({ type: "note", key: `note:${anchor}:${index}`, part })
+        steps.push(note(`note:${anchor}:${index}`, part))
         return
       case "reasoning": {
         const streaming = isStreaming && part.isStreaming
         if (!streaming && part.content.trim().length === 0) return
-        steps.push({
-          type: "thought",
-          key: `thought:${anchor}:${index}`,
-          part,
-          title: thoughtTitle(part.content, streaming),
-          streaming,
-        })
+        const key = `thought:${anchor}:${index}`
+        const prev = prior(key)
+        steps.push(
+          prev?.type === "thought" &&
+            prev.streaming === streaming &&
+            sameFields(prev.part, part)
+            ? prev
+            : {
+                type: "thought",
+                key,
+                part,
+                title: thoughtTitle(part.content, streaming),
+                streaming,
+              }
+        )
         return
       }
-      case "tool-call":
-        steps.push(toolStep(part))
+      case "tool-call": {
+        const prev = prior(`tool:${part.toolCallId}`)
+        steps.push(
+          prev?.type === "tool" && sameFields(prev.part, part)
+            ? prev
+            : toolStep(part)
+        )
         return
-      case "tool-result":
-        steps.push({
-          type: "tool-result",
-          key: `result:${part.toolCallId}:${index}`,
-          part,
-        })
+      }
+      case "tool-result": {
+        const key = `result:${part.toolCallId}:${index}`
+        const prev = prior(key)
+        steps.push(
+          prev?.type === "tool-result" && sameFields(prev.part, part)
+            ? prev
+            : { type: "tool-result", key, part }
+        )
         return
-      case "delegation-status-group":
+      }
+      case "delegation-status-group": {
         if (part.polls.length === 0) return
-        steps.push({
-          type: "delegation-polls",
-          key: `dpoll:${part.polls[0]!.toolCallId}`,
-          polls: part.polls,
-          status: combineStatuses(part.polls.map((p) => toolCallStatus(p))),
-        })
+        const key = `dpoll:${part.polls[0]!.toolCallId}`
+        const prev = prior(key)
+        steps.push(
+          prev?.type === "delegation-polls" && sameEach(prev.polls, part.polls)
+            ? prev
+            : {
+                type: "delegation-polls",
+                key,
+                polls: part.polls,
+                status: combineStatuses(
+                  part.polls.map((p) => toolCallStatus(p))
+                ),
+              }
+        )
         return
-      case "background-task-group":
+      }
+      case "background-task-group": {
         if (part.polls.length === 0) return
-        steps.push({
-          type: "background-tasks",
-          key: `bg:${part.polls[0]!.toolCallId}`,
-          polls: part.polls,
-          status: backgroundStatus(part.polls),
-          launches: launchesBefore(steps),
-        })
+        const key = `bg:${part.polls[0]!.toolCallId}`
+        const launches = launchesBefore(steps)
+        const prev = prior(key)
+        steps.push(
+          prev?.type === "background-tasks" &&
+            sameEach(prev.polls, part.polls) &&
+            sameLaunches(prev.launches, launches)
+            ? prev
+            : {
+                type: "background-tasks",
+                key,
+                polls: part.polls,
+                status: backgroundStatus(part.polls),
+                launches,
+              }
+        )
         return
+      }
       case "goal-run":
         steps.push({
           type: "goal",
@@ -211,16 +343,36 @@ function collectSteps(
           model: buildActivityUncached(part.items, part.isRunning, false),
         })
         return
-      case "plan":
-        steps.push({ type: "plan", key: `plan:${anchor}:${index}`, part })
+      case "plan": {
+        const key = `plan:${anchor}:${index}`
+        const prev = prior(key)
+        steps.push(
+          prev?.type === "plan" && sameFields(prev.part, part)
+            ? prev
+            : { type: "plan", key, part }
+        )
         return
-      case "generated-image":
-        steps.push({ type: "image", key: `image:${anchor}:${index}`, part })
+      }
+      case "generated-image": {
+        const key = `image:${anchor}:${index}`
+        const prev = prior(key)
+        steps.push(
+          prev?.type === "image" && sameFields(prev.part, part)
+            ? prev
+            : { type: "image", key, part }
+        )
         return
+      }
     }
   })
   return steps
 }
+
+/** The last model built for each reply, by the anchor its keys carry — what
+ *  its next rebuild keeps from (see `Previous`). A few replies at a time: the
+ *  ones streaming now, and those just handed over to history. */
+const lastBuilt = new Map<string, ActivityModel>()
+const LAST_BUILT_MAX = 8
 
 function buildActivityUncached(
   parts: AdaptedContentPart[],
@@ -230,13 +382,34 @@ function buildActivityUncached(
   const { body, trailing } = splitAnswer
     ? splitTrailingAnswerParts(parts)
     : { body: parts, trailing: [] }
-  const steps = linkLaterDelegationPolls(collectSteps(body, isStreaming))
-  return {
+  const anchor = replyAnchor(body)
+  const slot = `${splitAnswer ? "reply" : "all"}:${anchor}`
+  const last = lastBuilt.get(slot)
+  const previous = last ? previousOf(last) : null
+  const steps = linkLaterDelegationPolls(
+    collectSteps(body, isStreaming, anchor, previous)
+  )
+  const summary = summarizeActivity(steps)
+  const model: ActivityModel = {
     steps,
-    items: groupActivitySteps(steps.filter((s) => !isBlankInterruption(s))),
+    items: keepItems(
+      groupActivitySteps(steps.filter((s) => !isBlankInterruption(s))),
+      previous
+    ),
     answer: trailing,
-    summary: summarizeActivity(steps),
+    // The rows read it through context: a new set of the same keys would
+    // draw every row again.
+    summary:
+      previous && sameKeys(previous.recoveredKeys, summary.recoveredKeys)
+        ? { ...summary, recoveredKeys: previous.recoveredKeys }
+        : summary,
   }
+  lastBuilt.delete(slot)
+  lastBuilt.set(slot, model)
+  if (lastBuilt.size > LAST_BUILT_MAX) {
+    lastBuilt.delete(lastBuilt.keys().next().value!)
+  }
+  return model
 }
 
 const cache = new WeakMap<

@@ -210,6 +210,119 @@ describe("buildActivity on a live turn", () => {
   })
 })
 
+describe("buildActivity on a reply rebuilt from fresh parts", () => {
+  // A reply that streams is adapted afresh on every token: new part objects
+  // that read the same as the ones before.
+  const fresh = () =>
+    adaptMessageTurn(MOCKUP_ASSISTANT_TURN, MOCKUP_ADAPTER_TEXT).content
+
+  it("keeps every step and row whose content did not change", () => {
+    const before = buildActivity(fresh(), { isStreaming: true })
+    const after = buildActivity(fresh(), { isStreaming: true })
+    expect(after).not.toBe(before)
+    expect(after.steps).toHaveLength(before.steps.length)
+    after.steps.forEach((step, i) => expect(step).toBe(before.steps[i]))
+    expect(after.items).toHaveLength(before.items.length)
+    after.items.forEach((item, i) => expect(item).toBe(before.items[i]))
+    // The rows read it through context.
+    expect(after.summary.recoveredKeys).toBe(before.summary.recoveredKeys)
+  })
+
+  it("builds again only the step that changed, and only its row", () => {
+    const before = buildActivity(fresh(), { isStreaming: true })
+    const after = buildActivity(
+      fresh().map((part) =>
+        part.type === "tool-call" && part.toolCallId === "t9"
+          ? { ...part, output: `${part.output ?? ""}\none more line` }
+          : part
+      ),
+      { isStreaming: true }
+    )
+    expect(
+      after.steps
+        .filter((step, i) => step !== before.steps[i])
+        .map((s) => s.key)
+    ).toEqual(["tool:t9"])
+    expect(
+      after.items
+        .filter((item, i) => item !== before.items[i])
+        .map((i) => i.key)
+    ).toEqual(["tool:t9"])
+  })
+
+  it("redraws a group a call joins, and keeps the rows before it", () => {
+    const live = (extra: MessageTurn["blocks"]) =>
+      adaptMessageTurn(
+        { ...MOCKUP_LIVE_TURN, blocks: [...MOCKUP_LIVE_TURN.blocks, ...extra] },
+        MOCKUP_ADAPTER_TEXT,
+        true
+      ).content
+    const before = buildActivity(live([]), { isStreaming: true })
+    const after = buildActivity(
+      live([toolUse("l4", "Bash", { command: "pnpm --filter web build" })]),
+      { isStreaming: true }
+    )
+    expect(rows(after.items)).toEqual([
+      "thought:Checking the failing test",
+      "explore(l1,l2)",
+      "command(l3,l4)",
+    ])
+    expect(after.items[0]).toBe(before.items[0])
+    expect(after.items[1]).toBe(before.items[1])
+    const l3 = (model: typeof after) =>
+      model.steps.find((s) => s.type === "tool" && s.part.toolCallId === "l3")
+    expect(l3(after)).toBe(l3(before))
+  })
+
+  it("hands a kept delegation the check that came after it", () => {
+    const TASK = "a1b2c3d4"
+    const blocks: MessageTurn["blocks"] = [
+      toolUse("d1", "mcp__codeg-mcp__delegate_to_agent", {
+        agent_type: "codex",
+        task: "Update the snapshot.",
+      }),
+      toolResult("d1", JSON.stringify({ task_id: TASK, status: "started" })),
+      toolUse("d2", "mcp__codeg-mcp__get_delegation_status", {
+        task_ids: [TASK],
+      }),
+      toolResult("d2", JSON.stringify({ task_id: TASK, status: "running" })),
+    ]
+    const turn = (more: MessageTurn["blocks"]): MessageTurn => ({
+      id: "turn-kept-delegation",
+      role: "assistant",
+      timestamp: "2026-10-22T09:00:00Z",
+      blocks: [...blocks, ...more],
+    })
+    const build = (more: MessageTurn["blocks"]) =>
+      buildActivity(adaptMessageTurn(turn(more), MOCKUP_ADAPTER_TEXT).content, {
+        isStreaming: true,
+      })
+    const laterPolls = (model: ReturnType<typeof build>) => {
+      const step = model.steps[0]
+      return step?.type === "tool"
+        ? step.laterPolls?.map((p) => p.toolCallId)
+        : null
+    }
+    const before = build([])
+    expect(laterPolls(before)).toEqual(["d2"])
+    expect(build([]).steps[0]).toBe(before.steps[0])
+    const after = build([
+      { type: "text", text: "Still waiting on it." },
+      toolUse("d3", "mcp__codeg-mcp__get_delegation_status", {
+        task_ids: [TASK],
+      }),
+      toolResult(
+        "d3",
+        JSON.stringify({ task_id: TASK, status: "completed", text: "Done." })
+      ),
+    ])
+    expect(laterPolls(after)).toEqual(["d2", "d3"])
+    expect(after.steps[0]).not.toBe(before.steps[0])
+    // The first check reads the same: its row stays as it was.
+    expect(after.steps[1]).toBe(before.steps[1])
+  })
+})
+
 describe("buildActivity edge cases", () => {
   it("keeps a goal run's prose inside the run, where it is drawn", () => {
     const start: AdaptedContentPart = {
