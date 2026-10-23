@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl"
 import { ArrowUpRightIcon, BotIcon } from "lucide-react"
 
 import { MessageResponse } from "@/components/ai-elements/message"
+import { useTruncation } from "@/hooks/use-truncation"
 import { buildActivity } from "@/lib/activity/build-activity"
 import { describeToolCall } from "@/lib/activity/describe-tool-call"
 import { cleanTitle, tallySteps } from "@/lib/activity/progress"
@@ -35,11 +36,12 @@ const RESULT_PREVIEW_CHARS = 240
 
 /**
  * A sub-agent the turn launched (Claude Code's Agent/Task, codex's spawned
- * agents, Grok's sub-agents): `Explore · Find binding consumers   48s`, its
- * prompt (two lines), and — while it runs — its latest step, or once done the
- * first line of its result beside "Open conversation ↗" when it has a session
- * of its own. The panel holds the full prompt, the sub-agent's own steps as a
- * nested timeline, and its result.
+ * agents, Grok's sub-agents): `Explore  Find binding consumers  Find every
+ * consumer of…   48s` — the prompt it was handed on the title line — and,
+ * while it runs, its latest step, or once done the first line of its result,
+ * beside "Open conversation ↗" when it has a session of its own. The panel
+ * holds the full prompt, the sub-agent's own steps as a nested timeline, and
+ * its result.
  */
 export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
   const t = useTranslations("Folder.chat.contentParts")
@@ -151,6 +153,11 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
           RESULT_PREVIEW_CHARS
         )
   const prompt = m.prompt?.trim() || null
+  // The prompt on the title line, as one line; on its own it opens the row
+  // only when that line cuts it short.
+  const promptLine = prompt?.replace(/\s+/g, " ") ?? null
+  const { ref: promptRef, truncated: promptCut } =
+    useTruncation<HTMLSpanElement>(promptLine)
 
   if (pinnedOnly && !live) return null
 
@@ -168,7 +175,7 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
           />
         }
         expandable={
-          !!prompt ||
+          (promptLine !== null && (promptCut || open)) ||
           !!m.model ||
           !!m.effort ||
           !!childModel ||
@@ -215,49 +222,35 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
           )
         }
         addon={
-          prompt || summaryLine || m.openChildSession || progress ? (
-            <div className="space-y-1 pb-0.5">
-              {prompt ? (
-                <p
+          summaryLine || m.openChildSession || progress ? (
+            <div className="flex min-w-0 items-center gap-3 pb-0.5 text-sm">
+              {progress ? <StepBar progress={progress} live={live} /> : null}
+              {summaryLine ? (
+                <span
                   dir="auto"
-                  className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-foreground/90"
-                >
-                  {prompt}
-                </p>
-              ) : null}
-              {summaryLine || m.openChildSession || progress ? (
-                <div className="flex min-w-0 items-center gap-3 text-sm">
-                  {progress ? (
-                    <StepBar progress={progress} live={live} />
-                  ) : null}
-                  {summaryLine ? (
-                    <span
-                      dir="auto"
-                      className={cn(
-                        "min-w-0 flex-1 truncate",
-                        live ? "activity-shimmer" : "text-muted-foreground"
-                      )}
-                      title={summaryLine}
-                    >
-                      {summaryLine}
-                    </span>
-                  ) : (
-                    <span className="flex-1" />
+                  className={cn(
+                    "min-w-0 flex-1 truncate",
+                    live ? "activity-shimmer" : "text-muted-foreground"
                   )}
-                  {m.openChildSession ? (
-                    <button
-                      type="button"
-                      onClick={m.openChildSession}
-                      className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-sm text-foreground/80 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {tDelegation("openDetail")}
-                      <ArrowUpRightIcon
-                        aria-hidden="true"
-                        className="size-3.5 rtl:-scale-x-100"
-                      />
-                    </button>
-                  ) : null}
-                </div>
+                  title={summaryLine}
+                >
+                  {summaryLine}
+                </span>
+              ) : (
+                <span className="flex-1" />
+              )}
+              {m.openChildSession ? (
+                <button
+                  type="button"
+                  onClick={m.openChildSession}
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-sm text-foreground/80 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {tDelegation("openDetail")}
+                  <ArrowUpRightIcon
+                    aria-hidden="true"
+                    className="size-3.5 rtl:-scale-x-100"
+                  />
+                </button>
               ) : null}
             </div>
           ) : null
@@ -341,14 +334,17 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
           </div>
         )}
       >
-        <span className="flex min-w-0 items-baseline gap-2">
+        {/* The type and description are its title, the grey prompt after
+            them what it was handed — in whatever room the title leaves (it
+            is all in the panel); nothing runs past the line's end. */}
+        <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
           {m.subagentType ? (
             <>
               <span className="shrink-0 font-semibold text-foreground">
                 {m.subagentType}
               </span>
               {m.description ? (
-                <span className="min-w-0 truncate text-muted-foreground">
+                <span className="min-w-0 truncate text-foreground">
                   {m.description}
                 </span>
               ) : null}
@@ -369,6 +365,15 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
               dir="ltr"
             >
               #{shortAgentId(m.agentId)}
+            </span>
+          ) : null}
+          {promptLine ? (
+            <span
+              ref={promptRef}
+              dir="auto"
+              className="min-w-0 flex-1 truncate text-muted-foreground"
+            >
+              {promptLine}
             </span>
           ) : null}
         </span>

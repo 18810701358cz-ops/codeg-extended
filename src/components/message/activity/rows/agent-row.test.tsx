@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
 import {
@@ -13,6 +13,7 @@ import {
 } from "@/contexts/delegation-context"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
 import { BACKGROUND_TASK_MARKER } from "@/lib/background-agent"
+import { mockTruncateLayout } from "@/test-layout"
 import { ContentPartsRenderer } from "../../content-parts-renderer"
 
 /**
@@ -140,7 +141,8 @@ describe("sub-agent row: model and effort", () => {
           prompt: "say ok",
           effort: { level: "high" },
         }),
-        "output-available"
+        "output-available",
+        { output: "ok" }
       )
     )
     open()
@@ -160,7 +162,8 @@ describe("sub-agent row: model and effort", () => {
           model: "haiku",
           effort: "high",
         }),
-        "output-available"
+        "output-available",
+        { output: "done" }
       )
     )
     expect(header().textContent).toContain("forkprobe fork")
@@ -294,6 +297,79 @@ describe("sub-agent row: title", () => {
       )
     )
     expect(screen.queryByText(/^#/)).not.toBeInTheDocument()
+  })
+})
+
+describe("sub-agent row: the prompt it was handed", () => {
+  // Longer than the title line shows: a paragraph break included.
+  const PROMPT =
+    "Find every consumer of source_bindings.\n\nReport which ones assume inactive bindings are present."
+
+  // jsdom lays nothing out, so every node reads 0 wide — a prompt that fits.
+  let restoreMetrics: (() => void) | null = null
+  afterEach(() => {
+    restoreMetrics?.()
+    restoreMetrics = null
+  })
+
+  it("says the prompt on its title line, as one line, after the title", () => {
+    renderRow(
+      agent(
+        JSON.stringify({
+          subagent_type: "Explore",
+          description: "map the repo",
+          prompt: PROMPT,
+        }),
+        "output-available"
+      )
+    )
+    const line = within(header()).getByText(
+      "Find every consumer of source_bindings. Report which ones assume inactive bindings are present."
+    )
+    expect(line).toHaveClass("truncate", "text-muted-foreground")
+    expect(line).toHaveAttribute("dir", "auto")
+    // It takes only the room the title leaves, and nothing runs past the
+    // line's end.
+    expect(line).toHaveClass("flex-1")
+    expect(line.parentElement).toHaveClass("overflow-hidden")
+    // The type and description are the title it follows, in the darker ink.
+    expect(within(header()).getByText("map the repo")).toHaveClass(
+      "text-foreground"
+    )
+    expect(header().textContent).toBe(`Exploremap the repo${line.textContent}`)
+    // No lines of its own under the title.
+    expect(screen.getAllByText(/Find every consumer/)).toHaveLength(1)
+  })
+
+  it("has nothing to open when the prompt fits on its title line", () => {
+    renderRow(
+      agent(
+        JSON.stringify({
+          subagent_type: "Explore",
+          description: "map",
+          prompt: "List the files.",
+        }),
+        "output-available"
+      )
+    )
+    expect(hasPanel()).toBe(false)
+  })
+
+  it("opens to the whole prompt when the title line cuts it short", () => {
+    restoreMetrics = mockTruncateLayout(600, 200)
+    renderRow(
+      agent(
+        JSON.stringify({
+          subagent_type: "Explore",
+          description: "map",
+          prompt: PROMPT,
+        }),
+        "output-available"
+      )
+    )
+    open()
+    const panel = within(row().querySelector(".activity-detail") as HTMLElement)
+    expect(panel.getByText(/^Report which ones assume/)).toBeInTheDocument()
   })
 })
 

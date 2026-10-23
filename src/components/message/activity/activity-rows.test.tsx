@@ -300,13 +300,18 @@ describe("agent row", () => {
     },
   ])
 
-  it("shows the prompt and the result's first line, and opens to its own steps", () => {
+  it("shows the prompt on its title line, the result's first line under it, and opens to its own steps", () => {
     renderUi(<Round parts={parts(AGENT)} />)
     const row = rowOf("Explore")
+    const header = row.querySelector(":scope > button")!
     expect(within(row).getByText("Find binding consumers")).toBeTruthy()
     expect(
-      within(row).getAllByText("Find every consumer of source_bindings.").length
-    ).toBe(1)
+      within(row).getAllByText("Find every consumer of source_bindings.")
+    ).toEqual([
+      within(header as HTMLElement).getByText(
+        "Find every consumer of source_bindings."
+      ),
+    ])
     expect(
       within(row).getByText("Only report.py assumes inactive bindings.")
     ).toBeTruthy()
