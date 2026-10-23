@@ -156,15 +156,24 @@ export function ActivityRow({
 /**
  * The disclosure chevron after a row's label. It always takes its space and
  * only shows on hover / focus — or while the row is open — so nothing shifts
- * when it appears. Focus is the row's own, or a control's inside it (the
- * activity header's label).
+ * when it appears. Focus is the row's own, or a control's inside it. `always`
+ * keeps it in view folded too (the activity header's).
  */
-export function RowChevron({ open }: { open: boolean }) {
+export function RowChevron({
+  open,
+  always = false,
+}: {
+  open: boolean
+  always?: boolean
+}) {
   return (
     <ChevronRightIcon
       aria-hidden="true"
       className={cn(
-        "mt-[0.3125rem] size-3.5 shrink-0 text-muted-foreground opacity-0 transition-[opacity,rotate] group-hover/row:opacity-100 group-focus-visible/row:opacity-100 group-has-[:focus-visible]/row:opacity-100 rtl:-scale-x-100",
+        "mt-[0.3125rem] size-3.5 shrink-0 text-muted-foreground transition-[opacity,rotate] rtl:-scale-x-100",
+        always
+          ? "opacity-100"
+          : "opacity-0 group-hover/row:opacity-100 group-focus-visible/row:opacity-100 group-has-[:focus-visible]/row:opacity-100",
         // Mirrored under RTL, so it turns the other way to point down.
         open && "rotate-90 opacity-100 rtl:-rotate-90"
       )}

@@ -179,7 +179,7 @@ export const ActivityHeader = memo(function ActivityHeader({
             </span>
           ) : null}
         </span>
-        {toggle ? <RowChevron open={toggle.open} /> : null}
+        {toggle ? <RowChevron open={toggle.open} always /> : null}
       </span>
       <span
         aria-hidden="true"

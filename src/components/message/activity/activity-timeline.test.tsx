@@ -218,8 +218,9 @@ describe("activity timeline: the reference turn", () => {
     expect(screen.getByText("Explored")).toBeTruthy()
   })
 
-  it("draws the header's chevron after its text, turned while open", () => {
-    // Like a row's: after the summary, pointing down while the process shows.
+  it("draws the header's chevron after its text, always in view, turned while open", () => {
+    // Like a row's: after the summary, pointing down while the process shows —
+    // but in view folded too, not only on hover.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     const summary = screen.getByText(/14 steps/)
     const header = screen.getByText("3m 34s").parentElement!
@@ -231,6 +232,7 @@ describe("activity timeline: the reference turn", () => {
     expect(chevron.getAttribute("class")).toMatch(/\brotate-90\b/)
     fireEvent.click(foldControl())
     expect(chevron.getAttribute("class")).not.toMatch(/\brotate-90\b/)
+    expect(chevron.getAttribute("class")).not.toMatch(/\bopacity-0\b/)
   })
 
   it("folds and unfolds from anywhere on the header", () => {
