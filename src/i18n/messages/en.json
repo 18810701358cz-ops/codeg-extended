@@ -3921,6 +3921,7 @@
           "editedFiles": "{count, plural, one {Edited # file} other {Edited # files}}",
           "script": "{count, plural, one {#-line script} other {#-line script}}",
           "moreLines": "{count, plural, one {+# line} other {+# lines}}",
+          "command": "Command",
           "codexScript": "Script",
           "background": "background · #{id}",
           "backgroundShort": "background",

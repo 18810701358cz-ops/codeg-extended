@@ -3921,6 +3921,7 @@
           "editedFiles": "파일 {count}개 편집",
           "script": "{count}줄 스크립트",
           "moreLines": "+{count}줄",
+          "command": "명령",
           "codexScript": "스크립트",
           "background": "백그라운드 · #{id}",
           "backgroundShort": "백그라운드",

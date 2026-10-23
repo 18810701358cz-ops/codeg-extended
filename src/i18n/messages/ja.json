@@ -3921,6 +3921,7 @@
           "editedFiles": "{count} 件のファイルを編集",
           "script": "{count} 行のスクリプト",
           "moreLines": "+{count} 行",
+          "command": "コマンド",
           "codexScript": "スクリプト",
           "background": "バックグラウンド · #{id}",
           "backgroundShort": "バックグラウンド",

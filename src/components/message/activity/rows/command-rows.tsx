@@ -105,9 +105,10 @@ function useCommandOutput(step: ToolStep): CommandOutput | null {
   }, [part.output, part.errorText, tool.background, tool.status, t])
 }
 
-/** What a command row says: the agent's description of the command when it
- *  gave one, else the command line — `$ cmd`, a heredoc's opener, a session
- *  verb. `commandRef` measures whether the line cuts the command short. */
+/** What a command row says: a fixed "Command", then the agent's description
+ *  of the command when it gave one, else the command line (a heredoc's opener
+ *  for a heredoc); codex's session polls and scripts lead with their own verb.
+ *  `commandRef` measures whether the line cuts the command short. */
 function CommandLabel({
   step,
   commandRef,
@@ -176,20 +177,22 @@ function CommandLabel({
   const firstLine = heredoc ? heredoc.head : command.display.split("\n")[0]!
   const extraLines = heredoc ? 0 : command.lineCount - 1
   const live = step.tool.status === "running" || step.tool.status === "pending"
-  // One line: the title gives way first (the panel and the tooltip have it
-  // whole), its notes keep their room, and nothing runs past the line's end.
-  // A description is words, not a command: no prompt sign, and nothing about
-  // the command's lines — the command is atop the panel.
+  // One line: the label, then the title, which gives way first (the panel and
+  // the tooltip have it whole); its notes keep their room, and nothing runs
+  // past the line's end. A description is words, in the label's light ink,
+  // with nothing about the command's lines — the command is atop the panel.
   return (
     <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
+      <span
+        className={cn(
+          "shrink-0 font-medium",
+          live ? "activity-shimmer" : "text-muted-foreground"
+        )}
+      >
+        {t("row.command")}
+      </span>
       {command.description ? (
-        <span
-          dir="auto"
-          className={cn(
-            "min-w-0 truncate",
-            live ? "activity-shimmer" : "text-foreground"
-          )}
-        >
+        <span dir="auto" className="min-w-0 truncate text-muted-foreground">
           {command.description}
         </span>
       ) : (
@@ -199,7 +202,6 @@ function CommandLabel({
             className="min-w-0 truncate font-mono text-[0.8125rem]"
             dir="ltr"
           >
-            <span className="select-none text-muted-foreground">$ </span>
             {firstLine}
           </span>
           {heredoc ? (
@@ -366,13 +368,13 @@ function LiveTail({ text }: { text: string }) {
 }
 
 /**
- * `Run web unit tests   exit 1` — a shell command (or codex's session polls
- * and scripts). The row says what the command is for, in the agent's own
- * description of it, and the panel opens on the command itself; with no
- * description the row shows the command, `$ pnpm --filter web test`. A
- * failure opens itself — output anchored at the end, where the error is — and
- * stays open; a running command stays folded with its last lines showing
- * beneath.
+ * `Command  Run web unit tests   exit 1` — a shell command (or codex's
+ * session polls and scripts). The row says what the command is for, in the
+ * agent's own description of it, and the panel opens on the command itself;
+ * with no description the row shows the command, `Command  pnpm --filter web
+ * test`. A failure opens itself — output anchored at the end, where the error
+ * is — and stays open; a running command stays folded with its last lines
+ * showing beneath.
  */
 export const CommandRow = memo(function CommandRow({
   step: given,

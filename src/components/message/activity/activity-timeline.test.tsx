@@ -385,9 +385,10 @@ describe("activity timeline: a live turn", () => {
     const row = rowOf("Run web unit tests")
     expect(row.getAttribute("data-status")).toBe("running")
     expect(within(row).getByText(/lib\/state\.test\.ts/)).toBeTruthy()
-    // Its title shimmers while it runs, as a running row's verb does.
+    // Its label shimmers while it runs, as a running row's verb does.
+    expect(within(row).getByText("Command")).toHaveClass("activity-shimmer")
     expect(within(row).getByText("Run web unit tests")).toHaveClass(
-      "activity-shimmer"
+      "text-muted-foreground"
     )
   })
 })
@@ -485,7 +486,9 @@ describe("activity timeline: commands", () => {
     renderSettled(partsOf(RUN))
     const row = screen.getByTitle(LONG).closest("li")!
     const line = row.querySelector(":scope > button .truncate")!
-    expect(line.textContent).toBe(`$ ${LONG}`)
+    // After the fixed label, which stands for the prompt sign on the row.
+    expect(line.textContent).toBe(LONG)
+    expect(line.previousElementSibling?.textContent).toBe("Command")
     expect(line.parentElement).toHaveClass("overflow-hidden")
     fireEvent.click(within(row).getAllByRole("button")[0]!)
     const panel = row.querySelector(".activity-detail")!
@@ -502,9 +505,10 @@ describe("activity timeline: commands", () => {
   })
 
   it("says what a command is for when the agent did, and opens on the command", () => {
-    // The agent's description is the row's title — words, not a command, so
-    // no prompt sign and no count of the command's lines — and the command
-    // takes the description's place atop the panel, whole.
+    // After the fixed label, the agent's description is the row's title, in
+    // the label's light ink — words, not a command, so no count of the
+    // command's lines — and the command takes the description's place atop
+    // the panel, whole.
     const DESCRIBED: MessageTurn = {
       id: "turn-d",
       role: "assistant",
@@ -521,7 +525,13 @@ describe("activity timeline: commands", () => {
     renderSettled(partsOf(DESCRIBED))
     const row = rowOf("Install and run the web tests")
     const header = within(row).getAllByRole("button")[0]!
-    expect(header.textContent).toBe("Install and run the web tests")
+    expect(header.textContent).toBe("CommandInstall and run the web tests")
+    expect(within(header).getByText("Command")).toHaveClass(
+      "text-muted-foreground"
+    )
+    expect(
+      within(header).getByText("Install and run the web tests")
+    ).toHaveClass("text-muted-foreground")
     expect(header).toHaveAttribute("title", "Install and run the web tests")
     fireEvent.click(header)
     const panel = row.querySelector(".activity-detail") as HTMLElement

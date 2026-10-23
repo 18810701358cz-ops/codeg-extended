@@ -3921,6 +3921,7 @@
           "editedFiles": "{count, plural, zero {لم يُعدَّل أي ملف} one {عدّل ملفاً واحداً} two {عدّل ملفين} few {عدّل # ملفات} many {عدّل # ملفاً} other {عدّل # ملف}}",
           "script": "{count, plural, zero {نص برمجي بلا أسطر} one {نص برمجي من سطر واحد} two {نص برمجي من سطرين} few {نص برمجي من # أسطر} many {نص برمجي من # سطراً} other {نص برمجي من # سطر}}",
           "moreLines": "{count, plural, zero {+0 سطر} one {+سطر واحد} two {+سطران} few {+# أسطر} many {+# سطراً} other {+# سطر}}",
+          "command": "أمر",
           "codexScript": "نص برمجي",
           "background": "في الخلفية · \u2066#{id}\u2069",
           "backgroundShort": "في الخلفية",

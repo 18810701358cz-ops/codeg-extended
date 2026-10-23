@@ -3921,6 +3921,7 @@
           "editedFiles": "编辑了 {count} 个文件",
           "script": "{count} 行脚本",
           "moreLines": "+{count} 行",
+          "command": "命令",
           "codexScript": "脚本",
           "background": "后台 · #{id}",
           "backgroundShort": "后台",

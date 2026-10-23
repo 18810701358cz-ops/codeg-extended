@@ -3921,6 +3921,7 @@
           "editedFiles": "編輯了 {count} 個檔案",
           "script": "{count} 行指令稿",
           "moreLines": "+{count} 行",
+          "command": "指令",
           "codexScript": "指令稿",
           "background": "背景 · #{id}",
           "backgroundShort": "背景",
