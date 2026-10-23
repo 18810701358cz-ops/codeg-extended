@@ -410,6 +410,39 @@ describe("activity timeline: where the rail ends", () => {
     expect(list()).toHaveAttribute("data-end", "reached")
   })
 
+  it("levels the end marks with the line the list measures, else a footer's", () => {
+    // Each mark is centred on `--activity-end-line` (use-end-mark-line.ts),
+    // half its height below it; unmeasured, on a panel footer's, a group
+    // member's or a line of prose's centre: 0.125rem of padding under a 1.5rem
+    // line, 0.875rem above the row's bottom edge.
+    const stylesheet = postcss.parse(
+      readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8")
+    )
+    const decl = (selector: string, prop: string) => {
+      let value: string | undefined
+      stylesheet.walkRules((rule) => {
+        if (rule.selector.replace(/\s+/g, " ") !== selector) return
+        rule.walkDecls(prop, (d) => {
+          value = d.value
+        })
+      })
+      return value
+    }
+    // The main mark: a 0.5rem ring at the bottom of the segment's box.
+    expect(
+      decl(
+        '.activity-timeline[data-end="reached"] > .activity-item:last-child::before',
+        "bottom"
+      )
+    ).toBe("calc(var(--activity-end-line, 0.875rem) - 0.25rem)")
+    const child =
+      '.activity-children[data-end="reached"] > .activity-child:last-child[data-body]::after'
+    expect(decl(child, "height")).toBe("0.375rem")
+    expect(decl(child, "bottom")).toBe(
+      "calc(var(--activity-end-line, 0.875rem) - 0.1875rem)"
+    )
+  })
+
   it("holds the end mark back while the reply runs", () => {
     renderTurn(
       <CurrentRound

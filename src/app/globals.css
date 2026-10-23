@@ -1923,7 +1923,7 @@
    — the rail stays transparent over a workspace background image. Pure CSS,
    no measuring: the last row has a segment only beside a body under its line
    (`data-body`, set by the row), ending — once the list is done (`data-end`,
-   set by the list) — on an end mark at the foot of that body.
+   set by the list) — on an end mark level with that body's last line.
 
    Geometry (rem, so it follows the app zoom): a row's first line is 1.5rem
    tall with 0.125rem of padding above it, so its centre — and the ring's — sits
@@ -1995,10 +1995,15 @@
 
 /* Once the list is done (`data-end="reached"`: the reply, or the sub-agent,
    has finished) that segment ends on the end mark, a 0.5rem ring around a dot
-   at the foot of the body — never below it. The mark is drawn in the
-   segment's own box (at its bottom, the line above it stopping 0.125rem
-   short), so a row with no body under its line shows neither. */
+   level with the last line beside it. The list measures where that line is
+   (`--activity-end-line`, use-end-mark-line.ts: a card or a panel with no
+   footer ends higher); unmeasured, the mark takes a panel footer's, a group
+   member's or a line of prose's — 0.875rem above the row's bottom edge. The
+   mark is drawn in the segment's own box (at its bottom, the line above it
+   stopping 0.125rem short), so a row with no body under its line — or a
+   one-line note, whose dot already sits on that line — shows neither. */
 .activity-timeline[data-end="reached"] > .activity-item:last-child::before {
+  bottom: calc(var(--activity-end-line, 0.875rem) - 0.25rem);
   inset-inline-start: calc(0.75rem - 0.25rem);
   width: 0.5rem;
   background:
@@ -2065,15 +2070,17 @@
   content: none;
 }
 
+/* A finished group's mark sits level with its last member's last line, the
+   same way: measured, else a panel footer's 0.875rem above the bottom. */
 .activity-children[data-end="reached"] > .activity-child:last-child::before {
-  bottom: 0.6875rem;
+  bottom: calc(var(--activity-end-line, 0.875rem) + 0.3125rem);
 }
 
 .activity-children[data-end="reached"]
   > .activity-child:last-child[data-body]::after {
   content: "";
   position: absolute;
-  bottom: 0.1875rem;
+  bottom: calc(var(--activity-end-line, 0.875rem) - 0.1875rem);
   inset-inline-start: calc(0.5rem - 0.1875rem);
   width: 0.375rem;
   height: 0.375rem;

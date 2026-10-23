@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useMemo, useState, type ReactNode } from "react"
+import { memo, useMemo, useRef, useState, type ReactNode } from "react"
 import { useTranslations } from "next-intl"
 
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
@@ -32,6 +32,7 @@ import { GenericRow, ToolResultRow } from "./rows/generic-row"
 import { HostedRow, NoteRow } from "./rows/hosted-row"
 import { McpRow } from "./rows/mcp-row"
 import { ThoughtRow } from "./rows/thought-row"
+import { useEndMarkLine } from "./use-end-mark-line"
 import { useLiveToolStep } from "./use-live-step"
 
 /**
@@ -79,6 +80,11 @@ export const ActivityTimeline = memo(function ActivityTimeline({
   // virtualization keeps working: this only bounds one row's own DOM.
   const [revealed, setRevealed] = useState(0)
   const items = model.items
+  // Done, it ends on its end mark, level with its last row's last line — once
+  // there is a list to end (none is drawn without rows).
+  const reached = !pinnedOnly && !isStreaming
+  const listRef = useRef<HTMLOListElement>(null)
+  useEndMarkLine(listRef, reached && items.length > 0)
   const long = items.length > LONG_TIMELINE_ROWS && !pinnedOnly
   const hidden = long
     ? Math.max(
@@ -93,12 +99,13 @@ export const ActivityTimeline = memo(function ActivityTimeline({
   return (
     <ActivityRenderProvider value={context}>
       <ol
+        ref={listRef}
         role="list"
         className={cn("activity-timeline empty:hidden", pinnedOnly && "mt-2")}
         // Its end mark, once its steps are done — the reply's, or a
         // sub-agent's (globals.css); the rows still running under a folded
         // reply are no list of steps to end.
-        data-end={pinnedOnly ? undefined : isStreaming ? "pending" : "reached"}
+        data-end={pinnedOnly ? undefined : reached ? "reached" : "pending"}
       >
         {head.map((item) => (
           <ActivityItemView key={item.key} item={item} />

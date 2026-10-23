@@ -16,7 +16,7 @@ import type { StepStatus } from "@/lib/activity/types"
 import { describeStdinChars } from "@/lib/shell-session-tool"
 import { cn } from "@/lib/utils"
 import { useActivityRender } from "../activity-context"
-import { ActivityRow } from "../activity-row"
+import { ActivityMembers, ActivityRow } from "../activity-row"
 import { CopyAction, DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { RailIcon } from "../rail-icon"
@@ -529,21 +529,17 @@ export const CommandGroupRow = memo(function CommandGroupRow({
       }
       addon={
         liveStep ? (
-          <ul role="list" className="activity-children">
+          <ActivityMembers>
             <CommandRow step={liveStep} inGroup />
-          </ul>
+          </ActivityMembers>
         ) : null
       }
       detail={() => (
-        <ul
-          role="list"
-          className="activity-children"
-          data-end={live || awaited ? "pending" : "reached"}
-        >
+        <ActivityMembers end={live || awaited ? "pending" : "reached"}>
           {steps.map((step) => (
             <CommandRow key={step.key} step={step} inGroup />
           ))}
-        </ul>
+        </ActivityMembers>
       )}
     >
       <span

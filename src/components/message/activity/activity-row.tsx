@@ -1,12 +1,13 @@
 "use client"
 
-import { useId, type ReactNode } from "react"
+import { useId, useRef, type ReactNode } from "react"
 import { ChevronRightIcon } from "lucide-react"
 
 import type { ToolApproval } from "@/lib/activity/approval"
 import type { StepStatus } from "@/lib/activity/types"
 import { cn } from "@/lib/utils"
 import { ApprovalChip, showsApproval } from "./approval-chip"
+import { useEndMarkLine } from "./use-end-mark-line"
 
 const MARKER_POSITION = {
   main: {
@@ -180,6 +181,28 @@ export function RowChevron({
         open && "rotate-90 opacity-100 rtl:-rotate-90"
       )}
     />
+  )
+}
+
+/**
+ * An open group's members, on their own dashed rail. `end` says whether the
+ * group is done (`reached`: the members end on their mark, level with the
+ * last member's last line) or still going; a folded group's live member
+ * under its header has neither.
+ */
+export function ActivityMembers({
+  end,
+  children,
+}: {
+  end?: "pending" | "reached"
+  children: ReactNode
+}) {
+  const listRef = useRef<HTMLUListElement>(null)
+  useEndMarkLine(listRef, end === "reached")
+  return (
+    <ul ref={listRef} role="list" className="activity-children" data-end={end}>
+      {children}
+    </ul>
   )
 }
 

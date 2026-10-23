@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils"
 import { ReadImagePreview } from "../../read-image-preview"
 import { SearchResultsOutput } from "../../search-results-output"
 import { useActivityRender } from "../activity-context"
-import { ActivityRow } from "../activity-row"
+import { ActivityMembers, ActivityRow } from "../activity-row"
 import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { FileHeader } from "../file-header"
@@ -146,9 +146,9 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
       onExpandedChange={setOpen}
       addon={
         liveStep ? (
-          <ul role="list" className="activity-children">
+          <ActivityMembers>
             <ExploreChildRow step={liveStep} />
-          </ul>
+          </ActivityMembers>
         ) : null
       }
       trailing={
@@ -164,15 +164,11 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
         ) : null
       }
       detail={() => (
-        <ul
-          role="list"
-          className="activity-children"
-          data-end={live || awaited ? "pending" : "reached"}
-        >
+        <ActivityMembers end={live || awaited ? "pending" : "reached"}>
           {steps.map((step) => (
             <ExploreChildRow key={step.key} step={step} />
           ))}
-        </ul>
+        </ActivityMembers>
       )}
     >
       <span className="flex min-w-0 items-baseline gap-2">
