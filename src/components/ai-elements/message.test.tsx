@@ -46,7 +46,25 @@ vi.mock("@/components/ai-elements/link-safety", () => ({
   useStreamdownLinkSafety: () => ({ enabled: false }),
 }))
 
-import { MessageResponse, normalizeMathDelimiters } from "./message"
+import {
+  Message,
+  MessageContent,
+  MessageResponse,
+  normalizeMathDelimiters,
+} from "./message"
+
+describe("MessageContent", () => {
+  it("rounds a user's bubble into a capsule", () => {
+    render(
+      <Message from="user">
+        <MessageContent>Run the tests</MessageContent>
+      </Message>
+    )
+    const bubble = screen.getByText("Run the tests")
+    expect(bubble).toHaveClass("group-[.is-user]:rounded-3xl")
+    expect(bubble).not.toHaveClass("group-[.is-user]:rounded-lg")
+  })
+})
 
 describe("MessageResponse", () => {
   it("applies marker styles so ordered Markdown lists render as lists", () => {

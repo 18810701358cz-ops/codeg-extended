@@ -77,8 +77,11 @@ export const MessageContent = ({
       // with a hairline ring (fixed `--ws-msg-alpha` + backdrop blur — see
       // globals.css, scoped to `.is-user`) so it stays legible over a busy
       // background. Off / assistant messages: inert (no base rule, no `.is-user`
-      // ancestor).
-      "group-[.is-user]:ml-auto group-[.is-user]:w-fit group-[.is-user]:max-w-full group-[.is-user]:rounded-lg group-[.is-user]:bg-secondary group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground ws-msg-secondary",
+      // ancestor). Its radius is half a one-line bubble's height at the
+      // default `--radius` (2.2 × 0.625rem against 0.75rem + 1.25rem +
+      // 0.75rem), so a line is a capsule and a longer message keeps the same
+      // round corners.
+      "group-[.is-user]:ml-auto group-[.is-user]:w-fit group-[.is-user]:max-w-full group-[.is-user]:rounded-3xl group-[.is-user]:bg-secondary group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground ws-msg-secondary",
       "group-[.is-assistant]:w-full group-[.is-assistant]:text-foreground",
       className
     )}
