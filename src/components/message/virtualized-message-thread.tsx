@@ -2,7 +2,11 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties, ReactNode, RefObject } from "react"
-import { Virtualizer, type VirtualizerHandle } from "virtua"
+import {
+  Virtualizer,
+  type CustomContainerComponentProps,
+  type VirtualizerHandle,
+} from "virtua"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { Loader2 } from "lucide-react"
 import {
@@ -33,6 +37,26 @@ const VIEWPORT_TOP_PROBE_PX = 4
 
 /** Slack (px) under which the viewport counts as scrolled to the end. */
 const VIEWPORT_END_SLACK_PX = 2
+
+/**
+ * The virtualizer's container, without the `pointer-events: none` virtua puts
+ * on it while the list scrolls. The property is inherited, so turning it on as
+ * a scroll starts and off as it ends restyles everything the thread has drawn —
+ * in a reply with an opened timeline of hundreds of rows, a frame of hundreds
+ * of milliseconds each way. What it buys — rows under the pointer neither
+ * hover nor take a click while the list moves — is what any page does anyway.
+ */
+function ThreadContainer({
+  style,
+  children,
+  ref,
+}: CustomContainerComponentProps) {
+  return (
+    <div ref={ref} style={{ ...style, pointerEvents: undefined }}>
+      {children}
+    </div>
+  )
+}
 
 /** What `onViewportTopChange` reports. */
 export interface ViewportTop {
@@ -430,6 +454,7 @@ function VirtualizedMessageThreadImpl<T>({
         ) : (
           <Virtualizer
             ref={virtualizerHandleRef}
+            as={ThreadContainer}
             scrollRef={scrollRef as unknown as RefObject<HTMLElement | null>}
             itemSize={itemSize}
             bufferSize={bufferSize}
