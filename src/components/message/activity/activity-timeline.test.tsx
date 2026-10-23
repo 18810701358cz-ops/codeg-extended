@@ -502,14 +502,15 @@ describe("activity timeline: where the rail ends", () => {
       <CurrentRound parts={partsOf(LIVE, true, ["g2"])} completed={false} />
     )
     const group = rowOf("Running 2 commands")
-    // Folded, the running member shows under the header: one row, no list.
-    expect(group.querySelector(".activity-children")).not.toHaveAttribute(
-      "data-end"
-    )
-    fireEvent.click(within(group).getAllByRole("button")[0]!)
+    // Open while the reply is written, its list still going: no mark yet.
     expect(group.querySelector(".activity-children")).toHaveAttribute(
       "data-end",
       "pending"
+    )
+    // Folded, the running member shows under the header: one row, no list.
+    fireEvent.click(within(group).getAllByRole("button")[0]!)
+    expect(group.querySelector(".activity-children")).not.toHaveAttribute(
+      "data-end"
     )
   })
 })

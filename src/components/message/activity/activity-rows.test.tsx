@@ -507,18 +507,58 @@ describe("approval chips", () => {
   })
 })
 
-describe("a folded group waiting on the user", () => {
-  it("shows the member that needs the user under its header", () => {
-    const LIVE = turn([
-      toolUse("c1", "Bash", { command: "pnpm lint" }),
-      toolResult("c1", "ok"),
-      toolUse("c2", "Bash", { command: "rm -rf build" }),
-    ])
-    renderUi(
-      <Round parts={parts(LIVE, true, ["c2"])} completed={false} />,
-      "c2"
+describe("a command group in a reply being written", () => {
+  const LIVE = turn([
+    toolUse("c1", "Bash", { command: "pnpm lint" }),
+    toolResult("c1", "ok"),
+    toolUse("c2", "Bash", { command: "pnpm test\npnpm build" }),
+    toolResult("c2", "ok"),
+    toolUse("c3", "Bash", { command: "rm -rf build" }),
+  ])
+
+  it("lists every command, one row each, and folds once the reply is done", () => {
+    const { rerender } = renderUi(
+      <Round parts={parts(LIVE, true, ["c3"])} completed={false} />
     )
-    const group = rowOf("Running 2 commands")
+    const group = rowOf("Running 3 commands")
+    const members = group.querySelectorAll(".activity-child")
+    expect([...members].map((m) => m.getAttribute("data-step-key"))).toEqual([
+      "tool:c1",
+      "tool:c2",
+      "tool:c3",
+    ])
+    expect(within(rowOf("pnpm lint")).getByText("Command")).toBeTruthy()
+    expect(rowOf("pnpm test").getAttribute("data-status")).toBe("succeeded")
+    expect(rowOf("rm -rf build").getAttribute("data-status")).toBe("running")
+
+    rerender(withProviders(<Round parts={parts(LIVE)} />, null))
+    expect(
+      screen.getByRole("button", { name: /Ran 3 commands/ })
+    ).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByText("pnpm lint")).toBeNull()
+  })
+
+  it("stays as the reader left it, open or folded", () => {
+    const { rerender } = renderUi(
+      <Round parts={parts(LIVE, true, ["c3"])} completed={false} />
+    )
+    // Folded by hand while it runs, it stays folded.
+    fireEvent.click(screen.getByRole("button", { name: /Running 3 commands/ }))
+    expect(screen.queryByText("pnpm lint")).toBeNull()
+    // Opened again, it stays open once the reply is done.
+    fireEvent.click(screen.getByRole("button", { name: /Running 3 commands/ }))
+    rerender(withProviders(<Round parts={parts(LIVE)} />, null))
+    expect(screen.getByText("pnpm lint")).toBeTruthy()
+  })
+
+  it("folded, shows the member that needs the user under its header", () => {
+    renderUi(
+      <Round parts={parts(LIVE, true, ["c3"])} completed={false} />,
+      "c3"
+    )
+    const header = screen.getByRole("button", { name: /Running 3 commands/ })
+    fireEvent.click(header)
+    const group = rowOf("Running 3 commands")
     expect(group.getAttribute("data-status")).toBe("awaiting")
     const member = rowOf("rm -rf build")
     expect(member.getAttribute("data-status")).toBe("awaiting")

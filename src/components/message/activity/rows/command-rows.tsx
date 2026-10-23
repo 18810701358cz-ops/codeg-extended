@@ -458,8 +458,10 @@ export const CommandRow = memo(function CommandRow({
 })
 
 /**
- * "Ran 2 commands · all passed". Folded unless a member failed without being
- * redone; while folded, a member waiting on the user or running shows under
+ * "Ran 2 commands · all passed". While the reply is being written it lists its
+ * commands, one row each, as they run — its header names none of them; once
+ * the reply is done it folds, unless a member failed without being redone.
+ * Folded while live, the member waiting on the user or running shows under
  * the header.
  */
 export const CommandGroupRow = memo(function CommandGroupRow({
@@ -473,14 +475,14 @@ export const CommandGroupRow = memo(function CommandGroupRow({
 }) {
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
-  const { recoveredKeys } = useActivityRender()
+  const { recoveredKeys, isStreaming } = useActivityRender()
   const failures = steps.filter(
     (s) => s.tool.status === "failed" || s.tool.status === "rejected"
   )
   const unrecovered = failures.some((s) => !recoveredKeys.has(s.key))
   const awaited = useAwaitedStep(steps)
   const [open, setOpen] = useDisclosure(`group:${groupKey}`, {
-    defaultOpen: false,
+    defaultOpen: isStreaming,
     force: unrecovered,
   })
   const status = awaited ? "awaiting" : given
