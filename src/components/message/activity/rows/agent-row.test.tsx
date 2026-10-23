@@ -208,6 +208,8 @@ describe("sub-agent row: title", () => {
     )
     expect(header().textContent).toContain("Exploremap the repo")
     expect(screen.queryByText(/Sub-agent starting/)).not.toBeInTheDocument()
+    // The agent's words follow their own direction under an RTL UI.
+    expect(screen.getByText("map the repo")).toHaveAttribute("dir", "auto")
   })
 
   it("shows the description alone when the type hasn't streamed in yet", () => {

@@ -197,7 +197,7 @@ function BackgroundTaskRowView({
           </span>
         ) : null}
         {detail ? (
-          <span className="min-w-0 truncate text-muted-foreground">
+          <span className="min-w-0 truncate text-muted-foreground" dir="auto">
             {detail}
           </span>
         ) : null}

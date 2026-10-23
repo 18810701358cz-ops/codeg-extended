@@ -101,7 +101,9 @@ export const GenericRow = memo(function GenericRow({
               {t("row.todos")}
             </span>
             {tool.target ? (
-              <span className="min-w-0 truncate">{tool.target.text}</span>
+              <span className="min-w-0 truncate" dir="auto">
+                {tool.target.text}
+              </span>
             ) : null}
             {tool.detail ? (
               <span className="shrink-0 font-mono text-xs text-muted-foreground">
@@ -117,7 +119,10 @@ export const GenericRow = memo(function GenericRow({
               {t("row.completion")}
             </span>
             {tool.target ? (
-              <span className="min-w-0 truncate text-muted-foreground">
+              <span
+                className="min-w-0 truncate text-muted-foreground"
+                dir="auto"
+              >
                 {tool.target.text}
               </span>
             ) : null}
@@ -135,7 +140,10 @@ export const GenericRow = memo(function GenericRow({
               {tool.target?.text ?? tool.toolName}
             </span>
             {tool.detail ? (
-              <span className="min-w-0 truncate text-muted-foreground">
+              <span
+                className="min-w-0 truncate text-muted-foreground"
+                dir="auto"
+              >
                 {tool.detail}
               </span>
             ) : null}

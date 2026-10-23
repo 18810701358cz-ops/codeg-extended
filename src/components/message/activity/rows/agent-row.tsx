@@ -318,13 +318,14 @@ export const AgentRow = memo(function AgentRow({ step }: { step: ToolStep }) {
                 {m.subagentType}
               </span>
               {m.description ? (
-                <span className="min-w-0 truncate text-foreground">
+                <span className="min-w-0 truncate text-foreground" dir="auto">
                   {m.description}
                 </span>
               ) : null}
             </>
           ) : (
             <span
+              dir="auto"
               className={cn(
                 "min-w-0 truncate font-semibold",
                 live && !m.description ? "activity-shimmer" : "text-foreground"

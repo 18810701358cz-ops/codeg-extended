@@ -293,6 +293,20 @@ describe("activity timeline: the reference turn", () => {
     expect(child.className).toMatch(/\bleading-6\b/)
   })
 
+  it("lets the agent's own words on a row take their own direction", () => {
+    // Under an Arabic UI, English the agent wrote would inherit right to left
+    // and be cut at its start; it follows its own direction instead.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    for (const text of [
+      "Summarizing log status",
+      "HVAC-212 · Inactive bindings leak into report",
+      "Regenerate audit report · report.md written",
+      "Commit the fix",
+    ]) {
+      expect(screen.getByText(text)).toHaveAttribute("dir", "auto")
+    }
+  })
+
   it("spaces a group's members like the rows around the group", () => {
     // The same room above and below the line as a main row's header, and the
     // same gap between rows, so an open group keeps the timeline's rhythm

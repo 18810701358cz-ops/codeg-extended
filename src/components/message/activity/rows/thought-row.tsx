@@ -74,7 +74,7 @@ export const ThoughtRow = memo(function ThoughtRow({
           {step.streaming ? t("row.thinking") : t("row.thought")}
         </span>
         {step.title ? (
-          <span className="min-w-0 truncate text-muted-foreground">
+          <span className="min-w-0 truncate text-muted-foreground" dir="auto">
             {step.title}
           </span>
         ) : null}
