@@ -51,6 +51,35 @@ describe("CollapsibleUserMessage", () => {
     expect(content).toHaveClass("max-h-60", "collapsed-content-fade")
   })
 
+  it("comes back with its toggle when it mounts again", () => {
+    // The thread is virtualized: scrolled away and back, a message mounts
+    // again, and drawing it without its toggle until it is measured would
+    // change its height under the list.
+    const parts: AdaptedContentPart[] = [{ type: "text", text: "a long ask" }]
+    restoreMetrics = mockClampLayout(600, 240)
+    const first = renderWithIntl(<CollapsibleUserMessage parts={parts} />)
+    expect(screen.getByTestId("collapsible-user-message-toggle")).toBeTruthy()
+    first.unmount()
+    restoreMetrics()
+    // No layout this time (the observer has not reported yet).
+    restoreMetrics = null
+
+    renderWithIntl(<CollapsibleUserMessage parts={parts} />)
+    expect(screen.getByTestId("collapsible-user-message-toggle")).toBeTruthy()
+    expect(screen.getByTestId("collapsible-user-message-content")).toHaveClass(
+      "collapsed-content-fade"
+    )
+  })
+
+  it("starts other content unmeasured", () => {
+    renderWithIntl(
+      <CollapsibleUserMessage parts={[{ type: "text", text: "another" }]} />
+    )
+    expect(
+      screen.queryByTestId("collapsible-user-message-toggle")
+    ).not.toBeInTheDocument()
+  })
+
   it("expands to Show less on click and removes the clamp", () => {
     restoreMetrics = mockClampLayout(600, 240)
 
