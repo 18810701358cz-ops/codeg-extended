@@ -70,7 +70,7 @@ export function RailIcon({
       <span
         aria-hidden="true"
         className={cn(
-          "absolute inset-0 rounded-full border-[1.5px]",
+          "absolute inset-0 rounded-full border-[0.5px]",
           RING_CLASS[status],
           // `animate-spin` survives the "chat animations off" switch on
           // purpose (see globals.css): a turning ring is the one cue left
@@ -108,7 +108,7 @@ export function WorkingSpinner() {
   return (
     <span
       aria-hidden="true"
-      className="absolute start-1 top-1 size-4 animate-spin rounded-full border-[1.5px] border-activity-ring border-t-transparent motion-reduce:animate-none"
+      className="absolute start-1 top-1 size-4 animate-spin rounded-full border-[0.5px] border-activity-ring border-t-transparent motion-reduce:animate-none"
     />
   )
 }
