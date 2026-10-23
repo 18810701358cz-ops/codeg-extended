@@ -574,6 +574,55 @@ describe("delegation row: the running acknowledgement", () => {
     expect(within(row()).getByText("running")).toBeInTheDocument()
     expectOpens(909)
   })
+
+  it("reads how it ended off a later check when nothing live or stored says", () => {
+    // Reopened with the child's record gone: no binding, no meta — only the
+    // ack and the agent's own check on the task.
+    const check = (report: Record<string, unknown>): AdaptedContentPart => ({
+      type: "delegation-status-group",
+      polls: [
+        {
+          type: "tool-call",
+          toolCallId: "poll-1",
+          toolName: "mcp__codeg-mcp__get_delegation_status",
+          input: JSON.stringify({ task_ids: ["t1"] }),
+          state: "output-available",
+          output: JSON.stringify({ task_id: "t1", ...report }),
+        },
+      ],
+    })
+    const call = delegation({
+      input,
+      output: ackOutput,
+      state: "output-available",
+    })
+    const view = render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <ContentPartsRenderer
+          parts={[
+            call,
+            check({ status: "completed", text: "All four checks passed." }),
+          ]}
+          role="assistant"
+        />
+      </NextIntlClientProvider>
+    )
+    expect(within(row()).getByText(/^done/)).toBeInTheDocument()
+    expect(within(row()).queryByText("running")).toBeNull()
+    expect(within(row()).getByText("All four checks passed.")).toBeTruthy()
+    view.unmount()
+
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <ContentPartsRenderer
+          parts={[call, check({ status: "failed", error_code: "timeout" })]}
+          role="assistant"
+        />
+      </NextIntlClientProvider>
+    )
+    expect(within(row()).queryByText("running")).toBeNull()
+    expect(row().getAttribute("data-status")).toBe("failed")
+  })
 })
 
 describe("delegation row: an assistant's delegation", () => {

@@ -34,6 +34,7 @@ import {
   type DelegationCardStatus,
   type ParsedToolOutput,
 } from "@/lib/delegation-card"
+import { taskEnding, type StatusReport } from "@/lib/delegation-status"
 
 /** The raw inputs a `delegate_to_agent` tool call carries — what the
  *  delegation row reads off its call, and the shape `SubAgentOverlay`
@@ -52,6 +53,12 @@ export interface DelegationCardSource {
    * call's own id is never a binding key — the task id in its arguments is.
    */
   taskIdHint?: string | null
+  /**
+   * The newest `get_delegation_status` report on this task that came after the
+   * call (the timeline hands it over): how the task ended, when no live binding
+   * or stored meta says.
+   */
+  laterReport?: StatusReport | null
 }
 
 /**
@@ -113,8 +120,16 @@ function useDelegationChildLive(
 export function useDelegationCardModel(
   source: DelegationCardSource
 ): DelegationCardModel {
-  const { parentToolUseId, input, output, errorText, state, meta, taskIdHint } =
-    source
+  const {
+    parentToolUseId,
+    input,
+    output,
+    errorText,
+    state,
+    meta,
+    taskIdHint,
+    laterReport,
+  } = source
 
   const parsed = useMemo(() => parseInput(input), [input])
   const parsedMeta = useMemo(() => parseDelegationMeta(meta), [meta])
@@ -233,6 +248,7 @@ export function useDelegationCardModel(
     () => ({ agentType, assistantId, assistantName }),
     [agentType, assistantId, assistantName]
   )
+  const ended = useMemo(() => taskEnding(laterReport), [laterReport])
   const status = resolveDelegationStatus({
     binding,
     parsedMeta,
@@ -240,6 +256,7 @@ export function useDelegationCardModel(
     state,
     errorText,
     childAwaitingUser,
+    ended,
   })
   // The report is the only source for a call refused before any delegation
   // started (`assistant_not_found`, the companion's local refusals): no
@@ -248,6 +265,7 @@ export function useDelegationCardModel(
     binding?.errorCode ??
     parsedMeta?.errorCode ??
     toolOutput?.errorCode ??
+    ended?.errorCode ??
     undefined
 
   return {

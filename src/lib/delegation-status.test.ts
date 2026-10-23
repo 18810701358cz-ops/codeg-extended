@@ -8,6 +8,7 @@ import {
   parseStatusReports,
   parseTaskId,
   parseTaskIds,
+  taskEnding,
 } from "./delegation-status"
 import type { AdaptedToolCallPart } from "@/lib/adapters/ai-elements-adapter"
 
@@ -626,6 +627,36 @@ describe("deriveBadge", () => {
     expect(deriveBadge("status", report, "output-available", false)).toEqual({
       status: "ok",
     })
+  })
+})
+
+describe("taskEnding", () => {
+  const report = (body: Record<string, unknown>) =>
+    parseStatusReport(envelope({ task_id: "x", ...body }), null)
+
+  it("reads a finished task's outcome off the check", () => {
+    expect(taskEnding(report({ status: "completed", text: "ok" }))).toEqual({
+      status: "ok",
+      errorCode: undefined,
+    })
+    expect(
+      taskEnding(report({ status: "failed", error_code: "timeout" }))
+    ).toEqual({ status: "err", errorCode: "timeout" })
+    expect(taskEnding(report({ status: "canceled" }))).toEqual({
+      status: "err",
+      errorCode: "canceled",
+    })
+    // The broker no longer knows the task: it is not running anywhere.
+    expect(taskEnding(report({ status: "unknown" }))).toEqual({
+      status: "err",
+      errorCode: "unknown",
+    })
+  })
+
+  it("says nothing while the task runs, or when the check named no outcome", () => {
+    expect(taskEnding(report({ status: "running" }))).toBeNull()
+    expect(taskEnding(parseStatusReport("done", null))).toBeNull()
+    expect(taskEnding(null)).toBeNull()
   })
 })
 

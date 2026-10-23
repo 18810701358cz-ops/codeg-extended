@@ -609,6 +609,22 @@ export function deriveBadge(
   return { status: "starting" }
 }
 
+/**
+ * How a task ended, as a check on it reported — what a delegation's own card
+ * reads when nothing live or stored says more: a check that came back after the
+ * hand-over is newer than the ack it returned. Null while the task still runs,
+ * or when the check named no outcome.
+ */
+export function taskEnding(
+  report: StatusReport | null | undefined
+): { status: "ok" | "err"; errorCode?: string } | null {
+  if (!report?.status || report.status === "running") return null
+  const badge = deriveBadge("status", report, undefined, false)
+  return badge.status === "ok" || badge.status === "err"
+    ? { status: badge.status, errorCode: badge.errorCode }
+    : null
+}
+
 /** Compact human duration: `350ms`, `1.2s`, `12s`, `2m 0s`. Total seconds are
  *  rounded once before splitting so the remainder never rolls to `60s`. */
 export function formatDuration(ms: number): string {

@@ -19,7 +19,10 @@ import { useTruncation } from "@/hooks/use-truncation"
 import { previewLine } from "@/lib/activity/format"
 import type { ActivityStep, StepStatus } from "@/lib/activity/types"
 import type { AdaptedToolCallPart } from "@/lib/adapters/ai-elements-adapter"
-import type { DelegationCardStatus } from "@/lib/delegation-card"
+import {
+  delegateCallTaskId,
+  type DelegationCardStatus,
+} from "@/lib/delegation-card"
 import {
   buildDelegationTaskRows,
   deriveBadge,
@@ -140,6 +143,14 @@ export const DelegationRow = memo(function DelegationRow({
   const statusText = useStatusText()
   const { pinnedOnly } = useActivityRender()
   const { part } = step
+  // The newest report on its task: what its step bar and result read once it
+  // is no longer working — and, with nothing live or stored to go by, how it
+  // ended. The polls were handed over by this call's own task id.
+  const latest = useMemo(() => {
+    const rows = step.laterPolls ? buildDelegationTaskRows(step.laterPolls) : []
+    const taskId = delegateCallTaskId(part)
+    return rows.find((row) => row.taskId === taskId) ?? rows[rows.length - 1]
+  }, [step.laterPolls, part])
   const source = useMemo(
     () => ({
       parentToolUseId: part.toolCallId,
@@ -148,20 +159,13 @@ export const DelegationRow = memo(function DelegationRow({
       errorText: part.errorText ?? null,
       state: part.state,
       meta: part.meta ?? null,
+      laterReport: latest?.report ?? null,
     }),
-    [part]
+    [part, latest]
   )
   const model = useDelegationCardModel(source)
   const viewerHost = useSessionViewerHost()
   const [dialogOpen, setDialogOpen] = useState(false)
-  // The newest report on its task: what its step bar and result read once it
-  // is no longer working.
-  const latest = useMemo(() => {
-    const rows = step.laterPolls ? buildDelegationTaskRows(step.laterPolls) : []
-    return (
-      rows.find((row) => row.taskId === model.taskId) ?? rows[rows.length - 1]
-    )
-  }, [step.laterPolls, model.taskId])
   const status = stepStatusOf(model.status)
   const working = status === "running" || status === "awaiting"
   // While it works, its own connection is the freshest source; the reports
