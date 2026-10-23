@@ -46,6 +46,8 @@ const LONG_TIMELINE_HEAD = 20
 const LONG_TIMELINE_TAIL = 50
 /** Rows each "show more" reveals. */
 const LONG_TIMELINE_STEP = 200
+/** Where a long reply's hidden middle sits among its rows (and its key). */
+const FOLD = "fold"
 
 export const ActivityTimeline = memo(function ActivityTimeline({
   model,
@@ -86,16 +88,24 @@ export const ActivityTimeline = memo(function ActivityTimeline({
   const listRef = useRef<HTMLOListElement>(null)
   useEndMarkLine(listRef, reached && items.length > 0)
   const long = items.length > LONG_TIMELINE_ROWS && !pinnedOnly
+  // While it streams, its rows slide into the fold one at a time as new ones
+  // arrive: cutting the tail to size the moment it crossed the threshold would
+  // unmount dozens of rows at once, mid-stream. Settled, it opens trimmed.
+  const tailSize = isStreaming
+    ? LONG_TIMELINE_ROWS - LONG_TIMELINE_HEAD
+    : LONG_TIMELINE_TAIL
   const hidden = long
-    ? Math.max(
-        0,
-        items.length - LONG_TIMELINE_HEAD - LONG_TIMELINE_TAIL - revealed
-      )
+    ? Math.max(0, items.length - LONG_TIMELINE_HEAD - tailSize - revealed)
     : 0
   if (items.length === 0) return null
-  const head =
-    hidden > 0 ? items.slice(0, LONG_TIMELINE_HEAD + revealed) : items
-  const tail = hidden > 0 ? items.slice(items.length - LONG_TIMELINE_TAIL) : []
+  const headSize = LONG_TIMELINE_HEAD + revealed
+  // One list of children, the fold among them: a row that moves between the
+  // head, the fold and the tail keeps its key's place, never remounting.
+  const rows = items.flatMap<ActivityItem | typeof FOLD>((item, index) => {
+    if (hidden === 0 || index < headSize) return [item]
+    if (index === headSize) return [FOLD]
+    return index >= items.length - tailSize ? [item] : []
+  })
   return (
     <ActivityRenderProvider value={context}>
       <ol
@@ -107,26 +117,26 @@ export const ActivityTimeline = memo(function ActivityTimeline({
         // reply are no list of steps to end.
         data-end={pinnedOnly ? undefined : reached ? "reached" : "pending"}
       >
-        {head.map((item) => (
-          <ActivityItemView key={item.key} item={item} />
-        ))}
-        {hidden > 0 ? (
-          <li className="activity-item" data-marker="dot">
-            <span className="absolute start-[0.5625rem] top-[0.6875rem] flex size-1.5 items-center justify-center">
-              <span className="size-1.5 rounded-full bg-muted-foreground/50" />
-            </span>
-            <button
-              type="button"
-              className="min-h-7 rounded-sm py-0.5 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => setRevealed((count) => count + LONG_TIMELINE_STEP)}
-            >
-              {t("row.showMoreSteps", { count: hidden })}
-            </button>
-          </li>
-        ) : null}
-        {tail.map((item) => (
-          <ActivityItemView key={item.key} item={item} />
-        ))}
+        {rows.map((item) =>
+          item === FOLD ? (
+            <li key={FOLD} className="activity-item" data-marker="dot">
+              <span className="absolute start-[0.5625rem] top-[0.6875rem] flex size-1.5 items-center justify-center">
+                <span className="size-1.5 rounded-full bg-muted-foreground/50" />
+              </span>
+              <button
+                type="button"
+                className="min-h-7 rounded-sm py-0.5 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() =>
+                  setRevealed((count) => count + LONG_TIMELINE_STEP)
+                }
+              >
+                {t("row.showMoreSteps", { count: hidden })}
+              </button>
+            </li>
+          ) : (
+            <ActivityItemView key={item.key} item={item} />
+          )
+        )}
       </ol>
     </ActivityRenderProvider>
   )

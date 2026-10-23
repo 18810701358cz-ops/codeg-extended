@@ -332,10 +332,20 @@ describe("activity timeline: the reference turn", () => {
       })
       return value
     }
-    expect(gap(".activity-item + .activity-item")).toBeTruthy()
-    expect(gap(".activity-child + .activity-child")).toBe(
-      gap(".activity-item + .activity-item")
+    expect(gap(".activity-item:not(:first-child)")).toBeTruthy()
+    expect(gap(".activity-child:not(:first-child)")).toBe(
+      gap(".activity-item:not(:first-child)")
     )
+    // Not with a sibling combinator: Chrome restyles a whole list under one
+    // whenever a row leaves from its middle — as a long reply's fold does on
+    // every step while it streams.
+    const siblingRules: string[] = []
+    stylesheet.walkRules((rule) => {
+      if (/\.activity-(item|child)[^,{]*[+~]/.test(rule.selector)) {
+        siblingRules.push(rule.selector)
+      }
+    })
+    expect(siblingRules).toEqual([])
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     const explored = within(rowOf("Explored")).getAllByRole("button")[0]!
     fireEvent.click(explored)

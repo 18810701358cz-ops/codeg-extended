@@ -1945,7 +1945,11 @@
   text-align: start;
 }
 
-.activity-item + .activity-item {
+/* Spaced from the row before it — keyed on position, not written as
+   `.activity-item + .activity-item`: with an adjacent-sibling rule on the
+   list, Chrome restyles every row in it whenever one leaves from the middle,
+   which a long reply's fold does on each new step while it streams. */
+.activity-item:not(:first-child) {
   margin-top: var(--activity-gap);
 }
 
@@ -2037,7 +2041,7 @@
   text-align: start;
 }
 
-.activity-child + .activity-child {
+.activity-child:not(:first-child) {
   margin-top: var(--activity-gap);
 }
 

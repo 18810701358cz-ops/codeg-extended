@@ -71,12 +71,12 @@ function Round({
   )
 }
 
-function renderUi(
+function withProviders(
   ui: ReactElement,
   awaitingToolCallId: string | null = null,
   approvals: ToolApprovalMap = {}
 ) {
-  return render(
+  return (
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <StaticConnectionStoreProvider store={STORE}>
         <StaticDelegationProvider value={DELEGATION}>
@@ -89,6 +89,14 @@ function renderUi(
       </StaticConnectionStoreProvider>
     </NextIntlClientProvider>
   )
+}
+
+function renderUi(
+  ui: ReactElement,
+  awaitingToolCallId: string | null = null,
+  approvals: ToolApprovalMap = {}
+) {
+  return render(withProviders(ui, awaitingToolCallId, approvals))
 }
 
 function turn(blocks: ContentBlock[], id = "t"): MessageTurn {
@@ -364,9 +372,9 @@ describe("jumping to a failure", () => {
 })
 
 describe("long replies", () => {
-  it("opens a giant reply with its head and tail and a way to see the rest", () => {
+  function edits(count: number): MessageTurn {
     const blocks: ContentBlock[] = []
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < count; i++) {
       blocks.push(
         toolUse(`e${i}`, "Edit", {
           file_path: `/r/f${i}.ts`,
@@ -376,11 +384,38 @@ describe("long replies", () => {
       )
       blocks.push(toolResult(`e${i}`, "ok"))
     }
-    renderUi(<Round parts={parts(turn(blocks))} />)
+    return turn(blocks)
+  }
+
+  it("opens a giant reply with its head and tail and a way to see the rest", () => {
+    renderUi(<Round parts={parts(edits(200))} />)
     const more = screen.getByRole("button", { name: "Show 130 more steps" })
     expect(screen.getAllByText("Edited")).toHaveLength(70)
     fireEvent.click(more)
     expect(screen.getAllByText("Edited")).toHaveLength(200)
+  })
+
+  it("folds a streaming reply's rows away one at a time as it grows", () => {
+    const live = (count: number) => (
+      <Round parts={parts(edits(count), true)} completed={false} />
+    )
+    const view = renderUi(live(150))
+    expect(screen.getAllByText("Edited")).toHaveLength(150)
+    expect(screen.queryByRole("button", { name: /more step/ })).toBeNull()
+    const late = rowOf("f149.ts")
+    // Past the fold, the oldest row past the head goes, not a whole chunk —
+    // and the rows that stay are the same rows, not drawn again.
+    view.rerender(withProviders(live(151)))
+    expect(
+      screen.getByRole("button", { name: "Show 1 more step" })
+    ).toBeTruthy()
+    expect(screen.getAllByText("Edited")).toHaveLength(150)
+    expect(rowOf("f149.ts")).toBe(late)
+    view.rerender(withProviders(live(152)))
+    expect(
+      screen.getByRole("button", { name: "Show 2 more steps" })
+    ).toBeTruthy()
+    expect(screen.getAllByText("Edited")).toHaveLength(150)
   })
 })
 
