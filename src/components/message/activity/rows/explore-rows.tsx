@@ -349,7 +349,7 @@ function ExploreDetail({ step }: { step: ToolStep }) {
     )
     if (text !== null) {
       return (
-        <DetailBox tone="neutral" bodyClassName="px-3 py-2">
+        <DetailBox tone="neutral" bodyClassName="py-2">
           <SearchResultsOutput
             text={text}
             query={
