@@ -9,6 +9,7 @@ import {
 } from "streamdown"
 
 import { markdownLinkComponents } from "./markdown-link"
+import { scrollportComponents } from "./markdown-scrollport"
 import { mermaidComponents } from "./mermaid-block"
 import { LIVE_REMEND, normalizeMathDelimiters } from "./message"
 import { rehypePluginsAllowingCodeg } from "./rehype-allow-codeg"
@@ -52,7 +53,11 @@ const rehypePlugins = [
   rehypeListDirection,
 ]
 
-const reasoningComponents = { ...markdownLinkComponents, ...mermaidComponents }
+const reasoningComponents = {
+  ...markdownLinkComponents,
+  ...mermaidComponents,
+  ...scrollportComponents,
+}
 
 /**
  * The reasoning text itself, rendered as Markdown — the activity timeline's

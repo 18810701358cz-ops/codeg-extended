@@ -30,6 +30,7 @@ import {
 } from "streamdown"
 import { markdownLinkComponents } from "./markdown-link"
 import { messageBlockComponents } from "./json-render-pre"
+import { scrollportComponents } from "./markdown-scrollport"
 import { maskLiteralSpans } from "./markdown-mask"
 import { rehypePluginsAllowingCodeg } from "./rehype-allow-codeg"
 import { remarkTrimCjkAutolinkTail } from "./remark-cjk-autolink-tail"
@@ -598,13 +599,14 @@ function MessageResponseImpl({
       dir="auto"
       {...props}
       // Merge after spreading props so a caller can still override other
-      // elements, but the link icon + safety routing on `a` — and the diagram
-      // and json-render blocks on `pre` — always win.
+      // elements, but the link icon + safety routing on `a`, the diagram and
+      // json-render blocks on `pre` and the table's scrollbars always win.
       components={{
         ...props.components,
         ...markdownLinkComponents,
         ...markdownLocalImageComponents,
         ...messageBlockComponents,
+        ...scrollportComponents,
       }}
     >
       {normalized}
