@@ -156,7 +156,7 @@ describe("activity timeline: the reference turn", () => {
   it("leaves a failure that was redone folded, with its exit code", () => {
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     const failed = screen
-      .getAllByText("pnpm --filter web test")
+      .getAllByText("Run web unit tests")
       .map((el) => el.closest("li")!)
       .find((li) => li.getAttribute("data-status") === "failed")!
     expect(within(failed).getByText("exit 1")).toBeTruthy()
@@ -336,9 +336,13 @@ describe("activity timeline: a live turn", () => {
       />
     )
     expect(screen.getByText("Working")).toBeTruthy()
-    const row = rowOf("pnpm --filter web test -- --watch=false")
+    const row = rowOf("Run web unit tests")
     expect(row.getAttribute("data-status")).toBe("running")
     expect(within(row).getByText(/lib\/state\.test\.ts/)).toBeTruthy()
+    // Its title shimmers while it runs, as a running row's verb does.
+    expect(within(row).getByText("Run web unit tests")).toHaveClass(
+      "activity-shimmer"
+    )
   })
 })
 
@@ -449,6 +453,38 @@ describe("activity timeline: commands", () => {
     fireEvent.click(within(row).getAllByRole("button")[0]!)
     const panel = row.querySelector(".activity-detail")!
     expect(panel.querySelector("pre")?.textContent).toBe("48 passed")
+  })
+
+  it("says what a command is for when the agent did, and opens on the command", () => {
+    // The agent's description is the row's title — words, not a command, so
+    // no prompt sign and no count of the command's lines — and the command
+    // takes the description's place atop the panel, whole.
+    const DESCRIBED: MessageTurn = {
+      id: "turn-d",
+      role: "assistant",
+      timestamp: "2026-10-22T09:00:00Z",
+      blocks: [
+        toolUse("d1", "Bash", {
+          command: "pnpm install\npnpm --filter web test",
+          description: "Install and run the web tests",
+        }),
+        toolResult("d1", "48 passed"),
+        { type: "text", text: "All green." },
+      ],
+    }
+    renderSettled(partsOf(DESCRIBED))
+    const row = rowOf("Install and run the web tests")
+    const header = within(row).getAllByRole("button")[0]!
+    expect(header.textContent).toBe("Install and run the web tests")
+    expect(header).toHaveAttribute("title", "Install and run the web tests")
+    fireEvent.click(header)
+    const panel = row.querySelector(".activity-detail") as HTMLElement
+    const [command, output] = panel.querySelectorAll("pre")
+    expect(command?.textContent).toBe("$ pnpm install\npnpm --filter web test")
+    expect(output?.textContent).toBe("48 passed")
+    expect(
+      within(panel).queryByText("Install and run the web tests")
+    ).toBeNull()
   })
 
   it("scrolls a panel on the app's overlay scrollbars", () => {

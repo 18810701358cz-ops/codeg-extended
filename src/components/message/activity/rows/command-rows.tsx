@@ -105,8 +105,9 @@ function useCommandOutput(step: ToolStep): CommandOutput | null {
   }, [part.output, part.errorText, tool.background, tool.status, t])
 }
 
-/** The command line a row shows: `$ cmd`, a heredoc's opener, a session verb.
- *  `commandRef` measures whether the line cuts the command short. */
+/** What a command row says: the agent's description of the command when it
+ *  gave one, else the command line — `$ cmd`, a heredoc's opener, a session
+ *  verb. `commandRef` measures whether the line cuts the command short. */
 function CommandLabel({
   step,
   commandRef,
@@ -174,27 +175,44 @@ function CommandLabel({
   const heredoc = command.heredoc
   const firstLine = heredoc ? heredoc.head : command.display.split("\n")[0]!
   const extraLines = heredoc ? 0 : command.lineCount - 1
-  // One line: the command gives way first (the panel and the tooltip have it
+  const live = step.tool.status === "running" || step.tool.status === "pending"
+  // One line: the title gives way first (the panel and the tooltip have it
   // whole), its notes keep their room, and nothing runs past the line's end.
+  // A description is words, not a command: no prompt sign, and nothing about
+  // the command's lines — the command is atop the panel.
   return (
     <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
-      <span
-        ref={commandRef}
-        className="min-w-0 truncate font-mono text-[0.8125rem]"
-        dir="ltr"
-      >
-        <span className="select-none text-muted-foreground">$ </span>
-        {firstLine}
-      </span>
-      {heredoc ? (
-        <span className="shrink-0 text-muted-foreground">
-          {t("row.script", { count: heredoc.bodyLines })}
+      {command.description ? (
+        <span
+          dir="auto"
+          className={cn(
+            "min-w-0 truncate",
+            live ? "activity-shimmer" : "text-foreground"
+          )}
+        >
+          {command.description}
         </span>
-      ) : extraLines > 0 ? (
-        <span className="shrink-0 text-muted-foreground">
-          {t("row.moreLines", { count: extraLines })}
-        </span>
-      ) : null}
+      ) : (
+        <>
+          <span
+            ref={commandRef}
+            className="min-w-0 truncate font-mono text-[0.8125rem]"
+            dir="ltr"
+          >
+            <span className="select-none text-muted-foreground">$ </span>
+            {firstLine}
+          </span>
+          {heredoc ? (
+            <span className="shrink-0 text-muted-foreground">
+              {t("row.script", { count: heredoc.bodyLines })}
+            </span>
+          ) : extraLines > 0 ? (
+            <span className="shrink-0 text-muted-foreground">
+              {t("row.moreLines", { count: extraLines })}
+            </span>
+          ) : null}
+        </>
+      )}
       {scriptMeta?.label ? (
         <span className="shrink-0 self-center rounded-full bg-muted px-1.5 text-3xs leading-4 text-activity-muted-strong ws-msg-chip">
           {scriptMeta.label}
@@ -233,11 +251,13 @@ function CommandDetail({
   const failed = tool.status === "failed" || tool.status === "rejected"
   const live = tool.status === "running" || tool.status === "pending"
   const isScript = tool.kind === "script"
+  // The command, whole, wherever the row does not show it so: under a
+  // description, past its first line, or cut short.
   const showCommand =
     !isScript &&
     !!command &&
     !command.session &&
-    (command.lineCount > 1 || commandCut) &&
+    (!!command.description || command.lineCount > 1 || commandCut) &&
     !!command.display
   const fullCommand = command?.display ?? ""
   const script = useMemo(
@@ -294,11 +314,6 @@ function CommandDetail({
           {tParts("codexScript.truncated")}
         </p>
       ) : null}
-      {command?.description ? (
-        <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
-          {command.description}
-        </p>
-      ) : null}
       {showCommand ? (
         <pre
           className="whitespace-pre-wrap break-words border-b border-foreground/5 px-4 py-3 font-mono text-[0.78125rem] leading-relaxed"
@@ -351,11 +366,13 @@ function LiveTail({ text }: { text: string }) {
 }
 
 /**
- * `$ pnpm --filter web test   exit 1` — a shell command (or codex's session
- * polls and scripts). The row shows the command itself, never the agent's
- * description of it (that goes in the tooltip and atop the panel). A failure
- * opens itself — output anchored at the end, where the error is — and stays
- * open; a running command stays folded with its last lines showing beneath.
+ * `Run web unit tests   exit 1` — a shell command (or codex's session polls
+ * and scripts). The row says what the command is for, in the agent's own
+ * description of it, and the panel opens on the command itself; with no
+ * description the row shows the command, `$ pnpm --filter web test`. A
+ * failure opens itself — output anchored at the end, where the error is — and
+ * stays open; a running command stays folded with its last lines showing
+ * beneath.
  */
 export const CommandRow = memo(function CommandRow({
   step: given,
