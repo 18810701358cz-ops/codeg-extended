@@ -73,7 +73,7 @@ export function PlanMarkdownCard({
         id={contentId}
         data-testid="plan-mode-card-content"
         className={cn(
-          "prose prose-sm max-w-none px-3.5 py-3 text-sm dark:prose-invert [&_ol]:list-inside [&_ul]:list-inside",
+          "plan-markdown prose prose-sm max-w-none px-3.5 py-3 text-sm dark:prose-invert [&_ol]:list-inside [&_ul]:list-inside",
           clipped && "max-h-72 overflow-hidden",
           clipped && isOverflowing && "collapsed-content-fade"
         )}

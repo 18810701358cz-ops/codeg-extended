@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
+import postcss from "postcss"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -77,6 +80,34 @@ describe("plan-mode row", () => {
     await waitFor(() => {
       expect(container.textContent).toContain("item one")
     })
+  })
+
+  it("steps the plan's headings down inside its card", async () => {
+    renderRow({
+      toolName: "exitplanmode",
+      input: JSON.stringify({ plan: "# Keep CSV export working\n\n1. Map it" }),
+    })
+    const heading = await screen.findByRole("heading", {
+      name: "Keep CSV export working",
+    })
+    // globals.css sizes a heading under `.plan-markdown` below a reply's.
+    expect(heading.closest(".plan-markdown")).not.toBeNull()
+    const css = postcss.parse(
+      readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8")
+    )
+    const sizes = new Map<string, string>()
+    css.walkRules((rule) => {
+      if (!rule.selector.startsWith(".plan-markdown")) return
+      rule.walkDecls("font-size", (decl) => {
+        sizes.set(rule.selector.replace(/\s+/g, " "), decl.value)
+      })
+    })
+    expect(sizes.get('.plan-markdown [data-streamdown="heading-1"]')).toBe(
+      "1.125rem"
+    )
+    expect(sizes.get('.plan-markdown [data-streamdown="heading-2"]')).toBe(
+      "1rem"
+    )
   })
 
   it("marks a mode switch that carries no plan, with the mode it went to", () => {

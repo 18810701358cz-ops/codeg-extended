@@ -1718,6 +1718,30 @@
   vertical-align: middle;
 }
 
+/* A plan in its card is a document inside the reply, often inside the
+   timeline: its headings step down from a reply's own (Streamdown's 1.875rem
+   h1 would tower over the 0.875rem text around the card). */
+.plan-markdown [data-streamdown="heading-1"] {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+
+.plan-markdown [data-streamdown="heading-2"] {
+  font-size: 1rem;
+  line-height: 1.5rem;
+}
+
+.plan-markdown
+  :is(
+    [data-streamdown="heading-3"],
+    [data-streamdown="heading-4"],
+    [data-streamdown="heading-5"],
+    [data-streamdown="heading-6"]
+  ) {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
 /* Streamdown table overrides.
    Streamdown 2.7 makes the wrapper a card of its own (`rounded-lg border
    bg-sidebar p-2 gap-2`) around a scroll container it frames again
