@@ -545,6 +545,115 @@ const TEXT_TURN: MessageTurn = {
   blocks: [{ type: "text", text: "Yes — the fix is already on `main`." }],
 }
 
+/** Commands run back to back, the last still running, none described. */
+const COMMANDS_LIVE_TURN: MessageTurn = {
+  id: "turn-commands-live",
+  role: "assistant",
+  timestamp: "2026-10-23T08:00:00Z",
+  blocks: [
+    { type: "text", text: "Writing the page, then checking it." },
+    toolUse("k1", "Bash", {
+      command: [
+        "mkdir -p app/neon && cat > app/neon/page.tsx <<'EOF'",
+        'import { NeonDemo } from "@/components/neon-demo"',
+        "",
+        "export default function Page() {",
+        "  return <NeonDemo />",
+        "}",
+        "EOF",
+      ].join("\n"),
+    }),
+    toolResult("k1", ""),
+    toolUse("k2", "Bash", {
+      command: [
+        "npx eslint app/neon components/neon-demo.tsx && npx tsc --noEmit && echo OK",
+        "(npx next dev -p 3917 >/dev/null 2>&1 &) ; sleep 8; curl -s -o /dev/null -w '%{http_code}' localhost:3917/neon",
+      ].join("\n"),
+    }),
+    toolResult("k2", "OK\n200"),
+    toolUse("k3", "Bash", {
+      command: "pnpm --filter web test -- --watch=false",
+    }),
+    toolResult(
+      "k3",
+      [
+        "> web@0.1.0 test",
+        "> vitest run",
+        "",
+        " ✓ lib/report.test.ts (12 tests)",
+      ].join("\n")
+    ),
+  ],
+}
+
+/** Every Markdown block a reply carries, the wide ones wider than the column. */
+const MARKDOWN_TURN: MessageTurn = {
+  id: "turn-markdown",
+  role: "assistant",
+  timestamp: "2026-10-23T08:10:00Z",
+  duration_ms: 9000,
+  blocks: [
+    {
+      type: "thinking",
+      text: [
+        "**Planning the retry change**",
+        "",
+        "- read the settings first",
+        "- then the wrapper",
+        "",
+        "1. timeout",
+        "2. attempts",
+      ].join("\n"),
+    },
+    {
+      type: "text",
+      text: [
+        "The retry wrapper now backs off exponentially. What changed:",
+        "",
+        "- The timeout moved from a constant to the settings",
+        "- Each attempt logs its delay, so a slow upstream shows in the trace",
+        "  - the first retry waits 200 ms",
+        "  - the wait doubles, up to 5 s",
+        "- `lib/retry.ts` keeps its signature",
+        "",
+        "How a request goes now:",
+        "",
+        "1. Read the timeout from the settings",
+        "2. Try, and on a failure wait before the next attempt",
+        "3. Give up after five attempts and keep the last error",
+        "",
+        "Left to do:",
+        "",
+        "- [x] Move the timeout into the settings",
+        "- [ ] Document the new option",
+        "",
+        "| Setting | Default | Range | Environment variable | Config path | What it does | Updated |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| `retry.timeoutMs` | 2000 | 100–60000 | `CODEG_RETRY_TIMEOUT_MS` | `network.retry.timeoutMs` | How long one attempt may take before it counts as failed | 2026-10-23T08:00:00Z |",
+        "| `retry.attempts` | 5 | 1–10 | `CODEG_RETRY_ATTEMPTS` | `network.retry.attempts` | How many times a request is tried before it gives up | 2026-10-23T08:00:00Z |",
+        "| `retry.maxDelayMs` | 5000 | 200–60000 | `CODEG_RETRY_MAX_DELAY_MS` | `network.retry.maxDelayMs` | The longest wait between two attempts | 2026-10-23T08:00:00Z |",
+        "",
+        "```ts",
+        "export async function withRetry<T>(fn: () => Promise<T>, { attempts = 5, baseDelayMs = 200, maxDelayMs = 5_000 }: RetryOptions = {}): Promise<T> {",
+        "  let lastError: unknown",
+        "  for (let attempt = 0; attempt < attempts; attempt += 1) {",
+        "    try {",
+        "      return await fn()",
+        "    } catch (error) {",
+        "      lastError = error",
+        "      await sleep(Math.min(baseDelayMs * 2 ** attempt, maxDelayMs))",
+        "    }",
+        "  }",
+        "  throw lastError",
+        "}",
+        "```",
+        "",
+        "> The old constant is still exported for one release.",
+      ].join("\n"),
+    },
+  ],
+}
+
 type Scenario = {
   id: string
   title: string
@@ -600,6 +709,14 @@ const SCENARIOS: Scenario[] = [
   { id: "delegation", title: "Delegation checks", turn: DELEGATION_TURN },
   { id: "files", title: "Files: match, read, write, edit", turn: FILES_TURN },
   { id: "text", title: "Text-only reply", turn: TEXT_TURN },
+  {
+    id: "commands-live",
+    title: "Commands back to back, running",
+    turn: COMMANDS_LIVE_TURN,
+    live: true,
+    inProgress: ["k3"],
+  },
+  { id: "markdown", title: "Markdown", turn: MARKDOWN_TURN },
 ]
 
 function ScenarioView({ scenario }: { scenario: Scenario }) {
