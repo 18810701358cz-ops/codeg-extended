@@ -2,24 +2,33 @@ import { render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
 
+const captured = vi.hoisted(() => ({
+  remarkPlugins: [] as unknown[],
+}))
+
 vi.mock("streamdown", () => ({
   Streamdown: ({
     children,
     mode,
     parseIncompleteMarkdown,
+    remarkPlugins,
   }: {
     children: ReactNode
     mode?: string
     parseIncompleteMarkdown?: boolean
-  }) => (
-    <div
-      data-testid="streamdown-root"
-      data-mode={mode}
-      data-parse-incomplete={String(parseIncompleteMarkdown)}
-    >
-      {children}
-    </div>
-  ),
+    remarkPlugins?: unknown[]
+  }) => {
+    captured.remarkPlugins = remarkPlugins ?? []
+    return (
+      <div
+        data-testid="streamdown-root"
+        data-mode={mode}
+        data-parse-incomplete={String(parseIncompleteMarkdown)}
+      >
+        {children}
+      </div>
+    )
+  },
   defaultRemarkPlugins: {},
   defaultRehypePlugins: {},
 }))
@@ -79,5 +88,28 @@ describe("ReasoningMarkdown", () => {
     const root = screen.getByTestId("streamdown-root")
     expect(root).toHaveAttribute("data-mode", "static")
     expect(root).toHaveAttribute("data-parse-incomplete", "false")
+  })
+
+  // Reasoning is written a line at a time. Streamdown caches its processors
+  // by the plugins' function names, which a minified build shortens — so the
+  // breaks plugin carries a name of its own, or the reply's processor (a list
+  // just as long, without it) gets reused and the breaks are lost.
+  it("keeps a line break a line break, under a name a minified build keeps", () => {
+    render(tree(false))
+    const breaks = captured.remarkPlugins.find(
+      (plugin) =>
+        typeof plugin === "function" && plugin.name === "remarkReasoningBreaks"
+    ) as (() => (tree: unknown) => void) | undefined
+    expect(breaks).toBeDefined()
+    const paragraph = {
+      type: "paragraph",
+      children: [{ type: "text", value: "list the files\nthen read them" }],
+    }
+    breaks!()({ type: "root", children: [paragraph] })
+    expect(paragraph.children.map((node) => node.type)).toEqual([
+      "text",
+      "break",
+      "text",
+    ])
   })
 })

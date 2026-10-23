@@ -1,6 +1,7 @@
 "use client"
 
 import { memo, useMemo } from "react"
+import remarkBreaks from "remark-breaks"
 import {
   Streamdown,
   defaultRehypePlugins,
@@ -18,12 +19,26 @@ import { remarkRewriteFileUriLinks } from "./remark-file-uri-links"
 import { remarkRestoreWindowsPaths } from "./remark-windows-paths"
 import { useStreamdownPlugins } from "./streamdown-plugins"
 
+// Reasoning is written line by line — steps, checks, half-sentences — not as
+// wrapped paragraphs, so a line break stays one instead of folding into a
+// space. Named on purpose: Streamdown caches a processor per plugin list,
+// keyed by the plugins' function names, which a minified build cuts to a
+// letter or two — so this list, as long as the reply's, was served the
+// reply's processor and its breaks were lost. A name of its own keeps the two
+// keys apart.
+const remarkReasoningBreaks = Object.defineProperty(
+  () => remarkBreaks(),
+  "name",
+  { value: "remarkReasoningBreaks" }
+)
+
 const remarkPlugins = [
   ...Object.values(defaultRemarkPlugins),
   // Before remarkRewriteFileUriLinks, which reshapes a drive path's url.
   remarkRestoreWindowsPaths,
   remarkRewriteFileUriLinks,
   remarkTrimCjkAutolinkTail,
+  remarkReasoningBreaks,
 ]
 
 // The same links survive as in MessageResponse: `codeg://` references keep
