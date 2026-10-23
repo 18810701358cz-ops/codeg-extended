@@ -1701,6 +1701,23 @@
   display: inline;
 }
 
+/* GFM task lists. remark-gfm marks a task item `task-list-item` and puts its
+   checkbox first in it (in its first paragraph, in a loose list). The checkbox
+   is the item's marker, so the bullet our inside-positioned lists would draw
+   beside it goes, and the box keeps a marker's room from the text. Plain items
+   in the same list keep their bullets. */
+[data-streamdown="list-item"].task-list-item {
+  list-style-type: none;
+}
+
+[data-streamdown="list-item"].task-list-item > input[type="checkbox"],
+[data-streamdown="list-item"].task-list-item
+  > p:first-child
+  > input[type="checkbox"]:first-child {
+  margin-inline-end: 0.5em;
+  vertical-align: middle;
+}
+
 /* Streamdown table overrides.
    Streamdown 2.7 makes the wrapper a card of its own (`rounded-lg border
    bg-sidebar p-2 gap-2`) around a scroll container it frames again
