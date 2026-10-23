@@ -351,6 +351,80 @@ const WORKFLOW_TURN: MessageTurn = {
   ],
 }
 
+const GLOBBED = [
+  "lib/utils.ts",
+  "components/validation-lab.tsx",
+  "components/test-page-two.tsx",
+  "components/demo-page.tsx",
+  "components/test-lab.tsx",
+  "components/cyberpunk-console.tsx",
+  "components/experiment-console.tsx",
+  "components/ui/input.tsx",
+  "components/ui/textarea.tsx",
+  "components/ui/button.tsx",
+  "components/ui/card.tsx",
+  "components/ui/dialog.tsx",
+  "components/ui/select.tsx",
+  "components/ui/tabs.tsx",
+  "components/ui/tooltip.tsx",
+  "hooks/use-mobile.ts",
+  "hooks/use-toast.ts",
+  "hooks/use-debounce.ts",
+  "lib/format.ts",
+].map((file) => `${MOCKUP_REPO}/web/${file}`)
+
+const LAYOUT = `${MOCKUP_REPO}/web/app/layout.tsx`
+
+const FILES_TURN: MessageTurn = {
+  id: "turn-files",
+  role: "assistant",
+  timestamp: "2026-10-22T09:50:00Z",
+  duration_ms: 52000,
+  blocks: [
+    {
+      type: "thinking",
+      text: "**Mapping the components**\n\nList the components first.\nThen read the layout's navigation.\nThen add the settings page and link it.",
+    },
+    toolUse("g1", "Glob", { pattern: "{lib,hooks,components}/**/*.{ts,tsx}" }),
+    toolResult("g1", GLOBBED.join("\n")),
+    toolUse("r1", "Read", { file_path: LAYOUT, offset: 10, limit: 6 }),
+    toolResult(
+      "r1",
+      JSON.stringify({
+        start_line: 10,
+        content: [
+          "export default function RootLayout({ children }) {",
+          "  return (",
+          '    <html lang="en">',
+          "      <body>",
+          '        <nav><a href="/">Home</a></nav>',
+          "        {children}",
+        ].join("\n"),
+      })
+    ),
+    toolUse("w1", "Write", {
+      file_path: `${MOCKUP_REPO}/web/app/settings/page.tsx`,
+      content:
+        "export default function SettingsPage() {\n  return <main>Settings</main>\n}\n",
+    }),
+    toolResult(
+      "w1",
+      `File created successfully at: ${MOCKUP_REPO}/web/app/settings/page.tsx`
+    ),
+    toolUse("e1", "Edit", {
+      file_path: LAYOUT,
+      old_string: '        <nav><a href="/">Home</a></nav>',
+      new_string:
+        '        <nav>\n          <a href="/">Home</a>\n          <a href="/settings">Settings</a>\n        </nav>',
+    }),
+    toolResult("e1", `The file ${LAYOUT} has been updated successfully.`),
+    {
+      type: "text",
+      text: "Added the settings page and linked it from the navigation.",
+    },
+  ],
+}
+
 const POLLED_TASK_ID = "9e82cbc1-5d0e-4f6a-8b3c-2a1d0e9f8c7b"
 const POLLED_TASK =
   "Run `pnpm build` in /Users/me/work/my-app without changing any files. Report whether it succeeded (exit code), the key output, and — if it failed — the full error with file paths and line numbers."
@@ -524,6 +598,7 @@ const SCENARIOS: Scenario[] = [
   },
   { id: "workflow", title: "Plans, questions and tasks", turn: WORKFLOW_TURN },
   { id: "delegation", title: "Delegation checks", turn: DELEGATION_TURN },
+  { id: "files", title: "Files: match, read, write, edit", turn: FILES_TURN },
   { id: "text", title: "Text-only reply", turn: TEXT_TURN },
 ]
 
