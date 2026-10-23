@@ -573,6 +573,83 @@ describe("a command group in a reply being written", () => {
   })
 })
 
+describe("a reply's rail while it is written", () => {
+  const live = (blocks: ContentBlock[]): MessageTurn => ({
+    id: "t-rail",
+    role: "assistant",
+    timestamp: "2026-10-23T10:00:00Z",
+    blocks,
+  })
+  const C1 = [
+    toolUse("c1", "Bash", { command: "pnpm lint" }),
+    toolResult("c1", "ok"),
+  ]
+  const C2 = [
+    toolUse("c2", "Bash", { command: "pnpm test" }),
+    toolResult("c2", "ok"),
+  ]
+  const C3 = [toolUse("c3", "Bash", { command: "pnpm build" })]
+  const READ = [toolUse("r1", "Read", { file_path: "/r/a.ts" })]
+  const marked = (li: Element) =>
+    [
+      li.hasAttribute("data-rail-enter") && "enter",
+      li.hasAttribute("data-rail-extend") && "extend",
+    ]
+      .filter(Boolean)
+      .join(" ")
+
+  it("grows down to each step and group member that joins it", async () => {
+    const view = renderUi(
+      <Round parts={parts(live([...C1, ...C2]), true)} completed={false} />
+    )
+    const list = view.container.querySelector(".activity-timeline")!
+    const group = rowOf("Ran 2 commands")
+    expect(marked(group)).toBe("")
+
+    // A member joins the open group: its rail runs on from the last member.
+    view.rerender(
+      withProviders(
+        <Round
+          parts={parts(live([...C1, ...C2, ...C3]), true, ["c3"])}
+          completed={false}
+        />
+      )
+    )
+    await act(async () => {})
+    expect(marked(rowOf("pnpm test"))).toBe("extend")
+    expect(marked(rowOf("pnpm build"))).toBe("enter")
+    expect(marked(rowOf("pnpm lint"))).toBe("")
+
+    // A step joins the reply, above the turning mark the rail runs down to.
+    view.rerender(
+      withProviders(
+        <Round
+          parts={parts(live([...C1, ...C2, ...C3, ...READ]), true, [
+            "c3",
+            "r1",
+          ])}
+          completed={false}
+        />
+      )
+    )
+    await act(async () => {})
+    const read = rowOf(/a\.ts/)
+    expect(marked(read)).toBe("enter")
+    expect(marked(rowOf("Running 3 commands"))).toBe("")
+    expect(list.lastElementChild).toHaveAttribute("data-marker", "working")
+    expect(read.nextElementSibling).toBe(list.lastElementChild)
+
+    // Done, the marks go: nothing replays in history.
+    view.rerender(
+      withProviders(
+        <Round parts={parts(live([...C1, ...C2, ...C3, ...READ]))} />
+      )
+    )
+    expect(view.container.querySelector("[data-rail-enter]")).toBeNull()
+    expect(view.container.querySelector("[data-rail-extend]")).toBeNull()
+  })
+})
+
 describe("command row", () => {
   it("draws its command line in the label's light ink, like a description", () => {
     renderUi(

@@ -2138,6 +2138,78 @@
   );
 }
 
+/* A live list's rail grows down to the steps that join it rather than
+   appearing at once. `use-rail-growth.ts` marks, while the list is live, a row
+   that joined (`data-rail-enter`) and the row that was last before it
+   (`data-rail-extend`), and clears the marks once they have run. A new
+   row's segment — down to the next row, or to the turning mark at the foot of
+   a reply's rail — and a dot's incoming one grow from the top, and so does the
+   segment the last row gains once a row follows it. A last row with a body
+   already had a segment beside it: only the part past its line grows, the
+   clip let out from where the segment stopped. The rows one join touched take
+   their turn top to bottom (the hook holds each one's growth back a little
+   longer), so the rail draws down through them, and the turning mark fades in
+   as it arrives. Transform and clip only, so no row changes size under the
+   virtual list. */
+@keyframes activity-rail-grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes activity-rail-extend {
+  from {
+    clip-path: inset(0 0 var(--activity-rail-extension) 0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .activity-item[data-rail-enter]::before,
+  .activity-item[data-rail-enter][data-marker="dot"]::after,
+  .activity-item[data-rail-extend]:not([data-rail-enter], [data-body])::before,
+  .activity-child[data-rail-enter]::before,
+  .activity-child[data-rail-extend]:not(
+      [data-rail-enter],
+      [data-body]
+    )::before {
+    transform-origin: top;
+    animation: activity-rail-grow 0.26s cubic-bezier(0.33, 1, 0.68, 1) backwards;
+  }
+
+  .activity-item[data-rail-extend][data-body]:not([data-rail-enter])::before,
+  .activity-child[data-rail-extend][data-body]:not([data-rail-enter])::before {
+    animation: activity-rail-extend 0.26s cubic-bezier(0.33, 1, 0.68, 1)
+      backwards;
+  }
+
+  /* How much further the segment reaches once a row follows: from a last
+     row's `bottom` to a middle row's, per marker. */
+  .activity-item[data-rail-extend]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 0.375rem);
+  }
+  .activity-item[data-rail-extend][data-marker="dot"]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 0.5625rem);
+  }
+  .activity-child[data-rail-extend]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 0.5625rem);
+  }
+  .activity-child[data-rail-extend][data-marker="dot"]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 1.1875rem);
+  }
+  /* A done group's last member stopped at the end mark, a line higher (its
+     measured offset is gone by now: the mark's default stands in). */
+  .activity-child[data-rail-extend="reached"]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 1.4375rem);
+  }
+  .activity-child[data-rail-extend="reached"][data-marker="dot"]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 1.75rem);
+  }
+
+  .activity-item[data-marker="working"][data-rail-enter] {
+    animation: tool-content-fade 0.2s ease-out 0.12s both;
+  }
+}
+
 /* Figures and short labels the timeline sets in the monospace face (the
    header summary, a row's end column, a detail box's footer). Words in a
    script the monospace stack has no glyphs for — CJK, Arabic — fall back to a

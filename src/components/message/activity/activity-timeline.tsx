@@ -35,6 +35,7 @@ import { ThoughtRow } from "./rows/thought-row"
 import { WorkingSpinner } from "./rail-icon"
 import { useEndMarkLine } from "./use-end-mark-line"
 import { useLiveToolStep } from "./use-live-step"
+import { useRailGrowth } from "./use-rail-growth"
 
 /**
  * The activity timeline: a reply's process as one row per step on a left
@@ -94,6 +95,8 @@ export const ActivityTimeline = memo(function ActivityTimeline({
   const reached = !pinnedOnly && !isStreaming
   const listRef = useRef<HTMLOListElement>(null)
   useEndMarkLine(listRef, reached && items.length > 0)
+  // Still going, its rail grows down to each step that joins it.
+  useRailGrowth(listRef, !pinnedOnly && isStreaming && items.length > 0)
   const long = items.length > LONG_TIMELINE_ROWS && !pinnedOnly
   // While it streams, its rows slide into the fold one at a time as new ones
   // arrive: cutting the tail to size the moment it crossed the threshold would

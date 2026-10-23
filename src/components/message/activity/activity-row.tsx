@@ -6,8 +6,10 @@ import { ChevronRightIcon } from "lucide-react"
 import type { ToolApproval } from "@/lib/activity/approval"
 import type { StepStatus } from "@/lib/activity/types"
 import { cn } from "@/lib/utils"
+import { useActivityRender } from "./activity-context"
 import { ApprovalChip, showsApproval } from "./approval-chip"
 import { useEndMarkLine } from "./use-end-mark-line"
+import { useRailGrowth } from "./use-rail-growth"
 
 const MARKER_POSITION = {
   main: {
@@ -188,7 +190,9 @@ export function RowChevron({
  * An open group's members, on their own dashed rail. `end` says whether the
  * group is done (`reached`: the members end on their mark, level with the
  * last member's last line) or still going; a folded group's live member
- * under its header has neither.
+ * under its header has neither. While the reply is written, the rail grows
+ * down to each member that joins — a group whose members are all done can
+ * still gain one, and only turns live again in the commit that adds it.
  */
 export function ActivityMembers({
   end,
@@ -197,8 +201,10 @@ export function ActivityMembers({
   end?: "pending" | "reached"
   children: ReactNode
 }) {
+  const { isStreaming } = useActivityRender()
   const listRef = useRef<HTMLUListElement>(null)
   useEndMarkLine(listRef, end === "reached")
+  useRailGrowth(listRef, end !== undefined && isStreaming)
   return (
     <ul ref={listRef} role="list" className="activity-children" data-end={end}>
       {children}
