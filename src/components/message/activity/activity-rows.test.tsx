@@ -143,6 +143,14 @@ describe("delegation row", () => {
     expect(wait.textContent).toContain("done · 1m 34s")
   })
 
+  it("marks a check whose panel is open, so the rail can run beside it", () => {
+    renderUi(<Round parts={parts(MOCKUP_ASSISTANT_TURN)} />)
+    const wait = rowOf("Waiting for task #14be49e7 result")
+    expect(wait).not.toHaveAttribute("data-body")
+    fireEvent.click(within(wait).getAllByRole("button")[0]!)
+    expect(wait).toHaveAttribute("data-body")
+  })
+
   it("says the task on its title line, not on a line of its own", () => {
     renderUi(<Round parts={parts(MOCKUP_ASSISTANT_TURN)} />)
     const row = rowOf("Codex")

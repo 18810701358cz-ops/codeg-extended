@@ -115,6 +115,9 @@ export function ActivityRow({
       data-marker={markerKind}
       data-status={status}
       data-step-key={stepKey}
+      // As the last row it runs the rail beside its open panel, down to the
+      // end mark (globals.css).
+      data-body={open && detail ? "" : undefined}
     >
       <span
         className={cn(

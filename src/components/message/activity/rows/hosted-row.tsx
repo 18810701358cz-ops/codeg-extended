@@ -35,6 +35,9 @@ export const HostedRow = memo(function HostedRow({
       data-marker="ring"
       data-status={status}
       data-step-key={stepKey}
+      // The card is a body under its line: as the last row, the rail runs
+      // beside it (globals.css).
+      data-body=""
     >
       <span className="absolute start-0.5 top-1 flex size-5 items-center justify-center">
         <RailIcon
@@ -57,7 +60,14 @@ export const NoteRow = memo(function NoteRow({
   children: ReactNode
 }) {
   return (
-    <li className="activity-item" data-marker="dot" data-step-key={stepKey}>
+    <li
+      className="activity-item"
+      data-marker="dot"
+      data-step-key={stepKey}
+      // Prose is a body under its line too (globals.css draws no segment
+      // beside a one-line note).
+      data-body=""
+    >
       <span className="absolute start-[0.5625rem] top-[0.6875rem] flex size-1.5 items-center justify-center">
         <RailDot />
       </span>

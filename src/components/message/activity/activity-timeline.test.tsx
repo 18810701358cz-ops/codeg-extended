@@ -370,6 +370,20 @@ describe("activity timeline: where the rail ends", () => {
     )
   })
 
+  it("runs the rail past the last row only beside a body under its line", () => {
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const rows = list().querySelectorAll(":scope > li")
+    const last = rows[rows.length - 1] as HTMLElement
+    // Folded, the last row ends the rail at its ring: no segment, no mark.
+    expect(last).not.toHaveAttribute("data-body")
+    fireEvent.click(within(last).getAllByRole("button")[0]!)
+    expect(last).toHaveAttribute("data-body")
+    // Prose is a body under its line, open or not.
+    expect(
+      list().querySelector(':scope > li[data-marker="dot"]')
+    ).toHaveAttribute("data-body")
+  })
+
   it("holds a running group's mark back, and draws none under its folded member", () => {
     const LIVE: MessageTurn = {
       id: "turn-g",
