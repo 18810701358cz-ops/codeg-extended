@@ -735,6 +735,10 @@ describe("delegation row: the task it was handed", () => {
     )
     expect(line).toHaveClass("truncate")
     expect(line).toHaveAttribute("dir", "auto")
+    // It takes only the room the rest of the line leaves, and nothing runs
+    // past the line's end.
+    expect(line).toHaveClass("flex-1")
+    expect(line.parentElement).toHaveClass("overflow-hidden")
   })
 
   it("has nothing to open when the task fits on its title line", () => {

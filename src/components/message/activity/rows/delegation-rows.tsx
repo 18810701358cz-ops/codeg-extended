@@ -274,7 +274,10 @@ export const DelegationRow = memo(function DelegationRow({
           </DetailBox>
         )}
       >
-        <span className="flex min-w-0 items-baseline gap-2">
+        {/* The task gets whatever room the rest leaves (it is all in the
+            panel), the step count gives way next, and nothing runs past the
+            line's end. */}
+        <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
           <DelegationIdentityName
             identity={model.identity}
             className="max-w-[60%] shrink-0 truncate font-semibold text-foreground"
@@ -289,7 +292,7 @@ export const DelegationRow = memo(function DelegationRow({
             </span>
           ) : null}
           {progress && progress.steps > 0 ? (
-            <span className="shrink-0 text-muted-foreground">
+            <span className="min-w-0 truncate text-muted-foreground">
               {`· ${t("header.steps", { count: progress.steps })}`}
             </span>
           ) : null}
@@ -297,7 +300,7 @@ export const DelegationRow = memo(function DelegationRow({
             <span
               ref={taskRef}
               dir="auto"
-              className="min-w-0 truncate text-muted-foreground"
+              className="min-w-0 flex-1 truncate text-muted-foreground"
             >
               {taskLine}
             </span>
