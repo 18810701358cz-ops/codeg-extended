@@ -241,12 +241,42 @@ const AGENT_TURN: MessageTurn = {
             is_error: false,
           },
         ],
+        timeline: [
+          {
+            type: "text",
+            text: "I'll find every reader of `source_bindings` first.",
+          },
+          { type: "tool_call", childIndex: 0 },
+          {
+            type: "text",
+            text: "Four matches; only `report.py` walks them directly, so I'll read it.",
+          },
+          { type: "tool_call", childIndex: 1 },
+          {
+            type: "text",
+            text: "Three consumers read `source_bindings`; only `report.py` assumes inactive bindings are present.\n\n- `report.py` writes a line for every binding\n- `tasks.py` drops inactive bindings first\n- `audit.py` only counts them",
+          },
+        ],
       },
     },
     {
       type: "text",
       text: "Only `report.py` relies on inactive bindings being present.",
     },
+  ],
+}
+
+const AGENT_LIVE_TURN: MessageTurn = {
+  id: "turn-agent-live",
+  role: "assistant",
+  timestamp: "2026-10-22T09:25:00Z",
+  blocks: [
+    toolUse("a2", "Agent", {
+      description: "Run the build",
+      prompt:
+        "Run `pnpm build` in /Users/me/work/my-app without changing any files, and report whether it succeeded with the exit code and the key output.",
+      subagent_type: "general-purpose",
+    }),
   ],
 }
 
@@ -325,6 +355,10 @@ const POLLED_TASK_ID = "9e82cbc1-5d0e-4f6a-8b3c-2a1d0e9f8c7b"
 const POLLED_TASK =
   "Run `pnpm build` in /Users/me/work/my-app without changing any files. Report whether it succeeded (exit code), the key output, and — if it failed — the full error with file paths and line numbers."
 
+const RUNNING_TASK_ID = "5b4a74be-2c1d-4e8f-9a0b-6c5d4e3f2a1b"
+const RUNNING_TASK =
+  "Run the web unit tests in /Users/me/work/my-app and report every failure with its file path and line number."
+
 const DELEGATION_TURN: MessageTurn = {
   id: "turn-delegation",
   role: "assistant",
@@ -396,6 +430,32 @@ const DELEGATION_TURN: MessageTurn = {
         { content: "Add tests and verify", priority: "low", status: "pending" },
       ],
     },
+    // Still out when the reply ends: no step and no word from it yet.
+    toolUse(
+      "d3",
+      "mcp__codeg-mcp__delegate_to_agent",
+      { agent_type: "codex", task: RUNNING_TASK },
+      {
+        "codeg.delegation": {
+          status: "running",
+          child_conversation_id: 79,
+          task_id: RUNNING_TASK_ID,
+          task_preview: RUNNING_TASK,
+        },
+      }
+    ),
+    toolResult(
+      "d3",
+      JSON.stringify({ task_id: RUNNING_TASK_ID, status: "started" })
+    ),
+    toolUse("d4", "mcp__codeg-mcp__get_delegation_status", {
+      task_ids: [RUNNING_TASK_ID],
+      wait_ms: 60000,
+    }),
+    toolResult(
+      "d4",
+      JSON.stringify({ task_id: RUNNING_TASK_ID, status: "running" })
+    ),
     {
       type: "text",
       text: "The build passes; three of the six steps are done.",
@@ -455,6 +515,13 @@ const SCENARIOS: Scenario[] = [
   { id: "failure", title: "Failures", turn: FAILURE_TURN },
   { id: "codex", title: "Codex", turn: CODEX_TURN },
   { id: "agent", title: "Sub-agent", turn: AGENT_TURN },
+  {
+    id: "agent-live",
+    title: "Sub-agent, running",
+    turn: AGENT_LIVE_TURN,
+    live: true,
+    inProgress: ["a2"],
+  },
   { id: "workflow", title: "Plans, questions and tasks", turn: WORKFLOW_TURN },
   { id: "delegation", title: "Delegation checks", turn: DELEGATION_TURN },
   { id: "text", title: "Text-only reply", turn: TEXT_TURN },
