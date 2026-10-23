@@ -102,7 +102,9 @@ function useCommandOutput(step: ToolStep): CommandOutput | null {
 /** What a command row says: a fixed "Command", then the agent's description
  *  of the command when it gave one, else the command line (a heredoc's opener
  *  for a heredoc); codex's session polls and scripts lead with their own verb.
- *  `commandRef` measures whether the line cuts the command short. */
+ *  All of it in the label's light ink: a command line is long and dense, and
+ *  in the body colour it would outweigh every other row. `commandRef`
+ *  measures whether the line cuts the command short. */
 function CommandLabel({
   step,
   commandRef,
@@ -137,7 +139,10 @@ function CommandLabel({
         <span className="shrink-0 font-medium text-muted-foreground">
           {verb}
         </span>
-        <span className="min-w-0 truncate font-mono text-[0.8125rem]" dir="ltr">
+        <span
+          className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground"
+          dir="ltr"
+        >
           {target}
         </span>
       </span>
@@ -152,7 +157,7 @@ function CommandLabel({
         </span>
         {command.display ? (
           <span
-            className="min-w-0 truncate font-mono text-[0.8125rem]"
+            className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground"
             dir="ltr"
           >
             {command.display}
@@ -173,8 +178,8 @@ function CommandLabel({
   const live = step.tool.status === "running" || step.tool.status === "pending"
   // One line: the label, then the title, which gives way first (the panel and
   // the tooltip have it whole); its notes keep their room, and nothing runs
-  // past the line's end. A description is words, in the label's light ink,
-  // with nothing about the command's lines — the command is atop the panel.
+  // past the line's end. A description is words, with nothing about the
+  // command's lines — the command is atop the panel.
   return (
     <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
       <span
@@ -193,7 +198,7 @@ function CommandLabel({
         <>
           <span
             ref={commandRef}
-            className="min-w-0 truncate font-mono text-[0.8125rem]"
+            className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground"
             dir="ltr"
           >
             {firstLine}

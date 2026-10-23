@@ -566,3 +566,29 @@ describe("a command group in a reply being written", () => {
     expect(screen.queryByText("pnpm lint")).toBeNull()
   })
 })
+
+describe("command row", () => {
+  it("draws its command line in the label's light ink, like a description", () => {
+    renderUi(
+      <Round
+        parts={parts(
+          turn([
+            toolUse("c1", "Bash", { command: "pnpm lint" }),
+            toolResult("c1", "ok"),
+            { type: "text", text: "Now the tests." },
+            toolUse("c2", "Bash", {
+              command: "pnpm test",
+              description: "Run the tests",
+            }),
+            toolResult("c2", "ok"),
+          ])
+        )}
+      />
+    )
+
+    expect(screen.getByText("pnpm lint")).toHaveClass("text-muted-foreground")
+    expect(screen.getByText("Run the tests")).toHaveClass(
+      "text-muted-foreground"
+    )
+  })
+})
