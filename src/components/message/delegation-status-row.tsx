@@ -83,8 +83,6 @@ interface DelegationStatusRowProps {
    *  what the live sub-agent overrides it with — so the rail it sits on can
    *  agree with it. */
   onStatusChange?: (status: ResolvedBadge["status"]) => void
-  /** Told whether the row's panel is open, so the rail can run beside it. */
-  onOpenChange?: (open: boolean) => void
 }
 
 // Memoized: the rows of a card that keeps its polls are the same objects
@@ -98,7 +96,6 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
   runningConfirmed = false,
   latestPollId = null,
   onStatusChange,
-  onOpenChange,
 }: DelegationStatusRowProps) {
   const t = useTranslations("Folder.chat.delegation")
   const panelId = useId()
@@ -215,9 +212,6 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
   const duration =
     report.durationMs != null ? formatDuration(report.durationMs) : null
   const open = expandable && expanded
-  useEffect(() => {
-    onOpenChange?.(open)
-  }, [onOpenChange, open])
 
   const shortId = taskId ? taskId.slice(0, 8) : null
   const label =

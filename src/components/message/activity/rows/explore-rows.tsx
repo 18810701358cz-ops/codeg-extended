@@ -163,7 +163,11 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
         ) : null
       }
       detail={() => (
-        <ul role="list" className="activity-children">
+        <ul
+          role="list"
+          className="activity-children"
+          data-end={live || awaited ? "pending" : "reached"}
+        >
           {steps.map((step) => (
             <ExploreChildRow key={step.key} step={step} />
           ))}

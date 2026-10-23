@@ -208,6 +208,10 @@ describe("a folded turn", () => {
     ).toBe("awaiting")
     expect(screen.queryByText("#bbbb2222")).toBeNull()
     expect(screen.queryByText("Waiting for task #bbbb2222 result")).toBeNull()
+    // What stays in view is no list of the turn's steps: it has no end mark.
+    const lists = document.querySelectorAll(".activity-timeline")
+    expect(lists).toHaveLength(1)
+    expect(lists[0]).not.toHaveAttribute("data-end")
   })
 })
 

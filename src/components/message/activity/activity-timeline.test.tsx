@@ -290,14 +290,6 @@ describe("activity timeline: failures", () => {
     expect(within(row).getByText(/Type error/)).toBeTruthy()
   })
 
-  it("keeps the rail beside the last row while it is open", () => {
-    renderSettled(partsOf(FAILURE))
-    const row = rowOf("pnpm build")
-    expect(row).toHaveAttribute("data-open")
-    fireEvent.click(within(row).getAllByRole("button")[0]!)
-    expect(row).not.toHaveAttribute("data-open")
-  })
-
   it("leaves the failure link and a text selection to themselves", () => {
     renderSettled(partsOf(FAILURE))
     fireEvent.click(screen.getByText("1 failed"))
@@ -322,6 +314,62 @@ describe("activity timeline: a live turn", () => {
     const row = rowOf("pnpm --filter web test -- --watch=false")
     expect(row.getAttribute("data-status")).toBe("running")
     expect(within(row).getByText(/lib\/state\.test\.ts/)).toBeTruthy()
+  })
+})
+
+describe("activity timeline: where the rail ends", () => {
+  // The rail itself is CSS (globals.css): the list says whether it is done.
+  const list = () => document.querySelector(".activity-timeline")!
+
+  it("ends a finished reply's steps on the end mark", () => {
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    expect(list()).toHaveAttribute("data-end", "reached")
+  })
+
+  it("keeps the room for the mark, but not the mark, while the reply runs", () => {
+    renderTurn(
+      <CurrentRound
+        parts={partsOf(MOCKUP_LIVE_TURN, true, ["l3"])}
+        completed={false}
+      />
+    )
+    expect(list()).toHaveAttribute("data-end", "pending")
+  })
+
+  it("ends an open group's members on their own mark once the group is done", () => {
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const group = rowOf("Explored")
+    fireEvent.click(within(group).getAllByRole("button")[0]!)
+    expect(group.querySelector(".activity-children")).toHaveAttribute(
+      "data-end",
+      "reached"
+    )
+  })
+
+  it("holds a running group's mark back, and draws none under its folded member", () => {
+    const LIVE: MessageTurn = {
+      id: "turn-g",
+      role: "assistant",
+      timestamp: "2026-10-22T09:00:00Z",
+      blocks: [
+        toolUse("g1", "Bash", { command: "pnpm lint" }),
+        toolResult("g1", "ok"),
+        toolUse("g2", "Bash", { command: "pnpm test" }),
+      ],
+    }
+    renderTurn(
+      <CurrentRound parts={partsOf(LIVE, true, ["g2"])} completed={false} />
+    )
+    const group = rowOf("Running 2 commands")
+    // Folded, the running member shows under the header: one row, no list.
+    expect(group.querySelector(".activity-children")).not.toHaveAttribute(
+      "data-end"
+    )
+    fireEvent.click(within(group).getAllByRole("button")[0]!)
+    expect(group.querySelector(".activity-children")).toHaveAttribute(
+      "data-end",
+      "pending"
+    )
   })
 })
 

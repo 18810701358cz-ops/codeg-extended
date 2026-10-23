@@ -497,7 +497,11 @@ export const CommandGroupRow = memo(function CommandGroupRow({
         ) : null
       }
       detail={() => (
-        <ul role="list" className="activity-children">
+        <ul
+          role="list"
+          className="activity-children"
+          data-end={live || awaited ? "pending" : "reached"}
+        >
           {steps.map((step) => (
             <CommandRow key={step.key} step={step} inGroup />
           ))}

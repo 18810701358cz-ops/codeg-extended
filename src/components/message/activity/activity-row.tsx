@@ -118,8 +118,6 @@ export function ActivityRow({
       data-marker={markerKind}
       data-status={status}
       data-step-key={stepKey}
-      // An open last row keeps its rail beside the panel (globals.css).
-      data-open={open && detail ? "" : undefined}
     >
       <span
         className={cn(

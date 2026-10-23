@@ -95,6 +95,10 @@ export const ActivityTimeline = memo(function ActivityTimeline({
       <ol
         role="list"
         className={cn("activity-timeline empty:hidden", pinnedOnly && "mt-2")}
+        // Its end mark, once its steps are done — the reply's, or a
+        // sub-agent's (globals.css); the rows still running under a folded
+        // reply are no list of steps to end.
+        data-end={pinnedOnly ? undefined : isStreaming ? "pending" : "reached"}
       >
         {head.map((item) => (
           <ActivityItemView key={item.key} item={item} />
