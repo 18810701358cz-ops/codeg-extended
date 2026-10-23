@@ -14,8 +14,8 @@ const MARKER_POSITION = {
     dot: "start-[0.5625rem] top-[0.6875rem] size-1.5",
   },
   child: {
-    ring: "start-0 top-1 size-4",
-    dot: "start-[0.3125rem] top-[0.5625rem] size-1.5",
+    ring: "start-0 top-1.5 size-4",
+    dot: "start-[0.3125rem] top-[0.6875rem] size-1.5",
   },
 } as const
 
@@ -28,8 +28,9 @@ const MARKER_POSITION = {
  * below it — and the disclosure chevron always takes its space (it only
  * becomes visible on hover / focus), so nothing shifts when it appears.
  *
- * `variant="child"` is a row inside an expanded group: smaller marker, its own
- * dashed sub-rail (see `.activity-child` in globals.css).
+ * `variant="child"` is a row inside an expanded group: smaller marker and
+ * type, its own dashed sub-rail (see `.activity-child` in globals.css), and
+ * the same spacing as the rows around the group.
  */
 export function ActivityRow({
   stepKey,
@@ -99,10 +100,8 @@ export function ActivityRow({
   // `leading-*` that a later `text-*` follows, and the rail's markers and the
   // chevron are placed for a 1.5rem line.
   const headerClass = cn(
-    "group/row flex w-full min-w-0 items-start text-start",
-    variant === "main"
-      ? "py-0.5 text-sm leading-6"
-      : "text-[0.8125rem] leading-6",
+    "group/row flex w-full min-w-0 items-start py-0.5 text-start",
+    variant === "main" ? "text-sm leading-6" : "text-[0.8125rem] leading-6",
     headerClassName
   )
 

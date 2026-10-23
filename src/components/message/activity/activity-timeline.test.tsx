@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
+import postcss from "postcss"
 import { useState, type ReactElement } from "react"
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
@@ -289,6 +292,35 @@ describe("activity timeline: the reference turn", () => {
     const child = within(rowOf(/\/Makefile$/)).getByRole("button")
     expect(child.className).toMatch(/\bleading-6\b/)
   })
+
+  it("spaces a group's members like the rows around the group", () => {
+    // The same room above and below the line as a main row's header, and the
+    // same gap between rows, so an open group keeps the timeline's rhythm
+    // instead of packing its members together.
+    const stylesheet = postcss.parse(
+      readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8")
+    )
+    const gap = (selector: string) => {
+      let value: string | undefined
+      stylesheet.walkRules((rule) => {
+        if (rule.selector !== selector) return
+        rule.walkDecls("margin-top", (decl) => {
+          value = decl.value
+        })
+      })
+      return value
+    }
+    expect(gap(".activity-item + .activity-item")).toBeTruthy()
+    expect(gap(".activity-child + .activity-child")).toBe(
+      gap(".activity-item + .activity-item")
+    )
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const explored = within(rowOf("Explored")).getAllByRole("button")[0]!
+    fireEvent.click(explored)
+    const child = within(rowOf(/\/Makefile$/)).getByRole("button")
+    expect(child.className).toMatch(/\bpy-0\.5\b/)
+    expect(explored.className).toMatch(/\bpy-0\.5\b/)
+  })
 })
 
 describe("activity timeline: failures", () => {
@@ -355,7 +387,7 @@ describe("activity timeline: where the rail ends", () => {
     expect(list()).toHaveAttribute("data-end", "reached")
   })
 
-  it("keeps the room for the mark, but not the mark, while the reply runs", () => {
+  it("holds the end mark back while the reply runs", () => {
     renderTurn(
       <CurrentRound
         parts={partsOf(MOCKUP_LIVE_TURN, true, ["l3"])}
