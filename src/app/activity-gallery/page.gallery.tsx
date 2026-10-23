@@ -10,7 +10,7 @@
  * (default: all), `?lang=` sets the interface language.
  */
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 import { Message, MessageContent } from "@/components/ai-elements/message"
 import { CompletedTurnContent } from "@/components/message/completed-turn-content"
@@ -654,6 +654,96 @@ const MARKDOWN_TURN: MessageTurn = {
   ],
 }
 
+/**
+ * A reply that streams in a step at a time (`?view=stream`), then settles and
+ * starts over: prose that ends the reply and then turns into a note, a read,
+ * commands that gather into a group one by one, an edit. `&interval=` sets the
+ * beat in ms, `&beat=` holds it on one beat (`window.__setStreamBeat` moves
+ * it).
+ */
+const STREAM_BEATS: MessageTurn["blocks"][] = [
+  [
+    {
+      type: "thinking",
+      text: "**Looking at the page first**\n\nThen the styles it pulls in.",
+    },
+  ],
+  [toolUse("s1", "Read", { file_path: `${MOCKUP_REPO}/web/app/page.tsx` })],
+  [toolResult("s1", fixtureLines(30, "page.tsx"))],
+  [{ type: "text", text: "The page imports the console. Checking it next." }],
+  [toolUse("s2", "Bash", { command: "ls app components" })],
+  [toolResult("s2", "app\ncomponents")],
+  [toolUse("s3", "Bash", { command: "wc -l components/*.tsx" })],
+  [toolResult("s3", "  120 components/cyberpunk-console.tsx")],
+  [toolUse("s4", "Bash", { command: 'grep -n "keyframes" app/globals.css' })],
+  [toolResult("s4", "12:@keyframes flicker {")],
+  [{ type: "text", text: "Found it: the flicker runs on every frame." }],
+  [
+    toolUse("s5", "Edit", {
+      file_path: `${MOCKUP_REPO}/web/app/globals.css`,
+      old_string: "  animation: flicker 16ms infinite;",
+      new_string: "  animation: flicker 1.6s infinite;",
+      _start_line: 14,
+    }),
+  ],
+  [
+    toolResult(
+      "s5",
+      `The file ${MOCKUP_REPO}/web/app/globals.css has been updated successfully.`
+    ),
+  ],
+  [toolUse("s6", "Bash", { command: "pnpm --filter web test" })],
+  [toolResult("s6", " ✓ lib/report.test.ts (12 tests)")],
+  [{ type: "text", text: "Done: the flicker now runs every 1.6 s." }],
+]
+/** Beats the settled reply stays up for before it starts over. */
+const STREAM_SETTLED_BEATS = 3
+
+function StreamScenario() {
+  const interval = Number(params.get("interval") ?? 1400)
+  const held = params.get("beat")
+  const [beat, setBeat] = useState(held ? Number(held) : 1)
+  useEffect(() => {
+    // A probe steps a held reply itself.
+    Object.assign(window, { __setStreamBeat: setBeat })
+    if (held) return
+    const id = window.setInterval(
+      () =>
+        setBeat((b) =>
+          b >= STREAM_BEATS.length + STREAM_SETTLED_BEATS ? 1 : b + 1
+        ),
+      interval
+    )
+    return () => window.clearInterval(id)
+  }, [held, interval])
+  const scenario = useMemo<Scenario>(() => {
+    const blocks = STREAM_BEATS.slice(0, beat).flat()
+    const answered = new Set(
+      blocks.flatMap((b) =>
+        b.type === "tool_result" && b.tool_use_id ? [b.tool_use_id] : []
+      )
+    )
+    return {
+      id: "stream",
+      title: "Streaming, a step at a time",
+      turn: {
+        id: "turn-stream",
+        role: "assistant",
+        timestamp: "2026-10-23T09:00:00Z",
+        duration_ms: 21000,
+        blocks,
+      },
+      live: beat <= STREAM_BEATS.length,
+      inProgress: blocks.flatMap((b) =>
+        b.type === "tool_use" && b.tool_use_id && !answered.has(b.tool_use_id)
+          ? [b.tool_use_id]
+          : []
+      ),
+    }
+  }, [beat])
+  return <ScenarioView scenario={scenario} />
+}
+
 type Scenario = {
   id: string
   title: string
@@ -784,9 +874,13 @@ export default function ActivityGalleryPage() {
                   <ContentPartsRenderer parts={user.content} role="user" />
                 </MessageContent>
               </Message>
-              {scenarios.map((scenario) => (
-                <ScenarioView key={scenario.id} scenario={scenario} />
-              ))}
+              {view === "stream" ? (
+                <StreamScenario />
+              ) : (
+                scenarios.map((scenario) => (
+                  <ScenarioView key={scenario.id} scenario={scenario} />
+                ))
+              )}
             </div>
           </div>
         </StaticWorkspaceActionsProvider>
