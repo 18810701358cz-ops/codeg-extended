@@ -297,7 +297,7 @@ export const ExploreChildRow = memo(function ExploreChildRow({
         ) : null}
         <span
           className={cn(
-            "min-w-0 truncate font-mono text-foreground",
+            "min-w-0 truncate font-mono text-muted-foreground",
             standalone && "text-[0.8125rem]"
           )}
           dir="ltr"

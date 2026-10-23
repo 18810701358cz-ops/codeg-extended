@@ -37,19 +37,17 @@ const LARGE_DIFF_ROWS = 600
 const LARGE_DIFF_CHARS = 80_000
 const PREVIEW_ROWS = 240
 
-/** `agent/src/hvac_agent/` muted, `query_tasks.py` prominent; the directory
- *  is what truncates. */
+/** `agent/src/hvac_agent/query_tasks.py`, in the label's light ink like a
+ *  command line; the directory is what truncates, the name stays whole. */
 function PathLabel({ path }: { path: string }) {
   const { dir, name } = splitPathForDisplay(path)
   return (
     <span
-      className="flex min-w-0 items-baseline font-mono text-[0.8125rem]"
+      className="flex min-w-0 items-baseline font-mono text-[0.8125rem] text-muted-foreground"
       dir="ltr"
     >
-      {dir ? (
-        <span className="min-w-0 truncate text-muted-foreground">{dir}</span>
-      ) : null}
-      <span className="shrink-0 text-foreground">{name}</span>
+      {dir ? <span className="min-w-0 truncate">{dir}</span> : null}
+      <span className="shrink-0">{name}</span>
     </span>
   )
 }

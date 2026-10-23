@@ -307,12 +307,19 @@ describe("activity timeline: the reference turn", () => {
     }
   })
 
-  it("sets a row's verb and a group's title in the light ink, what they act on in the dark", () => {
+  it("sets a row's verb, a group's title and the file it acts on in the light ink", () => {
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     for (const label of ["Explored", "Ran 2 commands", "Edited"]) {
       expect(screen.getAllByText(label)[0]).toHaveClass("text-muted-foreground")
     }
-    expect(screen.getByText("query_tasks.py")).toHaveClass("text-foreground")
+    // The edited file: its folder and its name alike.
+    const name = screen.getByText("query_tasks.py")
+    expect(name).not.toHaveClass("text-foreground")
+    expect(name.closest(".text-muted-foreground")).toBe(name.parentElement)
+    // A file an explore group read.
+    fireEvent.click(within(rowOf("Explored")).getAllByRole("button")[0]!)
+    const read = within(rowOf(/\/Makefile$/)).getByText(/\/Makefile$/)
+    expect(read).toHaveClass("text-muted-foreground")
   })
 
   it("spaces a group's members like the rows around the group", () => {

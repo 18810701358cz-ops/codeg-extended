@@ -650,6 +650,43 @@ describe("a reply's rail while it is written", () => {
   })
 })
 
+describe("file rows", () => {
+  it("draw the file they read, write or edit in the label's light ink", () => {
+    renderUi(
+      <Round
+        parts={parts(
+          turn([
+            toolUse("r1", "Read", { file_path: "/repo/src/read.ts" }),
+            toolResult("r1", "1→export {}"),
+            { type: "text", text: "Now the new file." },
+            toolUse("w1", "Write", {
+              file_path: "/repo/src/made.ts",
+              content: "export const a = 1\n",
+            }),
+            toolResult("w1", "ok"),
+            { type: "text", text: "And the edit." },
+            toolUse("e1", "Edit", {
+              file_path: "/repo/src/changed.ts",
+              old_string: "a",
+              new_string: "b",
+            }),
+            toolResult("e1", "ok"),
+          ])
+        )}
+      />
+    )
+
+    expect(screen.getByText("/repo/src/read.ts")).toHaveClass(
+      "text-muted-foreground"
+    )
+    for (const name of ["made.ts", "changed.ts"]) {
+      const label = screen.getByText(name)
+      expect(label).not.toHaveClass("text-foreground")
+      expect(label.parentElement).toHaveClass("text-muted-foreground")
+    }
+  })
+})
+
 describe("command row", () => {
   it("draws its command line in the label's light ink, like a description", () => {
     renderUi(
