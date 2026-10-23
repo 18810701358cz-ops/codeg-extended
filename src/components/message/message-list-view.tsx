@@ -738,7 +738,8 @@ type AssistantTurnItem = Extract<ThreadRenderItem, { kind: "turn" }>
  * item FREEZES its members' `sourceTurns`, so any turn field the adapter's
  * cache ignores would be stale here forever (`source_turn_id`, which the fork
  * affordance reads, is in that tuple for exactly this reason). The keys embed
- * phase/id/index so ordering or phase drift invalidates too. A run
+ * role/id so ordering drift invalidates too; a member settling into history
+ * re-adapts (a new group) and completes, so phase drift does as well. A run
  * containing the streaming turn misses every batch by construction (the
  * streaming turn re-adapts per batch) — that residual rebuild is the point;
  * purely historical runs hit and keep their group/parts/sourceTurns
@@ -1483,15 +1484,17 @@ export function MessageListView({
         }
         groupCache.set(msg, group)
       }
-      // Include phase so a turn that briefly coexists across phases (e.g.
-      // a streaming turn that has just been promoted to localTurns while the
-      // liveMessage is still attached) doesn't collide with itself in the
-      // virtualized list, and role because the timeline dedup deliberately
-      // keeps different-role turns that share an id. NO positional index:
-      // paging in older history prepends items, and an index-bearing key
-      // would shift every existing row's identity — remounting the whole
-      // list and dropping the virtualizer's measurement cache mid-scroll.
-      const key = `${phase}-${role}-${msg.id}`
+      // Role and id: the timeline holds one turn per role and id (a streaming
+      // turn just promoted into localTurns while the liveMessage is still
+      // attached is deduped there, `dedupeTimeline`), and deliberately keeps
+      // different-role turns that share one. NO phase: a reply settling into
+      // history keeps its id, and a key that changed with the phase would
+      // remount the whole reply at the moment it finishes. NO positional
+      // index either: paging in older history prepends items, and an
+      // index-bearing key would shift every existing row's identity —
+      // remounting the whole list and dropping the virtualizer's measurement
+      // cache mid-scroll.
+      const key = `${role}-${msg.id}`
       // Hoist a compaction-only turn to its own standalone divider item so it
       // renders BETWEEN turns instead of being merged into (and wedged inside)
       // the preceding assistant reply by `mergeConsecutiveAssistantTurns`.

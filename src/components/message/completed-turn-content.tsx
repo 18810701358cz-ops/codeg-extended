@@ -139,13 +139,12 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
   const open = currentRound ? roundOpen : localOpen
 
   // The unfold animation belongs to a real closed→open TOGGLE, never to a mount
-  // that starts open. This component remounts constantly while staying open:
-  // the row key flips from `streaming-…` to `persisted-…` the instant a reply
-  // settles, the authoritative detail refetch renames the turn and flips it
-  // again, and the virtualizer recycles any row scrolled past its overscan
-  // buffer. Without this gate each of those replays a 200ms unfold, so a
-  // finished reply appears to collapse and re-open by itself — precisely the
-  // behaviour the round model exists to prevent.
+  // that starts open. This component remounts while staying open: the
+  // authoritative detail refetch renames the turn, and the virtualizer
+  // recycles any row scrolled past its overscan buffer. Without this gate each
+  // of those replays a 200ms unfold, so a finished reply appears to collapse
+  // and re-open by itself — precisely the behaviour the round model exists to
+  // prevent.
   //
   // Only the ENTER side is gated. The exit animation must always run: it is
   // what unmounts the content (see the presence check in `instant-collapsible`).

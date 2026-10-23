@@ -259,11 +259,10 @@ describe("CompletedTurnContent", () => {
   })
 
   it("does not replay the unfold when an open reply re-mounts", () => {
-    // This component re-mounts constantly while staying open: the row key flips
-    // `streaming-…` → `persisted-…` the instant a reply settles, the detail
-    // refetch renames the turn, and the virtualizer recycles scrolled-away
-    // rows. Each of those would replay the 200ms unfold — the reply would look
-    // like it collapsed and re-opened by itself.
+    // This component re-mounts while staying open: the detail refetch renames
+    // the turn, and the virtualizer recycles scrolled-away rows. Each of those
+    // would replay the 200ms unfold — the reply would look like it collapsed
+    // and re-opened by itself.
     const foldBody = () =>
       document.querySelector('[data-slot="collapsible-content"]')
 
