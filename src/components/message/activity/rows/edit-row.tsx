@@ -274,7 +274,7 @@ export const EditDiff = memo(function EditDiff({
       }
     >
       <div
-        className="min-w-full py-1 font-mono text-[0.78125rem] leading-relaxed"
+        className="min-w-full font-mono text-[0.78125rem] leading-relaxed"
         dir="ltr"
       >
         {visibleFiles.map((file) => (
