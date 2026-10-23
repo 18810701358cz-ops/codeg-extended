@@ -269,7 +269,9 @@ export const DelegationRow = memo(function DelegationRow({
             </span>
           ) : null}
           {progress && progress.steps > 0 ? (
-            <span className="min-w-0 truncate text-muted-foreground">
+            // Pulled in by the space after its dot, so the dot sits centred
+            // between the id and the count.
+            <span className="-ms-1 min-w-0 truncate text-muted-foreground">
               {`· ${t("header.steps", { count: progress.steps })}`}
             </span>
           ) : null}
