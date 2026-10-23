@@ -19,6 +19,7 @@ import { useActivityRender } from "../activity-context"
 import { ActivityRow } from "../activity-row"
 import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
+import { FileHeader } from "../file-header"
 import { RailDot, RailIcon } from "../rail-icon"
 import { ResultBody } from "../result-body"
 import {
@@ -372,6 +373,7 @@ function ExploreDetail({ step }: { step: ToolStep }) {
 function ReadDetail({ step }: { step: ToolStep }) {
   const t = useTranslations("Folder.chat.activity")
   const path = step.tool.target?.path
+  const displayPath = useDisplayPath(path)
   const imageMime = path ? localImageMime(path) : null
   const [showAll, setShowAll] = useState(false)
   const parsed = useMemo(
@@ -388,7 +390,11 @@ function ReadDetail({ step }: { step: ToolStep }) {
     // nothing at all).
     const note = parsed?.content.trim()
     return (
-      <DetailBox tone="neutral" bodyClassName="p-2">
+      <DetailBox
+        tone="neutral"
+        bodyClassName="p-2"
+        header={<FileHeader path={path} displayPath={displayPath} />}
+      >
         <ReadImagePreview path={path} mime={imageMime} />
         {note ? (
           <p
@@ -406,6 +412,15 @@ function ReadDetail({ step }: { step: ToolStep }) {
   return (
     <DetailBox
       tone="neutral"
+      header={
+        path ? (
+          <FileHeader
+            path={path}
+            displayPath={displayPath}
+            line={parsed.startLine}
+          />
+        ) : null
+      }
       footer={t("detail.lines", { count: lines.length })}
       actions={
         !showAll && lines.length > READ_PREVIEW_LINES ? (

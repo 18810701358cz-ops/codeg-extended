@@ -675,6 +675,11 @@ export interface EditDiff {
    * would point at the wrong lines.
    */
   numbered: boolean
+  /**
+   * Drawn from an empty old text — a write's new content, a notebook cell's
+   * new source — so there is no "before" to set beside it.
+   */
+  noBefore?: boolean
 }
 
 const NUMBERED_HUNK_RE = /^@@ -\d+/m
@@ -712,7 +717,9 @@ export function editDiffText(
     const diff = content ? generateUnifiedDiff("", content, path) : null
     // A whole new file starts at line 1, so its numbers are real; a notebook
     // cell's are not.
-    return diff ? { text: diff, numbered: name === "write" } : null
+    return diff
+      ? { text: diff, numbered: name === "write", noBefore: true }
+      : null
   }
 
   if (parsed) {

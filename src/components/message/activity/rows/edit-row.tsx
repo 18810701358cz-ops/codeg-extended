@@ -5,16 +5,22 @@ import { useTranslations } from "next-intl"
 
 import {
   parseUnifiedDiff,
+  toSplitRows,
+  ViewModeToggle,
   type ParsedDiffFile,
+  type SplitCell,
 } from "@/components/diff/unified-diff-preview"
 import { FilePathLink } from "@/components/ai-elements/link-safety"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { editDiffText } from "@/lib/activity/edit"
 import { splitPathForDisplay } from "@/lib/activity/format"
+import { useDiffViewMode } from "@/lib/diff-view-mode-prefs"
 import { cn } from "@/lib/utils"
 import { useActivityRender } from "../activity-context"
 import { ActivityRow } from "../activity-row"
 import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
+import { FileHeader } from "../file-header"
 import { RailIcon } from "../rail-icon"
 import { ResultBody } from "../result-body"
 import {
@@ -110,7 +116,13 @@ export const EditRow = memo(function EditRow({ step }: { step: ToolStep }) {
             </DetailBox>
           ) : null}
           {diff ? (
-            <EditDiff diffText={diff.text} numbered={diff.numbered} />
+            <EditDiff
+              diffText={diff.text}
+              numbered={diff.numbered}
+              noBefore={diff.noBefore ?? false}
+              path={single?.path}
+              displayPath={displayPath}
+            />
           ) : null}
         </div>
       )}
@@ -150,20 +162,38 @@ export const EditRow = memo(function EditRow({ step }: { step: ToolStep }) {
 })
 
 /**
- * The edit's diff in a bordered box: one line-number column (the old number
- * for a removed line, the new one otherwise — left blank where the payload
- * had no real positions), a sign column, and the code. Multi-file edits get a
- * header per file. Big diffs open as a preview.
+ * The edit's diff in a bordered box under a header naming the file (it opens
+ * it in the file tabs), with its counts and a switch between the inline and
+ * the side-by-side view — the one diff view preference the app keeps. Inline:
+ * one line-number column (the old number for a removed line, the new one
+ * otherwise — left blank where the payload had no real positions), a sign
+ * column, and the code; side by side: the old and the new text in two halves
+ * that scroll sideways on their own. Multi-file edits get a header per file.
+ * Big diffs open as a preview.
  */
 export const EditDiff = memo(function EditDiff({
   diffText,
   numbered,
+  noBefore = false,
+  path,
+  displayPath,
 }: {
   diffText: string
   numbered: boolean
+  /** Drawn from an empty old text (a write's new content): no "before". */
+  noBefore?: boolean
+  /** The edited file, as the row has it — opened from the header. */
+  path?: string
+  /** That path as the row shows it. */
+  displayPath?: string
 }) {
   const t = useTranslations("Folder.chat.activity")
   const files = useMemo(() => parseUnifiedDiff(diffText), [diffText])
+  const [view, switchView] = useDiffViewMode()
+  // Side by side only says something next to a "before".
+  const sideBySide = (file: ParsedDiffFile) =>
+    !file.binary && !addsOnly(file, noBefore)
+  const switchable = files.some(sideBySide)
   const totalRows = useMemo(
     () =>
       files.reduce(
@@ -189,9 +219,46 @@ export const EditDiff = memo(function EditDiff({
     )
   }
 
+  const single = files.length === 1 ? files[0]! : null
+  const figures = (
+    <>
+      <DiffFigure
+        additions={files.reduce((sum, file) => sum + file.additions, 0)}
+        deletions={files.reduce((sum, file) => sum + file.deletions, 0)}
+      />
+      {switchable ? (
+        <ViewModeToggle
+          view={view}
+          onSwitch={switchView}
+          className="border-transparent bg-transparent"
+        />
+      ) : null}
+    </>
+  )
+
   return (
     <DetailBox
       tone="plain"
+      header={
+        single ? (
+          <FileHeader
+            path={path ?? single.path}
+            displayPath={displayPath}
+            line={numbered ? firstLine(single) : null}
+          >
+            {figures}
+          </FileHeader>
+        ) : (
+          <>
+            <span className="activity-mono">
+              {t("metric.files", { count: files.length })}
+            </span>
+            <span className="ms-auto flex shrink-0 items-center gap-3">
+              {figures}
+            </span>
+          </>
+        )
+      }
       footer={
         large && !showAll ? t("detail.lines", { count: totalRows }) : null
       }
@@ -217,12 +284,27 @@ export const EditDiff = memo(function EditDiff({
             file={file}
             showHeader={files.length > 1}
             numbered={numbered}
+            split={view === "split" && sideBySide(file)}
           />
         ))}
       </div>
     </DetailBox>
   )
 })
+
+/** A file with no "before" to set beside it: one a patch adds, or one the
+ *  diff draws from an empty old text (`noBefore`: a write's new content). An
+ *  insertion into an existing file still has one — the file around it — even
+ *  where its hunk numbers cannot say so (`@@ -0,0` at the top of the file). */
+function addsOnly(file: ParsedDiffFile, noBefore: boolean): boolean {
+  return file.deletions === 0 && (file.mode === "added" || noBefore)
+}
+
+/** Where the change starts in the new file — none for a file deleted whole. */
+function firstLine(file: ParsedDiffFile): number | null {
+  const start = file.hunks[0]?.newStart
+  return start != null && start > 0 ? start : null
+}
 
 /** The first `budget` rows of a diff, cut at hunk and file boundaries. */
 function limitDiffRows(
@@ -249,10 +331,13 @@ function DiffFileBlock({
   file,
   showHeader,
   numbered,
+  split,
 }: {
   file: ParsedDiffFile
   showHeader: boolean
   numbered: boolean
+  /** Side by side: on, and the file has a "before" to set beside it. */
+  split: boolean
 }) {
   return (
     <div>
@@ -271,6 +356,25 @@ function DiffFileBlock({
           />
         </div>
       ) : null}
+      {split ? (
+        <SplitHunks file={file} numbered={numbered} />
+      ) : (
+        <UnifiedHunks file={file} numbered={numbered} />
+      )}
+    </div>
+  )
+}
+
+/** The inline view: the file's rows in order, a sign in front of each. */
+function UnifiedHunks({
+  file,
+  numbered,
+}: {
+  file: ParsedDiffFile
+  numbered: boolean
+}) {
+  return (
+    <>
       {file.hunks.map((hunk, hunkIndex) => (
         <div
           key={hunk.key}
@@ -306,6 +410,81 @@ function DiffFileBlock({
           ))}
         </div>
       ))}
+    </>
+  )
+}
+
+/**
+ * The side-by-side view: the old text on the left and the new on the right,
+ * each half scrolling sideways on its own so reading the end of a long line
+ * on one side does not drag the other away. Both halves walk the same paired
+ * rows, one line each, so they stay level.
+ */
+function SplitHunks({
+  file,
+  numbered,
+}: {
+  file: ParsedDiffFile
+  numbered: boolean
+}) {
+  const hunks = useMemo(
+    () =>
+      file.hunks.map((hunk) => ({
+        key: hunk.key,
+        rows: toSplitRows(hunk.rows),
+      })),
+    [file.hunks]
+  )
+  return (
+    <div className="grid grid-cols-2">
+      {(["left", "right"] as const).map((side) => (
+        <ScrollArea
+          key={side}
+          x="scroll"
+          y="hidden"
+          className={cn(
+            "min-w-0",
+            side === "right" && "border-s border-foreground/5"
+          )}
+        >
+          <div className="w-max min-w-full">
+            {hunks.map((hunk, hunkIndex) => (
+              <div
+                key={hunk.key}
+                className={cn(
+                  hunkIndex > 0 && "border-t border-dashed border-foreground/10"
+                )}
+              >
+                {hunk.rows.map((row, index) => (
+                  <SplitLine key={index} cell={row[side]} numbered={numbered} />
+                ))}
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      ))}
+    </div>
+  )
+}
+
+/** One half of a side-by-side row; a filler where the other side has a line
+ *  this one does not. */
+function SplitLine({ cell, numbered }: { cell: SplitCell; numbered: boolean }) {
+  const filler = cell.text === null
+  return (
+    <div
+      className={cn(
+        // One line tall even with nothing in it, so the halves stay level.
+        "flex min-h-[1.625em]",
+        cell.marker === "added" && "bg-diff-added",
+        cell.marker === "deleted" && "bg-diff-deleted",
+        filler && "bg-muted/40"
+      )}
+    >
+      <span className="w-11 shrink-0 select-none pe-2 text-end tabular-nums text-muted-foreground">
+        {numbered ? (cell.line ?? "") : ""}
+      </span>
+      <span className="flex-1 whitespace-pre pe-4">{cell.text}</span>
     </div>
   )
 }

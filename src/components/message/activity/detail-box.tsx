@@ -17,9 +17,9 @@ import { cn, copyTextToClipboard } from "@/lib/utils"
 /**
  * The one container every row's detail goes in: a tinted, rounded panel whose
  * body scrolls past a fixed height on the app's overlay scrollbars (fading out
- * at an edge with more beyond it), with an optional footer — a line count on
- * the start side, copy actions on the end side — that stays put while the
- * body scrolls.
+ * at an edge with more beyond it), with an optional header — the file a read
+ * or an edit is about — and an optional footer: a line count on the start
+ * side, copy actions on the end side. Both stay put while the body scrolls.
  *
  * `anchor="end"` opens scrolled to the bottom and stays there while content
  * streams in (a failing test run's summary is at the end); the default opens
@@ -29,6 +29,7 @@ export function DetailBox({
   children,
   tone = "neutral",
   anchor = "start",
+  header,
   footer,
   actions,
   className,
@@ -38,6 +39,8 @@ export function DetailBox({
   children: ReactNode
   tone?: "neutral" | "danger" | "plain"
   anchor?: "start" | "end"
+  /** A bar above the body: what the detail is (a file's name and figures). */
+  header?: ReactNode
   /** Start-side footer text, e.g. "12 lines". */
   footer?: ReactNode
   /** End-side footer actions (copy buttons). */
@@ -111,6 +114,16 @@ export function DetailBox({
         className
       )}
     >
+      {header ? (
+        <div
+          className={cn(
+            "flex min-h-8 items-center gap-3 border-b px-4 text-xs text-muted-foreground",
+            rule
+          )}
+        >
+          {header}
+        </div>
+      ) : null}
       <ScrollArea
         className={cn(!unbounded && "max-h-72")}
         x="scroll"

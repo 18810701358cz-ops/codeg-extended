@@ -50,12 +50,12 @@ const WORKSPACE = new Proxy(
   { get: () => () => {} }
 ) as unknown as WorkspaceActionsValue
 
-function renderTurn(ui: ReactElement) {
+function renderTurn(ui: ReactElement, workspace = WORKSPACE) {
   return render(
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <StaticConnectionStoreProvider store={STORE}>
         <StaticDelegationProvider value={DELEGATION}>
-          <StaticWorkspaceActionsProvider value={WORKSPACE}>
+          <StaticWorkspaceActionsProvider value={workspace}>
             {ui}
           </StaticWorkspaceActionsProvider>
         </StaticDelegationProvider>
@@ -459,6 +459,142 @@ describe("activity timeline: commands", () => {
     expect(
       box.querySelector("[data-overlayscrollbars-initialize]")
     ).toBeTruthy()
+  })
+})
+
+describe("activity timeline: file panels", () => {
+  const LAYOUT = "/repo/web/app/layout.tsx"
+  const PAGE = "/repo/web/app/settings/page.tsx"
+  const FILES: MessageTurn = {
+    id: "turn-files",
+    role: "assistant",
+    timestamp: "2026-10-22T09:00:00Z",
+    blocks: [
+      toolUse("r1", "Read", { file_path: LAYOUT, offset: 10, limit: 2 }),
+      toolResult(
+        "r1",
+        JSON.stringify({
+          start_line: 10,
+          content: "export default function RootLayout() {\n  return (",
+        })
+      ),
+      toolUse("w1", "Write", {
+        file_path: PAGE,
+        content: "export default function Page() {}\n",
+      }),
+      toolResult("w1", `File created successfully at: ${PAGE}`),
+      toolUse("e1", "Edit", {
+        file_path: LAYOUT,
+        old_string: "<nav>Home</nav>",
+        new_string: "<nav>\n  <a>Settings</a>\n</nav>",
+      }),
+      toolResult("e1", `The file ${LAYOUT} has been updated successfully.`),
+      { type: "text", text: "Done." },
+    ],
+  }
+
+  function renderFiles() {
+    const openFilePreview = vi.fn(async () => {})
+    const workspace = new Proxy(
+      { openFilePreview },
+      {
+        get: (target, key) =>
+          key in target ? target[key as keyof typeof target] : () => {},
+      }
+    ) as unknown as WorkspaceActionsValue
+    renderTurn(
+      <CurrentRound parts={partsOf(FILES)} durationMs={1000} completed />,
+      workspace
+    )
+    return openFilePreview
+  }
+
+  /** Open the row whose header names `text`, and return its panel. */
+  function openPanel(text: string | RegExp): HTMLElement {
+    const row = screen.getAllByText(text)[0]!.closest("li")!
+    fireEvent.click(within(row).getAllByRole("button")[0]!)
+    return row.querySelector(".activity-detail") as HTMLElement
+  }
+
+  afterEach(() => {
+    localStorage.removeItem("workspace:diff-view-mode")
+  })
+
+  it("heads a read with the file it read, opening it at the first line read", () => {
+    const openFilePreview = renderFiles()
+    const panel = openPanel(LAYOUT)
+    const name = within(panel).getByTitle(LAYOUT)
+    expect(name.textContent).toBe(LAYOUT)
+    fireEvent.click(name)
+    expect(openFilePreview).toHaveBeenCalledWith(LAYOUT, {
+      line: 10,
+      folderId: undefined,
+    })
+  })
+
+  it("heads an edit with the file, its counts and a switch to side by side", () => {
+    renderFiles()
+    const panel = openPanel("Edited")
+    expect(within(panel).getByTitle(LAYOUT).textContent).toBe(LAYOUT)
+    expect(within(panel).getByText("+3")).toBeTruthy()
+    expect(within(panel).getByText("−1")).toBeTruthy()
+    const toggle = within(panel).getByRole("button", {
+      name: "Switch to side-by-side view",
+    })
+    fireEvent.click(toggle)
+    // The old and the new text, each in a half of its own.
+    const halves = panel.querySelector(".grid-cols-2")!.children
+    expect(halves).toHaveLength(2)
+    expect(halves[0]!.textContent).toContain("<nav>Home</nav>")
+    expect(halves[0]!.textContent).not.toContain("Settings")
+    expect(halves[1]!.textContent).toContain("<a>Settings</a>")
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Switch to inline view" })
+    )
+    expect(panel.querySelector(".grid-cols-2")).toBeNull()
+  })
+
+  it.each([
+    ["in the middle", "@@ -12,0 +13,2 @@"],
+    ["at the top, with no context", "@@ -0,0 +1,2 @@"],
+  ])(
+    "offers side by side for lines inserted into a file %s, which has a before",
+    (_, hunk) => {
+      const INSERT: MessageTurn = {
+        id: "turn-insert",
+        role: "assistant",
+        timestamp: "2026-10-22T09:00:00Z",
+        blocks: [
+          toolUse(
+            "p1",
+            "apply_patch",
+            `--- a/web/app/layout.tsx\n+++ b/web/app/layout.tsx\n${hunk}\n+<a>Settings</a>\n+<a>Help</a>`
+          ),
+          toolResult("p1", "Success."),
+          { type: "text", text: "Done." },
+        ],
+      }
+      renderTurn(
+        <CurrentRound parts={partsOf(INSERT)} durationMs={1000} completed />
+      )
+      const panel = openPanel("Edited")
+      expect(
+        within(panel).getByRole("button", {
+          name: "Switch to side-by-side view",
+        })
+      ).toBeTruthy()
+    }
+  )
+
+  it("offers no side by side for a new file, which has no before", () => {
+    renderFiles()
+    const panel = openPanel("Created")
+    expect(within(panel).getByTitle(PAGE).textContent).toBe(PAGE)
+    expect(
+      within(panel).queryByRole("button", {
+        name: "Switch to side-by-side view",
+      })
+    ).toBeNull()
   })
 })
 
