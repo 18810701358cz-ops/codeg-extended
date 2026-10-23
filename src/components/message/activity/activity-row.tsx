@@ -46,7 +46,6 @@ export function ActivityRow({
   detail,
   addon,
   title,
-  showChevron = true,
   className,
   headerClassName,
 }: {
@@ -72,8 +71,6 @@ export function ActivityRow({
   addon?: ReactNode
   /** Full text of anything the header truncates. */
   title?: string
-  /** Group rows draw their chevron in the ring instead. */
-  showChevron?: boolean
   className?: string
   headerClassName?: string
 }) {
@@ -87,7 +84,7 @@ export function ActivityRow({
     <>
       <span className="flex min-w-0 flex-1 items-start gap-1">
         <span className="min-w-0">{children}</span>
-        {expandable && showChevron ? <RowChevron open={open} /> : null}
+        {expandable ? <RowChevron open={open} /> : null}
       </span>
       {trailing || chip ? (
         <RowFigure>

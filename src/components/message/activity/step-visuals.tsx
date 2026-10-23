@@ -17,6 +17,7 @@ import {
   GlobeIcon,
   ImageIcon,
   KeyboardIcon,
+  LayersIcon,
   LightbulbIcon,
   ListTodoIcon,
   MapIcon,
@@ -117,6 +118,8 @@ export const GOAL_ICON = TargetIcon
 export const PLAN_ICON = ListTodoIcon
 export const IMAGE_ICON = ImageIcon
 export const RESULT_ICON = WrenchIcon
+/** A run of steps folded into one row (an explore or a command group). */
+export const GROUP_ICON = LayersIcon
 
 /** Localized words for a step's status, for ring labels and the end column. */
 export function useStatusText() {

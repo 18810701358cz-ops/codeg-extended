@@ -3,7 +3,6 @@
 import { memo, useMemo } from "react"
 import Ansi from "ansi-to-react"
 import { useTranslations } from "next-intl"
-import { ChevronRightIcon } from "lucide-react"
 
 import { CodeBlock } from "@/components/ai-elements/code-block"
 import { normalizeCommandOutput } from "@/lib/activity/command"
@@ -20,7 +19,12 @@ import { ActivityRow } from "../activity-row"
 import { CopyAction, DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { RailIcon } from "../rail-icon"
-import { ToolFigure, toolIcon, useStatusText } from "../step-visuals"
+import {
+  GROUP_ICON,
+  ToolFigure,
+  toolIcon,
+  useStatusText,
+} from "../step-visuals"
 import {
   formatClock,
   LIVE_CLOCK_AFTER_MS,
@@ -467,16 +471,11 @@ export const CommandGroupRow = memo(function CommandGroupRow({
       status={status}
       marker={
         <RailIcon
-          icon={ChevronRightIcon}
+          icon={GROUP_ICON}
           status={status}
           label={`${t("kind.command")}, ${statusText(status)}`}
-          iconClassName={cn(
-            "transition-[rotate] rtl:-scale-x-100",
-            open && "rotate-90 rtl:-rotate-90"
-          )}
         />
       }
-      showChevron={false}
       expandable
       expanded={open}
       onExpandedChange={setOpen}

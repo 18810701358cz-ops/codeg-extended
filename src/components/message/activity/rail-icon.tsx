@@ -46,7 +46,6 @@ export function RailIcon({
   label,
   size = "md",
   className,
-  iconClassName,
 }: {
   icon?: ActivityIcon
   /** Drawn in the ring instead of `icon` — an agent's own logo. */
@@ -56,7 +55,6 @@ export function RailIcon({
   label: string
   size?: "md" | "sm"
   className?: string
-  iconClassName?: string
 }) {
   const live = status === "running" || status === "pending"
   return (
@@ -88,8 +86,7 @@ export function RailIcon({
             aria-hidden="true"
             className={cn(
               size === "md" ? "size-3" : "size-2.5",
-              ICON_CLASS[status],
-              iconClassName
+              ICON_CLASS[status]
             )}
           />
         ) : null)}

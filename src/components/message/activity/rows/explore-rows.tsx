@@ -2,7 +2,6 @@
 
 import { memo, useMemo, useState } from "react"
 import { useTranslations } from "next-intl"
-import { ChevronRightIcon } from "lucide-react"
 
 import { useActiveFolder } from "@/contexts/active-folder-context"
 import { parseReadOutput, searchResultText } from "@/lib/activity/explore"
@@ -22,7 +21,13 @@ import { DetailBox } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { RailDot, RailIcon } from "../rail-icon"
 import { ResultBody } from "../result-body"
-import { ToolFigure, ToolNotes, toolIcon, useStatusText } from "../step-visuals"
+import {
+  GROUP_ICON,
+  ToolFigure,
+  ToolNotes,
+  toolIcon,
+  useStatusText,
+} from "../step-visuals"
 import { useAwaitedStep, useLiveToolStep } from "../use-live-step"
 
 type ToolStep = Extract<ActivityStep, { type: "tool" }>
@@ -130,16 +135,11 @@ export const ExploreGroupRow = memo(function ExploreGroupRow({
       status={status}
       marker={
         <RailIcon
-          icon={ChevronRightIcon}
+          icon={GROUP_ICON}
           status={status}
           label={`${t("kind.explore")}, ${statusText(status)}`}
-          iconClassName={cn(
-            "transition-[rotate] rtl:-scale-x-100",
-            open && "rotate-90 rtl:-rotate-90"
-          )}
         />
       }
-      showChevron={false}
       expandable
       expanded={open}
       onExpandedChange={setOpen}

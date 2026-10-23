@@ -254,6 +254,28 @@ describe("activity timeline: the reference turn", () => {
     )
   })
 
+  it("marks a group with the group icon and draws its chevron after the label", () => {
+    // Like any row's: shown on hover, turned while open — the ring keeps its
+    // icon.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    for (const label of ["Explored", "Ran 2 commands"]) {
+      const group = screen.getAllByText(label)[0]!.closest("li")!
+      const ring = group.querySelector(':scope > span [role="img"]')!
+      expect(ring.querySelector("svg.lucide-layers")).toBeTruthy()
+      expect(ring.querySelector("svg.lucide-chevron-right")).toBeNull()
+      const header = within(group).getAllByRole("button")[0]!
+      const chevron = header.querySelector("svg.lucide-chevron-right")!
+      expect(
+        within(header).getByText(label).compareDocumentPosition(chevron) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+      expect(chevron.getAttribute("class")).toMatch(/\bopacity-0\b/)
+      fireEvent.click(header)
+      expect(chevron.getAttribute("class")).toMatch(/\brotate-90\b/)
+      expect(ring.querySelector("svg.lucide-layers")).toBeTruthy()
+    }
+  })
+
   it("sets row headers on the 1.5rem line the rail is drawn for", () => {
     // tailwind-merge drops a line height that a later font size follows; the
     // rings, dots and chevrons are placed for this line.
