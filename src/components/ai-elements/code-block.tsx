@@ -9,6 +9,7 @@ import type {
 } from "shiki"
 
 import { Button } from "@/components/ui/button"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Select,
   SelectContent,
@@ -426,10 +427,16 @@ export const CodeBlockContent = ({
       ? asyncState.tokenized
       : syncTokenized
 
+  // Sideways on the app's overlay scrollbars, like every other scroll area.
   return (
-    <div className="relative overflow-auto">
-      <CodeBlockBody showLineNumbers={showLineNumbers} tokenized={tokenized} />
-    </div>
+    <ScrollArea x="scroll" y="hidden">
+      <div className="relative">
+        <CodeBlockBody
+          showLineNumbers={showLineNumbers}
+          tokenized={tokenized}
+        />
+      </div>
+    </ScrollArea>
   )
 }
 

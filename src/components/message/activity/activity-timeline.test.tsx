@@ -450,6 +450,16 @@ describe("activity timeline: commands", () => {
     const panel = row.querySelector(".activity-detail")!
     expect(panel.querySelector("pre")?.textContent).toBe("48 passed")
   })
+
+  it("scrolls a panel on the app's overlay scrollbars", () => {
+    renderSettled(partsOf(RUN))
+    const row = screen.getByTitle(LONG).closest("li")!
+    fireEvent.click(within(row).getAllByRole("button")[0]!)
+    const box = row.querySelector(".activity-detail-box")!
+    expect(
+      box.querySelector("[data-overlayscrollbars-initialize]")
+    ).toBeTruthy()
+  })
 })
 
 describe("activity timeline: replies without steps", () => {

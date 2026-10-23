@@ -11,6 +11,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/instant-collapsible"
 import { normalizeToolName } from "@/lib/tool-call-normalization"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { unwrapWholeFence } from "@/lib/fenced-text"
 import { PauseIcon, XIcon } from "lucide-react"
@@ -393,9 +394,11 @@ function GoalCard({
             )}
 
             {isError && errorText && (
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-destructive/10 p-3 text-xs text-destructive">
-                {unwrapWholeFence(errorText)}
-              </pre>
+              <ScrollArea className="max-h-64 rounded-md bg-destructive/10">
+                <pre className="whitespace-pre-wrap break-words p-3 text-xs text-destructive">
+                  {unwrapWholeFence(errorText)}
+                </pre>
+              </ScrollArea>
             )}
           </div>
         </div>

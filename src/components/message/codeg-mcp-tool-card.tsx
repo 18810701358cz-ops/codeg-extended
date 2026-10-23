@@ -32,6 +32,7 @@ import {
   Signpost,
 } from "lucide-react"
 
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import {
   parseCodegMcpToolCall,
@@ -73,9 +74,18 @@ export const CODEG_MCP_TOOL_ICONS: Record<
   resume_delegation: RotateCcw,
 }
 
-/** The panel's Markdown blocks: the report and the result share one look. */
-const MARKDOWN_BLOCK =
-  'max-h-80 overflow-auto prose prose-sm max-w-none break-words text-xs dark:prose-invert [&_ol]:list-inside [&_ul]:list-inside [&_[data-streamdown="code-block-body"]]:max-h-96 [&_[data-streamdown="code-block-body"]]:overflow-auto'
+/** The panel's Markdown blocks: the report and the result share one look,
+ *  each scrolling past its cap on the overlay scrollbars (its code blocks
+ *  grow inside it instead of scrolling on their own). */
+function MarkdownBlock({ children }: { children: string }) {
+  return (
+    <ScrollArea className="max-h-80">
+      <div className="prose prose-sm max-w-none break-words text-xs dark:prose-invert [&_ol]:list-inside [&_ul]:list-inside">
+        <MessageResponse>{children}</MessageResponse>
+      </div>
+    </ScrollArea>
+  )
+}
 
 /**
  * What the board did with a work-task report, in the reader's words, where the
@@ -291,25 +301,19 @@ export function CodegMcpToolCard({
               <div className="mb-1 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
                 {t("promptLabel")}
               </div>
-              <div className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 px-2 py-1.5 text-xs text-foreground/90">
-                {prompt}
-              </div>
+              <ScrollArea className="max-h-40 rounded-md bg-muted/40">
+                <div className="whitespace-pre-wrap break-words px-2 py-1.5 text-xs text-foreground/90">
+                  {prompt}
+                </div>
+              </ScrollArea>
             </div>
           )}
           {/* The report through the chat's Markdown renderer, as the task
               drawer shows the same summary: the agent writes it the way it
               writes anything else — `code`, bullets, bold. */}
-          {report !== "" && (
-            <div className={MARKDOWN_BLOCK}>
-              <MessageResponse>{report}</MessageResponse>
-            </div>
-          )}
+          {report !== "" && <MarkdownBlock>{report}</MarkdownBlock>}
           {ack && <TaskAckLine ack={ack} />}
-          {resultText !== "" && (
-            <div className={MARKDOWN_BLOCK}>
-              <MessageResponse>{resultText}</MessageResponse>
-            </div>
-          )}
+          {resultText !== "" && <MarkdownBlock>{resultText}</MarkdownBlock>}
         </div>
       )}
     </div>

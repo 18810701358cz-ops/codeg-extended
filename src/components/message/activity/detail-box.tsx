@@ -11,13 +11,15 @@ import {
 import { CheckIcon, CopyIcon } from "lucide-react"
 import { useTranslations } from "next-intl"
 
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn, copyTextToClipboard } from "@/lib/utils"
 
 /**
  * The one container every row's detail goes in: a tinted, rounded panel whose
- * body scrolls past a fixed height (fading out at an edge with more beyond
- * it), with an optional footer — a line count on the start side, copy actions
- * on the end side.
+ * body scrolls past a fixed height on the app's overlay scrollbars (fading out
+ * at an edge with more beyond it), with an optional footer — a line count on
+ * the start side, copy actions on the end side — that stays put while the
+ * body scrolls.
  *
  * `anchor="end"` opens scrolled to the bottom and stays there while content
  * streams in (a failing test run's summary is at the end); the default opens
@@ -45,37 +47,59 @@ export function DetailBox({
   /** No height cap — for content that manages its own (a diff). */
   unbounded?: boolean
 }) {
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const [overflow, setOverflow] = useState<"none" | "start" | "end" | "both">(
-    "none"
-  )
+  // The scrollport is OverlayScrollbars' viewport, there once it has set up.
+  const viewportRef = useRef<HTMLElement | null>(null)
+  const [viewport, setViewport] = useState<HTMLElement | null>(null)
+  const onViewportRef = useCallback((node: HTMLElement | null) => {
+    viewportRef.current = node
+    // Its own class, so the edge fade (globals.css) masks this viewport and
+    // no scroll area nested inside it.
+    node?.classList.add("activity-detail-viewport")
+    setViewport(node)
+  }, [])
 
   const measure = useCallback(() => {
-    const node = scrollRef.current
+    const node = viewportRef.current
     if (!node) return
     const above = node.scrollTop > 1
     const below = node.scrollTop + node.clientHeight < node.scrollHeight - 1
-    setOverflow(
-      above && below ? "both" : above ? "start" : below ? "end" : "none"
-    )
+    const overflow =
+      above && below ? "both" : above ? "start" : below ? "end" : null
+    if (overflow) node.dataset.overflow = overflow
+    else delete node.dataset.overflow
+  }, [])
+
+  const stickToEnd = useRef(anchor === "end")
+  const followEnd = useCallback(() => {
+    const node = viewportRef.current
+    if (node && stickToEnd.current) node.scrollTop = node.scrollHeight
   }, [])
 
   // Only the open panel is mounted, so only it pays for observing its size.
   useEffect(() => {
-    const node = scrollRef.current
-    if (!node || unbounded || typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
-    observer.observe(node)
-    if (node.firstElementChild) observer.observe(node.firstElementChild)
+    if (!viewport || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => {
+      followEnd()
+      measure()
+    })
+    observer.observe(viewport)
+    if (viewport.firstElementChild) observer.observe(viewport.firstElementChild)
     return () => observer.disconnect()
-  }, [measure, unbounded])
+  }, [viewport, followEnd, measure])
 
-  const stickToEnd = useRef(anchor === "end")
-  useLayoutEffect(() => {
-    const node = scrollRef.current
-    if (!node || !stickToEnd.current) return
-    node.scrollTop = node.scrollHeight
-  })
+  useLayoutEffect(followEnd)
+
+  const onScroll = useCallback(() => {
+    const node = viewportRef.current
+    if (node && anchor === "end") {
+      stickToEnd.current =
+        node.scrollTop + node.clientHeight >= node.scrollHeight - 4
+    }
+    measure()
+  }, [anchor, measure])
+
+  const rule =
+    tone === "danger" ? "border-tone-danger/15" : "border-foreground/5"
 
   return (
     <div
@@ -87,30 +111,20 @@ export function DetailBox({
         className
       )}
     >
-      <div
-        ref={scrollRef}
-        className={cn(
-          "activity-detail-scroll overflow-auto",
-          !unbounded && "max-h-72",
-          bodyClassName
-        )}
-        data-overflow={overflow === "none" ? undefined : overflow}
-        onScroll={() => {
-          const node = scrollRef.current
-          if (node && anchor === "end") {
-            stickToEnd.current =
-              node.scrollTop + node.clientHeight >= node.scrollHeight - 4
-          }
-          measure()
-        }}
+      <ScrollArea
+        className={cn(!unbounded && "max-h-72")}
+        x="scroll"
+        y={unbounded ? "hidden" : "scroll"}
+        onScroll={onScroll}
+        onViewportRef={onViewportRef}
       >
-        <div>{children}</div>
-      </div>
+        <div className={bodyClassName}>{children}</div>
+      </ScrollArea>
       {footer || actions ? (
         <div
           className={cn(
             "activity-mono flex min-h-7 items-center gap-3 border-t px-4 text-xs text-muted-foreground",
-            tone === "danger" ? "border-tone-danger/15" : "border-foreground/5"
+            rule
           )}
         >
           <span className="min-w-0 truncate tabular-nums">{footer}</span>

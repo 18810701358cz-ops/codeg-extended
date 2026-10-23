@@ -2140,14 +2140,15 @@
 }
 
 /* A detail box's scroll body fades out at whichever edge has more content
-   beyond it; the attributes are set by the box while it is open. */
-.activity-detail-scroll[data-overflow="end"] {
+   beyond it; the class and attributes go on its OverlayScrollbars viewport,
+   set by the box while it is open, so the overlay scrollbar stays crisp. */
+.activity-detail-viewport[data-overflow="end"] {
   mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
 }
-.activity-detail-scroll[data-overflow="start"] {
+.activity-detail-viewport[data-overflow="start"] {
   mask-image: linear-gradient(to top, #000 calc(100% - 1.5rem), transparent);
 }
-.activity-detail-scroll[data-overflow="both"] {
+.activity-detail-viewport[data-overflow="both"] {
   mask-image: linear-gradient(
     to bottom,
     transparent,

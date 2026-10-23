@@ -45,6 +45,7 @@ import {
   type StatusReport,
 } from "@/lib/delegation-status"
 import { Button } from "@/components/ui/button"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { MessageResponse } from "@/components/ai-elements/message"
 import { ConnectionBlockingPrompts } from "@/components/chat/connection-blocking-prompts"
 import {
@@ -311,18 +312,23 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
           {/* Keyed by the page index so switching results remounts the scroll
               area, resetting it to the top (a scrolled long result would
               otherwise leave the next one scrolled mid-way). */}
+          {/* One scroll area for the whole result, on the overlay scrollbars;
+              its code blocks grow inside it instead of scrolling on their
+              own. */}
           {hasAnyResultText && (
-            <div key={idx} className="max-h-80 overflow-auto px-3 pb-2 pt-2">
-              {hasResultText ? (
-                <div className='prose prose-sm max-w-none break-words text-xs dark:prose-invert [&_ol]:list-inside [&_ul]:list-inside [&_[data-streamdown="code-block-body"]]:max-h-96 [&_[data-streamdown="code-block-body"]]:overflow-auto'>
-                  <MessageResponse>{resultText}</MessageResponse>
-                </div>
-              ) : (
-                <p className="text-xs italic text-muted-foreground">
-                  {t("noResultText")}
-                </p>
-              )}
-            </div>
+            <ScrollArea key={idx} className="max-h-80">
+              <div className="px-3 pb-2 pt-2">
+                {hasResultText ? (
+                  <div className="prose prose-sm max-w-none break-words text-xs dark:prose-invert [&_ol]:list-inside [&_ul]:list-inside">
+                    <MessageResponse>{resultText}</MessageResponse>
+                  </div>
+                ) : (
+                  <p className="text-xs italic text-muted-foreground">
+                    {t("noResultText")}
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
           )}
           {hasAnyResultText && hasPager && (
             <div className="flex items-center justify-center gap-1 border-t border-border px-3 py-1">
