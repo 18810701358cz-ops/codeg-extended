@@ -28,6 +28,7 @@ import {
   toolUse,
 } from "@/lib/activity/__fixtures__/mockup-turn"
 import type { MessageTurn } from "@/lib/types"
+import { mockTruncateLayout } from "@/test-layout"
 import { CompletedTurnContent } from "../completed-turn-content"
 import { resetDisclosureStore } from "./disclosure-store"
 
@@ -408,6 +409,46 @@ describe("activity timeline: where the rail ends", () => {
       "data-end",
       "pending"
     )
+  })
+})
+
+describe("activity timeline: commands", () => {
+  const LONG = "pnpm --filter web test -- --watch=false --reporter=verbose"
+  const RUN: MessageTurn = {
+    id: "turn-c",
+    role: "assistant",
+    timestamp: "2026-10-22T09:00:00Z",
+    blocks: [
+      toolUse("c1", "Bash", { command: LONG }),
+      toolResult("c1", "48 passed"),
+      { type: "text", text: "All green." },
+    ],
+  }
+  let restoreMetrics: (() => void) | null = null
+  afterEach(() => {
+    restoreMetrics?.()
+    restoreMetrics = null
+  })
+
+  it("says the command on one line, and the whole of it in the panel when that line cuts it", () => {
+    restoreMetrics = mockTruncateLayout(600, 200)
+    renderSettled(partsOf(RUN))
+    const row = screen.getByTitle(LONG).closest("li")!
+    const line = row.querySelector(":scope > button .truncate")!
+    expect(line.textContent).toBe(`$ ${LONG}`)
+    expect(line.parentElement).toHaveClass("overflow-hidden")
+    fireEvent.click(within(row).getAllByRole("button")[0]!)
+    const panel = row.querySelector(".activity-detail")!
+    expect(panel.querySelector("pre")?.textContent).toBe(`$ ${LONG}`)
+    expect(within(panel as HTMLElement).getByText("48 passed")).toBeTruthy()
+  })
+
+  it("keeps a command its line shows whole out of the panel", () => {
+    renderSettled(partsOf(RUN))
+    const row = screen.getByTitle(LONG).closest("li")!
+    fireEvent.click(within(row).getAllByRole("button")[0]!)
+    const panel = row.querySelector(".activity-detail")!
+    expect(panel.querySelector("pre")?.textContent).toBe("48 passed")
   })
 })
 

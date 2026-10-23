@@ -5,6 +5,7 @@ import Ansi from "ansi-to-react"
 import { useTranslations } from "next-intl"
 
 import { CodeBlock } from "@/components/ai-elements/code-block"
+import { useTruncation } from "@/hooks/use-truncation"
 import { normalizeCommandOutput } from "@/lib/activity/command"
 import {
   parseCodexScriptCard,
@@ -104,8 +105,15 @@ function useCommandOutput(step: ToolStep): CommandOutput | null {
   }, [part.output, part.errorText, tool.background, tool.status, t])
 }
 
-/** The command line a row shows: `$ cmd`, a heredoc's opener, a session verb. */
-function CommandLabel({ step }: { step: ToolStep }) {
+/** The command line a row shows: `$ cmd`, a heredoc's opener, a session verb.
+ *  `commandRef` measures whether the line cuts the command short. */
+function CommandLabel({
+  step,
+  commandRef,
+}: {
+  step: ToolStep
+  commandRef?: (node: HTMLSpanElement | null) => void
+}) {
   const t = useTranslations("Folder.chat.activity")
   const tParts = useTranslations("Folder.chat.contentParts")
   const command = step.tool.command
@@ -166,37 +174,39 @@ function CommandLabel({ step }: { step: ToolStep }) {
   const heredoc = command.heredoc
   const firstLine = heredoc ? heredoc.head : command.display.split("\n")[0]!
   const extraLines = heredoc ? 0 : command.lineCount - 1
-  // One clamped block holding the command and its trailing notes, so the
-  // notes flow after the last line of the command instead of dropping below.
-  // A long command wraps on a 1.25rem line; the margin keeps its first line
-  // centred where the row's 1.5rem line would be, beside the marker.
+  // One line: the command gives way first (the panel and the tooltip have it
+  // whole), its notes keep their room, and nothing runs past the line's end.
   return (
-    <span className="my-0.5 line-clamp-3 leading-5 [overflow-wrap:anywhere]">
-      <span className="font-mono text-[0.8125rem]" dir="ltr">
+    <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
+      <span
+        ref={commandRef}
+        className="min-w-0 truncate font-mono text-[0.8125rem]"
+        dir="ltr"
+      >
         <span className="select-none text-muted-foreground">$ </span>
         {firstLine}
       </span>
       {heredoc ? (
-        <span className="ms-2 text-muted-foreground">
+        <span className="shrink-0 text-muted-foreground">
           {t("row.script", { count: heredoc.bodyLines })}
         </span>
       ) : extraLines > 0 ? (
-        <span className="ms-2 text-muted-foreground">
+        <span className="shrink-0 text-muted-foreground">
           {t("row.moreLines", { count: extraLines })}
         </span>
       ) : null}
       {scriptMeta?.label ? (
-        <span className="ms-2 inline-block rounded-full bg-muted px-1.5 align-[0.0625rem] text-3xs leading-4 text-activity-muted-strong ws-msg-chip">
+        <span className="shrink-0 self-center rounded-full bg-muted px-1.5 text-3xs leading-4 text-activity-muted-strong ws-msg-chip">
           {scriptMeta.label}
         </span>
       ) : null}
       {command.announcedSession ? (
-        <span className="ms-2 font-mono text-xs text-muted-foreground">
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">
           {tParts("shellSession", { id: command.announcedSession })}
         </span>
       ) : null}
       {step.tool.background ? (
-        <span className="ms-2 inline-block rounded-full bg-muted px-1.5 align-[0.0625rem] font-mono text-3xs leading-4 text-activity-muted-strong ws-msg-chip">
+        <span className="shrink-0 self-center rounded-full bg-muted px-1.5 font-mono text-3xs leading-4 text-activity-muted-strong ws-msg-chip">
           {step.tool.background.taskId
             ? t("row.background", { id: step.tool.background.taskId })
             : t("row.backgroundShort")}
@@ -209,9 +219,12 @@ function CommandLabel({ step }: { step: ToolStep }) {
 function CommandDetail({
   step,
   output,
+  commandCut,
 }: {
   step: ToolStep
   output: CommandOutput | null
+  /** The row's line cuts the command short: the panel shows it whole. */
+  commandCut: boolean
 }) {
   const t = useTranslations("Folder.chat.activity")
   const tParts = useTranslations("Folder.chat.contentParts")
@@ -224,7 +237,7 @@ function CommandDetail({
     !isScript &&
     !!command &&
     !command.session &&
-    command.lineCount > 1 &&
+    (command.lineCount > 1 || commandCut) &&
     !!command.display
   const fullCommand = command?.display ?? ""
   const script = useMemo(
@@ -371,10 +384,15 @@ export const CommandRow = memo(function CommandRow({
     () => parseCodexScriptMeta(step.part.meta),
     [step.part.meta]
   )
+  // The command on one line; cut short there, it opens the row to be read
+  // whole.
+  const { ref: commandRef, truncated: commandCut } =
+    useTruncation<HTMLSpanElement>(tool.command?.display)
   const expandable =
     !!output ||
     !!tool.command?.description ||
     (tool.command?.lineCount ?? 0) > 1 ||
+    commandCut ||
     !!scriptMeta?.outputMissing ||
     !!scriptMeta?.sharedWith.length
   const elapsed = useLiveElapsed(step.key, live)
@@ -416,9 +434,11 @@ export const CommandRow = memo(function CommandRow({
         ))
       }
       addon={live && !open && output ? <LiveTail text={output.text} /> : null}
-      detail={() => <CommandDetail step={step} output={output} />}
+      detail={() => (
+        <CommandDetail step={step} output={output} commandCut={commandCut} />
+      )}
     >
-      <CommandLabel step={step} />
+      <CommandLabel step={step} commandRef={commandRef} />
     </ActivityRow>
   )
 })
