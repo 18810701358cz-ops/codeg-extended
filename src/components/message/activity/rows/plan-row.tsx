@@ -50,7 +50,7 @@ export const PlanRow = memo(function PlanRow({ step }: { step: PlanStep }) {
       )}
     >
       <span className="flex min-w-0 items-baseline gap-2">
-        <span className="shrink-0 font-medium text-foreground">
+        <span className="shrink-0 font-medium text-muted-foreground">
           {t("row.planUpdated")}
         </span>
         {current ? (

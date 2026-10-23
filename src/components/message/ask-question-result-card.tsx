@@ -240,7 +240,7 @@ export function AskQuestionResultCard({
       className="group/row flex w-full min-w-0 cursor-pointer items-start gap-1 rounded-sm py-0.5 text-start text-sm leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <span className="min-w-0 truncate">
-        <span className="me-1 font-medium text-foreground">
+        <span className="me-1 font-medium text-muted-foreground">
           {t("answeredLabel")}
         </span>
         <span className="text-muted-foreground">{summary}</span>

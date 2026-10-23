@@ -549,7 +549,7 @@ export const CommandGroupRow = memo(function CommandGroupRow({
       <span
         className={cn(
           "font-medium",
-          live ? "activity-shimmer" : "text-foreground"
+          live ? "activity-shimmer" : "text-muted-foreground"
         )}
       >
         {live || awaited

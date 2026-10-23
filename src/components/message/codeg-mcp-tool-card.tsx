@@ -191,14 +191,15 @@ export function CodegMcpToolCard({
   // read it.
   const row = timeline ? (
     // Laid out like the timeline's other rows: the chevron follows the label,
-    // and a failure is the word at the end (the ring carries the icon).
+    // a failure is the word at the end (the ring carries the icon), and the
+    // label is in the light ink of the delegation checks it sits among.
     <>
       <span className="flex min-w-0 flex-1 items-start gap-1">
         <span
           title={label}
           className={cn(
             "min-w-0 truncate font-medium",
-            isRunning ? "activity-shimmer" : "text-foreground"
+            isRunning ? "activity-shimmer" : "text-muted-foreground"
           )}
         >
           {label}

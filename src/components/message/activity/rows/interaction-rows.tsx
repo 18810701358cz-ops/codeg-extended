@@ -86,7 +86,7 @@ export const PlanModeRow = memo(function PlanModeRow({
       )}
     >
       <span className="flex min-w-0 items-baseline gap-2">
-        <span className="shrink-0 font-medium text-foreground">
+        <span className="shrink-0 font-medium text-muted-foreground">
           {markerLabel}
         </span>
         {title ? (
@@ -181,7 +181,7 @@ export const FeedbackRow = memo(function FeedbackRow({
       )}
     >
       <span className="flex min-w-0 items-baseline gap-2">
-        <span className="shrink-0 font-medium text-foreground">
+        <span className="shrink-0 font-medium text-muted-foreground">
           {failed ? t("errorTitle") : t("count", { count: entries.length })}
         </span>
         {failed ? (

@@ -307,6 +307,14 @@ describe("activity timeline: the reference turn", () => {
     }
   })
 
+  it("sets a row's verb and a group's title in the light ink, what they act on in the dark", () => {
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    for (const label of ["Explored", "Ran 2 commands", "Edited"]) {
+      expect(screen.getAllByText(label)[0]).toHaveClass("text-muted-foreground")
+    }
+    expect(screen.getByText("query_tasks.py")).toHaveClass("text-foreground")
+  })
+
   it("spaces a group's members like the rows around the group", () => {
     // The same room above and below the line as a main row's header, and the
     // same gap between rows, so an open group keeps the timeline's rhythm
