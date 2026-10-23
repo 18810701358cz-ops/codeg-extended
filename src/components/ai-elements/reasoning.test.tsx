@@ -9,11 +9,13 @@ const captured = vi.hoisted(() => ({
 vi.mock("streamdown", () => ({
   Streamdown: ({
     children,
+    className,
     mode,
     parseIncompleteMarkdown,
     remarkPlugins,
   }: {
     children: ReactNode
+    className?: string
     mode?: string
     parseIncompleteMarkdown?: boolean
     remarkPlugins?: unknown[]
@@ -22,6 +24,7 @@ vi.mock("streamdown", () => ({
     return (
       <div
         data-testid="streamdown-root"
+        className={className}
         data-mode={mode}
         data-parse-incomplete={String(parseIncompleteMarkdown)}
       >
@@ -72,6 +75,21 @@ describe("ReasoningMarkdown", () => {
     const root = screen.getByTestId("streamdown-root")
     expect(root).toHaveAttribute("data-mode", "static")
     expect(root).toHaveAttribute("data-parse-incomplete", "false")
+  })
+
+  // Numbered and bulleted, the marker inside the text column: outside it, a
+  // bullet would sit on the timeline's rail beside the thought.
+  it("draws a thought's lists the way a reply's draw", () => {
+    render(tree(false))
+
+    expect(screen.getByTestId("streamdown-root")).toHaveClass(
+      "[&_ol]:list-decimal",
+      "[&_ul]:list-disc",
+      "[&_ol]:list-inside",
+      "[&_ul]:list-inside",
+      "[&_ol]:ps-2",
+      "[&_ul]:ps-2"
+    )
   })
 
   // The transition is the case that matters: the text does not change on the
