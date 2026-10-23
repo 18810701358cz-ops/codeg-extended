@@ -15,6 +15,7 @@ import {
   useDelegationCardModel,
   type DelegationIdentity,
 } from "@/hooks/use-delegation-card-model"
+import { useElapsedLabel } from "@/hooks/use-elapsed-label"
 import { useTruncation } from "@/hooks/use-truncation"
 import { previewLine } from "@/lib/activity/format"
 import type { ActivityStep, StepStatus } from "@/lib/activity/types"
@@ -26,7 +27,6 @@ import {
 import {
   buildDelegationTaskRows,
   deriveBadge,
-  formatDuration,
   parseStatusReport,
   parseTaskId,
   type DelegationTaskRow,
@@ -97,7 +97,9 @@ function DelegationStatusWord({
   clock: string | null
 }) {
   const t = useTranslations("Folder.chat.delegation.status")
-  const duration = durationMs != null ? ` · ${formatDuration(durationMs)}` : ""
+  const elapsedLabel = useElapsedLabel()
+  const took = elapsedLabel(durationMs)
+  const duration = took ? ` · ${took}` : ""
   switch (status) {
     case "err":
       return (

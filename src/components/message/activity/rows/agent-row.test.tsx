@@ -543,7 +543,7 @@ describe("sub-agent row: Cursor's task outcome envelope", () => {
         { output: '{"durationMs":39894,"isBackground":false}' }
       )
     )
-    expect(within(header()).getByText("39.9s")).toBeInTheDocument()
+    expect(within(header()).getByText("39s")).toBeInTheDocument()
     expect(row()).toHaveAttribute("data-status", "succeeded")
     expect(document.body.textContent).not.toMatch(/durationMs|isBackground/)
   })
@@ -786,7 +786,7 @@ describe("sub-agent row: Grok's live progress", () => {
       })
     )
     expect(
-      screen.getByText("7 tool calls · 1 turns · 4.2s · context 12%")
+      screen.getByText("7 tool calls · 1 turns · 4s · context 12%")
     ).toBeInTheDocument()
   })
 

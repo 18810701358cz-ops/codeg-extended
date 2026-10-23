@@ -18,19 +18,13 @@ import type {
   AdaptedToolCallPart,
 } from "@/lib/adapters/ai-elements-adapter"
 import type { AgentToolCall, AgentType } from "@/lib/types"
+import { useElapsedLabel } from "@/hooks/use-elapsed-label"
 import { extractJsonField, tryParseJson } from "@/lib/activity/json"
 import {
   isAsyncLaunchAckText,
   parseBackgroundTaskMarker,
 } from "@/lib/background-agent"
 import { useSessionViewerHost } from "./session-viewer-host-context"
-
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  const sec = ms / 1000
-  if (sec < 60) return `${sec.toFixed(1)}s`
-  return `${(sec / 60).toFixed(1)}m`
-}
 
 /** Convert AgentToolCall[] to tool-call parts: the sub-agent's own steps, as
  *  its nested timeline draws them. */
@@ -202,6 +196,7 @@ export function useAgentCallModel(
   const t = useTranslations("Folder.chat.contentParts")
   const tTool = useTranslations("Folder.chat.tool")
   const tBg = useTranslations("Folder.chat.backgroundTasks")
+  const elapsedLabel = useElapsedLabel()
 
   const isRunning =
     part.state === "input-available" || part.state === "input-streaming"
@@ -430,9 +425,8 @@ export function useAgentCallModel(
     if (grokProgress.turnCount != null) {
       pieces.push(t("agentProgressTurns", { count: grokProgress.turnCount }))
     }
-    if (grokProgress.durationMs != null) {
-      pieces.push(formatDuration(grokProgress.durationMs))
-    }
+    const took = elapsedLabel(grokProgress.durationMs)
+    if (took) pieces.push(took)
     if (grokProgress.contextUsagePct != null) {
       pieces.push(
         t("agentProgressContext", {
@@ -441,17 +435,11 @@ export function useAgentCallModel(
       )
     }
     return pieces.length > 0 ? pieces.join(" · ") : null
-  }, [grokProgress, t])
+  }, [grokProgress, t, elapsedLabel])
 
-  const durationSuffix = useMemo(() => {
-    if (agentStats?.total_duration_ms) {
-      return formatDuration(agentStats.total_duration_ms)
-    }
-    if (taskOutcome?.durationMs != null) {
-      return formatDuration(taskOutcome.durationMs)
-    }
-    return null
-  }, [agentStats, taskOutcome])
+  const durationSuffix = elapsedLabel(
+    agentStats?.total_duration_ms || taskOutcome?.durationMs
+  )
 
   // Opening the child's transcript is capsule-level, not body-level: while it
   // runs (and, for codex, even after) the child's session is the only record of

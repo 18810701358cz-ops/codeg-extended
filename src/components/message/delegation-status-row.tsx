@@ -39,11 +39,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { cn } from "@/lib/utils"
-import {
-  formatDuration,
-  type ResolvedBadge,
-  type StatusReport,
-} from "@/lib/delegation-status"
+import type { ResolvedBadge, StatusReport } from "@/lib/delegation-status"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { MessageResponse } from "@/components/ai-elements/message"
@@ -55,6 +51,7 @@ import {
 import { ErrorLabel } from "@/components/message/delegation-status-badge"
 import { useDelegationStatusContext } from "@/components/message/delegation-status-index-context"
 import { useDelegationTaskLive } from "@/hooks/use-delegation-task-live"
+import { useElapsedLabel } from "@/hooks/use-elapsed-label"
 
 interface DelegationStatusRowProps {
   /** Which companion tool this row represents — selects the label + icon. */
@@ -102,6 +99,7 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
   onOpenChange,
 }: DelegationStatusRowProps) {
   const t = useTranslations("Folder.chat.delegation")
+  const elapsedLabel = useElapsedLabel()
   const panelId = useId()
 
   // A later card of this transcript polled the same task: this row is a
@@ -213,8 +211,7 @@ export const DelegationStatusRow = memo(function DelegationStatusRow({
   const expandable = hasAnyResultText || prompts != null
 
   const isRunning = badge.status === "running"
-  const duration =
-    report.durationMs != null ? formatDuration(report.durationMs) : null
+  const duration = elapsedLabel(report.durationMs)
   const open = expandable && expanded
   useEffect(() => {
     onOpenChange?.(open)

@@ -5,6 +5,7 @@ import Ansi from "ansi-to-react"
 import { useTranslations } from "next-intl"
 
 import { CodeBlock } from "@/components/ai-elements/code-block"
+import { useElapsedLabel } from "@/hooks/use-elapsed-label"
 import { useTruncation } from "@/hooks/use-truncation"
 import { normalizeCommandOutput } from "@/lib/activity/command"
 import {
@@ -57,13 +58,6 @@ function decodeEscapedAnsi(output: string): string {
 
 function stripAnsi(text: string): string {
   return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
-}
-
-function formatDuration(ms: number): string {
-  const seconds = Math.round(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  return `${minutes}m ${seconds % 60}s`
 }
 
 interface CommandOutput {
@@ -385,6 +379,7 @@ export const CommandRow = memo(function CommandRow({
 }) {
   const t = useTranslations("Folder.chat.activity")
   const statusText = useStatusText()
+  const elapsedLabel = useElapsedLabel()
   const { recoveredKeys } = useActivityRender()
   const step = useLiveToolStep(given)
   const { tool } = step
@@ -423,7 +418,7 @@ export const CommandRow = memo(function CommandRow({
     tool.status === "succeeded" &&
     tool.command?.durationMs != null &&
     tool.command.durationMs >= SHOW_DURATION_MS
-      ? formatDuration(tool.command.durationMs)
+      ? elapsedLabel(tool.command.durationMs)
       : null
 
   return (

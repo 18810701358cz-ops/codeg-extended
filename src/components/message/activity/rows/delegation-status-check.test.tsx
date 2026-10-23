@@ -4,6 +4,7 @@ import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it, vi } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
+import zhMessages from "@/i18n/messages/zh-CN.json"
 import type { ToolCallState } from "@/lib/adapters/ai-elements-adapter"
 import { ContentPartsRenderer } from "../../content-parts-renderer"
 
@@ -360,13 +361,33 @@ describe("delegation status call", () => {
           task_id: "abc12345",
           status: "completed",
           text: "Done.",
-          duration_ms: 1234,
+          duration_ms: 42_400,
         })}
         state="output-available"
       />
     )
-    // Like a delegation's own row: `done · 1.2s` (en: status.ok = "done").
-    expect(screen.getByText("done · 1.2s")).toBeInTheDocument()
+    // Like a delegation's own row and the reply's header: `done · 42s`
+    // (en: status.ok = "done").
+    expect(screen.getByText("done · 42s")).toBeInTheDocument()
+  })
+
+  it("writes the execution time in the reader's language, as the header does", () => {
+    render(
+      <NextIntlClientProvider locale="zh-CN" messages={zhMessages}>
+        <StatusCall
+          kind="status"
+          input={JSON.stringify({ task_id: "abc12345" })}
+          output={envelope({
+            task_id: "abc12345",
+            status: "completed",
+            text: "Done.",
+            duration_ms: 94_000,
+          })}
+          state="output-available"
+        />
+      </NextIntlClientProvider>
+    )
+    expect(screen.getByText("完成 · 1 分钟 34 秒")).toBeInTheDocument()
   })
 
   it("renders the expanded result through the Markdown renderer (not a <pre>)", () => {
@@ -448,7 +469,7 @@ describe("delegation status call", () => {
         state="output-available"
       />
     )
-    expect(screen.getByText("done · 2m 0s")).toBeInTheDocument()
+    expect(screen.getByText("done · 1m 59s")).toBeInTheDocument()
     expect(screen.queryByText(/1m 60s/)).not.toBeInTheDocument()
   })
 })

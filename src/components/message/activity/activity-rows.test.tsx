@@ -331,7 +331,8 @@ describe("agent row", () => {
     expect(
       within(row).getByText("Only report.py assumes inactive bindings.")
     ).toBeTruthy()
-    expect(within(row).getByText("48.0s")).toBeTruthy()
+    // Written like the reply's header: whole seconds.
+    expect(within(row).getByText("48s")).toBeTruthy()
     expect(within(row).getByRole("img", { name: "2 steps" })).toBeTruthy()
     fireEvent.click(within(row).getAllByRole("button")[0]!)
     expect(within(row).getByText("Explored")).toBeTruthy()
