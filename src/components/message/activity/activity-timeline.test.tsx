@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import postcss from "postcss"
 import { useState, type ReactElement } from "react"
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -620,6 +620,88 @@ describe("activity timeline: file panels", () => {
       within(panel).getByRole("button", { name: "Switch to inline view" })
     )
     expect(panel.querySelector(".grid-cols-2")).toBeNull()
+  })
+
+  describe("with the overlay scrollbars set up", () => {
+    // The real library: its setup is deferred into an idle callback and then
+    // an animation frame, queued here and flushed by the test; it measures
+    // only an element with a size, and jsdom lays nothing out.
+    const deferred = new Map<number, () => void>()
+    let nextHandle = 0
+    function flushDeferred() {
+      for (let round = 0; round < 2; round++) {
+        act(() => {
+          for (const [handle, callback] of [...deferred]) {
+            deferred.delete(handle)
+            callback()
+          }
+        })
+      }
+    }
+    beforeEach(() => {
+      const queue = (callback: () => void) => {
+        deferred.set(++nextHandle, callback)
+        return nextHandle
+      }
+      const cancel = (handle: number) => deferred.delete(handle)
+      vi.stubGlobal("requestIdleCallback", queue)
+      vi.stubGlobal("cancelIdleCallback", cancel)
+      vi.stubGlobal("requestAnimationFrame", queue)
+      vi.stubGlobal("cancelAnimationFrame", cancel)
+      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(200)
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(
+        200
+      )
+    })
+    afterEach(() => {
+      deferred.clear()
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+
+    /** A viewport that scrolls sideways as far as `reach` (jsdom keeps no
+     *  scroll offsets of its own). */
+    function scrollable(viewport: HTMLElement, reach: number) {
+      Object.defineProperty(viewport, "clientWidth", { value: 100 })
+      Object.defineProperty(viewport, "scrollWidth", { value: 100 + reach })
+      Object.defineProperty(viewport, "scrollLeft", {
+        value: 0,
+        writable: true,
+      })
+    }
+
+    it("scrolls the two halves of side by side together", () => {
+      localStorage.setItem("workspace:diff-view-mode", "split")
+      renderFiles()
+      const panel = openPanel("Edited")
+      flushDeferred()
+      const [left, right] = [
+        ...panel.querySelector(".grid-cols-2")!.children,
+      ].map(
+        (half) =>
+          half.querySelector("[data-overlayscrollbars-viewport]") as HTMLElement
+      )
+      expect(left).toBeTruthy()
+      expect(right).toBeTruthy()
+      scrollable(left!, 300)
+      scrollable(right!, 60)
+
+      left!.scrollLeft = 40
+      fireEvent.scroll(left!)
+      expect(right!.scrollLeft).toBe(40)
+
+      // As far as the shorter half goes, and no further — nor does its stop
+      // pull back the half being scrolled.
+      left!.scrollLeft = 200
+      fireEvent.scroll(left!)
+      expect(right!.scrollLeft).toBe(60)
+      fireEvent.scroll(right!)
+      expect(left!.scrollLeft).toBe(200)
+
+      right!.scrollLeft = 10
+      fireEvent.scroll(right!)
+      expect(left!.scrollLeft).toBe(10)
+    })
   })
 
   it.each([

@@ -10,6 +10,7 @@ import {
   type ParsedDiffFile,
   type SplitCell,
 } from "@/components/diff/unified-diff-preview"
+import { useSyncedScroll } from "@/components/diff/use-synced-scroll"
 import { FilePathLink } from "@/components/ai-elements/link-safety"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { editDiffText } from "@/lib/activity/edit"
@@ -168,8 +169,8 @@ export const EditRow = memo(function EditRow({ step }: { step: ToolStep }) {
  * one line-number column (the old number for a removed line, the new one
  * otherwise — left blank where the payload had no real positions), a sign
  * column, and the code; side by side: the old and the new text in two halves
- * that scroll sideways on their own. Multi-file edits get a header per file.
- * Big diffs open as a preview.
+ * that scroll sideways together. Multi-file edits get a header per file. Big
+ * diffs open as a preview.
  */
 export const EditDiff = memo(function EditDiff({
   diffText,
@@ -415,10 +416,12 @@ function UnifiedHunks({
 }
 
 /**
- * The side-by-side view: the old text on the left and the new on the right,
- * each half scrolling sideways on its own so reading the end of a long line
- * on one side does not drag the other away. Both halves walk the same paired
- * rows, one line each, so they stay level.
+ * The side-by-side view: the old text on the left and the new on the right.
+ * Each half scrolls sideways as far as its own longest line, and the two move
+ * together (`useSyncedScroll`, as in the workspace's diff view): the line
+ * read on one side stays beside its pair, and where one half runs out of
+ * line, it stops there instead of pulling the other back. Both halves walk
+ * the same paired rows, one line each, so they stay level.
  */
 function SplitHunks({
   file,
@@ -435,6 +438,8 @@ function SplitHunks({
       })),
     [file.hunks]
   )
+  const { registerLeft, registerRight, handleLeftScroll, handleRightScroll } =
+    useSyncedScroll()
   return (
     <div className="grid grid-cols-2">
       {(["left", "right"] as const).map((side) => (
@@ -446,6 +451,8 @@ function SplitHunks({
             "min-w-0",
             side === "right" && "border-s border-foreground/5"
           )}
+          onViewportRef={side === "left" ? registerLeft : registerRight}
+          onScroll={side === "left" ? handleLeftScroll : handleRightScroll}
         >
           <div className="w-max min-w-full">
             {hunks.map((hunk, hunkIndex) => (
