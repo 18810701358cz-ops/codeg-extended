@@ -230,21 +230,21 @@ beforeEach(() => {
 describe("activity timeline: the reference turn", () => {
   it("summarizes the turn in the header: steps, how it ended, then the time", () => {
     // Only the step count is spelled out; the breakdown by kind is the
-    // tooltip's. The outcome follows the count, and the time closes the
-    // capsule at its end, past the chevron.
+    // tooltip's. The outcome follows the count, then the time, and the
+    // chevron closes the capsule.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     const header = activityHeader()
     expect(header.textContent).toBe(
-      "Activity14 steps · 1 failed, recovered3m 34s"
+      "Activity14 steps · 1 failed, recovered · 3m 34s"
     )
     expect(header.querySelector("[title]")).toHaveAttribute(
       "title",
       "14 steps · 6 commands · 1 edit · 1 agent · 1 MCP call · 3 files read · 1 search"
     )
-    const time = header.lastElementChild!
-    expect(time.textContent).toBe("3m 34s")
-    expect(time.previousElementSibling).toBe(
-      header.querySelector("svg.lucide-chevron-right")
+    const chevron = header.lastElementChild!
+    expect(chevron).toBe(header.querySelector("svg.lucide-chevron-right"))
+    expect(chevron.previousElementSibling!.lastElementChild!.textContent).toBe(
+      " · 3m 34s"
     )
     expect(foldControl()).toHaveAttribute("aria-expanded", "true")
   })

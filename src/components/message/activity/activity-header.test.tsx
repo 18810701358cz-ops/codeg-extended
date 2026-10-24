@@ -64,21 +64,27 @@ describe("ActivityHeader", () => {
       { steps: 2, failed: 1, interrupted: 1 },
       "Activity2 steps · 1 failed, recovered · 1 interrupted",
     ],
-  ])("reads %s, the time after the chevron", (_, given, line) => {
+  ])("reads %s, then the time, before the chevron", (_, given, line) => {
     const capsule = renderHeader(summaryOf(given))
-    expect(capsule.textContent).toBe(`${line}3s`)
-    const time = capsule.lastElementChild!
-    expect(time.textContent).toBe("3s")
-    expect(time.previousElementSibling).toBe(
-      capsule.querySelector("svg.lucide-chevron-right")
-    )
+    // The time is the summary's last item, after the same separator.
+    expect(capsule.textContent).toBe(`${line} · 3s`)
+    const chevron = capsule.lastElementChild!
+    expect(chevron).toBe(capsule.querySelector("svg.lucide-chevron-right"))
+    const time = chevron.previousElementSibling!.lastElementChild!
+    expect(time.textContent).toBe(" · 3s")
+    // As a flex item of its own the time would drop the separator's
+    // leading space; it keeps it as written.
+    expect(time.getAttribute("class")!.split(/\s+/)).toContain("whitespace-pre")
   })
 
   it("keeps the time of a reply with no steps beside its label", () => {
     const capsule = renderHeader(summaryOf({}), { folds: false })
     expect(capsule.textContent).toBe("Reply3s")
     expect(capsule.querySelector("svg")).toBeNull()
-    expect(capsule.querySelector(".activity-mono")!.textContent).toBe("3s")
+    const time = capsule.querySelector(".activity-mono")!
+    expect(time.textContent).toBe("3s")
+    // No separator to set it apart: a gap does.
+    expect(time.getAttribute("class")!.split(/\s+/)).toContain("ms-2")
   })
 
   it("shows no time while the turn runs", () => {
@@ -88,15 +94,23 @@ describe("ActivityHeader", () => {
 
   it("gives way in a narrow column: the summary first, then the label", () => {
     // The summary shrinks to nothing before the label does; the label, never
-    // wider than the room left, then truncates too. The chevron and the time
-    // keep their width, so nothing runs over them.
+    // wider than the room the time leaves it, then truncates too. The time
+    // and the chevron keep their width, so nothing runs over them.
     const capsule = renderHeader(
       summaryOf({ steps: 4, failed: 1, unrecovered: 1 })
     )
     const classes = (el: Element) => el.getAttribute("class")!.split(/\s+/)
-    // Their group can give up its width.
-    expect(classes(capsule.firstElementChild!)).toContain("min-w-0")
-    const [label, summary] = capsule.firstElementChild!.children
+    const [words, chevron] = capsule.children
+    expect(capsule.children).toHaveLength(2)
+    expect(classes(chevron!)).toContain("shrink-0")
+    // What the capsule says can give up its width; within it the label and
+    // the summary can, and the time after them cannot.
+    expect(classes(words!)).toContain("min-w-0")
+    const [group, time] = words!.children
+    expect(words!.children).toHaveLength(2)
+    expect(classes(group!)).toContain("min-w-0")
+    expect(classes(time!)).toContain("shrink-0")
+    const [label, summary] = group!.children
     expect(classes(label!)).toEqual(
       expect.arrayContaining(["max-w-full", "shrink-0", "truncate"])
     )
@@ -104,8 +118,5 @@ describe("ActivityHeader", () => {
       expect.arrayContaining(["min-w-0", "truncate"])
     )
     expect(classes(summary!)).not.toContain("shrink-0")
-    const [chevron, time] = [...capsule.children].slice(1)
-    expect(classes(chevron!)).toContain("shrink-0")
-    expect(classes(time!)).toContain("shrink-0")
   })
 })
