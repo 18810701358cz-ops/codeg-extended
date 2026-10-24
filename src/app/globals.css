@@ -1345,6 +1345,48 @@
   );
 }
 
+/* 消息里的细线，开图时加深。消息里的描边（「执行过程」胶囊、代码块和它标题栏的底边、表格、
+   内联代码、用户气泡、卡片和详情面板的 border-border……）都是主题 --border：一种不透明的浅灰
+   （深色主题是白 10%）。压在被遮罩冲淡的背景图上，它和线两侧的颜色差不多，线就看不出来了。
+   开图时在消息范围里把 --border 换成前景色的一层薄染色 --ws-msg-border：它按「比下面深多少」
+   画，压在图的哪种颜色上都一样看得出（深色主题是提亮），深浅同 chrome 分隔线。范围 = 消息
+   （.is-user / .is-assistant，会话和子会话抽屉里的都是）+ 显式的 .ws-msg-scope（消息之间的上下文
+   压缩分隔线）：任务、自动化等页面复用的 ws-msg-* 表面不在范围里，不受影响。混色用 oklab：
+   在 oklch 里和 transparent 混，旧内核会把缺失的色相按 0°（红）插值。 */
+[data-workspace-bg="on"] {
+  --ws-msg-border: color-mix(in oklab, var(--foreground) 18%, transparent);
+}
+[data-workspace-bg="on"] :is(.is-user, .is-assistant, .ws-msg-scope) {
+  --border: var(--ws-msg-border);
+}
+
+/* 面板：执行过程里步骤展开后的详情框（DetailBox）这类关图时无边框的浅底面板，开图后底色
+   半透明，和背景图分不开——补一圈上面那种细线。失败的面板（data-tone="danger"）关图是不透明
+   的浅红底，开图也换成半透明（消息表面同一种染色里调进一点红），线也带红。两处都只设自定义
+   属性、不直接写 color-mix 的颜色声明：构建会在直接写的 color-mix 前面补一条取第一种颜色的
+   回落声明（这里就是纯红的 --destructive），不认识 color-mix 的老内核丢掉后一条、用那条回落，
+   会把失败面板整块涂红；自定义属性的两条声明在任何内核里都是后一条生效，那条回落等于没有，
+   老内核里它在用处作废——底色同关图（老内核本就算不出 --tone-danger-surface），线不画。 */
+[data-workspace-bg="on"] .ws-msg-panel {
+  border: 1px solid var(--ws-msg-panel-border, var(--border));
+}
+[data-workspace-bg="on"] .ws-msg-panel[data-tone="danger"] {
+  --tone-danger-surface: color-mix(
+    in oklab,
+    var(--destructive) 10%,
+    color-mix(
+      in oklab,
+      var(--muted) calc(var(--ws-msg-alpha) * 100%),
+      transparent
+    )
+  );
+  --ws-msg-panel-border: color-mix(
+    in oklab,
+    var(--tone-danger) 35%,
+    transparent
+  );
+}
+
 /* Canvas 表面：开启背景图时强制透明，让底层背景图 + 遮罩直接透出（会话/文件
    overlay section、侧栏会话行）。无 base 规则 —— 与元素上配对的 bg-*（bg-background
    / bg-sidebar）组合，未启用背景图时完全等价那个纯色（零回归）。透明不依赖
@@ -1412,10 +1454,12 @@
 [data-workspace-bg="on"] {
   --ws-chrome-border: color-mix(in oklch, var(--foreground) 18%, transparent);
 }
-/* 老引擎无 color-mix 时回落到主题 --border（仍随主题，至少不崩）。 */
+/* 老引擎无 color-mix 时回落到主题 --border（仍随主题，至少不崩）。消息细线 --ws-msg-border 同理：
+   不回落的话，消息里的 --border 会是一句作废的 color-mix，边框退成 currentColor 的黑线。 */
 @supports not (background: color-mix(in oklch, white, transparent)) {
   [data-workspace-bg="on"] {
     --ws-chrome-border: var(--border);
+    --ws-msg-border: var(--border);
   }
 }
 /* 组合式 utility（无 base 规则）：挂在已带 border-* / border-border* 的 chrome 元素上，开图时用加强色

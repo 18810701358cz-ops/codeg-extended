@@ -59,8 +59,11 @@ export function DetailBox({
 
   return (
     <div
+      // Over a workspace background image the panel turns translucent and
+      // takes a hairline border (`ws-msg-panel`; a failed one's red-tinted).
+      data-tone={tone}
       className={cn(
-        "activity-detail-box overflow-hidden rounded-[0.625rem]",
+        "activity-detail-box ws-msg-panel overflow-hidden rounded-[0.625rem]",
         tone === "neutral" && "bg-activity-surface ws-msg-card",
         tone === "danger" && "bg-tone-danger-surface",
         tone === "plain" && "border border-border bg-background ws-msg-card",

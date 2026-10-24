@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
+import postcss from "postcss"
 import { act, fireEvent, render } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -142,6 +145,58 @@ describe("DetailBox", () => {
     viewport!.scrollTop = 400
     fireEvent.scroll(viewport!)
     expect(viewport!.dataset.overflow).toBe("start")
+  })
+})
+
+describe("DetailBox over a workspace background image", () => {
+  const stylesheet = postcss.parse(
+    readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8")
+  )
+  /** The declarations of the top-level rules written with `selector`. */
+  function declarations(selector: string): Record<string, string> {
+    const found: Record<string, string> = {}
+    stylesheet.each((node) => {
+      if (node.type !== "rule" || node.selector !== selector) return
+      node.walkDecls((decl) => {
+        found[decl.prop] = decl.value
+      })
+    })
+    return found
+  }
+
+  it("draws every tone's panel inside a hairline", () => {
+    for (const tone of ["neutral", "danger", "plain"] as const) {
+      const { container, unmount } = render(
+        <DetailBox tone={tone}>body</DetailBox>
+      )
+      const box = container.firstElementChild
+      expect(box).toHaveClass("activity-detail-box", "ws-msg-panel")
+      expect(box).toHaveAttribute("data-tone", tone)
+      unmount()
+    }
+    // Off the image a neutral or failed panel is a plain tint with no frame;
+    // on it, the tint is translucent and the hairline is what sets it apart.
+    expect(declarations('[data-workspace-bg="on"] .ws-msg-panel').border).toBe(
+      "1px solid var(--ws-msg-panel-border, var(--border))"
+    )
+  })
+
+  it("turns a failed panel translucent and its hairline red, through custom properties alone", () => {
+    const danger = declarations(
+      '[data-workspace-bg="on"] .ws-msg-panel[data-tone="danger"]'
+    )
+    // A colour-mix written straight into `background-color` gets a build
+    // fallback of its first colour ahead of it — the solid failure red, which
+    // an engine without colour-mix keeps, painting the whole panel. Of a
+    // custom property's two declarations the later always wins, fallback or
+    // not: there the panel keeps its own fill.
+    expect(Object.keys(danger).sort()).toEqual([
+      "--tone-danger-surface",
+      "--ws-msg-panel-border",
+    ])
+    expect(danger["--tone-danger-surface"]).toContain("var(--destructive)")
+    expect(danger["--tone-danger-surface"]).toContain("var(--ws-msg-alpha)")
+    expect(danger["--ws-msg-panel-border"]).toContain("var(--tone-danger)")
   })
 })
 

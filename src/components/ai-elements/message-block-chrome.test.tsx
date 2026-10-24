@@ -8,7 +8,7 @@ vi.mock("@/components/ai-elements/link-safety", () => ({
   useStreamdownLinkSafety: () => ({ enabled: false }),
 }))
 
-import { MessageResponse } from "./message"
+import { Message, MessageContent, MessageResponse } from "./message"
 
 // Streamdown's own utility classes live in node_modules, which our Tailwind
 // scan skips, so a block's frame is decided by globals.css rules keyed on
@@ -273,5 +273,56 @@ describe("MessageResponse table chrome", () => {
       "min-height": "0",
       padding: "0",
     })
+  })
+})
+
+describe("a message's hairlines over a background image", () => {
+  const BG = '[data-workspace-bg="on"]'
+  const SCOPE = `${BG} :is(.is-user, .is-assistant, .ws-msg-scope)`
+
+  it("draws them in a tint of the text colour, not the theme's flat grey", () => {
+    const { container } = render(
+      <div data-workspace-bg="on">
+        <Message from="user">
+          <MessageContent>Sort the bindings</MessageContent>
+        </Message>
+        <Message from="assistant">
+          <MessageContent>
+            <MessageResponse>{REPLY}</MessageResponse>
+          </MessageContent>
+        </Message>
+      </div>
+    )
+    // A message, the user's or the agent's, swaps the theme's --border…
+    expect(declarations(SCOPE)["--border"]).toBe("var(--ws-msg-border)")
+    expect(container.querySelector(".is-user")!.matches(SCOPE)).toBe(true)
+    expect(container.querySelector(".is-assistant")!.matches(SCOPE)).toBe(true)
+    // …for a tint of the text colour, which shows on any colour of the image
+    // (the theme's opaque grey vanishes where the image is that grey).
+    expect(declarations(BG)["--ws-msg-border"]).toMatch(
+      /^color-mix\(in oklab, var\(--foreground\) \d+%, transparent\)$/
+    )
+    // The code block's frame and title bar, and the table's card, draw in it.
+    const root = container.querySelector(CODE_ROOT)!
+    expect(root.closest(".is-assistant")).not.toBeNull()
+    expect(declarations(TABLE_CARD).border).toBe("1px solid var(--border)")
+    expect(
+      declarations(`${BG} [data-streamdown="code-block-header"]`)["box-shadow"]
+    ).toBe("inset 0 -1px 0 var(--border)")
+  })
+
+  it("keeps the theme's grey on an engine without colour-mix", () => {
+    // Else --border would be a colour-mix such an engine drops, and every
+    // border in a message would fall back to the black of currentColor.
+    let fallback: string | undefined
+    stylesheet.walkAtRules("supports", (atRule) => {
+      if (!atRule.params.startsWith("not")) return
+      atRule.walkRules(BG, (rule) => {
+        rule.walkDecls("--ws-msg-border", (decl) => {
+          fallback = decl.value
+        })
+      })
+    })
+    expect(fallback).toBe("var(--border)")
   })
 })
