@@ -418,6 +418,53 @@ describe("activity timeline: a live turn", () => {
   })
 })
 
+describe("activity timeline: the status rings", () => {
+  const ring = (row: HTMLElement) =>
+    row.querySelector<HTMLElement>(':scope > span [role="img"]')!
+
+  it("turns a solid arc over the track of a running step", () => {
+    // A 0.5px dashed ring that turned could not be read as turning: the
+    // running ring keeps a light track and adds a heavier arc that spins.
+    renderTurn(
+      <CurrentRound
+        parts={partsOf(MOCKUP_LIVE_TURN, true, ["l3"])}
+        completed={false}
+      />
+    )
+    const mark = ring(rowOf("Run web unit tests"))
+    const arc = mark.querySelector<HTMLElement>(".border-t-activity-ring-live")
+    expect(arc).toBeTruthy()
+    expect(arc!.className).toMatch(/\banimate-spin\b/)
+    expect(arc!.className).toMatch(/\bborder-transparent\b/)
+  })
+
+  it("fades a finished step's ring and stops it turning", () => {
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const mark = ring(rowOf("Summarizing log status"))
+    const rest = mark.querySelector<HTMLElement>(".rounded-full")!
+    expect(rest).toHaveAttribute("data-ring", "quiet")
+    expect(rest.className).toMatch(/\bborder-activity-ring-done\b/)
+    expect(rest.className).not.toMatch(/\banimate-spin\b/)
+    expect(mark.querySelector(".border-t-activity-ring-live")).toBeNull()
+  })
+
+  it("turns the same arc at the foot of a live reply", () => {
+    // Under a reply with no answer yet: the mark is a track with the arc over
+    // it, so the two read as one ring.
+    const { container } = renderTurn(
+      <CurrentRound
+        parts={partsOf(MOCKUP_LIVE_TURN, true, ["l3"])}
+        completed={false}
+      />
+    )
+    const mark = container.querySelector<HTMLElement>(
+      '.activity-timeline > [data-marker="working"]'
+    )!
+    expect(mark.querySelector(".border-activity-ring")).toBeTruthy()
+    expect(mark.querySelector(".border-t-activity-ring-live")).toBeTruthy()
+  })
+})
+
 describe("activity timeline: where the rail ends", () => {
   // The rail itself is CSS (globals.css): the list says whether it is done.
   const list = () => document.querySelector(".activity-timeline")!

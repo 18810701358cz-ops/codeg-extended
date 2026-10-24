@@ -999,6 +999,8 @@
 :root {
   --activity-rail: color-mix(in oklab, var(--foreground) 12%, transparent);
   --activity-ring: color-mix(in oklab, var(--foreground) 45%, transparent);
+  --activity-ring-done: color-mix(in oklab, var(--foreground) 22%, transparent);
+  --activity-ring-live: color-mix(in oklab, var(--foreground) 72%, transparent);
   --activity-surface: var(--muted);
   /* --muted-foreground 在 --muted 底上只有约 4.3:1：详情框和灰底小标签里的次要文字
      改用它（向前景色略收），见下方 .activity-detail-box。 */
@@ -1053,6 +1055,8 @@
   --font-sans: var(--font-sans);
   --color-activity-rail: var(--activity-rail);
   --color-activity-ring: var(--activity-ring);
+  --color-activity-ring-done: var(--activity-ring-done);
+  --color-activity-ring-live: var(--activity-ring-live);
   --color-activity-surface: var(--activity-surface);
   --color-activity-muted-strong: var(--activity-muted-strong);
   --color-tone-success: var(--tone-success);
