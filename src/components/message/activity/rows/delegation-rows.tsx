@@ -4,26 +4,23 @@ import { memo, useCallback, useMemo, useState } from "react"
 import { useTranslations } from "next-intl"
 import { ActivityIcon, BanIcon } from "lucide-react"
 
-import { AgentIcon } from "@/components/agent-icon"
-import { AssistantAvatar } from "@/components/assistants/assistant-avatar"
-import { DelegationIdentityName } from "@/components/message/delegation-identity"
-import { ErrorLabel } from "@/components/message/delegation-status-badge"
+import {
+  DelegationIdentityGlyph,
+  DelegationIdentityName,
+} from "@/components/message/delegation-identity"
+import {
+  DelegationStatusWord,
+  delegationStepStatus,
+} from "@/components/message/delegation-status-badge"
 import { DelegationStatusRow } from "@/components/message/delegation-status-row"
 import { useSessionViewerHost } from "@/components/message/session-viewer-host-context"
 import { SubAgentSessionDialog } from "@/components/message/sub-agent-session-dialog"
-import {
-  useDelegationCardModel,
-  type DelegationIdentity,
-} from "@/hooks/use-delegation-card-model"
-import { useElapsedLabel } from "@/hooks/use-elapsed-label"
+import { useDelegationCardModel } from "@/hooks/use-delegation-card-model"
 import { useTruncation } from "@/hooks/use-truncation"
 import { previewLine } from "@/lib/activity/format"
 import type { ActivityStep, StepStatus } from "@/lib/activity/types"
 import type { AdaptedToolCallPart } from "@/lib/adapters/ai-elements-adapter"
-import {
-  delegateCallTaskId,
-  type DelegationCardStatus,
-} from "@/lib/delegation-card"
+import { delegateCallTaskId } from "@/lib/delegation-card"
 import {
   buildDelegationTaskRows,
   deriveBadge,
@@ -31,7 +28,6 @@ import {
   parseTaskId,
   type DelegationTaskRow,
 } from "@/lib/delegation-status"
-import { useAssistant } from "@/stores/assistants-store"
 import { useActivityRender } from "../activity-context"
 import { ActivityRow } from "../activity-row"
 import { DetailBox } from "../detail-box"
@@ -50,82 +46,6 @@ import { GenericRow } from "./generic-row"
 
 /** Longest result line shown under a finished delegation. */
 const RESULT_PREVIEW_CHARS = 240
-
-function stepStatusOf(status: DelegationCardStatus): StepStatus {
-  switch (status) {
-    case "starting":
-    case "running":
-      return "running"
-    case "waiting":
-      return "awaiting"
-    case "ok":
-      return "succeeded"
-    case "err":
-      return "failed"
-  }
-}
-
-/** The agent's logo — or the assistant's avatar — inside the rail's ring. */
-function IdentityGlyph({ identity }: { identity: DelegationIdentity }) {
-  const assistant = useAssistant(identity.assistantId)
-  if (identity.assistantId !== null) {
-    return (
-      <AssistantAvatar
-        avatar={assistant?.avatar ?? null}
-        name={assistant?.name ?? identity.assistantName ?? ""}
-        size={14}
-      />
-    )
-  }
-  return identity.agentType ? (
-    <AgentIcon agentType={identity.agentType} className="size-3" />
-  ) : (
-    <span className="size-1.5 rounded-sm bg-muted-foreground/60" />
-  )
-}
-
-function DelegationStatusWord({
-  status,
-  errorCode,
-  durationMs,
-  clock,
-}: {
-  status: DelegationCardStatus
-  errorCode?: string
-  durationMs: number | null
-  /** How long it has been running here, once that is worth showing. */
-  clock: string | null
-}) {
-  const t = useTranslations("Folder.chat.delegation.status")
-  const elapsedLabel = useElapsedLabel()
-  const took = elapsedLabel(durationMs)
-  const duration = took ? ` · ${took}` : ""
-  switch (status) {
-    case "err":
-      return (
-        <span className="text-tone-danger">
-          <ErrorLabel code={errorCode} />
-          {duration}
-        </span>
-      )
-    case "waiting":
-      return <span className="text-tone-warning">{t("waiting")}</span>
-    case "ok":
-      return (
-        <>
-          {t("ok")}
-          {duration}
-        </>
-      )
-    default:
-      return (
-        <>
-          {t(status)}
-          {clock ? <span aria-hidden="true">{` ${clock}`}</span> : null}
-        </>
-      )
-  }
-}
 
 /**
  * One delegation, start to finish: `Codex  #14be49e7  Update the stale
@@ -168,7 +88,7 @@ export const DelegationRow = memo(function DelegationRow({
   const model = useDelegationCardModel(source)
   const viewerHost = useSessionViewerHost()
   const [dialogOpen, setDialogOpen] = useState(false)
-  const status = stepStatusOf(model.status)
+  const status = delegationStepStatus(model.status)
   const working = status === "running" || status === "awaiting"
   // While it works, its own connection is the freshest source; the reports
   // its checks returned cover the rest (and, once it is done, say how it
@@ -211,7 +131,7 @@ export const DelegationRow = memo(function DelegationRow({
         status={status}
         marker={
           <RailIcon
-            glyph={<IdentityGlyph identity={model.identity} />}
+            glyph={<DelegationIdentityGlyph identity={model.identity} />}
             status={status}
             label={`${t("kind.delegation")}, ${statusText(status)}`}
           />
