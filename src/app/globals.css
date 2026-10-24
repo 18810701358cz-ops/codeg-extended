@@ -2338,7 +2338,9 @@
 
 /* A detail box's scroll body fades out at whichever edge has more content
    beyond it; the class and attributes go on its OverlayScrollbars viewport,
-   set by the box while it is open, so the overlay scrollbar stays crisp. */
+   set by the box while it is open, so the overlay scrollbar stays crisp — or
+   on each part's that scrolls itself in a box that does not (`DetailScroll`,
+   a half of a side-by-side diff). */
 .activity-detail-viewport[data-overflow="end"] {
   mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
 }

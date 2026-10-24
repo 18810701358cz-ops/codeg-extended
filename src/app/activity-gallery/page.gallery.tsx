@@ -450,6 +450,54 @@ const FILES_TURN: MessageTurn = {
   ],
 }
 
+/** An edit taller than its panel, with lines wider than it: the panel scrolls
+ *  both ways, in the inline and the side-by-side view. */
+const LONG_EDIT_OLD = [
+  "export async function loadTasks(client: ApiClient, folder: string) {",
+  "  const response = await client.get(`/folders/${encodeURIComponent(folder)}/tasks?include=bindings,assignees,labels&state=open`)",
+  "  const tasks = response.data.tasks",
+  "  return tasks.filter((task) => task.binding.active)",
+  "}",
+]
+const LONG_EDIT_NEW = [
+  "export async function loadTasks(",
+  "  client: ApiClient,",
+  "  folder: string,",
+  "  { includeInactive = false, signal }: LoadTasksOptions = {}",
+  ") {",
+  "  const query = new URLSearchParams({ include: 'bindings,assignees,labels', state: 'open', page_size: String(TASK_PAGE_SIZE) })",
+  "  const tasks: Task[] = []",
+  "  for (let page = 1; ; page += 1) {",
+  "    query.set('page', String(page))",
+  "    const response = await client.get(`/folders/${encodeURIComponent(folder)}/tasks?${query}`, { signal })",
+  "    tasks.push(...response.data.tasks)",
+  "    if (!response.data.next_page) break",
+  "  }",
+  "  // A binding the server marks `is_active: false` belongs to a task that was moved to another folder; keep it only on request.",
+  "  return includeInactive",
+  "    ? tasks",
+  "    : tasks.filter((task) => task.bindings.some((binding) => binding.isActive))",
+  "}",
+]
+const LONG_EDIT_TURN: MessageTurn = {
+  id: "turn-long-edit",
+  role: "assistant",
+  timestamp: "2026-10-22T09:55:00Z",
+  duration_ms: 12000,
+  blocks: [
+    toolUse("le1", "Edit", {
+      file_path: `${MOCKUP_REPO}/web/lib/tasks.ts`,
+      old_string: LONG_EDIT_OLD.join("\n"),
+      new_string: LONG_EDIT_NEW.join("\n"),
+    }),
+    toolResult(
+      "le1",
+      `The file ${MOCKUP_REPO}/web/lib/tasks.ts has been updated successfully.`
+    ),
+    { type: "text", text: "Tasks now load page by page." },
+  ],
+}
+
 const POLLED_TASK_ID = "9e82cbc1-5d0e-4f6a-8b3c-2a1d0e9f8c7b"
 const POLLED_TASK =
   "Run `pnpm build` in /Users/me/work/my-app without changing any files. Report whether it succeeded (exit code), the key output, and — if it failed — the full error with file paths and line numbers."
@@ -824,6 +872,7 @@ const SCENARIOS: Scenario[] = [
   { id: "workflow", title: "Plans, questions and tasks", turn: WORKFLOW_TURN },
   { id: "delegation", title: "Delegation checks", turn: DELEGATION_TURN },
   { id: "files", title: "Files: match, read, write, edit", turn: FILES_TURN },
+  { id: "long-edit", title: "A long edit", turn: LONG_EDIT_TURN },
   { id: "text", title: "Text-only reply", turn: TEXT_TURN },
   {
     id: "commands-live",

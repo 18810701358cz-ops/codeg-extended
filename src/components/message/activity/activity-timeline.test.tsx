@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { OverlayScrollbars } from "overlayscrollbars"
 import postcss from "postcss"
 import { useState, type ReactElement } from "react"
 import { act, fireEvent, render, screen, within } from "@testing-library/react"
@@ -1078,32 +1079,42 @@ describe("activity timeline: file panels", () => {
       vi.restoreAllMocks()
     })
 
-    /** A viewport that scrolls sideways as far as `reach` (jsdom keeps no
-     *  scroll offsets of its own). */
-    function scrollable(viewport: HTMLElement, reach: number) {
+    /** A viewport that scrolls sideways as far as `reach`, and down as far
+     *  as `down` (jsdom keeps no scroll offsets of its own). */
+    function scrollable(viewport: HTMLElement, reach: number, down = 0) {
       Object.defineProperty(viewport, "clientWidth", { value: 100 })
       Object.defineProperty(viewport, "scrollWidth", { value: 100 + reach })
-      Object.defineProperty(viewport, "scrollLeft", {
-        value: 0,
-        writable: true,
-      })
+      Object.defineProperty(viewport, "clientHeight", { value: 100 })
+      Object.defineProperty(viewport, "scrollHeight", { value: 100 + down })
+      for (const offset of ["scrollLeft", "scrollTop"]) {
+        Object.defineProperty(viewport, offset, { value: 0, writable: true })
+      }
     }
 
-    it("scrolls the two halves of side by side together", () => {
+    /** The overflow an OverlayScrollbars host was set up with. */
+    const overflowOf = (host: Element) =>
+      OverlayScrollbars(host as HTMLElement)?.options().overflow
+
+    /** The halves of the open side-by-side view: their hosts and viewports. */
+    function halvesOf(panel: HTMLElement) {
+      return [...panel.querySelector(".grid-cols-2")!.children].map((host) => ({
+        host,
+        viewport: host.querySelector(
+          "[data-overlayscrollbars-viewport]"
+        ) as HTMLElement,
+      }))
+    }
+
+    it("scrolls the two halves of side by side together, both ways", () => {
       localStorage.setItem("workspace:diff-view-mode", "split")
       renderFiles()
       const panel = openPanel("Edited")
       flushDeferred()
-      const [left, right] = [
-        ...panel.querySelector(".grid-cols-2")!.children,
-      ].map(
-        (half) =>
-          half.querySelector("[data-overlayscrollbars-viewport]") as HTMLElement
-      )
+      const [left, right] = halvesOf(panel).map((half) => half.viewport)
       expect(left).toBeTruthy()
       expect(right).toBeTruthy()
-      scrollable(left!, 300)
-      scrollable(right!, 60)
+      scrollable(left!, 300, 80)
+      scrollable(right!, 60, 80)
 
       left!.scrollLeft = 40
       fireEvent.scroll(left!)
@@ -1120,6 +1131,99 @@ describe("activity timeline: file panels", () => {
       right!.scrollLeft = 10
       fireEvent.scroll(right!)
       expect(left!.scrollLeft).toBe(10)
+
+      // Down too: each half scrolls its own rows, level with the other's.
+      right!.scrollTop = 30
+      fireEvent.scroll(right!)
+      expect(left!.scrollTop).toBe(30)
+    })
+
+    it("caps each half of side by side, not the box, so its sideways scrollbar stays in view", () => {
+      // A half that only scrolled sideways inside a box scrolling down had its
+      // scrollbar under its last row, out of view until the box was scrolled
+      // to the end. Each half now scrolls both ways within the cap, and the
+      // box itself does not.
+      localStorage.setItem("workspace:diff-view-mode", "split")
+      renderFiles()
+      const panel = openPanel("Edited")
+      flushDeferred()
+      const box = panel.querySelector(".activity-detail-box")!
+      const own = box.querySelector(
+        "[data-overlayscrollbars-viewport]"
+      )!.parentElement!
+      expect(own.className.split(/\s+/)).not.toContain("max-h-72")
+      expect(overflowOf(own)?.y).toBe("hidden")
+      const halves = halvesOf(panel)
+      expect(halves).toHaveLength(2)
+      for (const { host, viewport } of halves) {
+        expect(host.className.split(/\s+/)).toContain("max-h-72")
+        expect(overflowOf(host)).toMatchObject({ x: "scroll", y: "scroll" })
+        // With the box's own edge fade, now that it is what scrolls.
+        expect(viewport).toHaveClass("activity-detail-viewport")
+      }
+
+      // Inline, the box scrolls both ways, as it always has.
+      fireEvent.click(
+        within(panel).getByRole("button", { name: "Switch to inline view" })
+      )
+      flushDeferred()
+      const inline = box.querySelector(
+        "[data-overlayscrollbars-viewport]"
+      )!.parentElement!
+      expect(inline.className.split(/\s+/)).toContain("max-h-72")
+      expect(overflowOf(inline)).toMatchObject({ x: "scroll", y: "scroll" })
+      expect(
+        box.querySelectorAll("[data-overlayscrollbars-viewport]")
+      ).toHaveLength(1)
+    })
+
+    it("caps a file with no before in a side-by-side patch on its own", () => {
+      // The box does not scroll side by side, so a file drawn inline in it —
+      // one the patch adds — scrolls itself.
+      const PATCH: MessageTurn = {
+        id: "turn-patch",
+        role: "assistant",
+        timestamp: "2026-10-22T09:00:00Z",
+        blocks: [
+          toolUse(
+            "p1",
+            "apply_patch",
+            [
+              "*** Begin Patch",
+              "*** Update File: web/app/layout.tsx",
+              "@@ export default function RootLayout() {",
+              "-  return <nav>Home</nav>",
+              "+  return <nav>Settings</nav>",
+              "*** Add File: web/app/settings/page.tsx",
+              "+export default function Page() {}",
+              "*** End Patch",
+            ].join("\n")
+          ),
+          toolResult("p1", "Success."),
+          { type: "text", text: "Done." },
+        ],
+      }
+      localStorage.setItem("workspace:diff-view-mode", "split")
+      renderTurn(
+        <CurrentRound parts={partsOf(PATCH)} durationMs={1000} completed />
+      )
+      const panel = openPanel(/Edited 2 files/)
+      flushDeferred()
+      expect(halvesOf(panel)).toHaveLength(2)
+      const box = panel.querySelector(".activity-detail-box")!
+      const own = box.querySelector(
+        "[data-overlayscrollbars-viewport]"
+      )!.parentElement!
+      expect(overflowOf(own)?.y).toBe("hidden")
+      const added = within(panel).getByText("export default function Page() {}")
+      const host = added.closest(
+        "[data-overlayscrollbars-viewport]"
+      )!.parentElement!
+      // Its own scroll body, inside the box's — not the box's, nor a half.
+      expect(host).not.toBe(own)
+      expect(host.closest(".grid-cols-2")).toBeNull()
+      expect(host.className.split(/\s+/)).toContain("max-h-72")
+      expect(overflowOf(host)).toMatchObject({ x: "scroll", y: "scroll" })
     })
   })
 

@@ -12,14 +12,13 @@ import {
 } from "@/components/diff/unified-diff-preview"
 import { useSyncedScroll } from "@/components/diff/use-synced-scroll"
 import { FilePathLink } from "@/components/ai-elements/link-safety"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { editDiffText } from "@/lib/activity/edit"
 import { splitPathForDisplay } from "@/lib/activity/format"
 import { useDiffViewMode } from "@/lib/diff-view-mode-prefs"
 import { cn } from "@/lib/utils"
 import { useActivityRender } from "../activity-context"
 import { ActivityRow } from "../activity-row"
-import { DetailBox } from "../detail-box"
+import { DetailBox, DetailScroll } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { FileHeader } from "../file-header"
 import { RailIcon } from "../rail-icon"
@@ -166,9 +165,12 @@ export const EditRow = memo(function EditRow({ step }: { step: ToolStep }) {
  * the side-by-side view — the one diff view preference the app keeps. Inline:
  * one line-number column (the old number for a removed line, the new one
  * otherwise — left blank where the payload had no real positions), a sign
- * column, and the code; side by side: the old and the new text in two halves
- * that scroll sideways together. Multi-file edits get a header per file. Big
- * diffs open as a preview.
+ * column, and the code, the box scrolling both ways; side by side: the old
+ * and the new text in two halves that each scroll both ways, together, so
+ * each half's sideways scrollbar sits at the foot of what shows rather than
+ * under rows scrolled out of view — the box itself does not scroll, and every
+ * file caps its own height. Multi-file edits get a header per file. Big diffs
+ * open as a preview.
  */
 export const EditDiff = memo(function EditDiff({
   diffText,
@@ -193,6 +195,8 @@ export const EditDiff = memo(function EditDiff({
   const sideBySide = (file: ParsedDiffFile) =>
     !file.binary && !addsOnly(file, noBefore)
   const switchable = files.some(sideBySide)
+  // Side by side, the files scroll themselves (see above).
+  const split = view === "split" && switchable
   const totalRows = useMemo(
     () =>
       files.reduce(
@@ -238,6 +242,7 @@ export const EditDiff = memo(function EditDiff({
   return (
     <DetailBox
       tone="plain"
+      unbounded={split}
       header={
         single ? (
           <FileHeader
@@ -283,7 +288,8 @@ export const EditDiff = memo(function EditDiff({
             file={file}
             showHeader={files.length > 1}
             numbered={numbered}
-            split={view === "split" && sideBySide(file)}
+            split={split && sideBySide(file)}
+            scrolls={split}
           />
         ))}
       </div>
@@ -331,12 +337,16 @@ function DiffFileBlock({
   showHeader,
   numbered,
   split,
+  scrolls,
 }: {
   file: ParsedDiffFile
   showHeader: boolean
   numbered: boolean
   /** Side by side: on, and the file has a "before" to set beside it. */
   split: boolean
+  /** The box does not scroll (side by side is on): the file scrolls itself,
+   *  even one drawn inline for having no "before". */
+  scrolls: boolean
 }) {
   return (
     <div>
@@ -357,6 +367,10 @@ function DiffFileBlock({
       ) : null}
       {split ? (
         <SplitHunks file={file} numbered={numbered} />
+      ) : scrolls ? (
+        <DetailScroll>
+          <UnifiedHunks file={file} numbered={numbered} />
+        </DetailScroll>
       ) : (
         <UnifiedHunks file={file} numbered={numbered} />
       )}
@@ -415,11 +429,14 @@ function UnifiedHunks({
 
 /**
  * The side-by-side view: the old text on the left and the new on the right.
- * Each half scrolls sideways as far as its own longest line, and the two move
- * together (`useSyncedScroll`, as in the workspace's diff view): the line
- * read on one side stays beside its pair, and where one half runs out of
- * line, it stops there instead of pulling the other back. Both halves walk
- * the same paired rows, one line each, so they stay level.
+ * Each half is a scroll body of its own, capped at the box's height (the box
+ * itself is `unbounded` and does not scroll), as in the workspace's diff
+ * view: its sideways scrollbar is at the foot of what shows, not under rows
+ * scrolled out of view. It scrolls sideways as far as its own longest line,
+ * and the two move together, both ways (`useSyncedScroll`): the line read on
+ * one side stays beside its pair, and where one half runs out of line, it
+ * stops there instead of pulling the other back. Both halves walk the same
+ * paired rows, one line each, so they stay level.
  */
 function SplitHunks({
   file,
@@ -441,10 +458,8 @@ function SplitHunks({
   return (
     <div className="grid grid-cols-2">
       {(["left", "right"] as const).map((side) => (
-        <ScrollArea
+        <DetailScroll
           key={side}
-          x="scroll"
-          y="hidden"
           className={cn(
             "min-w-0",
             side === "right" && "border-s border-foreground/5"
@@ -466,7 +481,7 @@ function SplitHunks({
               </div>
             ))}
           </div>
-        </ScrollArea>
+        </DetailScroll>
       ))}
     </div>
   )
