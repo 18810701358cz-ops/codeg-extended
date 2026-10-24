@@ -29,16 +29,6 @@ describe("StatusBadge", () => {
     renderBadge({ status: "err", errorCode: "timeout" })
     expect(screen.getByText("timeout")).toHaveAttribute("title", "timeout")
   })
-
-  it("comes in a smaller size for the side panel's cards", () => {
-    const { unmount } = renderBadge({ status: "running" })
-    expect(screen.getByText("running")).toHaveClass("text-xs")
-    unmount()
-    renderBadge({ status: "running", size: "sm" })
-    const small = screen.getByText("running")
-    expect(small).toHaveClass("text-2xs")
-    expect(small).not.toHaveClass("text-xs")
-  })
 })
 
 describe("DelegationStatusWord", () => {

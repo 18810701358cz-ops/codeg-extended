@@ -13,8 +13,13 @@
 import { useEffect, useMemo, useState } from "react"
 
 import { Message, MessageContent } from "@/components/ai-elements/message"
+import { SessionDetailsInsights } from "@/components/layout/session-details-insights"
 import { CompletedTurnContent } from "@/components/message/completed-turn-content"
 import { ContentPartsRenderer } from "@/components/message/content-parts-renderer"
+import { extractDelegationSources } from "@/components/message/message-list-view"
+import { buildMessageNavEntries } from "@/components/message/message-nav-entries"
+import { MessageNavScrollContext } from "@/components/message/message-nav-scroll-context"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   ActivityLiveProvider,
   type ActivityLiveValue,
@@ -47,6 +52,7 @@ import {
   toolUse,
 } from "@/lib/activity/__fixtures__/mockup-turn"
 import type { MessageTurn } from "@/lib/types"
+import { publishTranscriptInsights } from "@/stores/transcript-insights-store"
 
 const params =
   typeof window !== "undefined"
@@ -915,6 +921,116 @@ function StreamScenario() {
   return <ScenarioView scenario={scenario} />
 }
 
+/**
+ * The Session Details panel's message navigator (`?view=nav`), fed the replies
+ * above as the rounds of one conversation: the last — two sub-agents, and
+ * files written, edited and patched — open, as the panel opens the latest.
+ * `&width=` sets the panel's width (default 348, the panel's own), `&height=`
+ * its height (default the window's), `&current=` the message the transcript
+ * shows (default the last).
+ */
+const NAV_CONVERSATION_ID = -1
+
+function navUserTurn(id: string, text: string): MessageTurn {
+  return {
+    id,
+    role: "user",
+    timestamp: "2026-10-22T08:00:00Z",
+    blocks: [{ type: "text", text }],
+  }
+}
+
+const NAV_TURNS: MessageTurn[] = [
+  navUserTurn("nav-1", "Survey the project and list its components"),
+  FILES_TURN,
+  navUserTurn("nav-2", "/compact"),
+  navUserTurn(
+    "nav-3",
+    "Page through the tasks instead of loading them all at once"
+  ),
+  LONG_EDIT_TURN,
+  navUserTurn(
+    "nav-4",
+    "继续打磨优化会话详情tab内容：\n1、Git分支名的左边那个图标不要；\n2、检查消息导航是否有性能问题，有的话一并修掉，然后跑一遍测试"
+  ),
+  DELEGATION_TURN,
+  { ...FILES_TURN, id: "nav-files" },
+  { ...LONG_EDIT_TURN, id: "nav-long-edit" },
+  { ...CODEX_TURN, id: "nav-codex" },
+]
+
+function navInsights() {
+  const threadIndexByTurnId = new Map(
+    NAV_TURNS.flatMap((turn, index) =>
+      turn.role === "user" ? [[turn.id, index] as const] : []
+    )
+  )
+  const entries = buildMessageNavEntries({
+    earlierTurns: null,
+    earlierUserCount: 0,
+    loadedTurns: NAV_TURNS,
+    threadIndexByTurnId,
+    loadedSubAgents: {
+      byUserTurnId: new Map([
+        [
+          "nav-4",
+          extractDelegationSources(
+            adaptMessageTurn(DELEGATION_TURN, MOCKUP_ADAPTER_TEXT).content
+          ),
+        ],
+      ]),
+      leading: [],
+    },
+  })
+  const plan = DELEGATION_TURN.blocks.find((block) => block.type === "plan")
+  return {
+    nav: {
+      count: entries.length,
+      entries,
+      earlier: null,
+      revealingTurnId: null,
+      currentTurnId: params.get("current") ?? "nav-4",
+    },
+    plan: {
+      entries: plan?.type === "plan" ? plan.entries : [],
+      streaming: false,
+    },
+    actions: { selectNavEntry: () => {}, retryEarlierNav: () => {} },
+  }
+}
+
+function NavScenario() {
+  // Published before the first render reads it.
+  useState(() =>
+    publishTranscriptInsights(NAV_CONVERSATION_ID, "gallery", navInsights())
+  )
+  // As the Session Details tab hosts it: one scroll area, whose viewport the
+  // navigator renders its rows in view of.
+  const [viewport, setViewport] = useState<HTMLElement | null>(null)
+  const height = params.get("height")
+  return (
+    <div
+      data-scenario="nav"
+      className="ws-surface ms-auto flex h-screen flex-col border-s border-border ws-chrome-border"
+      style={{
+        width: Number(params.get("width") ?? 348),
+        height: height ? Number(height) : undefined,
+      }}
+    >
+      <ScrollArea className="min-h-0 flex-1" onViewportRef={setViewport}>
+        <MessageNavScrollContext.Provider value={viewport}>
+          <div className="min-w-0 space-y-4 p-3 text-sm">
+            <SessionDetailsInsights
+              conversationId={NAV_CONVERSATION_ID}
+              active
+            />
+          </div>
+        </MessageNavScrollContext.Provider>
+      </ScrollArea>
+    </div>
+  )
+}
+
 type Scenario = {
   id: string
   title: string
@@ -1039,23 +1155,27 @@ export default function ActivityGalleryPage() {
       <StaticDelegationProvider value={DELEGATION}>
         <StaticWorkspaceActionsProvider value={WORKSPACE}>
           <div className="chat-motion-scope min-h-screen bg-background text-foreground">
-            <div
-              id="gallery-root"
-              className="mx-auto flex w-full max-w-[48rem] flex-col gap-8 px-6 py-8"
-            >
-              <Message from="user">
-                <MessageContent>
-                  <ContentPartsRenderer parts={user.content} role="user" />
-                </MessageContent>
-              </Message>
-              {view === "stream" ? (
-                <StreamScenario />
-              ) : (
-                scenarios.map((scenario) => (
-                  <ScenarioView key={scenario.id} scenario={scenario} />
-                ))
-              )}
-            </div>
+            {view === "nav" ? (
+              <NavScenario />
+            ) : (
+              <div
+                id="gallery-root"
+                className="mx-auto flex w-full max-w-[48rem] flex-col gap-8 px-6 py-8"
+              >
+                <Message from="user">
+                  <MessageContent>
+                    <ContentPartsRenderer parts={user.content} role="user" />
+                  </MessageContent>
+                </Message>
+                {view === "stream" ? (
+                  <StreamScenario />
+                ) : (
+                  scenarios.map((scenario) => (
+                    <ScenarioView key={scenario.id} scenario={scenario} />
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </StaticWorkspaceActionsProvider>
       </StaticDelegationProvider>

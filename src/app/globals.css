@@ -1351,8 +1351,8 @@
    开图时在消息范围里把 --border 换成前景色的一层薄染色 --ws-msg-border：它按「比下面深多少」
    画，压在图的哪种颜色上都一样看得出（深色主题是提亮），深浅同 chrome 分隔线。范围 = 消息
    （.is-user / .is-assistant，会话和子会话抽屉里的都是）+ 显式的 .ws-msg-scope（消息之间的上下文
-   压缩分隔线）：任务、自动化等页面复用的 ws-msg-* 表面不在范围里，不受影响。混色用 oklab：
-   在 oklch 里和 transparent 混，旧内核会把缺失的色相按 0°（红）插值。 */
+   压缩分隔线、会话详情的消息导航）：任务、自动化等页面复用的 ws-msg-* 表面不在范围里，不受
+   影响。混色用 oklab：在 oklch 里和 transparent 混，旧内核会把缺失的色相按 0°（红）插值。 */
 [data-workspace-bg="on"] {
   --ws-msg-border: color-mix(in oklab, var(--foreground) 18%, transparent);
 }
@@ -1393,6 +1393,13 @@
    color-mix，故无需 @supports 降级。 */
 [data-workspace-bg="on"] .ws-transparent-bg {
   background-color: transparent;
+}
+
+/* 渐隐到页面底色的遮挡（bg-gradient-to-* from-background）：开图时那一截渐变是一条不透明的
+   底色带，压在背景图上。去掉它，浮在上面的东西自己带磨砂底（会话详情消息导航底部的「当前
+   消息」按钮）。无 base 规则，关图零回归。 */
+[data-workspace-bg="on"] .ws-no-fade {
+  background-image: none;
 }
 
 /* 终端画布：让 xterm 视口透出所属 ws-surface 面板的磨砂表面（而非黑块）。xterm 6 的视口

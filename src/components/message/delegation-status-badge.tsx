@@ -14,7 +14,6 @@ import { Badge } from "@/components/ui/badge"
 import { useElapsedLabel } from "@/hooks/use-elapsed-label"
 import type { StepStatus } from "@/lib/activity/types"
 import type { DelegationCardStatus } from "@/lib/delegation-card"
-import { cn } from "@/lib/utils"
 
 type DelegationStatusValue =
   | "starting"
@@ -58,20 +57,13 @@ function StatusText({
 export function StatusBadge({
   status,
   errorCode,
-  size = "default",
 }: {
   status: DelegationStatusValue
   errorCode?: string
-  /** `sm`: the narrower pill of the Session Details side panel's sub-agent
-   *  cards. */
-  size?: "default" | "sm"
 }) {
   return (
     <Badge
-      className={cn(
-        "rounded-full",
-        size === "sm" ? "h-[1.125rem] gap-1 px-1.5 text-2xs" : "gap-1.5 text-xs"
-      )}
+      className="gap-1.5 rounded-full text-xs"
       variant="secondary"
       title={status === "err" ? (errorCode ?? undefined) : undefined}
     >
