@@ -123,6 +123,32 @@ describe("MessageResponse code block chrome", () => {
     expect(positioner.height).toBe(bar.height)
   })
 
+  it("tints the body like its title bar over a background image, a rule between them", () => {
+    // Over a workspace background image the bar and the body both take the
+    // translucent tint of the reply's other surfaces — the body used to stay
+    // an opaque white panel — and, the two now one colour, a hairline at the
+    // foot of the bar tells them apart.
+    const BAR = '[data-workspace-bg="on"] [data-streamdown="code-block-header"]'
+    const BODY = '[data-workspace-bg="on"] [data-streamdown="code-block-body"]'
+    const { container } = render(
+      <div data-workspace-bg="on">
+        <MessageResponse>{REPLY}</MessageResponse>
+      </div>
+    )
+    const root = container.querySelector(CODE_ROOT)!
+    expect(
+      root.querySelector('[data-streamdown="code-block-header"]')!.matches(BAR)
+    ).toBe(true)
+    expect(
+      root.querySelector('[data-streamdown="code-block-body"]')!.matches(BODY)
+    ).toBe(true)
+
+    const bar = declarations(BAR)
+    expect(bar["background-color"]).toContain("var(--ws-msg-alpha)")
+    expect(declarations(BODY)["background-color"]).toBe(bar["background-color"])
+    expect(bar["box-shadow"]).toBe("inset 0 -1px 0 var(--border)")
+  })
+
   it("paints light token colours, which 2.7 leaves to an ungenerated class", async () => {
     const { container } = renderReply()
 

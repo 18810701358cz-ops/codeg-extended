@@ -1324,11 +1324,20 @@
   );
 }
 
-/* 围栏代码块标题栏（Streamdown 的 code-block-header，关图时是下方「Streamdown code blocks」
-   区块给的 muted 80%）：转半透明中性染色（不磨砂），与其它 muted 标题栏统一。代码块根自带
-   rounded-xl border 作边界。代码正文（code-block-body）保持 Streamdown 自带的不透明
-   bg-background（护可读性），不在此列。 */
+/* 围栏代码块（Streamdown 的 code-block）：标题栏（关图时是下方「Streamdown code blocks」区块
+   给的 muted 80%）和代码正文（关图时是 Streamdown 自带的不透明 bg-background）开图都转同一种
+   半透明中性染色（不磨砂），跟消息里其它表面一样透出背景图。两者底色一样了，标题栏底边补一条
+   inset 1px 分隔线（纯色 var(--border)，不改盒模型；关图两者底色不同，不需要）。代码块根自带
+   rounded-xl border 作外边界。 */
 [data-workspace-bg="on"] [data-streamdown="code-block-header"] {
+  background-color: color-mix(
+    in oklch,
+    var(--muted) calc(var(--ws-msg-alpha) * 100%),
+    transparent
+  );
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+[data-workspace-bg="on"] [data-streamdown="code-block-body"] {
   background-color: color-mix(
     in oklch,
     var(--muted) calc(var(--ws-msg-alpha) * 100%),
