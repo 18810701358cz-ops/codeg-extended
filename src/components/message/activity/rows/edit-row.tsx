@@ -378,7 +378,9 @@ function DiffFileBlock({
   )
 }
 
-/** The inline view: the file's rows in order, a sign in front of each. */
+/** The inline view: the file's rows in order, a sign in front of each — as
+ *  wide as its longest line, so a row's tint runs on under a line scrolled
+ *  into view sideways. */
 function UnifiedHunks({
   file,
   numbered,
@@ -387,7 +389,7 @@ function UnifiedHunks({
   numbered: boolean
 }) {
   return (
-    <>
+    <div className="w-max min-w-full">
       {file.hunks.map((hunk, hunkIndex) => (
         <div
           key={hunk.key}
@@ -423,7 +425,7 @@ function UnifiedHunks({
           ))}
         </div>
       ))}
-    </>
+    </div>
   )
 }
 

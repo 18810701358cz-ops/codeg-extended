@@ -1227,6 +1227,26 @@ describe("activity timeline: file panels", () => {
     })
   })
 
+  it("runs an inline row's tint under a line scrolled into view sideways", () => {
+    // The rows are as wide as the longest line — not the box — so a line
+    // scrolled into view keeps its row's colour.
+    renderFiles()
+    const panel = openPanel("Edited")
+    const box = panel.querySelector(".activity-detail-box")!
+    const row = box.querySelector(".bg-diff-added")!
+    // Some box between the row and the panel sizes to its content, and to
+    // no less than the panel.
+    const sized: Element[] = []
+    for (let node = row.parentElement; node && node !== box; ) {
+      const classes = node.className.split(/\s+/)
+      if (classes.includes("w-max") && classes.includes("min-w-full")) {
+        sized.push(node)
+      }
+      node = node.parentElement
+    }
+    expect(sized).toHaveLength(1)
+  })
+
   it.each([
     ["in the middle", "@@ -12,0 +13,2 @@"],
     ["at the top, with no context", "@@ -0,0 +1,2 @@"],
