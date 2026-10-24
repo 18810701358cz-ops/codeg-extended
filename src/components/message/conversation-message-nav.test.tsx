@@ -302,6 +302,19 @@ describe("MessageNavList", () => {
     expect(onRetryEarlier).toHaveBeenCalledTimes(1)
   })
 
+  it("keeps code left to right under a right-to-left interface", () => {
+    // A list item's own text-align (`-webkit-match-parent`) turns the list's
+    // logical start into a physical right under RTL, which would carry
+    // through a diff's dir="ltr" and push its code to the right edge: each
+    // row starts its own.
+    renderList()
+    const rows = screen.getAllByRole("listitem")
+    expect(rows).toHaveLength(entries.length)
+    for (const row of rows) {
+      expect(row.firstElementChild).toHaveClass("text-start")
+    }
+  })
+
   it("sums up a closed message's sub-agents and files", () => {
     renderList()
     const edits = messageButton("edit something")

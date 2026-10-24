@@ -562,8 +562,8 @@ const MessageNavRow = memo(function MessageNavRow({
   if (!open) {
     return (
       // The gap under a row is padding, not margin: the virtualizer measures
-      // the row's box.
-      <div className="pb-px">
+      // the row's box. `text-start`, as on an open row: see there.
+      <div className="pb-px text-start">
         <button
           type="button"
           data-testid="nav-message"
@@ -599,7 +599,11 @@ const MessageNavRow = memo(function MessageNavRow({
   }
 
   return (
-    <div className="py-1">
+    // `text-start`: a list item's own `text-align` (`-webkit-match-parent`)
+    // turns the list's logical start into a physical right under RTL, which
+    // would carry through a diff's `dir="ltr"` and push its code against the
+    // panel's right edge.
+    <div className="py-1 text-start">
       {/* The message and its round on one band: a line per sub-agent, then
           its files, their icons in the number column. A translucent tint
           with a hairline over a background image, like the transcript's
