@@ -4021,6 +4021,7 @@
         "detail": {
           "lines": "{count, plural, one {# line} other {# lines}}",
           "copyCommand": "copy command",
+          "copyScript": "copy script",
           "copyOutput": "copy output",
           "copied": "copied",
           "args": "args",

@@ -948,6 +948,102 @@ describe("activity timeline: commands", () => {
       box.querySelector("[data-overlayscrollbars-initialize]")
     ).toBeTruthy()
   })
+
+  it("draws no footer under a panel with nothing in it to copy", () => {
+    // A wait on a shell session whose command spans lines opens; it has no
+    // command of its own to copy, and this one printed nothing. Its footer
+    // used to be an empty bar.
+    const WAITED: MessageTurn = {
+      id: "turn-w",
+      role: "assistant",
+      timestamp: "2026-10-22T09:00:00Z",
+      blocks: [
+        toolUse("w1", "wait", {
+          cell_id: "7106",
+          session_command: "pnpm build\npnpm start",
+        }),
+        toolResult("w1", ""),
+        { type: "text", text: "Started." },
+      ],
+    }
+    renderSettled(partsOf(WAITED))
+    const row = rowOf("Wait")
+    fireEvent.click(within(row).getAllByRole("button")[0]!)
+    const box = row.querySelector(".activity-detail-box")!
+    expect(within(box as HTMLElement).getByText("No output")).toBeTruthy()
+    expect(box.querySelector(":scope > .border-t")).toBeNull()
+  })
+})
+
+describe("activity timeline: codex scripts", () => {
+  // A script codex ran that the history parser could not take apart into
+  // its calls: its first command titles the row.
+  const SOURCE = [
+    "const cmds = [",
+    '  "git show 71be0b15:web/app/page.tsx",',
+    '\t"git show ef1c3766:web/app/page.tsx"',
+    "];",
+    "",
+    "const results = await Promise.allSettled(cmds.map((cmd) => tools.exec_command({ cmd })))",
+  ].join("\n")
+  function scriptTurn(
+    output: string,
+    failed = false,
+    title: string | null = "git show 71be0b15:web/app/page.tsx"
+  ): MessageTurn {
+    return {
+      id: "turn-script",
+      role: "assistant",
+      timestamp: "2026-10-22T09:00:00Z",
+      blocks: [
+        toolUse("s1", "codex_script", {
+          source: SOURCE,
+          ...(title ? { title } : {}),
+          call_count: 1,
+        }),
+        toolResult("s1", output, failed),
+        { type: "text", text: "Compared them." },
+      ],
+    }
+  }
+  /** The script's panel: a failed one is open already. */
+  function scriptPanel(
+    output: string,
+    failed = false,
+    title?: string | null
+  ): HTMLElement {
+    renderSettled(partsOf(scriptTurn(output, failed, title)))
+    const row = rowOf("Script")
+    if (!failed) fireEvent.click(within(row).getAllByRole("button")[0]!)
+    return row.querySelector(".activity-detail-box") as HTMLElement
+  }
+
+  it("copies the script from its panel, not the command the row is titled by", async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    })
+    try {
+      const panel = scriptPanel("2 files differ")
+      expect(within(panel).queryByText("copy command")).toBeNull()
+      await act(async () => {
+        fireEvent.click(within(panel).getByText("copy script"))
+      })
+      expect(writeText).toHaveBeenCalledWith(SOURCE)
+    } finally {
+      Reflect.deleteProperty(navigator, "clipboard")
+    }
+  })
+
+  it("leaves no empty footer under a script with no title that printed nothing", () => {
+    // With no command to copy and no output, its footer used to be an empty
+    // bar; the script is always there to copy.
+    const panel = scriptPanel("", false, null)
+    expect(within(panel).getByText("No output")).toBeTruthy()
+    const footer = within(panel).getByText("copy script").closest("div")!
+    expect(footer.textContent).toBe("copy script")
+  })
 })
 
 describe("activity timeline: file panels", () => {

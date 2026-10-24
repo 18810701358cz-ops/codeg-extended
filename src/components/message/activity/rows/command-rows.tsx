@@ -269,6 +269,12 @@ function CommandDetail({
     () => parseCodexScriptMeta(step.part.meta),
     [step.part.meta]
   )
+  // A script's panel copies the script; a command's, its command line.
+  const copy = script
+    ? { text: script.source, label: t("detail.copyScript") }
+    : fullCommand && !command?.session
+      ? { text: fullCommand, label: t("detail.copyCommand") }
+      : null
 
   return (
     <DetailBox
@@ -276,17 +282,17 @@ function CommandDetail({
       anchor={failed || live ? "end" : "start"}
       footer={output ? t("detail.lines", { count: output.lines }) : null}
       actions={
-        <>
-          {fullCommand && !command?.session ? (
-            <CopyAction text={fullCommand} label={t("detail.copyCommand")} />
-          ) : null}
-          {output ? (
-            <CopyAction
-              text={() => stripAnsi(output.text)}
-              label={t("detail.copyOutput")}
-            />
-          ) : null}
-        </>
+        copy || output ? (
+          <>
+            {copy ? <CopyAction text={copy.text} label={copy.label} /> : null}
+            {output ? (
+              <CopyAction
+                text={() => stripAnsi(output.text)}
+                label={t("detail.copyOutput")}
+              />
+            ) : null}
+          </>
+        ) : null
       }
     >
       {script ? (

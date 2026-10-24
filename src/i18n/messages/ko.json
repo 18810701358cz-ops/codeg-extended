@@ -4021,6 +4021,7 @@
         "detail": {
           "lines": "{count}줄",
           "copyCommand": "명령 복사",
+          "copyScript": "스크립트 복사",
           "copyOutput": "출력 복사",
           "copied": "복사됨",
           "args": "인자",

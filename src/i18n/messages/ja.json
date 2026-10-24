@@ -4021,6 +4021,7 @@
         "detail": {
           "lines": "{count} 行",
           "copyCommand": "コマンドをコピー",
+          "copyScript": "スクリプトをコピー",
           "copyOutput": "出力をコピー",
           "copied": "コピーしました",
           "args": "引数",

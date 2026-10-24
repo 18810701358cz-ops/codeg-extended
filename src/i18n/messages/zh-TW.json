@@ -4021,6 +4021,7 @@
         "detail": {
           "lines": "{count} 行",
           "copyCommand": "複製指令",
+          "copyScript": "複製指令稿",
           "copyOutput": "複製輸出",
           "copied": "已複製",
           "args": "參數",

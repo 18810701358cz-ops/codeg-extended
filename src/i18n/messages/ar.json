@@ -4021,6 +4021,7 @@
         "detail": {
           "lines": "{count, plural, zero {0 سطر} one {سطر واحد} two {سطران} few {# أسطر} many {# سطراً} other {# سطر}}",
           "copyCommand": "نسخ الأمر",
+          "copyScript": "نسخ النص البرمجي",
           "copyOutput": "نسخ المخرجات",
           "copied": "تم النسخ",
           "args": "الوسائط",
