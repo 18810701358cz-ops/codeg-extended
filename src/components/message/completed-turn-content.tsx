@@ -260,10 +260,11 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
     }
     // A reply that is all process — stopped on a tool call, or ended on a card
     // that is its answer — shows its rows as an open fold does: hung under the
-    // header, with nothing between them. A reply with no steps has none, its
-    // answer under the header.
+    // header, with nothing between them; the header's failure link looks for
+    // its row in here. A reply with no steps has none, its answer under the
+    // header.
     return (
-      <div className="space-y-3">
+      <div ref={turnRef} className="space-y-3">
         <div>
           {header}
           <ActivityParts model={activity} isStreaming={isStreaming} headed />

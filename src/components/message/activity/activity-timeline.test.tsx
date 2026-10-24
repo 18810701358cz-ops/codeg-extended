@@ -547,6 +547,26 @@ describe("activity timeline: failures", () => {
     fireEvent.click(activityHeader().querySelector(".activity-mono")!)
     expect(foldControl()).toHaveAttribute("aria-expanded", "true")
   })
+
+  it("brings the failure into view in a reply that cannot fold", () => {
+    // Stopped on the failed call, with no answer after it: the header's red
+    // count is still the way to the row.
+    renderSettled(partsOf(STOPPED_ON_FAILURE), 9000)
+    const into = vi.spyOn(Element.prototype, "scrollIntoView")
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((frame) => {
+      frame(0)
+      return 0
+    })
+    // jsdom has no `CSS`; the step keys here need no escaping.
+    vi.stubGlobal("CSS", { escape: (value: string) => value })
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "1 failed" }))
+      expect(into).toHaveBeenCalledTimes(1)
+      expect(into.mock.contexts[0]).toBe(rowOf("pnpm --filter web build"))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
 
 describe("activity timeline: a live turn", () => {
