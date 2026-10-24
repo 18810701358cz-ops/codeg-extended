@@ -263,6 +263,16 @@ describe("activity timeline: the reference turn", () => {
     expect(header.querySelector("span[aria-hidden='true'].flex-1")).toBeNull()
   })
 
+  it("makes the header a block a row's line tall", () => {
+    // 1.75rem — a one-line row's height, so the rows under it keep its pitch;
+    // and a block, in no line box that could add room under its edge.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const classes = activityHeader().className.split(/\s+/)
+    expect(classes).toContain("h-7")
+    expect(classes).toContain("flex")
+    expect(classes).not.toContain("inline-flex")
+  })
+
   it("sets the header's label and its figures at one size, centred on the line", () => {
     // Only the weight tells the label apart; the chevron is centred by the
     // capsule's own flex, not by a margin meant for a row's 1.5rem line.

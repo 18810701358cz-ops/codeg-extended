@@ -32,12 +32,14 @@ const CATEGORY_KEY = {
 
 /**
  * The turn's activity header: a capsule only as wide as what it says —
- * `Activity 14 steps · 3m 34s · 1 failed, recovered ›`. The count comes
- * first, the time right after it, then how the turn ended; the breakdown by
- * kind (`6 commands · 1 edit · …`) is the tooltip's, not the line's, so the
- * capsule stays short however much a turn did. While the turn runs it reads
- * `Working 6 steps` with a shimmer; a reply with no steps keeps a `Reply 3s`
- * header so the slot never blinks in and out as a turn settles.
+ * `Activity 14 steps · 3m 34s · 1 failed, recovered ›` — and as tall as a
+ * timeline row's line with its padding (1.75rem), so the rows hung under it
+ * keep its pitch. The count comes first, the time right after it, then how
+ * the turn ended; the breakdown by kind (`6 commands · 1 edit · …`) is the
+ * tooltip's, not the line's, so the capsule stays short however much a turn
+ * did. While the turn runs it reads `Working 6 steps` with a shimmer; a reply
+ * with no steps keeps a `Reply 3s` header so the slot never blinks in and out
+ * as a turn settles.
  *
  * An unrecovered failure is red and, when `onJumpToFailure` is given, a button
  * that opens the turn at that step.
@@ -120,8 +122,10 @@ export const ActivityHeader = memo(function ActivityHeader({
     <div
       // `ws-msg-chip`: over a workspace background image the capsule turns
       // translucent like the reply's other small surfaces, with its own ring.
+      // A block, not inline: no line box around it adds room under it, so
+      // what follows starts at its bottom edge.
       className={cn(
-        "ws-msg-chip inline-flex w-fit max-w-full min-w-0 items-center gap-2 rounded-full bg-muted/60 py-1 pe-3 ps-3.5 text-xs leading-6 transition-colors",
+        "ws-msg-chip flex h-7 w-fit max-w-full min-w-0 items-center gap-2 rounded-full bg-muted/60 pe-3 ps-3.5 text-xs transition-colors",
         toggle && "group/row cursor-pointer hover:bg-muted"
       )}
       onClick={onHeaderClick}
