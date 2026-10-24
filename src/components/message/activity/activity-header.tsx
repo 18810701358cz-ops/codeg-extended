@@ -32,14 +32,15 @@ const CATEGORY_KEY = {
 
 /**
  * The turn's activity header: a capsule only as wide as what it says —
- * `Activity 14 steps · 3m 34s · 1 failed, recovered ›` — and as tall as a
- * timeline row's line with its padding (1.75rem), so the rows hung under it
- * keep its pitch. The count comes first, the time right after it, then how
- * the turn ended; the breakdown by kind (`6 commands · 1 edit · …`) is the
- * tooltip's, not the line's, so the capsule stays short however much a turn
- * did. While the turn runs it reads `Working 6 steps` with a shimmer; a reply
- * with no steps keeps a `Reply 3s` header so the slot never blinks in and out
- * as a turn settles.
+ * `Activity 14 steps · 1 failed, recovered ›  3m 34s` — and 2rem tall, a
+ * little taller than a timeline row, the head of the rows hung under it.
+ * The count comes first, then how the turn ended, then the chevron; the time
+ * the turn took closes the capsule at its end, like the figure at the end of
+ * a row. The breakdown by kind (`6 commands · 1 edit · …`) is the tooltip's,
+ * not the line's, so the capsule stays short however much a turn did. While
+ * the turn runs it reads `Working 6 steps` with a shimmer; a reply with no
+ * steps keeps a `Reply 3s` header so the slot never blinks in and out as a
+ * turn settles.
  *
  * An unrecovered failure is red and, when `onJumpToFailure` is given, a button
  * that opens the turn at that step.
@@ -100,9 +101,12 @@ export const ActivityHeader = memo(function ActivityHeader({
 
   const tooltip = full.join(separator)
   // The label takes the same size as the figures beside it; only its weight
-  // sets it apart.
+  // sets it apart. Where the capsule runs out of room (a narrow column) the
+  // summary gives way first, then the label — kept whole until the summary is
+  // gone, never wider than the room left — each cut with an ellipsis, so the
+  // chevron and the time stay whole and nothing runs over them.
   const labelClass = cn(
-    "shrink-0 text-xs font-semibold",
+    "max-w-full shrink-0 truncate text-xs font-semibold",
     completed ? "text-foreground" : "activity-shimmer"
   )
 
@@ -125,7 +129,7 @@ export const ActivityHeader = memo(function ActivityHeader({
       // A block, not inline: no line box around it adds room under it, so
       // what follows starts at its bottom edge.
       className={cn(
-        "ws-msg-chip flex h-7 w-fit max-w-full min-w-0 items-center gap-2 rounded-full bg-muted/60 pe-3 ps-3.5 text-xs transition-colors",
+        "ws-msg-chip flex h-8 w-fit max-w-full min-w-0 items-center gap-2 rounded-full bg-muted/60 px-4 text-xs transition-colors",
         toggle && "group/row cursor-pointer hover:bg-muted"
       )}
       onClick={onHeaderClick}
@@ -147,26 +151,15 @@ export const ActivityHeader = memo(function ActivityHeader({
         ) : (
           <span className={labelClass}>{label}</span>
         )}
-        {/* A reply with no steps still keeps its time (`Reply 3s`), so the
-            slot never blinks in and out as a turn settles. */}
-        {pieces.length > 0 ||
-        failureClause ||
-        interruptedClause ||
-        (elapsed && completed) ? (
+        {pieces.length > 0 || failureClause || interruptedClause ? (
           <span
             className="activity-mono min-w-0 truncate text-xs text-muted-foreground"
             title={tooltip || undefined}
           >
             {pieces.join(separator)}
-            {elapsed && completed ? (
-              <>
-                {pieces.length > 0 ? separator : null}
-                {elapsed}
-              </>
-            ) : null}
             {failureClause ? (
               <>
-                {pieces.length > 0 || (elapsed && completed) ? separator : null}
+                {pieces.length > 0 ? separator : null}
                 {failureClause.danger && onJumpToFailure ? (
                   <button
                     type="button"
@@ -189,19 +182,32 @@ export const ActivityHeader = memo(function ActivityHeader({
             ) : null}
             {interruptedClause ? (
               <>
-                {pieces.length > 0 || (elapsed && completed) || failureClause
-                  ? separator
-                  : null}
+                {pieces.length > 0 || failureClause ? separator : null}
                 {interruptedClause}
               </>
             ) : null}
           </span>
         ) : null}
       </span>
-      {/* The chevron ends the capsule, centred on it (the row's own is
-            placed for a 1.5rem line by margin, which the flex centres here). */}
+      {/* The chevron follows what it unfolds, centred on the capsule (the
+          row's own is placed for a 1.5rem line by margin, which the flex
+          centres here). */}
       {toggle ? (
         <RowChevron open={toggle.open} always className="mb-0 mt-0" />
+      ) : null}
+      {/* The time ends the capsule, past the chevron — and stays, a reply
+          with no steps keeping its `Reply 3s` so the slot never blinks in and
+          out as a turn settles. */}
+      {elapsed && completed ? (
+        <span
+          className={cn(
+            "activity-mono shrink-0 text-xs text-muted-foreground",
+            // A little further from the chevron than the words are.
+            toggle && "ms-1"
+          )}
+        >
+          {elapsed}
+        </span>
       ) : null}
     </div>
   )

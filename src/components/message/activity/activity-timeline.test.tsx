@@ -227,17 +227,23 @@ beforeEach(() => {
 })
 
 describe("activity timeline: the reference turn", () => {
-  it("summarizes the turn in the header: steps, time, then how it ended", () => {
+  it("summarizes the turn in the header: steps, how it ended, then the time", () => {
     // Only the step count is spelled out; the breakdown by kind is the
-    // tooltip's. The time follows the count, and the outcome ends the line.
+    // tooltip's. The outcome follows the count, and the time closes the
+    // capsule at its end, past the chevron.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     const header = activityHeader()
     expect(header.textContent).toBe(
-      "Activity14 steps · 3m 34s · 1 failed, recovered"
+      "Activity14 steps · 1 failed, recovered3m 34s"
     )
     expect(header.querySelector("[title]")).toHaveAttribute(
       "title",
       "14 steps · 6 commands · 1 edit · 1 agent · 1 MCP call · 3 files read · 1 search"
+    )
+    const time = header.lastElementChild!
+    expect(time.textContent).toBe("3m 34s")
+    expect(time.previousElementSibling).toBe(
+      header.querySelector("svg.lucide-chevron-right")
     )
     expect(foldControl()).toHaveAttribute("aria-expanded", "true")
   })
@@ -364,12 +370,14 @@ describe("activity timeline: the reference turn", () => {
     expect(header.querySelector("span[aria-hidden='true'].flex-1")).toBeNull()
   })
 
-  it("makes the header a block a row's line tall", () => {
-    // 1.75rem — a one-line row's height, so the rows under it keep its pitch;
-    // and a block, in no line box that could add room under its edge.
+  it("makes the header a block 2rem tall", () => {
+    // A little taller than a one-line row (1.75rem), the head of the rows
+    // under it; and a block, in no line box that could add room under its
+    // edge.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     const classes = activityHeader().className.split(/\s+/)
-    expect(classes).toContain("h-7")
+    expect(classes).toContain("h-8")
+    expect(classes).not.toContain("h-7")
     expect(classes).toContain("flex")
     expect(classes).not.toContain("inline-flex")
   })
@@ -380,9 +388,12 @@ describe("activity timeline: the reference turn", () => {
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     const header = activityHeader()
     expect(foldControl().className).toMatch(/\btext-xs\b/)
-    expect(header.querySelector(".activity-mono")!.className).toMatch(
-      /\btext-xs\b/
-    )
+    const figures = header.querySelectorAll(".activity-mono")
+    // The summary and the time.
+    expect(figures).toHaveLength(2)
+    for (const figure of figures) {
+      expect(figure.className).toMatch(/\btext-xs\b/)
+    }
     expect(header.className).toMatch(/\bitems-center\b/)
     const chevron = header.querySelector("svg.lucide-chevron-right")!
     const chevronClasses = chevron.getAttribute("class")!.split(/\s+/)
