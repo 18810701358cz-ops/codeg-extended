@@ -239,6 +239,17 @@ describe("activity timeline: the reference turn", () => {
     expect(chevron.getAttribute("class")).not.toMatch(/\bopacity-0\b/)
   })
 
+  it("draws the header as a capsule with no rule across it", () => {
+    // The capsule is the separation now; the time still ends the line, so it
+    // lines up down a conversation.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const header = screen.getByText("3m 34s").parentElement!
+    expect(header.className).toMatch(/\brounded-full\b/)
+    expect(header.className).toMatch(/\bws-msg-chip\b/)
+    expect(header.querySelector(".h-px")).toBeNull()
+    expect(header.lastElementChild).toBe(screen.getByText("3m 34s"))
+  })
+
   it("folds and unfolds from anywhere on the header", () => {
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     fireEvent.click(screen.getByText(/14 steps/))

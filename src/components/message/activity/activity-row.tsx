@@ -218,9 +218,12 @@ export function ActivityRow({
 export function RowChevron({
   open,
   always = false,
+  className,
 }: {
   open: boolean
   always?: boolean
+  /** Placed by a line that is not a row's 1.5rem header (the turn's). */
+  className?: string
 }) {
   return (
     <ChevronRightIcon
@@ -231,7 +234,8 @@ export function RowChevron({
           ? "opacity-100"
           : "opacity-0 group-hover/row:opacity-100 group-focus-visible/row:opacity-100 group-has-[:focus-visible]/row:opacity-100",
         // Mirrored under RTL, so it turns the other way to point down.
-        open && "rotate-90 opacity-100 rtl:-rotate-90"
+        open && "rotate-90 opacity-100 rtl:-rotate-90",
+        className
       )}
     />
   )

@@ -33,11 +33,11 @@ const CATEGORY_KEY = {
 const MAX_CATEGORIES = 3
 
 /**
- * The turn's activity header: `Activity  14 steps · 6 commands · 1 edit ·
- * 1 agent · 1 failed, recovered › ———— 3m 34s` — laid out like a timeline
- * row, its chevron after the text and its time at the end. While the turn runs
- * it reads `Working  6 steps` with a shimmer; a reply with no steps keeps a
- * `Reply ———— 3s` header so the slot never blinks in and out as a turn settles.
+ * The turn's activity header, a capsule across the reply's width: `Activity
+ * 14 steps · 6 commands · 1 edit · 1 agent · 1 failed, recovered ›   3m 34s`
+ * — the chevron after the text, the time at the end. While the turn runs it
+ * reads `Working 6 steps` with a shimmer; a reply with no steps keeps a
+ * `Reply 3s` header so the slot never blinks in and out as a turn settles.
  *
  * An unrecovered failure is red and, when `onJumpToFailure` is given, a button
  * that opens the turn at that step.
@@ -117,9 +117,11 @@ export const ActivityHeader = memo(function ActivityHeader({
 
   return (
     <div
+      // `ws-msg-chip`: over a workspace background image the capsule turns
+      // translucent like the reply's other small surfaces, with its own ring.
       className={cn(
-        "flex w-full min-w-0 items-center gap-3 pb-1 text-sm leading-6",
-        toggle && "group/row cursor-pointer"
+        "ws-msg-chip flex w-full min-w-0 items-center gap-2 rounded-full bg-muted/60 py-1 pe-3 ps-3.5 text-sm leading-6 transition-colors",
+        toggle && "group/row cursor-pointer hover:bg-muted"
       )}
       onClick={onHeaderClick}
     >
@@ -179,12 +181,13 @@ export const ActivityHeader = memo(function ActivityHeader({
             </span>
           ) : null}
         </span>
-        {toggle ? <RowChevron open={toggle.open} always /> : null}
+        {/* No line to a rule any more — the capsule is the separation — so
+            the chevron and the time are the only marks at either end. */}
+        {toggle ? (
+          <RowChevron open={toggle.open} always className="mb-0 mt-0" />
+        ) : null}
       </span>
-      <span
-        aria-hidden="true"
-        className="h-px min-w-6 flex-1 bg-foreground/10"
-      />
+      <span aria-hidden="true" className="min-w-0 flex-1" />
       {elapsed && completed ? (
         <span className="activity-mono shrink-0 text-xs text-muted-foreground">
           {elapsed}
