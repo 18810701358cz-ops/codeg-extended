@@ -2044,6 +2044,31 @@
   background: var(--activity-rail);
 }
 
+/* A reply's list under its header capsule (`data-headed`, set by the turn).
+   It starts a row's gap plus 0.25rem below the capsule — as if the capsule's
+   edge were the bottom of a ring on a row before it — so the first ring sits
+   as far under the capsule (1rem) as a ring under the one before. The first
+   row's rail runs up to that edge: down to 0.125rem above its ring, or, when
+   prose comes first, into its dot as a dot's incoming segment does. */
+.activity-timeline[data-headed] {
+  padding-top: calc(var(--activity-gap) + 0.25rem);
+}
+
+.activity-timeline[data-headed] > .activity-item:first-child::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(0.625rem - 0.5px);
+  top: calc(-1 * (var(--activity-gap) + 0.25rem));
+  height: calc(var(--activity-gap) + 0.375rem);
+  width: 1px;
+  background: var(--activity-rail);
+}
+
+.activity-timeline[data-headed]
+  > .activity-item[data-marker="dot"]:first-child::after {
+  height: calc(var(--activity-gap) + 0.875rem);
+}
+
 /* Once the list is done (`data-end="reached"`: the reply, or the sub-agent,
    has finished) that segment ends on the end mark, a 0.5rem ring around a dot
    level with the last line beside it. The list measures where that line is
@@ -2156,8 +2181,9 @@
    stopped. The rows one join touched take
    their turn top to bottom (the hook holds each one's growth back a little
    longer), so the rail draws down through them, and the turning mark fades in
-   as it arrives. Transform and clip only, so no row changes size under the
-   virtual list. */
+   as it arrives. The rail up to the header stands as it is: a first row that
+   joins takes over the one already drawn. Transform and clip only, so no row
+   changes size under the virtual list. */
 @keyframes activity-rail-grow {
   from {
     transform: scaleY(0);
@@ -2172,7 +2198,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .activity-item[data-rail-enter]::before,
-  .activity-item[data-rail-enter][data-marker="dot"]::after,
+  .activity-item[data-rail-enter][data-marker="dot"]:not(:first-child)::after,
   .activity-item[data-rail-extend]:not(
       [data-rail-enter],
       [data-rail-body]

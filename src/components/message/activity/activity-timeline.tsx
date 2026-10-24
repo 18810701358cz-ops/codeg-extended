@@ -11,7 +11,6 @@ import type {
   ActivityStep,
 } from "@/lib/activity/types"
 import { ActivityRenderProvider, useActivityRender } from "./activity-context"
-import { cn } from "@/lib/utils"
 import { GOAL_ICON, IMAGE_ICON, toolIcon } from "./step-visuals"
 import { AskQuestionResultCard } from "../ask-question-result-card"
 import { CODEG_MCP_TOOL_ICONS, CodegMcpToolCard } from "../codeg-mcp-tool-card"
@@ -60,6 +59,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
   renderPart,
   pinnedOnly = false,
   working = false,
+  headed = false,
 }: {
   model: ActivityModel
   isStreaming: boolean
@@ -68,6 +68,10 @@ export const ActivityTimeline = memo(function ActivityTimeline({
   /** The reply ends on this list while its agent is at work: the rail runs
    *  on past the last row to a turning mark. */
   working?: boolean
+  /** The list hangs under the turn's header capsule: its first step sits as
+   *  far below it as a step below the one before, and the rail runs up to
+   *  it (globals.css). */
+  headed?: boolean
 }) {
   const t = useTranslations("Folder.chat.activity")
   const context = useMemo(
@@ -126,11 +130,12 @@ export const ActivityTimeline = memo(function ActivityTimeline({
       <ol
         ref={listRef}
         role="list"
-        className={cn("activity-timeline empty:hidden", pinnedOnly && "mt-2")}
+        className="activity-timeline empty:hidden"
         // Its end mark, once its steps are done — the reply's, or a
         // sub-agent's (globals.css); the rows still running under a folded
         // reply are no list of steps to end.
         data-end={pinnedOnly ? undefined : reached ? "reached" : "pending"}
+        data-headed={headed ? "" : undefined}
       >
         {rows.map((item) =>
           item === FOLD ? (

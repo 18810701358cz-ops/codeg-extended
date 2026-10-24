@@ -303,6 +303,7 @@ export const ActivityParts = memo(function ActivityParts({
   isStreaming,
   pinnedOnly = false,
   working = false,
+  headed = false,
 }: {
   model: ActivityModel
   isStreaming: boolean
@@ -311,6 +312,8 @@ export const ActivityParts = memo(function ActivityParts({
   /** The reply ends on its rail while its agent is at work (see
    *  `ActivityTimeline`). */
   working?: boolean
+  /** Hung under the turn's header (see `ActivityTimeline`). */
+  headed?: boolean
 }) {
   const render = useAssistantRenderPart(isStreaming)
   return (
@@ -320,6 +323,7 @@ export const ActivityParts = memo(function ActivityParts({
       renderPart={render}
       pinnedOnly={pinnedOnly}
       working={working}
+      headed={headed}
     />
   )
 })

@@ -258,14 +258,23 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
         />
       )
     }
+    // A reply that is all process — stopped on a tool call, or ended on a card
+    // that is its answer — shows its rows as an open fold does: hung under the
+    // header, with nothing between them. A reply with no steps has none, its
+    // answer under the header.
     return (
       <div className="space-y-3">
-        {header}
-        <ContentPartsRenderer
-          parts={parts}
-          role="assistant"
-          isStreaming={isStreaming}
-        />
+        <div>
+          {header}
+          <ActivityParts model={activity} isStreaming={isStreaming} headed />
+        </div>
+        {split.answer.length > 0 && (
+          <ContentPartsRenderer
+            parts={split.answer}
+            role="assistant"
+            isStreaming={isStreaming}
+          />
+        )}
         {working ? <WorkingMark /> : null}
       </div>
     )
@@ -285,12 +294,14 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
             model={activity}
             isStreaming={isStreaming}
             pinnedOnly
+            headed
           />
         ) : null}
         {/* `reply-fold-body` (globals.css) slides the body open and shut on a
-            grid track. The inner div is the clipped grid item — it must stay
-            a single child, and the spacing has to live INSIDE it or the closed
-            track never reaches zero. */}
+            grid track. The div is the clipped grid item — it must stay a
+            single child, and the spacing has to live INSIDE it (the headed
+            list's own, under the header) or the closed track never reaches
+            zero. */}
         <CollapsibleContent
           id={bodyId}
           className={cn(
@@ -299,13 +310,12 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
           )}
         >
           <div>
-            <div className="pt-2">
-              <ActivityParts
-                model={activity}
-                isStreaming={isStreaming}
-                working={workingOnRail}
-              />
-            </div>
+            <ActivityParts
+              model={activity}
+              isStreaming={isStreaming}
+              working={workingOnRail}
+              headed
+            />
           </div>
         </CollapsibleContent>
       </Collapsible>

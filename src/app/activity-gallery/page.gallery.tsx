@@ -135,6 +135,31 @@ const FAILURE_TURN: MessageTurn = {
   ],
 }
 
+/** A reply that is all process: prose first, then a call that failed, and no
+ *  answer after it — the header cannot fold it away. */
+const NO_ANSWER_TURN: MessageTurn = {
+  id: "turn-no-answer",
+  role: "assistant",
+  timestamp: "2026-10-22T09:02:00Z",
+  duration_ms: 9000,
+  blocks: [
+    { type: "text", text: "Checking the build before I change anything." },
+    toolUse("n1", "Bash", { command: "pnpm --filter web build" }),
+    toolResult(
+      "n1",
+      [
+        "> web@0.1.0 build",
+        "> next build",
+        "",
+        "Failed to compile.",
+        "",
+        "[terminal exited: exit code: 1]",
+      ].join("\n"),
+      true
+    ),
+  ],
+}
+
 const CODEX_TURN: MessageTurn = {
   id: "turn-codex",
   role: "assistant",
@@ -786,6 +811,7 @@ const SCENARIOS: Scenario[] = [
     inProgress: ["l3"],
   },
   { id: "failure", title: "Failures", turn: FAILURE_TURN },
+  { id: "no-answer", title: "Stopped on a failed call", turn: NO_ANSWER_TURN },
   { id: "codex", title: "Codex", turn: CODEX_TURN },
   { id: "agent", title: "Sub-agent", turn: AGENT_TURN },
   {

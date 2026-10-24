@@ -121,6 +121,107 @@ function rowOf(text: string | RegExp): HTMLElement {
   return row as HTMLElement
 }
 
+/** A reply that is all process: prose, then a call that failed, and no answer
+ *  after it — so its header has nothing to fold away. */
+const STOPPED_ON_FAILURE: MessageTurn = {
+  id: "turn-stopped",
+  role: "assistant",
+  timestamp: "2026-10-22T09:02:00Z",
+  blocks: [
+    { type: "text", text: "Checking the build before I change anything." },
+    toolUse("s1", "Bash", { command: "pnpm --filter web build" }),
+    toolResult(
+      "s1",
+      "Failed to compile.\n[terminal exited: exit code: 1]",
+      true
+    ),
+  ],
+}
+
+/** A declaration in globals.css, by its rule's selector (whitespace folded). */
+function globalsDecl(selector: string, prop: string): string | undefined {
+  let value: string | undefined
+  postcss
+    .parse(readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8"))
+    .walkRules((rule) => {
+      if (rule.selector.replace(/\s+/g, " ") !== selector) return
+      rule.walkDecls(prop, (decl) => {
+        value = decl.value
+      })
+    })
+  return value
+}
+
+/** A length from globals.css in rem (16px to the rem), `var(--activity-gap)`
+ *  read as the list's own. Sums, products and signs only: anything else in
+ *  it throws rather than being read as something it is not. */
+function remOf(value: string | undefined): number {
+  const gap = globalsDecl(".activity-timeline", "--activity-gap")!
+  const source = (value ?? "")
+    .replace(/var\(--activity-gap\)/g, gap)
+    .replace(/calc\(/g, "(")
+    .replace(/\s+/g, "")
+  const tokens = source.match(/\d*\.?\d+(?:rem|px)?|[-+*()]/g) ?? []
+  if (tokens.length === 0 || tokens.join("") !== source) {
+    throw new Error(`cannot read ${String(value)}`)
+  }
+  let at = 0
+  const sum = (): number => {
+    let total = product()
+    while (tokens[at] === "+" || tokens[at] === "-") {
+      const plus = tokens[at++] === "+"
+      const next = product()
+      total = plus ? total + next : total - next
+    }
+    return total
+  }
+  const product = (): number => {
+    let total = factor()
+    while (tokens[at] === "*") {
+      at += 1
+      total *= factor()
+    }
+    return total
+  }
+  const factor = (): number => {
+    const token = tokens[at++]!
+    if (token === "-") return -factor()
+    if (token === "(") {
+      const inner = sum()
+      at += 1
+      return inner
+    }
+    const number = Number.parseFloat(token)
+    if (Number.isNaN(number)) throw new Error(`cannot read ${String(value)}`)
+    return token.endsWith("px") ? number / 16 : number
+  }
+  const length = sum()
+  if (at !== tokens.length) throw new Error(`cannot read ${String(value)}`)
+  return length
+}
+
+/** The classes that could space `to` from `from`, `to`'s own padding aside:
+ *  `to`'s margins above it, the padding and margins of its ancestors below
+ *  the element the two share, the gaps that element sets between its
+ *  children, and `from`'s margins below it. */
+function spacingBetween(from: Element, to: Element): string[] {
+  let shared = from.parentElement
+  while (shared && !shared.contains(to)) shared = shared.parentElement
+  const classes = (node: Element, pattern: RegExp) =>
+    node.className.split(/\s+/).filter((name) => pattern.test(name))
+  const found = classes(to, /^-?m[ty]?-/)
+  for (
+    let node = to.parentElement;
+    node && node !== shared;
+    node = node.parentElement
+  ) {
+    found.push(...classes(node, /^-?[pm][tbxy]?-/))
+  }
+  if (shared) found.push(...classes(shared, /^(?:space-y|gap|gap-y)-/))
+  found.push(...classes(from, /^-?m[by]?-/))
+  return found
+}
+
 beforeEach(() => {
   resetDisclosureStore()
 })
@@ -536,6 +637,51 @@ describe("activity timeline: where the rail ends", () => {
   it("ends a finished reply's steps on the end mark", () => {
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     expect(list()).toHaveAttribute("data-end", "reached")
+  })
+
+  it("hangs the reply's rows under the header, a step's gap below it", () => {
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    expect(list()).toHaveAttribute("data-headed")
+    // Nothing but the list's own padding between the capsule and the rows.
+    expect(spacingBetween(activityHeader(), list())).toEqual([])
+    // A one-line row is 1.75rem with its ring 0.25rem–1.5rem down it: the
+    // first ring is as far below the capsule as a ring below the one before.
+    const gap = remOf("var(--activity-gap)")
+    const head = remOf(
+      globalsDecl(".activity-timeline[data-headed]", "padding-top")
+    )
+    expect(head + 0.25).toBeCloseTo(1.75 - 1.5 + gap + 0.25)
+    // The first row's rail starts at the capsule's edge and stops as a
+    // segment does: 0.125rem above a ring, or where a dot's incoming one
+    // stops (prose can come first).
+    const rail =
+      ".activity-timeline[data-headed] > .activity-item:first-child::after"
+    const top = remOf(globalsDecl(rail, "top"))
+    expect(globalsDecl(rail, "content")).toBe('""')
+    expect(top).toBeCloseTo(-head)
+    expect(top + remOf(globalsDecl(rail, "height"))).toBeCloseTo(0.25 - 0.125)
+    const dotRail =
+      '.activity-timeline[data-headed] > .activity-item[data-marker="dot"]:first-child::after'
+    const incoming =
+      '.activity-item[data-marker="dot"]:not(:first-child)::after'
+    expect(top + remOf(globalsDecl(dotRail, "height"))).toBeCloseTo(
+      remOf(globalsDecl(incoming, "top")) +
+        remOf(globalsDecl(incoming, "height"))
+    )
+    const column = globalsDecl(".activity-item::before", "inset-inline-start")
+    expect(column).toBeTruthy()
+    expect(globalsDecl(rail, "inset-inline-start")).toBe(column)
+  })
+
+  it("hangs the rows of a reply that cannot fold the same way, prose first", () => {
+    renderSettled(partsOf(STOPPED_ON_FAILURE), 9000)
+    expect(screen.queryByRole("button", { name: "Activity" })).toBeNull()
+    expect(list()).toHaveAttribute("data-headed")
+    expect(list().querySelector(":scope > li")).toHaveAttribute(
+      "data-marker",
+      "dot"
+    )
+    expect(spacingBetween(activityHeader(), list())).toEqual([])
   })
 
   it("starts a row's ring flush with the reply's left edge", () => {

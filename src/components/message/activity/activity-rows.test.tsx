@@ -234,6 +234,10 @@ describe("a folded turn", () => {
     const lists = document.querySelectorAll(".activity-timeline")
     expect(lists).toHaveLength(1)
     expect(lists[0]).not.toHaveAttribute("data-end")
+    // It hangs under the header as the open list does: a step's gap below
+    // it, the rail running up to it (globals.css), no margin of its own.
+    expect(lists[0]).toHaveAttribute("data-headed")
+    expect(lists[0]!.className.split(/\s+/)).not.toContain("mt-2")
   })
 })
 
