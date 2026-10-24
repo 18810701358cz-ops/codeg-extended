@@ -443,10 +443,18 @@ describe("activity timeline: the status rings", () => {
       />
     )
     const mark = ring(rowOf("Run web unit tests"))
-    const arc = mark.querySelector<HTMLElement>(".border-t-activity-ring-live")
-    expect(arc).toBeTruthy()
-    expect(arc!.className).toMatch(/\banimate-spin\b/)
-    expect(arc!.className).toMatch(/\bborder-transparent\b/)
+    // The light track stays under the arc.
+    const track = mark.querySelector<HTMLElement>(".border-activity-ring")!
+    expect(track.className).toContain("border-[0.5px]")
+    expect(track.className).not.toMatch(/\banimate-spin\b/)
+    // The arc is one childless span, heavier than the track and turning.
+    const arc = mark.querySelector<HTMLElement>(".border-t-activity-ring-live")!
+    expect(arc.className).toMatch(/\banimate-spin\b/)
+    expect(arc.className).toMatch(/\bborder-transparent\b/)
+    expect(arc.className).toContain("border-[1.25px]")
+    expect(arc.className).toContain("[animation-duration:1.5s]")
+    expect(arc.childElementCount).toBe(0)
+    expect(arc.textContent).toBe("")
   })
 
   it("fades a finished step's ring and stops it turning", () => {
@@ -456,6 +464,9 @@ describe("activity timeline: the status rings", () => {
     expect(rest).toHaveAttribute("data-ring", "quiet")
     expect(rest.className).toMatch(/\bborder-activity-ring-done\b/)
     expect(rest.className).not.toMatch(/\banimate-spin\b/)
+    // It fades rather than snapping when a running step settles.
+    expect(rest.className).toContain("transition-[border-color]")
+    expect(rest.className).toContain("duration-500")
     expect(mark.querySelector(".border-t-activity-ring-live")).toBeNull()
   })
 
@@ -472,7 +483,10 @@ describe("activity timeline: the status rings", () => {
       '.activity-timeline > [data-marker="working"]'
     )!
     expect(mark.querySelector(".border-activity-ring")).toBeTruthy()
-    expect(mark.querySelector(".border-t-activity-ring-live")).toBeTruthy()
+    const arc = mark.querySelector<HTMLElement>(".border-t-activity-ring-live")!
+    expect(arc.className).toMatch(/\banimate-spin\b/)
+    // Two plain children: the track and the arc, nothing inside either.
+    expect(mark.firstElementChild!.childElementCount).toBe(2)
   })
 })
 
