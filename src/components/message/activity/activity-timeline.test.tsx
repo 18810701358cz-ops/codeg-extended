@@ -110,6 +110,10 @@ function renderSettled(parts: AdaptedContentPart[], durationMs = 214000) {
 const foldControl = (label = "Activity") =>
   screen.getByRole("button", { name: label })
 
+/** The capsule itself — the line the label, the figures and the time share. */
+const activityHeader = () =>
+  document.querySelector<HTMLElement>(".ws-msg-chip")!
+
 /** The timeline row whose header contains `text`. */
 function rowOf(text: string | RegExp): HTMLElement {
   const row = screen.getByText(text).closest("li")
@@ -122,14 +126,18 @@ beforeEach(() => {
 })
 
 describe("activity timeline: the reference turn", () => {
-  it("summarizes the turn in the header, its time at the end", () => {
+  it("summarizes the turn in the header: steps, time, then how it ended", () => {
+    // Only the step count is spelled out; the breakdown by kind is the
+    // tooltip's. The time follows the count, and the outcome ends the line.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
-    const time = screen.getByText("3m 34s")
-    const header = time.parentElement!
+    const header = activityHeader()
     expect(header.textContent).toBe(
-      "Activity14 steps · 6 commands · 1 edit · 1 agent · 1 failed, recovered3m 34s"
+      "Activity14 steps · 3m 34s · 1 failed, recovered"
     )
-    expect(header.lastElementChild).toBe(time)
+    expect(header.querySelector("[title]")).toHaveAttribute(
+      "title",
+      "14 steps · 6 commands · 1 edit · 1 agent · 1 MCP call · 3 files read · 1 search"
+    )
     expect(foldControl()).toHaveAttribute("aria-expanded", "true")
   })
 
@@ -227,7 +235,7 @@ describe("activity timeline: the reference turn", () => {
     // but in view folded too, not only on hover.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
     const summary = screen.getByText(/14 steps/)
-    const header = screen.getByText("3m 34s").parentElement!
+    const header = activityHeader()
     const chevron = header.querySelector("svg.lucide-chevron-right")!
     expect(
       summary.compareDocumentPosition(chevron) &
@@ -239,15 +247,34 @@ describe("activity timeline: the reference turn", () => {
     expect(chevron.getAttribute("class")).not.toMatch(/\bopacity-0\b/)
   })
 
-  it("draws the header as a capsule with no rule across it", () => {
-    // The capsule is the separation now; the time still ends the line, so it
-    // lines up down a conversation.
+  it("draws the header as a capsule only as wide as its line", () => {
+    // The capsule is the separation itself, so there is no rule to run to the
+    // end — and no full-width bar either: it hugs its own words.
     renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
-    const header = screen.getByText("3m 34s").parentElement!
+    const header = activityHeader()
     expect(header.className).toMatch(/\brounded-full\b/)
     expect(header.className).toMatch(/\bws-msg-chip\b/)
+    const classes = header.className.split(/\s+/)
+    expect(classes).toContain("w-fit")
+    // `max-w-full` is not `w-full`: the capsule caps at the column, it does
+    // not fill it.
+    expect(classes).not.toContain("w-full")
     expect(header.querySelector(".h-px")).toBeNull()
-    expect(header.lastElementChild).toBe(screen.getByText("3m 34s"))
+    expect(header.querySelector("span[aria-hidden='true'].flex-1")).toBeNull()
+  })
+
+  it("sets the header's label and its figures at one size, centred on the line", () => {
+    // Only the weight tells the label apart; the chevron is centred by the
+    // capsule's own flex, not by a margin meant for a row's 1.5rem line.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const header = activityHeader()
+    expect(foldControl().className).toMatch(/\btext-xs\b/)
+    expect(header.querySelector(".activity-mono")!.className).toMatch(
+      /\btext-xs\b/
+    )
+    expect(header.className).toMatch(/\bitems-center\b/)
+    const chevron = header.querySelector("svg.lucide-chevron-right")!
+    expect(chevron.getAttribute("class")).toMatch(/\bmt-0\b/)
   })
 
   it("folds and unfolds from anywhere on the header", () => {
@@ -255,7 +282,7 @@ describe("activity timeline: the reference turn", () => {
     fireEvent.click(screen.getByText(/14 steps/))
     expect(foldControl()).toHaveAttribute("aria-expanded", "false")
     expect(screen.queryByText("Explored")).toBeNull()
-    fireEvent.click(screen.getByText("3m 34s"))
+    fireEvent.click(activityHeader().querySelector(".activity-mono")!)
     expect(foldControl()).toHaveAttribute("aria-expanded", "true")
     expect(screen.getByText("Explored")).toBeTruthy()
   })
@@ -404,7 +431,7 @@ describe("activity timeline: failures", () => {
     vi.spyOn(window, "getSelection").mockReturnValue({
       toString: () => "1 failed",
     } as Selection)
-    fireEvent.click(screen.getByText("3m 34s"))
+    fireEvent.click(activityHeader().querySelector(".activity-mono")!)
     expect(foldControl()).toHaveAttribute("aria-expanded", "true")
   })
 })

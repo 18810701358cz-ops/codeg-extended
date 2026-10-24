@@ -100,7 +100,9 @@ describe("CompletedTurnContent with nothing left to show", () => {
     // The header still reports the duration — it is the only place that does
     // now — but with no toggle that could hide the reply.
     expect(screen.getByText("Activity")).toBeInTheDocument()
-    expect(screen.getByText(/^5s/)).toBeInTheDocument()
+    // The time follows the step count on the same line.
+    const header = document.querySelector(".ws-msg-chip")!
+    expect(header.textContent).toMatch(/5s$/)
     expect(queryToggle()).toBeNull()
     expect(screen.getByText("Wrapping up.")).toBeInTheDocument()
     // The completion card renders the result as both its header title and its
@@ -159,7 +161,9 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    expect(screen.getByText(/^1m 9s/)).toBeInTheDocument()
+    expect(document.querySelector(".ws-msg-chip")!.textContent).toMatch(
+      /1m 9s$/
+    )
     const trigger = toggle()
     expect(trigger).toHaveAttribute("aria-expanded", "false")
     expect(screen.getByText("The fix is complete.")).toBeInTheDocument()

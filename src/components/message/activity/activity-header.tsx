@@ -30,14 +30,14 @@ const CATEGORY_KEY = {
   searches: "header.searches",
 } as const
 
-const MAX_CATEGORIES = 3
-
 /**
- * The turn's activity header, a capsule across the reply's width: `Activity
- * 14 steps · 6 commands · 1 edit · 1 agent · 1 failed, recovered ›   3m 34s`
- * — the chevron after the text, the time at the end. While the turn runs it
- * reads `Working 6 steps` with a shimmer; a reply with no steps keeps a
- * `Reply 3s` header so the slot never blinks in and out as a turn settles.
+ * The turn's activity header: a capsule only as wide as what it says —
+ * `Activity 14 steps · 3m 34s · 1 failed, recovered ›`. The count comes
+ * first, the time right after it, then how the turn ended; the breakdown by
+ * kind (`6 commands · 1 edit · …`) is the tooltip's, not the line's, so the
+ * capsule stays short however much a turn did. While the turn runs it reads
+ * `Working 6 steps` with a shimmer; a reply with no steps keeps a `Reply 3s`
+ * header so the slot never blinks in and out as a turn settles.
  *
  * An unrecovered failure is red and, when `onJumpToFailure` is given, a button
  * that opens the turn at that step.
@@ -61,6 +61,8 @@ export const ActivityHeader = memo(function ActivityHeader({
   const t = useTranslations("Folder.chat.activity")
   const separator = t("header.separator")
 
+  // The line carries the step count only — the breakdown by kind is what the
+  // tooltip is for. `full` keeps it for that tooltip, most telling first.
   const { pieces, full } = useMemo(() => {
     if (!summary) return { pieces: [] as string[], full: [] as string[] }
     const categories = CATEGORY_ORDER.filter(
@@ -68,10 +70,7 @@ export const ActivityHeader = memo(function ActivityHeader({
     ).map((key) => t(CATEGORY_KEY[key], { count: summary.counts[key] }))
     const lead =
       summary.steps > 0 ? [t("header.steps", { count: summary.steps })] : []
-    return {
-      pieces: [...lead, ...categories.slice(0, MAX_CATEGORIES)],
-      full: [...lead, ...categories],
-    }
+    return { pieces: lead, full: [...lead, ...categories] }
   }, [summary, t])
 
   const label = !completed
@@ -98,8 +97,10 @@ export const ActivityHeader = memo(function ActivityHeader({
       : null
 
   const tooltip = full.join(separator)
+  // The label takes the same size as the figures beside it; only its weight
+  // sets it apart.
   const labelClass = cn(
-    "shrink-0 font-semibold",
+    "shrink-0 text-xs font-semibold",
     completed ? "text-foreground" : "activity-shimmer"
   )
 
@@ -120,78 +121,83 @@ export const ActivityHeader = memo(function ActivityHeader({
       // `ws-msg-chip`: over a workspace background image the capsule turns
       // translucent like the reply's other small surfaces, with its own ring.
       className={cn(
-        "ws-msg-chip flex w-full min-w-0 items-center gap-2 rounded-full bg-muted/60 py-1 pe-3 ps-3.5 text-sm leading-6 transition-colors",
+        "ws-msg-chip inline-flex w-fit max-w-full min-w-0 items-center gap-2 rounded-full bg-muted/60 py-1 pe-3 ps-3.5 text-xs leading-6 transition-colors",
         toggle && "group/row cursor-pointer hover:bg-muted"
       )}
       onClick={onHeaderClick}
     >
-      <span className="flex min-w-0 items-start gap-1">
-        <span className="flex min-w-0 items-baseline gap-2.5">
-          {toggle ? (
-            <button
-              type="button"
-              className={cn(
-                labelClass,
-                "cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              )}
-              aria-expanded={toggle.open}
-              aria-controls={toggle.controls}
-              onClick={toggle.onToggle}
-            >
-              {label}
-            </button>
-          ) : (
-            <span className={labelClass}>{label}</span>
-          )}
-          {pieces.length > 0 || failureClause || interruptedClause ? (
-            <span
-              className="activity-mono min-w-0 truncate text-xs text-muted-foreground"
-              title={tooltip || undefined}
-            >
-              {pieces.join(separator)}
-              {failureClause ? (
-                <>
-                  {pieces.length > 0 ? separator : null}
-                  {failureClause.danger && onJumpToFailure ? (
-                    <button
-                      type="button"
-                      className="rounded-sm text-tone-danger underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      title={t("header.jumpToFailure")}
-                      onClick={onJumpToFailure}
-                    >
-                      {failureClause.text}
-                    </button>
-                  ) : (
-                    <span
-                      className={
-                        failureClause.danger ? "text-tone-danger" : undefined
-                      }
-                    >
-                      {failureClause.text}
-                    </span>
-                  )}
-                </>
-              ) : null}
-              {interruptedClause ? (
-                <>
-                  {pieces.length > 0 || failureClause ? separator : null}
-                  {interruptedClause}
-                </>
-              ) : null}
-            </span>
-          ) : null}
-        </span>
-        {/* No line to a rule any more — the capsule is the separation — so
-            the chevron and the time are the only marks at either end. */}
+      <span className="flex min-w-0 items-center gap-2">
         {toggle ? (
-          <RowChevron open={toggle.open} always className="mb-0 mt-0" />
+          <button
+            type="button"
+            className={cn(
+              labelClass,
+              "cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            )}
+            aria-expanded={toggle.open}
+            aria-controls={toggle.controls}
+            onClick={toggle.onToggle}
+          >
+            {label}
+          </button>
+        ) : (
+          <span className={labelClass}>{label}</span>
+        )}
+        {/* A reply with no steps still keeps its time (`Reply 3s`), so the
+            slot never blinks in and out as a turn settles. */}
+        {pieces.length > 0 ||
+        failureClause ||
+        interruptedClause ||
+        (elapsed && completed) ? (
+          <span
+            className="activity-mono min-w-0 truncate text-xs text-muted-foreground"
+            title={tooltip || undefined}
+          >
+            {pieces.join(separator)}
+            {elapsed && completed ? (
+              <>
+                {pieces.length > 0 ? separator : null}
+                {elapsed}
+              </>
+            ) : null}
+            {failureClause ? (
+              <>
+                {pieces.length > 0 || (elapsed && completed) ? separator : null}
+                {failureClause.danger && onJumpToFailure ? (
+                  <button
+                    type="button"
+                    className="rounded-sm text-tone-danger underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    title={t("header.jumpToFailure")}
+                    onClick={onJumpToFailure}
+                  >
+                    {failureClause.text}
+                  </button>
+                ) : (
+                  <span
+                    className={
+                      failureClause.danger ? "text-tone-danger" : undefined
+                    }
+                  >
+                    {failureClause.text}
+                  </span>
+                )}
+              </>
+            ) : null}
+            {interruptedClause ? (
+              <>
+                {pieces.length > 0 || (elapsed && completed) || failureClause
+                  ? separator
+                  : null}
+                {interruptedClause}
+              </>
+            ) : null}
+          </span>
         ) : null}
       </span>
-      <span aria-hidden="true" className="min-w-0 flex-1" />
-      {elapsed && completed ? (
-        <span className="activity-mono shrink-0 text-xs text-muted-foreground">
-          {elapsed}
-        </span>
+      {/* The chevron ends the capsule, centred on it (the row's own is
+            placed for a 1.5rem line by margin, which the flex centres here). */}
+      {toggle ? (
+        <RowChevron open={toggle.open} always className="mb-0 mt-0" />
       ) : null}
     </div>
   )
