@@ -3807,7 +3807,6 @@
         "deletedAssistant": "(excluído)"
       },
       "contentParts": {
-        "scriptToolCalls": "{count, plural, one {# chamada de ferramenta} other {# chamadas de ferramenta}}",
         "offset": "Deslocamento: {offset}",
         "pages": "Páginas: {pages}",
         "allowLarge": "Além do limite de tamanho",

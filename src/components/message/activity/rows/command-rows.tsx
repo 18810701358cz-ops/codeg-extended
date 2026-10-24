@@ -4,7 +4,10 @@ import { memo, useMemo } from "react"
 import Ansi from "ansi-to-react"
 import { useTranslations } from "next-intl"
 
-import { CodeBlock } from "@/components/ai-elements/code-block"
+import {
+  TokenSpan,
+  useHighlightedTokens,
+} from "@/components/ai-elements/code-block"
 import { useElapsedLabel } from "@/hooks/use-elapsed-label"
 import { useTruncation } from "@/hooks/use-truncation"
 import { normalizeCommandOutput } from "@/lib/activity/command"
@@ -18,7 +21,7 @@ import { describeStdinChars } from "@/lib/shell-session-tool"
 import { cn } from "@/lib/utils"
 import { useActivityRender } from "../activity-context"
 import { ActivityMembers, ActivityRow } from "../activity-row"
-import { CopyAction, DetailBox } from "../detail-box"
+import { CopyAction, DetailBox, DetailScroll } from "../detail-box"
 import { useDisclosure } from "../disclosure-store"
 import { RailIcon } from "../rail-icon"
 import {
@@ -235,6 +238,66 @@ function CommandLabel({
   )
 }
 
+/** Columns to a tab stop: the app's `tab-size` (Tailwind's preflight). */
+const TAB_SIZE = 4
+
+/** A line with its tabs spelled out as the spaces to the next tab stop. A
+ *  hanging indent moves where a line starts, and a browser sets tab stops
+ *  from the block's edge, not the line's: a tab left in lands short. */
+function expandTabs(line: string): string {
+  if (!line.includes("\t")) return line
+  let out = ""
+  for (const char of line) {
+    out += char === "\t" ? " ".repeat(TAB_SIZE - (out.length % TAB_SIZE)) : char
+  }
+  return out
+}
+
+/**
+ * A codex script, set in its panel the way a command is: flush, at the
+ * output's size, in the colours of the app's code blocks. Its lines wrap, as
+ * the command's and the output's do, so all of a line reads without a
+ * sideways scroll; a wrapped line hangs two columns in from its own indent,
+ * so it never reads as the next line. A long script scrolls on its own under
+ * a lower cap than the output's, which keeps its full height beneath it.
+ */
+function ScriptSource({ source }: { source: string }) {
+  const code = useMemo(
+    () => source.replace(/\n+$/, "").split("\n").map(expandTabs).join("\n"),
+    [source]
+  )
+  const { tokens } = useHighlightedTokens(code, "javascript")
+  const lines = useMemo(
+    () =>
+      tokens.map((line) => {
+        const text = line.map((token) => token.content).join("")
+        const indent = text.length - text.replace(/^ +/, "").length
+        return { line, hang: `${indent + 2}ch` }
+      }),
+    [tokens]
+  )
+  return (
+    <DetailScroll className="max-h-40 border-b border-foreground/5">
+      <div
+        className="px-4 py-3 font-mono text-[0.78125rem] leading-relaxed"
+        dir="ltr"
+      >
+        {lines.map(({ line, hang }, index) => (
+          <div
+            key={index}
+            className="whitespace-pre-wrap break-words"
+            style={{ paddingLeft: hang, textIndent: `-${hang}` }}
+          >
+            {line.length === 0
+              ? "\n"
+              : line.map((token, at) => <TokenSpan key={at} token={token} />)}
+          </div>
+        ))}
+      </div>
+    </DetailScroll>
+  )
+}
+
 function CommandDetail({
   step,
   output,
@@ -275,11 +338,37 @@ function CommandDetail({
     : fullCommand && !command?.session
       ? { text: fullCommand, label: t("detail.copyCommand") }
       : null
+  // Opened on a failure or a running command, the output shows its end,
+  // where the error or the latest line is.
+  const anchor = failed || live ? "end" : "start"
+  const shownOutput = output ? (
+    <>
+      {output.truncated > 0 ? (
+        <p className="px-4 pt-2 font-mono text-2xs text-muted-foreground">
+          {t("detail.tailOnly", { count: MAX_OUTPUT_LINES })}
+        </p>
+      ) : null}
+      <pre
+        className="activity-ansi whitespace-pre-wrap break-words px-4 py-3 font-mono text-[0.78125rem] leading-relaxed"
+        dir="ltr"
+      >
+        <Ansi>{output.text}</Ansi>
+      </pre>
+    </>
+  ) : (
+    <p className="px-4 py-3 text-xs text-muted-foreground">
+      {t("detail.noOutput")}
+    </p>
+  )
 
+  // A script and its output each scroll on their own, one above the other
+  // (the box does not), so a long script never pushes the output out of the
+  // panel, and neither's scrollbar runs along the other's.
   return (
     <DetailBox
       tone={failed ? "danger" : "neutral"}
-      anchor={failed || live ? "end" : "start"}
+      anchor={script ? "start" : anchor}
+      unbounded={!!script}
       footer={output ? t("detail.lines", { count: output.lines }) : null}
       actions={
         copy || output ? (
@@ -295,16 +384,7 @@ function CommandDetail({
         ) : null
       }
     >
-      {script ? (
-        <div className="border-b border-foreground/5">
-          <CodeBlock code={script.source} language="javascript" />
-          {script.callCount > 0 ? (
-            <p className="px-4 pb-2 text-xs text-muted-foreground">
-              {tParts("scriptToolCalls", { count: script.callCount })}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+      {script ? <ScriptSource source={script.source} /> : null}
       {scriptMeta?.sharedWith.length ? (
         <p className="border-b border-foreground/5 px-4 py-2 text-xs text-muted-foreground">
           {tParts("codexScript.sharedWith", {
@@ -330,24 +410,10 @@ function CommandDetail({
           {fullCommand}
         </pre>
       ) : null}
-      {output ? (
-        <>
-          {output.truncated > 0 ? (
-            <p className="px-4 pt-2 font-mono text-2xs text-muted-foreground">
-              {t("detail.tailOnly", { count: MAX_OUTPUT_LINES })}
-            </p>
-          ) : null}
-          <pre
-            className="activity-ansi whitespace-pre-wrap break-words px-4 py-3 font-mono text-[0.78125rem] leading-relaxed"
-            dir="ltr"
-          >
-            <Ansi>{output.text}</Ansi>
-          </pre>
-        </>
+      {script && output ? (
+        <DetailScroll anchor={anchor}>{shownOutput}</DetailScroll>
       ) : (
-        <p className="px-4 py-3 text-xs text-muted-foreground">
-          {t("detail.noOutput")}
-        </p>
+        shownOutput
       )}
     </DetailBox>
   )

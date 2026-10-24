@@ -498,6 +498,98 @@ const LONG_EDIT_TURN: MessageTurn = {
   ],
 }
 
+/** Codex scripts the history parser could not take apart: one with a long
+ *  output, one that failed, one that printed nothing. */
+const CODEX_SCRIPT_SOURCE = [
+  "const cmds = [",
+  '  "git show 71be0b15:src/components/browser/browser-page-handoff.tsx",',
+  '  "git show ef1c3766:src/components/browser/browser-page-handoff.tsx",',
+  "  \"nl -ba src/components/browser/browser-screenshot-markup.tsx | sed -n '1,100p;430,520p'\",",
+  "  \"nl -ba src/components/browser/browser-page-handoff.test.tsx | sed -n '1,260p;455,565p'\"",
+  "];",
+  'const results = await Promise.allSettled(cmds.map(cmd => tools.exec_command({cmd, workdir:"/Users/dev/work/codeg", max_output_tokens: 12000})));',
+  'results.forEach((r,i) => text(JSON.stringify({cmd:cmds[i], result:r.status==="fulfilled"?r.value:String(r.reason)})));',
+  "",
+].join("\n")
+const CODEX_SCRIPT_RESULT = (cmd: string) =>
+  JSON.stringify({
+    cmd,
+    result: {
+      output: Array.from(
+        { length: 24 },
+        (_, i) =>
+          `${String(i + 1).padStart(4)}\timport { useBrowserPageHandoff } from "./browser-page-handoff" // line ${i + 1}`
+      ).join("\n"),
+      exit_code: 0,
+    },
+  })
+const CODEX_SCRIPT_TURN: MessageTurn = {
+  id: "turn-codex-script",
+  role: "assistant",
+  timestamp: "2026-10-22T09:58:00Z",
+  duration_ms: 31000,
+  blocks: [
+    toolUse("cs1", "codex_script", {
+      source: CODEX_SCRIPT_SOURCE,
+      title:
+        "git show 71be0b15:src/components/browser/browser-page-handoff.tsx",
+      call_count: 1,
+    }),
+    toolResult(
+      "cs1",
+      [
+        "Warning: truncated output (original token count: 11720)",
+        "Total output lines: 4",
+        "",
+        CODEX_SCRIPT_RESULT(
+          "git show 71be0b15:src/components/browser/browser-page-handoff.tsx"
+        ),
+        CODEX_SCRIPT_RESULT(
+          "git show ef1c3766:src/components/browser/browser-page-handoff.tsx"
+        ),
+        CODEX_SCRIPT_RESULT(
+          "nl -ba src/components/browser/browser-screenshot-markup.tsx | sed -n '1,100p;430,520p'"
+        ),
+      ].join("\n")
+    ),
+    toolUse("cs2", "codex_script", {
+      source: [
+        "const dirs = ['web', 'agent'];",
+        "for (const dir of dirs) {",
+        '  const r = await tools.exec_command({cmd: `pnpm --filter ${dir} test`, workdir: "/Users/dev/work/codeg"});',
+        "  text(r.output);",
+        "}",
+      ].join("\n"),
+      title: "pnpm --filter web test",
+      call_count: 1,
+    }),
+    toolResult(
+      "cs2",
+      [
+        ...Array.from(
+          { length: 18 },
+          (_, i) => ` ✓ lib/tasks-${i + 1}.test.ts (4 tests) ${12 + i}ms`
+        ),
+        "FAIL  lib/report.test.ts > writes bindings in id order",
+        "AssertionError: expected [ 'b2', 'b1' ] to deeply equal [ 'b1', 'b2' ]",
+        "Test Files  1 failed | 18 passed (19)",
+        "     Tests  1 failed | 83 passed (84)",
+      ].join("\n"),
+      true
+    ),
+    toolUse("cs3", "codex_script", {
+      source: [
+        "const notes = ['report.md', 'CHANGELOG.md'];",
+        "for (const n of notes)",
+        '\ttext(`${n}: ${(await tools.exec_command({cmd: `wc -l ${n}`, workdir: "/Users/dev/work/codeg"})).output.trim()}`);',
+      ].join("\n"),
+      call_count: 1,
+    }),
+    toolResult("cs3", ""),
+    { type: "text", text: "Compared the two versions of the handoff." },
+  ],
+}
+
 const POLLED_TASK_ID = "9e82cbc1-5d0e-4f6a-8b3c-2a1d0e9f8c7b"
 const POLLED_TASK =
   "Run `pnpm build` in /Users/me/work/my-app without changing any files. Report whether it succeeded (exit code), the key output, and — if it failed — the full error with file paths and line numbers."
@@ -879,6 +971,7 @@ const SCENARIOS: Scenario[] = [
   { id: "delegation", title: "Delegation checks", turn: DELEGATION_TURN },
   { id: "files", title: "Files: match, read, write, edit", turn: FILES_TURN },
   { id: "long-edit", title: "A long edit", turn: LONG_EDIT_TURN },
+  { id: "codex-script", title: "Codex scripts", turn: CODEX_SCRIPT_TURN },
   { id: "text", title: "Text-only reply", turn: TEXT_TURN },
   {
     id: "commands-live",

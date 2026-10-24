@@ -3807,7 +3807,6 @@
         "deletedAssistant": "(gelöscht)"
       },
       "contentParts": {
-        "scriptToolCalls": "{count, plural, one {# Tool-Aufruf} other {# Tool-Aufrufe}}",
         "offset": "Versatz: {offset}",
         "pages": "Seiten: {pages}",
         "allowLarge": "Über dem Größenlimit",

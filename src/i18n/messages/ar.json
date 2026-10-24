@@ -3807,7 +3807,6 @@
         "deletedAssistant": "(محذوف)"
       },
       "contentParts": {
-        "scriptToolCalls": "{count, plural, zero {صفر استدعاء أداة} one {استدعاء أداة واحد} two {استدعاءا أداة} few {# استدعاءات أداة} many {# استدعاء أداة} other {# استدعاء أداة}}",
         "offset": "الإزاحة: {offset}",
         "pages": "الصفحات: {pages}",
         "allowLarge": "تجاوز حد الحجم",

@@ -25,6 +25,7 @@ import {
   type AdaptedContentPart,
 } from "@/lib/adapters/ai-elements-adapter"
 import {
+  fixtureLines,
   MOCKUP_ADAPTER_TEXT,
   MOCKUP_ASSISTANT_TURN,
   MOCKUP_LIVE_TURN,
@@ -226,6 +227,61 @@ function spacingBetween(from: Element, to: Element): string[] {
 beforeEach(() => {
   resetDisclosureStore()
 })
+
+/**
+ * Sets the real OverlayScrollbars up in the enclosing describe: its setup is
+ * deferred into an idle callback and then an animation frame, queued here and
+ * run by the returned flush; it measures only an element with a size, and
+ * jsdom lays nothing out.
+ */
+function withOverlayScrollbars() {
+  const deferred = new Map<number, () => void>()
+  let nextHandle = 0
+  beforeEach(() => {
+    const queue = (callback: () => void) => {
+      deferred.set(++nextHandle, callback)
+      return nextHandle
+    }
+    const cancel = (handle: number) => deferred.delete(handle)
+    vi.stubGlobal("requestIdleCallback", queue)
+    vi.stubGlobal("cancelIdleCallback", cancel)
+    vi.stubGlobal("requestAnimationFrame", queue)
+    vi.stubGlobal("cancelAnimationFrame", cancel)
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(200)
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(200)
+  })
+  afterEach(() => {
+    deferred.clear()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+  return function flushDeferred() {
+    for (let round = 0; round < 2; round++) {
+      act(() => {
+        for (const [handle, callback] of [...deferred]) {
+          deferred.delete(handle)
+          callback()
+        }
+      })
+    }
+  }
+}
+
+/** A viewport that scrolls sideways as far as `reach`, and down as far as
+ *  `down` (jsdom keeps no scroll offsets of its own). */
+function scrollable(viewport: HTMLElement, reach: number, down = 0) {
+  Object.defineProperty(viewport, "clientWidth", { value: 100 })
+  Object.defineProperty(viewport, "scrollWidth", { value: 100 + reach })
+  Object.defineProperty(viewport, "clientHeight", { value: 100 })
+  Object.defineProperty(viewport, "scrollHeight", { value: 100 + down })
+  for (const offset of ["scrollLeft", "scrollTop"]) {
+    Object.defineProperty(viewport, offset, { value: 0, writable: true })
+  }
+}
+
+/** The overflow an OverlayScrollbars host was set up with. */
+const overflowOf = (host: Element) =>
+  OverlayScrollbars(host as HTMLElement)?.options().overflow
 
 describe("activity timeline: the reference turn", () => {
   it("summarizes the turn in the header: steps, how it ended, then the time", () => {
@@ -1018,6 +1074,59 @@ describe("activity timeline: codex scripts", () => {
     return row.querySelector(".activity-detail-box") as HTMLElement
   }
 
+  const lineBlocks = (panel: HTMLElement) =>
+    [...panel.querySelectorAll("[style*='text-indent']")] as HTMLElement[]
+
+  it("sets the script flush in its panel, in the output's type, with no card of its own", () => {
+    // It used to be a whole code block — a bordered card, its own font size
+    // and padding — inside the panel, with a count of the script's call
+    // sites under it.
+    const panel = scriptPanel("2 files differ")
+    const lines = lineBlocks(panel)
+    // As written, but for its tab, set as the spaces to the next tab stop.
+    expect(lines.map((line) => line.textContent)).toEqual(
+      SOURCE.replace("\t", "    ")
+        .split("\n")
+        .map((line) => line || "\n")
+    )
+    const script = lines[0]!.parentElement!
+    const output = panel.querySelector("pre.activity-ansi")!
+    expect(output.textContent).toBe("2 files differ")
+    for (const type of [
+      "font-mono",
+      "text-[0.78125rem]",
+      "leading-relaxed",
+      "px-4",
+      "py-3",
+    ]) {
+      expect(script).toHaveClass(type)
+      expect(output).toHaveClass(type)
+    }
+    expect(script).toHaveAttribute("dir", "ltr")
+    expect(panel.querySelector("[data-language]")).toBeNull()
+    expect(panel.textContent).not.toMatch(/tool call/)
+  })
+
+  it("wraps a long line of the script, hung under its own indent", () => {
+    const [first, spaced, tabbed, , blank] = lineBlocks(scriptPanel("ok"))
+    for (const line of [first, spaced, tabbed]) {
+      expect(line).toHaveClass("whitespace-pre-wrap")
+      expect(line).toHaveClass("break-words")
+    }
+    // Wrapped, a line goes on two columns in from where its text starts.
+    expect(first!.style.paddingLeft).toBe("2ch")
+    expect(first!.style.textIndent).toBe("-2ch")
+    expect(spaced!.style.paddingLeft).toBe("4ch")
+    expect(spaced!.style.textIndent).toBe("-4ch")
+    // A tab is spelled out as the spaces to the next fourth column (the
+    // app's tab size): left in, it would land short of it on a hung line,
+    // whose tab stops a browser sets from the block's edge.
+    expect(tabbed!.textContent!.startsWith('    "git show')).toBe(true)
+    expect(tabbed!.style.paddingLeft).toBe("6ch")
+    // An empty line keeps its height.
+    expect(blank!.textContent).toBe("\n")
+  })
+
   it("copies the script from its panel, not the command the row is titled by", async () => {
     const writeText = vi.fn(async () => {})
     Object.defineProperty(navigator, "clipboard", {
@@ -1043,6 +1152,69 @@ describe("activity timeline: codex scripts", () => {
     expect(within(panel).getByText("No output")).toBeTruthy()
     const footer = within(panel).getByText("copy script").closest("div")!
     expect(footer.textContent).toBe("copy script")
+  })
+
+  describe("with the overlay scrollbars set up", () => {
+    const flushDeferred = withOverlayScrollbars()
+    /** The panel's scroll bodies: the box's own, then those within it. */
+    const hostsOf = (panel: HTMLElement) =>
+      [...panel.querySelectorAll("[data-overlayscrollbars-viewport]")].map(
+        (viewport) => ({
+          host: viewport.parentElement!,
+          viewport: viewport as HTMLElement,
+        })
+      )
+
+    it("gives the script and its output a scroll body each, and the box none", () => {
+      // In one body, a long script pushed the output out of the panel; a
+      // script scrolling inside it put two scrollbars on one edge.
+      const panel = scriptPanel("2 files differ")
+      flushDeferred()
+      const [box, script, output] = hostsOf(panel)
+      expect(hostsOf(panel)).toHaveLength(3)
+      expect(overflowOf(box!.host)?.y).toBe("hidden")
+      expect(box!.host.className.split(/\s+/)).not.toContain("max-h-72")
+      // The script under a lower cap than the output's, one above the other.
+      expect(script!.host.className.split(/\s+/)).toContain("max-h-40")
+      expect(script!.host.contains(lineBlocks(panel)[0]!)).toBe(true)
+      expect(output!.host.className.split(/\s+/)).toContain("max-h-72")
+      expect(output!.host.textContent).toBe("2 files differ")
+      expect(script!.host.contains(output!.host)).toBe(false)
+      for (const { host, viewport } of [script!, output!]) {
+        expect(overflowOf(host)?.y).toBe("scroll")
+        expect(viewport).toHaveClass("activity-detail-viewport")
+      }
+    })
+
+    it("opens a failed script's output at its end, where the error is", () => {
+      const observers: { notify: () => void; targets: Element[] }[] = []
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          entry: (typeof observers)[number]
+          constructor(notify: () => void) {
+            this.entry = { notify, targets: [] }
+            observers.push(this.entry)
+          }
+          observe(target: Element) {
+            this.entry.targets.push(target)
+          }
+          unobserve() {}
+          disconnect() {}
+        }
+      )
+      const panel = scriptPanel(fixtureLines(40, "FAIL"), true)
+      flushDeferred()
+      const [, script, output] = hostsOf(panel)
+      for (const { viewport } of [script!, output!]) {
+        scrollable(viewport, 0, 400)
+        observers
+          .find((observer) => observer.targets.includes(viewport))!
+          .notify()
+      }
+      expect(output!.viewport.scrollTop).toBe(500)
+      expect(script!.viewport.scrollTop).toBe(0)
+    })
   })
 })
 
@@ -1139,57 +1311,7 @@ describe("activity timeline: file panels", () => {
   })
 
   describe("with the overlay scrollbars set up", () => {
-    // The real library: its setup is deferred into an idle callback and then
-    // an animation frame, queued here and flushed by the test; it measures
-    // only an element with a size, and jsdom lays nothing out.
-    const deferred = new Map<number, () => void>()
-    let nextHandle = 0
-    function flushDeferred() {
-      for (let round = 0; round < 2; round++) {
-        act(() => {
-          for (const [handle, callback] of [...deferred]) {
-            deferred.delete(handle)
-            callback()
-          }
-        })
-      }
-    }
-    beforeEach(() => {
-      const queue = (callback: () => void) => {
-        deferred.set(++nextHandle, callback)
-        return nextHandle
-      }
-      const cancel = (handle: number) => deferred.delete(handle)
-      vi.stubGlobal("requestIdleCallback", queue)
-      vi.stubGlobal("cancelIdleCallback", cancel)
-      vi.stubGlobal("requestAnimationFrame", queue)
-      vi.stubGlobal("cancelAnimationFrame", cancel)
-      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(200)
-      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(
-        200
-      )
-    })
-    afterEach(() => {
-      deferred.clear()
-      vi.unstubAllGlobals()
-      vi.restoreAllMocks()
-    })
-
-    /** A viewport that scrolls sideways as far as `reach`, and down as far
-     *  as `down` (jsdom keeps no scroll offsets of its own). */
-    function scrollable(viewport: HTMLElement, reach: number, down = 0) {
-      Object.defineProperty(viewport, "clientWidth", { value: 100 })
-      Object.defineProperty(viewport, "scrollWidth", { value: 100 + reach })
-      Object.defineProperty(viewport, "clientHeight", { value: 100 })
-      Object.defineProperty(viewport, "scrollHeight", { value: 100 + down })
-      for (const offset of ["scrollLeft", "scrollTop"]) {
-        Object.defineProperty(viewport, offset, { value: 0, writable: true })
-      }
-    }
-
-    /** The overflow an OverlayScrollbars host was set up with. */
-    const overflowOf = (host: Element) =>
-      OverlayScrollbars(host as HTMLElement)?.options().overflow
+    const flushDeferred = withOverlayScrollbars()
 
     /** The halves of the open side-by-side view: their hosts and viewports. */
     function halvesOf(panel: HTMLElement) {

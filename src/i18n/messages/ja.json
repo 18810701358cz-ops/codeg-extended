@@ -3807,7 +3807,6 @@
         "deletedAssistant": "（削除済み）"
       },
       "contentParts": {
-        "scriptToolCalls": "{count} 個のツールを呼び出し",
         "offset": "オフセット: {offset}",
         "pages": "ページ: {pages}",
         "allowLarge": "サイズ上限超過",

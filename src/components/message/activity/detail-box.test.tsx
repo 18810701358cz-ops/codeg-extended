@@ -169,4 +169,29 @@ describe("DetailScroll", () => {
     expect(onScroll).toHaveBeenCalled()
     expect(own!.dataset.overflow).toBe("end")
   })
+
+  it("keeps to an end anchor as the box's body does", () => {
+    // The output under a script: on its last line until the reader scrolls
+    // up, while the box around it does not scroll at all.
+    const body = (count: number) => (
+      <DetailBox unbounded>
+        <DetailScroll anchor="end">
+          {Array.from({ length: count }, (_, index) => (
+            <p key={index}>{index}</p>
+          ))}
+        </DetailScroll>
+      </DetailBox>
+    )
+    const { container, rerender } = render(body(1))
+    flushDeferred()
+    const [, own] = viewportsIn(container)
+    sized(own!, 100, 500)
+    rerender(body(2))
+    expect(own!.scrollTop).toBe(500)
+
+    own!.scrollTop = 120
+    fireEvent.scroll(own!)
+    rerender(body(3))
+    expect(own!.scrollTop).toBe(120)
+  })
 })

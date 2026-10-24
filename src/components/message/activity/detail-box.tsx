@@ -48,27 +48,11 @@ export function DetailBox({
   className?: string
   bodyClassName?: string
   /** No height cap — for content that caps and scrolls its own parts (the
-   *  halves of a side-by-side diff, each in a `DetailScroll`). */
+   *  halves of a side-by-side diff, a script and its output, each in a
+   *  `DetailScroll`). */
   unbounded?: boolean
 }) {
-  const stickToEnd = useRef(anchor === "end")
-  const followEnd = useCallback((node: HTMLElement) => {
-    if (stickToEnd.current) node.scrollTop = node.scrollHeight
-  }, [])
-  const { viewportRef, onViewportRef, measure } = useEdgeFade(followEnd)
-
-  useLayoutEffect(() => {
-    if (viewportRef.current) followEnd(viewportRef.current)
-  })
-
-  const onScroll = useCallback(() => {
-    const node = viewportRef.current
-    if (node && anchor === "end") {
-      stickToEnd.current =
-        node.scrollTop + node.clientHeight >= node.scrollHeight - 4
-    }
-    measure()
-  }, [anchor, measure, viewportRef])
+  const { onViewportRef, onScroll } = useScrollBody(anchor)
 
   const rule =
     tone === "danger" ? "border-tone-danger/15" : "border-foreground/5"
@@ -166,25 +150,57 @@ function useEdgeFade(onResize?: (viewport: HTMLElement) => void) {
 }
 
 /**
+ * A scroll body's handlers: its edge fade, and its anchor — `"end"` opens it
+ * scrolled to the bottom and keeps it there as content streams in, until the
+ * reader scrolls up from it.
+ */
+function useScrollBody(anchor: "start" | "end") {
+  const stickToEnd = useRef(anchor === "end")
+  const followEnd = useCallback((node: HTMLElement) => {
+    if (stickToEnd.current) node.scrollTop = node.scrollHeight
+  }, [])
+  const { viewportRef, onViewportRef, measure } = useEdgeFade(followEnd)
+
+  useLayoutEffect(() => {
+    if (viewportRef.current) followEnd(viewportRef.current)
+  })
+
+  const onScroll = useCallback(() => {
+    const node = viewportRef.current
+    if (node && anchor === "end") {
+      stickToEnd.current =
+        node.scrollTop + node.clientHeight >= node.scrollHeight - 4
+    }
+    measure()
+  }, [anchor, measure, viewportRef])
+
+  return { onViewportRef, onScroll }
+}
+
+/**
  * A scroll body of its own inside a detail box, capped at the box's height:
- * it scrolls both ways and fades at an edge with more beyond it, as the box's
- * body does — for a part that must keep its sideways scrollbar at the foot of
- * what shows (a half of a side-by-side diff) where the box itself does not
- * scroll (`unbounded`). `onViewportRef` and `onScroll` pass through, to pair
- * two of them.
+ * it scrolls both ways, fades at an edge with more beyond it and keeps to its
+ * `anchor`, as the box's body does — for parts that each keep their
+ * scrollbars at the foot and the side of what shows where the box itself
+ * does not scroll (`unbounded`): the halves of a side-by-side diff, a script
+ * and its output. `onViewportRef` and `onScroll` pass through, to pair two of
+ * them.
  */
 export function DetailScroll({
   children,
   className,
+  anchor = "start",
   onViewportRef,
   onScroll,
 }: {
   children: ReactNode
   className?: string
+  anchor?: "start" | "end"
   onViewportRef?: (viewport: HTMLElement | null) => void
   onScroll?: () => void
 }) {
-  const { onViewportRef: tagViewport, measure } = useEdgeFade()
+  const { onViewportRef: tagViewport, onScroll: ownScroll } =
+    useScrollBody(anchor)
   const handleViewportRef = useCallback(
     (node: HTMLElement | null) => {
       tagViewport(node)
@@ -193,9 +209,9 @@ export function DetailScroll({
     [tagViewport, onViewportRef]
   )
   const handleScroll = useCallback(() => {
-    measure()
+    ownScroll()
     onScroll?.()
-  }, [measure, onScroll])
+  }, [ownScroll, onScroll])
   return (
     <ScrollArea
       className={cn("max-h-72", className)}

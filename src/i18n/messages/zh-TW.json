@@ -3807,7 +3807,6 @@
         "deletedAssistant": "（已刪除）"
       },
       "contentParts": {
-        "scriptToolCalls": "呼叫 {count} 個工具",
         "offset": "位移：{offset}",
         "pages": "頁碼：{pages}",
         "allowLarge": "超出大小限制",
