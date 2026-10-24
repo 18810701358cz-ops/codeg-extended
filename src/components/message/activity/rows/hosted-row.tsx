@@ -39,7 +39,7 @@ export const HostedRow = memo(function HostedRow({
       // beside it (globals.css).
       data-body=""
     >
-      <span className="absolute start-0.5 top-1 flex size-5 items-center justify-center">
+      <span className="absolute start-0 top-1 flex size-5 items-center justify-center">
         <RailIcon
           icon={icon}
           status={status}
@@ -68,7 +68,7 @@ export const NoteRow = memo(function NoteRow({
       // beside a one-line note).
       data-body=""
     >
-      <span className="absolute start-[0.5625rem] top-[0.6875rem] flex size-1.5 items-center justify-center">
+      <span className="absolute start-[0.4375rem] top-[0.6875rem] flex size-1.5 items-center justify-center">
         <RailDot />
       </span>
       <div className="min-w-0 py-0.5" dir="auto">

@@ -120,7 +120,7 @@ export function RailIcon({
  */
 export function WorkingSpinner() {
   return (
-    <span aria-hidden="true" className="absolute start-1 top-1 size-4">
+    <span aria-hidden="true" className="absolute start-0.5 top-1 size-4">
       <span className="absolute inset-0 rounded-full border-[0.5px] border-activity-ring" />
       <span className="absolute inset-0 animate-spin rounded-full border-[1.25px] border-transparent border-t-activity-ring-live motion-reduce:animate-none" />
     </span>

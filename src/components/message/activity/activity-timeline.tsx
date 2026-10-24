@@ -135,7 +135,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
         {rows.map((item) =>
           item === FOLD ? (
             <li key={FOLD} className="activity-item" data-marker="dot">
-              <span className="absolute start-[0.5625rem] top-[0.6875rem] flex size-1.5 items-center justify-center">
+              <span className="absolute start-[0.4375rem] top-[0.6875rem] flex size-1.5 items-center justify-center">
                 <span className="size-1.5 rounded-full bg-muted-foreground/50" />
               </span>
               <button

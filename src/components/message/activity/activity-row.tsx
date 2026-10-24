@@ -13,8 +13,10 @@ import { useRailGrowth } from "./use-rail-growth"
 
 const MARKER_POSITION = {
   main: {
-    ring: "start-0.5 top-1 size-5",
-    dot: "start-[0.5625rem] top-[0.6875rem] size-1.5",
+    // Flush with the reply's left edge, like a group's members: the ring is
+    // the widest mark, so it starts at 0 and the rail runs through its centre.
+    ring: "start-0 top-1 size-5",
+    dot: "start-[0.4375rem] top-[0.6875rem] size-1.5",
   },
   child: {
     ring: "start-0 top-1.5 size-4",

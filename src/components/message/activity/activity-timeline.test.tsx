@@ -526,6 +526,41 @@ describe("activity timeline: where the rail ends", () => {
     expect(list()).toHaveAttribute("data-end", "reached")
   })
 
+  it("starts a row's ring flush with the reply's left edge", () => {
+    // The ring is the widest mark and the widest thing in the column, so it
+    // starts at 0 and the rail runs down its centre (0.625rem) — history and
+    // groups alike, and nothing sits further left than the header above them.
+    renderSettled(partsOf(MOCKUP_ASSISTANT_TURN))
+    const row = list().querySelector(":scope > li")!
+    const marker = row.querySelector(":scope > span")!
+    const classes = marker.className.split(/\s+/)
+    expect(classes).toContain("start-0")
+    expect(classes).not.toContain("start-0.5")
+
+    const stylesheet = postcss.parse(
+      readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8")
+    )
+    const decl = (selector: string, prop: string) => {
+      let value: string | undefined
+      stylesheet.walkRules((rule) => {
+        if (rule.selector.replace(/\s+/g, " ") !== selector) return
+        rule.walkDecls(prop, (d) => {
+          value = d.value
+        })
+      })
+      return value
+    }
+    // The segment under the ring, and a dot's incoming one, follow its centre.
+    for (const selector of [
+      ".activity-item::before",
+      '.activity-item[data-marker="dot"]:not(:first-child)::after',
+    ]) {
+      expect(decl(selector, "inset-inline-start")).toBe(
+        "calc(0.625rem - 0.5px)"
+      )
+    }
+  })
+
   it("levels the end marks with the line the list measures, else a footer's", () => {
     // Each mark is centred on `--activity-end-line` (use-end-mark-line.ts),
     // half its height below it; unmeasured, on a panel footer's, a group
