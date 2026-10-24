@@ -123,6 +123,39 @@ describe("MessageResponse code block chrome", () => {
     expect(positioner.height).toBe(bar.height)
   })
 
+  it("puts a code glyph in the title bar of a fence that names no language", () => {
+    // Streamdown leaves the language label empty, and the bar bare on its
+    // left; the glyph takes the label's place. A fence with a language keeps
+    // its label and gets no glyph.
+    const LABEL = '[data-streamdown="code-block-header"] > span:empty'
+    const { container } = render(
+      <MessageResponse>
+        {["```", "retry 2/5: ECONNRESET", "```", "", "```ts", "x", "```"].join(
+          "\n"
+        )}
+      </MessageResponse>
+    )
+    const [bare, named] = [
+      ...container.querySelectorAll('[data-streamdown="code-block-header"]'),
+    ]
+    expect(bare!.getAttribute("data-language")).toBe("")
+    expect(bare!.firstElementChild!.matches(LABEL)).toBe(true)
+    expect(named!.firstElementChild!.textContent).toBe("ts")
+    expect(named!.firstElementChild!.matches(LABEL)).toBe(false)
+
+    const glyph = declarations(`${LABEL}::before`)
+    expect(glyph).toMatchObject({
+      content: '""',
+      display: "block",
+      "background-color": "currentColor",
+    })
+    // The lucide `code` glyph, as a mask in both spellings (older WebKit).
+    for (const mask of [glyph.mask, glyph["-webkit-mask"]]) {
+      expect(mask).toContain("d='m16 18 6-6-6-6'")
+      expect(mask).toContain("d='m8 6-6 6 6 6'")
+    }
+  })
+
   it("tints the body like its title bar over a background image, a rule between them", () => {
     // Over a workspace background image the bar and the body both take the
     // translucent tint of the reply's other surfaces — the body used to stay
