@@ -274,7 +274,9 @@ describe("activity timeline: the reference turn", () => {
     )
     expect(header.className).toMatch(/\bitems-center\b/)
     const chevron = header.querySelector("svg.lucide-chevron-right")!
-    expect(chevron.getAttribute("class")).toMatch(/\bmt-0\b/)
+    const chevronClasses = chevron.getAttribute("class")!.split(/\s+/)
+    expect(chevronClasses).toContain("mt-0")
+    expect(chevronClasses).toContain("mb-0")
   })
 
   it("folds and unfolds from anywhere on the header", () => {
@@ -536,6 +538,11 @@ describe("activity timeline: where the rail ends", () => {
     const classes = marker.className.split(/\s+/)
     expect(classes).toContain("start-0")
     expect(classes).not.toContain("start-0.5")
+    // A dot's own 0.375rem box is centred on that same line.
+    const dot = list().querySelector(
+      ':scope > li[data-marker="dot"] > span'
+    ) as HTMLElement
+    expect(dot.className.split(/\s+/)).toContain("start-[0.4375rem]")
 
     const stylesheet = postcss.parse(
       readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8")
@@ -559,6 +566,14 @@ describe("activity timeline: where the rail ends", () => {
         "calc(0.625rem - 0.5px)"
       )
     }
+    // The end mark is a 0.5rem ring centred there too, and the working mark
+    // under a live reply starts at the same column.
+    expect(
+      decl(
+        '.activity-timeline[data-end="reached"] > .activity-item:last-child::before',
+        "inset-inline-start"
+      )
+    ).toBe("calc(0.625rem - 0.25rem)")
   })
 
   it("levels the end marks with the line the list measures, else a footer's", () => {
