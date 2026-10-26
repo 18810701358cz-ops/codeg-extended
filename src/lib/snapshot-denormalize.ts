@@ -15,6 +15,7 @@ import type {
   SessionFailureRecord,
   SessionModeStateInfo,
   SessionUsageUpdateInfo,
+  ToolApprovalInfo,
   ToolCallState,
 } from "@/lib/types"
 
@@ -93,6 +94,10 @@ export interface SnapshotPatch {
    *  records, never clobber a fresher live one. `[]` when the server omitted
    *  the field. */
   sessionFailures: SessionFailureRecord[]
+  /** The connection's recent approval records. Merged into the in-memory map
+   *  on both hydrate branches by `mergeToolApprovals` (later decision per call
+   *  wins, so it can only add). `[]` when the server omitted the field. */
+  toolApprovals: ToolApprovalInfo[]
   /** AIR async tasks carried by the snapshot, already merged backend-side.
    *  Terminal rows included — they are the ids subsequent live deltas revise.
    *  `[]` when the server omitted the field. */
@@ -175,6 +180,7 @@ export function denormalizeSnapshot(wire: LiveSessionSnapshot): SnapshotPatch {
     configStaleKind: wire.config_stale_kind ?? null,
     backgroundOutstanding: wire.background_outstanding ?? 0,
     sessionFailures: wire.session_failures ?? [],
+    toolApprovals: wire.tool_approvals ?? [],
     asyncTasks: wire.async_tasks ?? [],
     lastError,
     lastErrorCode,

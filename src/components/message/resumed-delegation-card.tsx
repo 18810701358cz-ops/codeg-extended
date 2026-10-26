@@ -4,9 +4,8 @@
  * Inline card for `resume_delegation` — the sub-agent that came BACK.
  *
  * A resume is only ever about one thing: which interrupted sub-agent is
- * running again. So this card IS the delegation card (`DelegationCardRow`,
- * shared with `DelegatedSubThread`), wearing a ⟳ marker, rather than a second
- * card stating a task id above it.
+ * running again. So this card IS a delegation card (`DelegationCardRow`),
+ * wearing a ⟳ marker, rather than a second card stating a task id above it.
  *
  * That merge is also what makes live and history agree. Live, the broker's
  * running-meta write goes to the ORIGINAL `delegate_to_agent` call's

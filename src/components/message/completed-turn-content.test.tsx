@@ -4,7 +4,9 @@ import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
+import { EMPTY_TOOL_APPROVALS } from "@/lib/activity/approval"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
+import { ActivityLiveProvider } from "./activity/activity-live-context"
 import {
   CompletedTurnContent,
   splitAssistantTurnParts,
@@ -41,6 +43,12 @@ const COMPLETED_PARTS: AdaptedContentPart[] = [
 // between tests. Render tests take a fresh copy.
 const freshCompletedParts = (): AdaptedContentPart[] => [...COMPLETED_PARTS]
 
+/** The header's fold control: its label. */
+const toggle = () =>
+  screen.getByRole("button", { name: /^(Activity|Working)$/ })
+const queryToggle = () =>
+  screen.queryByRole("button", { name: /^(Activity|Working)$/ })
+
 describe("splitAssistantTurnParts", () => {
   it("keeps only the trailing final response outside progress", () => {
     const split = splitAssistantTurnParts(COMPLETED_PARTS)
@@ -64,7 +72,7 @@ describe("splitAssistantTurnParts", () => {
 
 describe("CompletedTurnContent with nothing left to show", () => {
   // A reply that ends on its last tool call has no trailing answer, so
-  // collapsing would leave an empty bubble under a lone "Worked for" chip.
+  // collapsing would leave an empty bubble under a lone header.
   // Reachable on every agent (a turn stopped mid-tool-call) and by design on
   // some: Cline's `attempt_completion` card and a plan-mode turn's
   // ExitPlanMode card ARE the answer.
@@ -90,9 +98,12 @@ describe("CompletedTurnContent with nothing left to show", () => {
     )
 
     // The header still reports the duration — it is the only place that does
-    // now — but as a static row, with no toggle that could hide the reply.
-    expect(screen.getByText("Worked for 5s")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Worked for/ })).toBeNull()
+    // now — but with no toggle that could hide the reply.
+    expect(screen.getByText("Activity")).toBeInTheDocument()
+    // The time follows the step count on the same line.
+    const header = document.querySelector(".ws-msg-chip")!
+    expect(header.textContent).toMatch(/5s$/)
+    expect(queryToggle()).toBeNull()
     expect(screen.getByText("Wrapping up.")).toBeInTheDocument()
     // The completion card renders the result as both its header title and its
     // body, so match on presence rather than a unique node.
@@ -108,7 +119,8 @@ describe("CompletedTurnContent with nothing left to show", () => {
       />
     )
 
-    expect(screen.queryByRole("button", { name: /Worked for/ })).toBeNull()
+    expect(screen.getByText("Activity")).toBeInTheDocument()
+    expect(queryToggle()).toBeNull()
     expect(screen.getAllByText("All done.").length).toBeGreaterThan(0)
   })
 
@@ -149,7 +161,10 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    const trigger = screen.getByRole("button", { name: "Worked for 1m 9s" })
+    expect(document.querySelector(".ws-msg-chip")!.textContent).toMatch(
+      /1m 9s$/
+    )
+    const trigger = toggle()
     expect(trigger).toHaveAttribute("aria-expanded", "false")
     expect(screen.getByText("The fix is complete.")).toBeInTheDocument()
     expect(
@@ -173,7 +188,7 @@ describe("CompletedTurnContent", () => {
     const first = renderWithIntl(
       <CompletedTurnContent parts={parts} durationMs={69_000} completed />
     )
-    fireEvent.click(screen.getByRole("button", { name: "Worked for 1m 9s" }))
+    fireEvent.click(toggle())
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
@@ -183,9 +198,7 @@ describe("CompletedTurnContent", () => {
       <CompletedTurnContent parts={parts} durationMs={69_000} completed />
     )
 
-    expect(
-      screen.getByRole("button", { name: "Worked for 1m 9s" })
-    ).toHaveAttribute("aria-expanded", "true")
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
@@ -200,17 +213,14 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    expect(screen.queryByText("Worked for 1m 9s")).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Working..." })).toHaveAttribute(
-      "aria-expanded",
-      "true"
-    )
+    // A running reply's header says it is working, not how long it took.
+    expect(screen.getByText("Working")).toBeInTheDocument()
+    expect(screen.queryByText(/1m 9s/)).not.toBeInTheDocument()
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /Read src\/app\.tsx/ })
-    ).toBeInTheDocument()
+    expect(screen.getByText("src/app.tsx")).toBeInTheDocument()
     expect(screen.getByText("The fix is complete.")).toBeInTheDocument()
   })
 
@@ -248,20 +258,17 @@ describe("CompletedTurnContent", () => {
       </NextIntlClientProvider>
     )
 
-    expect(
-      screen.getByRole("button", { name: "Worked for 1m 9s" })
-    ).toHaveAttribute("aria-expanded", "true")
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
   })
 
   it("does not replay the unfold when an open reply re-mounts", () => {
-    // This component re-mounts constantly while staying open: the row key flips
-    // `streaming-…` → `persisted-…` the instant a reply settles, the detail
-    // refetch renames the turn, and the virtualizer recycles scrolled-away
-    // rows. Each of those would replay the 200ms unfold — the reply would look
-    // like it collapsed and re-opened by itself.
+    // This component re-mounts while staying open: the detail refetch renames
+    // the turn, and the virtualizer recycles scrolled-away rows. Each of those
+    // would replay the 200ms unfold — the reply would look like it collapsed
+    // and re-opened by itself.
     const foldBody = () =>
       document.querySelector('[data-slot="collapsible-content"]')
 
@@ -270,7 +277,7 @@ describe("CompletedTurnContent", () => {
       <CompletedTurnContent parts={parts} durationMs={69_000} completed />
     )
     // A real toggle DOES animate.
-    fireEvent.click(screen.getByRole("button", { name: "Worked for 1m 9s" }))
+    fireEvent.click(toggle())
     expect(foldBody()).toHaveClass("reply-fold-enter")
     first.unmount()
 
@@ -278,9 +285,7 @@ describe("CompletedTurnContent", () => {
     renderWithIntl(
       <CompletedTurnContent parts={parts} durationMs={69_000} completed />
     )
-    expect(
-      screen.getByRole("button", { name: "Worked for 1m 9s" })
-    ).toHaveAttribute("aria-expanded", "true")
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
     expect(foldBody()).not.toHaveClass("reply-fold-enter")
   })
 
@@ -294,7 +299,7 @@ describe("CompletedTurnContent", () => {
         foldEpoch={3}
       />
     )
-    fireEvent.click(screen.getByRole("button", { name: "Worked for 1m 9s" }))
+    fireEvent.click(toggle())
     expect(
       screen.getByText("I found the relevant component.")
     ).toBeInTheDocument()
@@ -310,9 +315,7 @@ describe("CompletedTurnContent", () => {
       </NextIntlClientProvider>
     )
 
-    expect(
-      screen.getByRole("button", { name: "Worked for 1m 9s" })
-    ).toHaveAttribute("aria-expanded", "false")
+    expect(toggle()).toHaveAttribute("aria-expanded", "false")
     expect(
       screen.queryByText("I found the relevant component.")
     ).not.toBeInTheDocument()
@@ -329,16 +332,16 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    expect(screen.getByText("Worked for 1m 9s")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Worked for/ })).toBeNull()
+    expect(screen.getByText("Reply")).toBeInTheDocument()
+    expect(screen.getByText("1m 9s")).toBeInTheDocument()
+    expect(queryToggle()).toBeNull()
     expect(screen.getByText("Just an answer.")).toBeInTheDocument()
   })
 
   it("keeps a header while the duration has not been backfilled yet", () => {
     // A reply settles before the post-turn reparse patches `duration_ms` onto
     // it. Dropping the header for that window made it blink out between
-    // "Working..." and "Worked for 3s"; the settled-no-duration label holds
-    // the slot instead.
+    // "Working" and "Reply · 3s"; the bare label holds the slot instead.
     renderWithIntl(
       <CompletedTurnContent
         parts={[{ type: "text", text: "Just an answer." }]}
@@ -347,7 +350,7 @@ describe("CompletedTurnContent", () => {
       />
     )
 
-    expect(screen.getByText("Finished working")).toBeInTheDocument()
+    expect(screen.getByText("Reply")).toBeInTheDocument()
     expect(screen.getByText("Just an answer.")).toBeInTheDocument()
   })
 
@@ -358,7 +361,153 @@ describe("CompletedTurnContent", () => {
       <CompletedTurnContent parts={[]} durationMs={null} completed />
     )
 
-    expect(screen.queryByText("Finished working")).not.toBeInTheDocument()
+    expect(screen.queryByText("Reply")).not.toBeInTheDocument()
     expect(container.textContent).toBe("")
+  })
+})
+
+describe("CompletedTurnContent: the turning mark while the agent works", () => {
+  const RUNNING_PARTS = (): AdaptedContentPart[] => [
+    { type: "text", text: "Checking the component." },
+    {
+      type: "tool-call",
+      toolCallId: "call-run",
+      toolName: "Read",
+      input: '{"file_path":"src/app.tsx"}',
+      state: "input-available",
+    },
+  ]
+  const marks = (container: HTMLElement) =>
+    container.querySelectorAll('[data-marker="working"]')
+  const onRail = (container: HTMLElement) =>
+    container.querySelector('.activity-timeline > [data-marker="working"]')
+
+  it("hangs it off the rail while the timeline ends the reply", () => {
+    const { container } = renderWithIntl(
+      <CompletedTurnContent
+        parts={RUNNING_PARTS()}
+        durationMs={null}
+        completed={false}
+      />
+    )
+
+    expect(marks(container)).toHaveLength(1)
+    const mark = onRail(container)
+    // Last on the rail, so the steps that join go in above it.
+    expect(mark).not.toBeNull()
+    expect(mark!.parentElement!.lastElementChild).toBe(mark)
+    expect(mark).toHaveAttribute("aria-hidden", "true")
+    // One plain element turns: every frame restyles it and its children, and
+    // an SVG's turn would lay the page out too, for as long as it streams.
+    const turning = mark!.querySelector(".animate-spin")
+    expect(turning?.tagName).toBe("SPAN")
+    expect(turning?.childElementCount).toBe(0)
+  })
+
+  it("puts it under the answer being written", () => {
+    const { container } = renderWithIntl(
+      <CompletedTurnContent
+        parts={freshCompletedParts()}
+        durationMs={null}
+        completed={false}
+      />
+    )
+
+    expect(marks(container)).toHaveLength(1)
+    expect(onRail(container)).toBeNull()
+    const answer = screen.getByText("The fix is complete.")
+    expect(
+      answer.compareDocumentPosition(marks(container)[0]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it("puts it under a reply with no steps yet, or none at all", () => {
+    const view = renderWithIntl(
+      <CompletedTurnContent parts={[]} durationMs={null} completed={false} />
+    )
+    expect(marks(view.container)).toHaveLength(1)
+
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <CompletedTurnContent
+          parts={[{ type: "text", text: "Let me look." }]}
+          durationMs={null}
+          completed={false}
+        />
+      </NextIntlClientProvider>
+    )
+    expect(marks(view.container)).toHaveLength(1)
+    expect(
+      screen
+        .getByText("Let me look.")
+        .compareDocumentPosition(marks(view.container)[0]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it("moves it under the header when the reader folds the reply", () => {
+    const { container } = renderWithIntl(
+      <CompletedTurnContent
+        parts={RUNNING_PARTS()}
+        durationMs={null}
+        completed={false}
+      />
+    )
+
+    fireEvent.click(toggle())
+
+    expect(toggle()).toHaveAttribute("aria-expanded", "false")
+    expect(marks(container)).toHaveLength(1)
+    expect(onRail(container)).toBeNull()
+  })
+
+  it.each([
+    ["a permission request about one of its calls", "call-run"],
+    ["a question or a plan to approve", null],
+  ])("leaves it out while the agent waits on %s", (_, awaitingToolCallId) => {
+    const { container } = renderWithIntl(
+      <ActivityLiveProvider
+        value={{
+          awaitingToolCallId,
+          awaitingUser: true,
+          approvals: EMPTY_TOOL_APPROVALS,
+        }}
+      >
+        <CompletedTurnContent
+          parts={RUNNING_PARTS()}
+          durationMs={null}
+          completed={false}
+        />
+      </ActivityLiveProvider>
+    )
+
+    expect(marks(container)).toHaveLength(0)
+  })
+
+  it("drops it once the reply is done", () => {
+    const view = renderWithIntl(
+      <CompletedTurnContent
+        parts={RUNNING_PARTS()}
+        durationMs={null}
+        completed={false}
+        currentRound
+        roundOpen
+      />
+    )
+    expect(marks(view.container)).toHaveLength(1)
+
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <CompletedTurnContent
+          parts={RUNNING_PARTS()}
+          durationMs={4_000}
+          completed
+          currentRound
+          roundOpen
+        />
+      </NextIntlClientProvider>
+    )
+    expect(marks(view.container)).toHaveLength(0)
   })
 })

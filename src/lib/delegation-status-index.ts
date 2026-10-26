@@ -98,8 +98,8 @@ function collect(
     if (part.type === "delegation-status-group") {
       out.push(...refsOfPolls(part.polls))
     } else if (part.type === "tool-call") {
-      // A status call the grouper left bare is drawn as a one-poll card of
-      // its own (`DelegationStatusCard`), named by its own call id.
+      // A status call the grouper left bare is drawn as a one-poll row of
+      // its own, named by its own call id.
       if (!isStatusCall(part)) continue
       let polls = singlePollByCall.get(part)
       if (!polls) {
@@ -107,7 +107,7 @@ function collect(
         singlePollByCall.set(part, polls)
       }
       out.push(...refsOfPolls(polls))
-    } else if (part.type === "tool-group" || part.type === "goal-run") {
+    } else if (part.type === "goal-run") {
       collect(part.items, out)
     }
   }

@@ -8,7 +8,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::acp::delegation::types::{BlockedKind, BlockedOn};
+use crate::acp::delegation::types::{
+    BlockedKind, BlockedOn, DelegationProgress, StepMark, LAST_STEP_CAP, MAX_STEP_MARKS,
+};
 use crate::acp::event_stream::{
     images_slice_size, json_str_len, json_value_size, opt_json_size, opt_str_size,
     ConnectionEventStream, RecentEventsBuffer,
@@ -19,7 +21,8 @@ use crate::acp::question::PendingQuestionState;
 use crate::acp::types::{
     AcpEvent, AsyncTaskRecord, AvailableCommandInfo, ConfigStaleKind, ConnectionStatus,
     EventEnvelope, GrokModelCatalog, GrokModelSpec, PromptCapabilitiesInfo, RemoteControlInfo,
-    SessionConfigOptionInfo, SessionFailureRecord, SessionModeStateInfo, ToolCallImageInfo,
+    SessionConfigOptionInfo, SessionFailureRecord, SessionModeStateInfo, ToolApprovalInfo,
+    ToolCallImageInfo,
 };
 use crate::models::agent::AgentType;
 use crate::models::message::MessageRole;
@@ -322,6 +325,15 @@ pub struct SessionState {
     /// pending notes the one-shot `FeedbackSubmitted` event won't replay for it.
     /// Size is human-bounded (one entry per note the user types this turn).
     pub feedback: Vec<FeedbackItem>,
+
+    /// This connection's answered permission requests, as records about their
+    /// tool calls (`AcpEvent::ToolApproval`), oldest first, one per tool call.
+    /// NOT turn-scoped: the transcript keeps drawing a call's approval after
+    /// its turn ends, and a client attaching later has no other live source
+    /// for the ones the lifecycle worker may not have stored yet. Carried on
+    /// `to_snapshot()`; capped at [`MAX_TOOL_APPROVALS`], past which the
+    /// `tool_approval` table serves the transcript on its own.
+    pub tool_approvals: Vec<ToolApprovalInfo>,
 
     /// Launched-but-unresolved background tasks (async sub-agents + background
     /// shell tasks), mirrored from the transcript watcher's authoritative
@@ -662,6 +674,13 @@ pub struct SessionState {
     /// `delegation_call_id`-bound child outcome. Cleared on the next prompt.
     pub last_assistant_text: Option<String>,
 
+    /// The just-completed turn's tool-call progress ([`Self::turn_progress`]),
+    /// captured at TurnComplete beside `last_assistant_text` — by the time the
+    /// delegation broker records a finished child's result, the turn's tool
+    /// calls are already cleared. Backend-internal, like
+    /// `last_assistant_text`.
+    pub last_turn_progress: Option<DelegationProgress>,
+
     /// The in-flight user prompt for the current turn, captured from
     /// `AcpEvent::UserMessage` and cleared on `TurnComplete` (alongside
     /// `live_message`). Carried on `to_snapshot()` so a client attaching
@@ -839,6 +858,7 @@ impl SessionState {
             pending_plan_approval: None,
             active_delegations: BTreeMap::new(),
             feedback: Vec::new(),
+            tool_approvals: Vec::new(),
             background_outstanding: 0,
             background_activity_at: None,
             modes: None,
@@ -881,6 +901,7 @@ impl SessionState {
             async_tasks: BTreeMap::new(),
             async_task_activity_at: None,
             last_assistant_text: None,
+            last_turn_progress: None,
             pending_user_message: None,
             pending_user_message_started_at: None,
             turn_in_flight: false,
@@ -1196,6 +1217,17 @@ impl SessionState {
                     self.pending_permission = None;
                 }
             }
+            AcpEvent::ToolApproval { approval } => {
+                // One record per call: a later answer about the same call
+                // replaces the earlier one and moves to the newest end.
+                self.tool_approvals
+                    .retain(|a| a.tool_call_id != approval.tool_call_id);
+                self.tool_approvals.push(approval.clone());
+                if self.tool_approvals.len() > MAX_TOOL_APPROVALS {
+                    let excess = self.tool_approvals.len() - MAX_TOOL_APPROVALS;
+                    self.tool_approvals.drain(..excess);
+                }
+            }
             AcpEvent::QuestionRequest {
                 question_id,
                 questions,
@@ -1310,6 +1342,7 @@ impl SessionState {
                 // captured.
                 if self.turn_in_flight || self.live_message.is_some() {
                     self.last_assistant_text = None;
+                    self.last_turn_progress = self.turn_progress();
                 }
                 if let Some(live) = self.live_message.as_ref() {
                     let after_last_tool_call = live
@@ -1876,6 +1909,55 @@ impl SessionState {
         None
     }
 
+    /// How far the turn in flight has got, as its tool calls show: how many
+    /// finished, how the latest [`MAX_STEP_MARKS`] of them ended (in the order
+    /// the agent started them), and the latest call's title. `None` while the
+    /// turn has called no tool. Read by the delegation broker for a running
+    /// child's status report.
+    pub fn turn_progress(&self) -> Option<DelegationProgress> {
+        let live = self.live_message.as_ref()?;
+        let mut steps: u32 = 0;
+        let mut marks = std::collections::VecDeque::with_capacity(MAX_STEP_MARKS);
+        let mut latest: Option<&ToolCallState> = None;
+        for block in &live.content {
+            let LiveContentBlock::ToolCallRef { tool_call_id } = block else {
+                continue;
+            };
+            let Some(call) = self.active_tool_calls.get(tool_call_id) else {
+                continue;
+            };
+            latest = Some(call);
+            let mark = match call.status {
+                ToolCallStatus::Completed => StepMark::Ok,
+                ToolCallStatus::Failed => StepMark::Failed,
+                ToolCallStatus::Pending | ToolCallStatus::InProgress => continue,
+            };
+            steps = steps.saturating_add(1);
+            if marks.len() == MAX_STEP_MARKS {
+                marks.pop_front();
+            }
+            marks.push_back(mark);
+        }
+        let latest = latest?;
+        let label = latest.label.trim();
+        Some(DelegationProgress {
+            steps,
+            marks: marks.into(),
+            last_step: (!label.is_empty()).then(|| truncate_one_line(label, LAST_STEP_CAP)),
+        })
+    }
+
+    /// [`Self::turn_progress`] while a turn runs, else what the last turn
+    /// ended with — a delegation child's progress whichever side of its
+    /// `TurnComplete` the broker asks from.
+    pub fn delegation_progress(&self) -> Option<DelegationProgress> {
+        if self.live_message.is_some() {
+            self.turn_progress()
+        } else {
+            self.last_turn_progress.clone()
+        }
+    }
+
     /// The prompt this session is parked on, if any — a permission, an
     /// `ask_user_question`, or a plan approval. `None` means nothing is waiting
     /// on the user.
@@ -2307,6 +2389,7 @@ impl SessionState {
             pending_user_message: self.pending_user_message.clone(),
             active_delegations: self.active_delegations.values().cloned().collect(),
             feedback: self.feedback.clone(),
+            tool_approvals: self.tool_approvals.clone(),
             background_outstanding: self.background_outstanding,
             feedback_tool_available: self.feedback_tool_available,
             native_steering_available: self.native_steering_available,
@@ -2422,6 +2505,12 @@ pub struct LiveSessionSnapshot {
     /// wire so every snapshot stays byte-identical with the pre-feature shape.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub feedback: Vec<FeedbackItem>,
+    /// The connection's recent approval records (see
+    /// `SessionState.tool_approvals`). Same `default` / `skip_serializing_if`
+    /// treatment as `feedback`: absent from older payloads, and off the wire
+    /// for a connection that has answered nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_approvals: Vec<ToolApprovalInfo>,
     /// Launched-but-unresolved background tasks (see
     /// `SessionState.background_outstanding`) — lets a client attaching
     /// mid-episode (web reconnect, new window) recover the pending count the
@@ -2524,6 +2613,12 @@ fn u32_is_zero(v: &u32) -> bool {
 /// budget. That is the same size it ships today.
 const MAX_SNAPSHOT_TOOL_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 
+/// How many approval records [`SessionState::tool_approvals`] keeps. A record
+/// is a few hundred bytes, and a connection that has answered more than this
+/// many permission requests has long had the older ones stored, so the cap
+/// only bounds the snapshot of a very long-lived connection.
+const MAX_TOOL_APPROVALS: usize = 256;
+
 /// The part of a `ToolCallState` a trim actually removes: the RESULT payload,
 /// which grows with what the tool did. Excludes the identity fields (id / kind /
 /// label / status / meta) and `images`, which every entry keeps whatever the
@@ -2614,7 +2709,7 @@ fn parse_tool_call_output_text(text: &str) -> ToolCallOutput {
 /// `PendingPermissionState.tool_call_id`——快查路径（match by id 时不必每次重
 /// 解析整个 tool_call value）。完整 tool_call value 由调用方另行保留，前端
 /// 依赖它做 diff / 命令 / plan 渲染。同时兼容 camelCase / snake_case。
-fn extract_tool_call_id(tool_call: &serde_json::Value) -> String {
+pub(crate) fn extract_tool_call_id(tool_call: &serde_json::Value) -> String {
     tool_call
         .as_object()
         .and_then(|o| {
@@ -3663,6 +3758,98 @@ mod tests {
             s.latest_live_reply(100).as_deref(),
             Some("running tool: grep files")
         );
+    }
+
+    fn tool_call(id: &str, title: &str, status: &str) -> AcpEvent {
+        AcpEvent::ToolCall {
+            tool_call_id: id.into(),
+            title: title.into(),
+            kind: "execute".into(),
+            status: status.into(),
+            content: None,
+            raw_input: None,
+            raw_output: None,
+            locations: None,
+            meta: None,
+            images: None,
+        }
+    }
+
+    fn settle(id: &str, status: &str) -> AcpEvent {
+        AcpEvent::ToolCallUpdate {
+            tool_call_id: id.into(),
+            title: None,
+            status: Some(status.into()),
+            content: None,
+            raw_input: None,
+            raw_output: None,
+            raw_output_append: None,
+            locations: None,
+            meta: None,
+            images: None,
+        }
+    }
+
+    #[test]
+    fn turn_progress_counts_finished_calls_in_the_order_they_started() {
+        let mut s = fresh_state();
+        assert_eq!(s.turn_progress(), None, "no turn, no progress");
+        s.apply_event(&AcpEvent::ContentDelta {
+            text: "on it".into(),
+            parent_tool_use_id: None,
+        });
+        assert_eq!(s.turn_progress(), None, "no tool called yet");
+        // Ids sort the other way round from the order they started in.
+        s.apply_event(&tool_call("z-1", "read a.rs", "in_progress"));
+        s.apply_event(&tool_call("a-2", "pnpm test", "in_progress"));
+        s.apply_event(&tool_call("m-3", "edit a.rs", "in_progress"));
+        s.apply_event(&settle("a-2", "failed"));
+        s.apply_event(&settle("z-1", "completed"));
+        let progress = s.turn_progress().expect("progress");
+        assert_eq!(progress.steps, 2);
+        assert_eq!(progress.marks, vec![StepMark::Ok, StepMark::Failed]);
+        // The latest call, finished or not.
+        assert_eq!(progress.last_step.as_deref(), Some("edit a.rs"));
+    }
+
+    #[test]
+    fn turn_progress_keeps_only_the_latest_marks() {
+        let mut s = fresh_state();
+        for i in 0..MAX_STEP_MARKS + 3 {
+            let id = format!("tc-{i:02}");
+            s.apply_event(&tool_call(&id, "step", "in_progress"));
+            s.apply_event(&settle(&id, if i == 0 { "failed" } else { "completed" }));
+        }
+        let progress = s.turn_progress().expect("progress");
+        assert_eq!(progress.steps as usize, MAX_STEP_MARKS + 3);
+        assert_eq!(progress.marks.len(), MAX_STEP_MARKS);
+        assert!(
+            progress.marks.iter().all(|m| *m == StepMark::Ok),
+            "the oldest (failed) mark fell off the front"
+        );
+    }
+
+    #[test]
+    fn a_finished_turn_keeps_its_progress_for_the_broker() {
+        let mut s = fresh_state();
+        s.apply_event(&tool_call("tc-1", "pnpm build", "in_progress"));
+        s.apply_event(&settle("tc-1", "completed"));
+        let live = s.delegation_progress().expect("live progress");
+        s.apply_event(&AcpEvent::TurnComplete {
+            session_id: "ext".into(),
+            stop_reason: "end_turn".into(),
+            agent_type: "codex".into(),
+        });
+        assert!(s.active_tool_calls.is_empty());
+        assert_eq!(s.turn_progress(), None);
+        assert_eq!(s.delegation_progress(), Some(live));
+        // A repeated TurnComplete (the cancel path's late response) keeps it.
+        s.apply_event(&AcpEvent::TurnComplete {
+            session_id: "ext".into(),
+            stop_reason: "end_turn".into(),
+            agent_type: "codex".into(),
+        });
+        assert!(s.delegation_progress().is_some());
     }
 
     #[test]
@@ -5016,6 +5203,72 @@ mod tests {
             .as_ref()
             .expect("stale PermissionResolved must not clear a non-matching pending permission");
         assert_eq!(p.request_id, "p-2");
+    }
+
+    fn approval(tool_call_id: &str, option_kind: &str) -> ToolApprovalInfo {
+        ToolApprovalInfo {
+            tool_call_id: tool_call_id.into(),
+            option_kind: option_kind.into(),
+            option_name: "Allow".into(),
+            origin: "user".into(),
+            decided_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn tool_approvals_keep_one_record_per_call_across_turns() {
+        let mut s = fresh_state();
+        s.apply_event(&AcpEvent::ToolApproval {
+            approval: approval("tc-1", "allow_once"),
+        });
+        s.apply_event(&AcpEvent::ToolApproval {
+            approval: approval("tc-2", "allow_once"),
+        });
+        // A second answer about the same call replaces the first and becomes
+        // the newest.
+        let again = approval("tc-1", "reject_once");
+        s.apply_event(&AcpEvent::ToolApproval {
+            approval: again.clone(),
+        });
+        // Not turn-scoped: a finished turn keeps its approvals.
+        s.apply_event(&AcpEvent::TurnComplete {
+            session_id: "ext".into(),
+            stop_reason: "end_turn".into(),
+            agent_type: "claude_code".into(),
+        });
+        let ids: Vec<_> = s
+            .tool_approvals
+            .iter()
+            .map(|a| a.tool_call_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["tc-2", "tc-1"]);
+        assert_eq!(s.tool_approvals[1], again);
+
+        let snap = s.to_snapshot();
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let back: LiveSessionSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.tool_approvals, s.tool_approvals);
+        let empty_json = serde_json::to_string(&fresh_state().to_snapshot()).expect("serialize");
+        assert!(
+            !empty_json.contains("tool_approvals"),
+            "a connection that answered nothing keeps the field off the wire"
+        );
+    }
+
+    #[test]
+    fn tool_approvals_drop_the_oldest_past_the_cap() {
+        let mut s = fresh_state();
+        for i in 0..MAX_TOOL_APPROVALS + 3 {
+            s.apply_event(&AcpEvent::ToolApproval {
+                approval: approval(&format!("tc-{i}"), "allow_once"),
+            });
+        }
+        assert_eq!(s.tool_approvals.len(), MAX_TOOL_APPROVALS);
+        assert_eq!(s.tool_approvals[0].tool_call_id, "tc-3");
+        assert_eq!(
+            s.tool_approvals.last().map(|a| a.tool_call_id.as_str()),
+            Some(format!("tc-{}", MAX_TOOL_APPROVALS + 2).as_str())
+        );
     }
 
     #[test]

@@ -206,8 +206,11 @@ export function ContextCompactionCard({ state, meta, summary }: Props) {
         : t("compacted")
   const summaryText =
     typeof summary === "string" && summary.trim().length > 0 ? summary : null
+  // `ws-msg-scope`: its hairlines are the transcript's, which a workspace
+  // background image darkens (globals.css) — it sits between messages, not in
+  // one.
   const divider = (
-    <div className="flex items-center gap-3 py-1 text-xs text-muted-foreground/80 select-none">
+    <div className="ws-msg-scope flex items-center gap-3 py-1 text-xs text-muted-foreground/80 select-none">
       <div className="h-px flex-1 bg-gradient-to-r from-transparent to-border/70" />
       <div
         className={`flex shrink-0 items-center gap-1.5${failed ? " text-destructive/80" : ""}`}
@@ -240,7 +243,7 @@ export function ContextCompactionCard({ state, meta, summary }: Props) {
   )
   if (summaryText === null) return divider
   return (
-    <div>
+    <div className="ws-msg-scope">
       {divider}
       {summaryOpen ? (
         <CompactionSummaryBody

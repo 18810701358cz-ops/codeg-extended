@@ -30,6 +30,7 @@ import {
 } from "streamdown"
 import { markdownLinkComponents } from "./markdown-link"
 import { messageBlockComponents } from "./json-render-pre"
+import { scrollportComponents } from "./markdown-scrollport"
 import { maskLiteralSpans } from "./markdown-mask"
 import { rehypePluginsAllowingCodeg } from "./rehype-allow-codeg"
 import { remarkTrimCjkAutolinkTail } from "./remark-cjk-autolink-tail"
@@ -37,6 +38,7 @@ import { withRelativeFileLinks } from "./rehype-relative-file-links"
 import { remarkRewriteFileUriLinks } from "./remark-file-uri-links"
 import { remarkRestoreWindowsPaths } from "./remark-windows-paths"
 import { remarkLocalImages } from "./remark-local-images"
+import { rehypeListDirection } from "./rehype-list-direction"
 import { markdownLocalImageComponents } from "./markdown-local-image"
 import { MATH_FENCE_PAD, useStreamdownPlugins } from "./streamdown-plugins"
 
@@ -76,8 +78,11 @@ export const MessageContent = ({
       // with a hairline ring (fixed `--ws-msg-alpha` + backdrop blur — see
       // globals.css, scoped to `.is-user`) so it stays legible over a busy
       // background. Off / assistant messages: inert (no base rule, no `.is-user`
-      // ancestor).
-      "group-[.is-user]:ml-auto group-[.is-user]:w-fit group-[.is-user]:max-w-full group-[.is-user]:rounded-lg group-[.is-user]:bg-secondary group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground ws-msg-secondary",
+      // ancestor). Its radius is half a one-line bubble's height at the
+      // default `--radius` (2.2 × 0.625rem against 0.75rem + 1.25rem +
+      // 0.75rem), so a line is a capsule and a longer message keeps the same
+      // round corners.
+      "group-[.is-user]:ml-auto group-[.is-user]:w-fit group-[.is-user]:max-w-full group-[.is-user]:rounded-3xl group-[.is-user]:bg-secondary group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground ws-msg-secondary",
       "group-[.is-assistant]:w-full group-[.is-assistant]:text-foreground",
       className
     )}
@@ -481,9 +486,10 @@ const remarkPlugins = [
 // …and relative local links (`./a.md`, `src/a.md`, `~/a.md`) keep their href
 // through harden, which would otherwise flatten them to a root path or block
 // them. See rehype-relative-file-links.
-const rehypePlugins = rehypePluginsAllowingCodeg(
-  withRelativeFileLinks(defaultRehypePlugins)
-)
+const rehypePlugins = [
+  ...rehypePluginsAllowingCodeg(withRelativeFileLinks(defaultRehypePlugins)),
+  rehypeListDirection,
+]
 
 /**
  * How finished Markdown renders. Streamdown defaults to `mode="streaming"` +
@@ -557,7 +563,13 @@ function MessageResponseImpl({
   return (
     <Streamdown
       className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-3 [&_ol]:pl-3",
+        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:ps-2 [&_ol]:ps-2",
+        // Each block takes the direction of its own text (`dir="auto"`
+        // below), so indents and rules go on the logical start side. An item
+        // re-states `text-align: start`: the UA gives <li>
+        // `-webkit-match-parent`, which would align an English item in an
+        // Arabic list (or the reverse) by the list's side, not its own.
+        "[&_li]:text-start",
         // Streamdown gives `blockquote` its own `border-l-4
         // border-muted-foreground/30 … italic`, but those class names live in
         // node_modules, which Tailwind v4 does not scan — so the two border
@@ -565,11 +577,13 @@ function MessageResponseImpl({
         // with no rule (the `pl-4`/`my-4`/`text-muted-foreground` on the same
         // element only survive because they happen to be used elsewhere in src).
         // Re-declare the rule here, where it IS scanned; the descendant selector
-        // also outranks Streamdown's plain utility class. No `pl-*` — its `pl-4`
-        // already works and a same-specificity duplicate would be a coin flip.
+        // also outranks Streamdown's plain utility class. Rule and indent sit
+        // on the quote's start side, which follows its text: in a left-to-right
+        // quote `ps-4` is Streamdown's own `pl-4`; in a right-to-left one `pe-0`
+        // drops that left padding.
         // Upright, not italic: CJK has no true italic, so a browser fakes it by
         // skewing, which looks broken.
-        "[&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:not-italic",
+        "[&_blockquote]:border-s-2 [&_blockquote]:border-border [&_blockquote]:ps-4 [&_blockquote]:pe-0 [&_blockquote]:not-italic",
         className
       )}
       plugins={plugins}
@@ -578,15 +592,21 @@ function MessageResponseImpl({
       mode={mode}
       parseIncompleteMarkdown={parseIncompleteMarkdown}
       remend={remend ? { ...remend, ...LIVE_REMEND } : LIVE_REMEND}
+      // Every paragraph, heading, list item, quote and cell takes the
+      // direction of its own text (code stays left-to-right): an English reply
+      // in the Arabic interface reads left-to-right with its full stop at the
+      // end, and an Arabic one in an English interface the other way.
+      dir="auto"
       {...props}
       // Merge after spreading props so a caller can still override other
-      // elements, but the link icon + safety routing on `a` — and the diagram
-      // and json-render blocks on `pre` — always win.
+      // elements, but the link icon + safety routing on `a`, the diagram and
+      // json-render blocks on `pre` and the table's scrollbars always win.
       components={{
         ...props.components,
         ...markdownLinkComponents,
         ...markdownLocalImageComponents,
         ...messageBlockComponents,
+        ...scrollportComponents,
       }}
     >
       {normalized}

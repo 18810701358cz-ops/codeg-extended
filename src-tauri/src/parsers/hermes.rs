@@ -328,6 +328,7 @@ impl HermesParser {
                         is_error: false,
                         agent_stats: None,
                         images: Vec::new(),
+                        exit_code: None,
                     });
                 }
                 MessageRole::System => continue,

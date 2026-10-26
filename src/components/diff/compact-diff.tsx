@@ -21,21 +21,21 @@ const MAX_ROWS = 400
 
 const ROW_TINT: Record<ParsedDiffRow["type"], string> = {
   context: "",
-  added: "bg-green-500/10",
-  deleted: "bg-red-500/10",
-  modified: "bg-blue-500/10",
+  added: "bg-diff-added",
+  deleted: "bg-diff-deleted",
+  modified: "bg-diff-modified",
 }
 
 const CELL_TINT: Record<SplitCell["marker"], string> = {
   none: "",
-  added: "bg-green-500/10",
-  deleted: "bg-red-500/10",
-  modified: "bg-blue-500/10",
+  added: "bg-diff-added",
+  deleted: "bg-diff-deleted",
+  modified: "bg-diff-modified",
 }
 
 const SIGN_CLASS: Record<ParsedDiffRow["sign"], string> = {
-  "+": "text-green-700 dark:text-green-400",
-  "-": "text-red-700 dark:text-red-400",
+  "+": "text-diff-added-fg",
+  "-": "text-diff-deleted-fg",
   " ": "",
 }
 
@@ -268,10 +268,10 @@ function SplitRows({
  * lines instead of scrolling them sideways, so a change can be read without
  * leaving the panel; `view` lays it out inline or side by side.
  *
- * It draws no frame and no scroll box of its own: the host frames it, and a
- * tall diff grows the panel, which already scrolls, rather than trapping the
- * wheel in a box inside it. A very long one shows its first rows and offers
- * the rest.
+ * It draws no frame, no background and no scroll box of its own: the host
+ * frames it on its surface, and a tall diff grows the panel, which already
+ * scrolls, rather than trapping the wheel in a box inside it. A very long one
+ * shows its first rows and offers the rest.
  */
 export function CompactDiff({
   diffText,
@@ -314,7 +314,7 @@ export function CompactDiff({
   )
 
   const root = cn(
-    "bg-background font-mono text-2xs leading-[1.125rem] [tab-size:2]",
+    "font-mono text-2xs leading-[1.125rem] [tab-size:2]",
     className
   )
 

@@ -2,8 +2,9 @@
 
 /**
  * Who a delegation card says ran the task, drawn the same way on every surface
- * that shows one: the card row, the session drawer's header and the top-right
- * overlay.
+ * that shows one: the card row, the session drawer's header, the top-right
+ * overlay, and the status rings of the activity timeline and the Session
+ * Details navigator.
  *
  * An assistant shows its own avatar with a small badge of the agent it ran on,
  * and its name followed by a muted "· Agent"; a bare agent shows the agent's
@@ -27,7 +28,7 @@ import { getAgentLabel } from "@/lib/custom-agents"
 import { cn } from "@/lib/utils"
 import { useAssistant } from "@/stores/assistants-store"
 
-export type DelegationIdentitySize = "card" | "compact" | "header" | "overlay"
+export type DelegationIdentitySize = "card" | "header" | "overlay"
 
 const AVATAR: Record<
   DelegationIdentitySize,
@@ -48,16 +49,6 @@ const AVATAR: Record<
     placeholder: "h-2.5 w-2.5",
     corner: "h-4 w-4",
     cornerIcon: "h-2.5 w-2.5",
-  },
-  // The 28px disc of the compact card the Session Details side panel lists a
-  // message's sub-agents with.
-  compact: {
-    px: 28,
-    box: "h-7 w-7 rounded-full",
-    agentIcon: "h-4 w-4",
-    placeholder: "h-2 w-2",
-    corner: "h-3.5 w-3.5",
-    cornerIcon: "h-2 w-2",
   },
   // The session drawer header's 28px tile.
   header: {
@@ -153,6 +144,31 @@ export function DelegationIdentityAvatar({
         </span>
       ) : null}
     </span>
+  )
+}
+
+/** The agent's logo — or the assistant's avatar — sized to sit inside a 20px
+ *  status ring (`RailIcon`): a delegation's row in the activity timeline, and
+ *  a sub-agent of a message in the Session Details navigator. */
+export function DelegationIdentityGlyph({
+  identity,
+}: {
+  identity: DelegationIdentity
+}) {
+  const assistant = useAssistant(identity.assistantId)
+  if (identity.assistantId !== null) {
+    return (
+      <AssistantAvatar
+        avatar={assistant?.avatar ?? null}
+        name={assistant?.name ?? identity.assistantName ?? ""}
+        size={14}
+      />
+    )
+  }
+  return identity.agentType ? (
+    <AgentIcon agentType={identity.agentType} className="size-3" />
+  ) : (
+    <span className="size-1.5 rounded-sm bg-muted-foreground/60" />
   )
 }
 

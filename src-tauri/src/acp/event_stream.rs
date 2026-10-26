@@ -540,9 +540,12 @@ fn content_block_size(block: &crate::models::message::ContentBlock) -> usize {
             is_error: _,
             agent_stats,
             images,
+            exit_code,
         } => {
             128 + opt_str_size(tool_use_id)
                 + opt_str_size(output_preview)
+                // `,"exit_code":` plus up to 20 digits and a sign.
+                + exit_code.map_or(0, |_| 40)
                 + agent_stats.as_ref().map_or(0, agent_stats_size)
                 + images
                     .iter()
@@ -1068,6 +1071,7 @@ mod tests {
                         child_session_id: Some("019fe6bf-0bcb-70c2-a02d-e5c006dfc32a".into()),
                     }),
                     images: vec![image],
+                    exit_code: Some(i64::MIN),
                 },
             ],
             timestamp: chrono::Utc::now(),

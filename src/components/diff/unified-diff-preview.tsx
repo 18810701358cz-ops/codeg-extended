@@ -81,14 +81,14 @@ interface WorkingFile {
 
 const ROW_CLASS: Record<RowMarker, string> = {
   none: "",
-  added: "bg-green-500/10 text-green-900 dark:text-green-300",
-  deleted: "bg-red-500/10 text-red-900 dark:text-red-300",
-  modified: "bg-blue-500/10 text-blue-900 dark:text-blue-300",
+  added: "bg-diff-added",
+  deleted: "bg-diff-deleted",
+  modified: "bg-diff-modified",
 }
 
 const SIGN_CLASS: Record<string, string> = {
-  "+": "text-green-700 dark:text-green-400",
-  "-": "text-red-700 dark:text-red-400",
+  "+": "text-diff-added-fg",
+  "-": "text-diff-deleted-fg",
   " ": "text-muted-foreground/50",
 }
 
@@ -1012,12 +1012,8 @@ function DiffFileSection({
               dir="ltr"
               className="inline-flex shrink-0 items-center gap-2 font-mono"
             >
-              <span className="text-green-700 dark:text-green-400">
-                +{file.additions}
-              </span>
-              <span className="text-red-700 dark:text-red-400">
-                -{file.deletions}
-              </span>
+              <span className="text-tone-success">+{file.additions}</span>
+              <span className="text-tone-danger">-{file.deletions}</span>
             </span>
           )}
           {!newFile && !file.binary && (

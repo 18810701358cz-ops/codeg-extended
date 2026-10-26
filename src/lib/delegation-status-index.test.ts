@@ -64,22 +64,16 @@ describe("collectDelegationStatusTasks", () => {
         poll("p1", ["a", "b"], [report("a", "running"), report("b", "running")])
       ),
       { type: "text", text: "Still waiting." },
-      // A status call the grouper left bare: its own one-poll card.
+      // A status call the grouper left bare: its own one-poll row.
       poll("p2", ["a"]),
       {
-        type: "tool-group",
-        isStreaming: false,
-        items: [
-          {
-            type: "tool-call",
-            toolCallId: "r1",
-            toolName: "Read",
-            input: "{}",
-            state: "output-available",
-          },
-          poll("p3", ["b"], [report("b", "running")], "get_delegation_status"),
-        ],
+        type: "tool-call",
+        toolCallId: "r1",
+        toolName: "Read",
+        input: "{}",
+        state: "output-available",
       },
+      poll("p3", ["b"], [report("b", "running")], "get_delegation_status"),
       {
         type: "goal-run",
         start: {

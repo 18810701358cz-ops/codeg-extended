@@ -433,6 +433,10 @@ function parseGrokTaskOutputEnvelopes(text: string): BackgroundTaskEnvelope[] {
     .filter((e): e is BackgroundTaskEnvelope => e !== null)
 }
 
+/** A tag a Claude Code poll envelope cannot do without (see
+ *  `parsePollEnvelope`). */
+const POLL_TAG_RE = /<(?:retrieval_status|task_type|task_id)>/i
+
 /** Every task reported by one background-task tool result: a single envelope for
  *  Claude Code's poll/stop and CodeBuddy's plain-text snapshot shapes, and one
  *  per task for Grok's `TaskOutput` (whose `MultiResult` variant can cover
@@ -443,12 +447,18 @@ export function parseBackgroundTaskEnvelopes(
 ): BackgroundTaskEnvelope[] {
   const raw = text?.trim()
   if (!raw) return []
+  // This runs on every tool call's result while a reply is adapted, and the
+  // parsers are not cheap (a regex per tag, a JSON parse, a split into lines).
+  // Each shape is recognizable up front, so ordinary output skips them all.
+  const json = raw.startsWith("{")
   const single =
-    parsePollEnvelope(raw) ??
-    parseStopEnvelope(raw) ??
-    parseCodeBuddySnapshot(raw)
+    (POLL_TAG_RE.test(raw) ? parsePollEnvelope(raw) : null) ??
+    (json ? parseStopEnvelope(raw) : null) ??
+    (raw.startsWith("Task ID: ") || raw.startsWith("Shell ID: ")
+      ? parseCodeBuddySnapshot(raw)
+      : null)
   if (single) return [single]
-  return parseGrokTaskOutputEnvelopes(raw)
+  return json ? parseGrokTaskOutputEnvelopes(raw) : []
 }
 
 /** Parse a background-task tool result into its structured envelope, or `null`

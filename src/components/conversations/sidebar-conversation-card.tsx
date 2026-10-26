@@ -575,10 +575,16 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                           className="relative inline-flex shrink-0 items-center justify-center"
                           title={tSidebar("statusRunningBadge")}
                         >
-                          <Loader2
-                            className="h-3.5 w-3.5 animate-spin text-amber-600 dark:text-amber-400"
+                          {/* The turn is on a span, not the icon: an SVG
+                              element's transform animates on the main thread,
+                              laying the page out every frame for as long as
+                              the conversation runs. */}
+                          <span
+                            className="inline-flex animate-spin"
                             aria-hidden
-                          />
+                          >
+                            <Loader2 className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                          </span>
                           <span className="sr-only">
                             {tSidebar("statusRunningBadge")}
                           </span>

@@ -4,23 +4,23 @@
  * DelegationContext — tracks live parent ↔ child delegation bindings
  * indexed by `parent_tool_use_id`.
  *
- * The parent's `delegate_to_agent` ToolCallBlock needs to render the child
+ * The parent's `delegate_to_agent` row needs to show the child
  * sub-session inline. Both wire events (`delegation_started` /
  * `delegation_completed`) are emitted on the *parent*'s connection stream by
  * the broker, so this context subscribes via the provider's `useAcpEvent`
  * fanout — which is fed by the Tauri firehose AND the per-connection attach
  * streams, so it behaves identically in desktop and web/server runtimes. It
  * filters the two delegation variants and exposes a tool-use-id-keyed lookup
- * so ToolCallBlock can resolve the binding by the field it already has in hand.
+ * so the row can resolve the binding by the field it already has in hand.
  *
  * State stays in-memory; persistence across reloads relies on the
  * parent_tool_use_id stored on the child's DB row (Phase 7).
  *
  * On the child's blocking prompts: attaching the child (below) is what makes
  * them visible at all. The permission store stays per-connection — a child's
- * `permission_request` is never re-keyed onto the parent's ToolCallBlock — but
+ * `permission_request` is never re-keyed onto the parent's row — but
  * because the child IS a connection in the store, `useDelegationCardModel`
- * reads its pending prompts directly and badges the delegation card
+ * reads its pending prompts directly and badges the delegation row
  * "waiting", and both `SubAgentSessionDialog` and the `get_delegation_status`
  * row (`useDelegationTaskLive`, found by task id) answer through the child's
  * own connection id. Surfaces OUTSIDE this transcript (the pet badge/panel,
@@ -69,7 +69,7 @@ export interface DelegationBinding {
   assistantName: string | null
 }
 
-interface DelegationContextValue {
+export interface DelegationContextValue {
   findByParentToolUseId(id: string): DelegationBinding | undefined
   findByChildConversationId(id: number): DelegationBinding | undefined
   /**
@@ -89,6 +89,24 @@ export function useDelegation(): DelegationContextValue {
     throw new Error("useDelegation must be used within DelegationProvider")
   }
   return ctx
+}
+
+/**
+ * Fixed lookups in place of the live provider — for surfaces that render chat
+ * cards outside a workspace (the activity gallery page, component tests).
+ */
+export function StaticDelegationProvider({
+  value,
+  children,
+}: {
+  value: DelegationContextValue
+  children: ReactNode
+}) {
+  return (
+    <DelegationContext.Provider value={value}>
+      {children}
+    </DelegationContext.Provider>
+  )
 }
 
 /** The lookups, or `null` outside `DelegationProvider` — for a card that only
@@ -165,7 +183,7 @@ export function DelegationProvider({ children }: { children: ReactNode }) {
         cancelDetachTimer(envelope.parent_tool_use_id)
         // Pull the child connection into the reducer so its
         // streaming text / tool calls / pendingPermission reach
-        // the parent's DelegatedSubThread inline. A binding re-seeded from
+        // the parent's delegation row. A binding re-seeded from
         // the parent's snapshot names a child that is already mid-turn —
         // possibly parked on a permission it raised before this client
         // attached — so that one is hydrated from the child's own snapshot.

@@ -49,6 +49,7 @@ import {
 import { useAppearance } from "@/hooks/use-appearance"
 import { saveDiagram, type DiagramFormat } from "@/lib/mermaid-export"
 import { cn, copyTextToClipboard } from "@/lib/utils"
+import { overlayScrollportRef } from "./markdown-scrollport"
 import {
   clampOffset,
   containZoom,
@@ -928,6 +929,10 @@ PlantUmlBlock.displayName = "PlantUmlBlock"
  * `code` component reads to tell a fenced block from inline code. Dropping it
  * would render every code fence as inline code, so the passthrough is
  * load-bearing.
+ *
+ * The passthrough also hands the code element a ref, which Streamdown passes
+ * on with the element's other props to the block's scrolling body: the body
+ * gets the app's overlay scrollbars.
  */
 export function MermaidAwarePre({ children }: { children?: ReactNode }) {
   if (!isValidElement(children)) return <>{children}</>
@@ -935,9 +940,13 @@ export function MermaidAwarePre({ children }: { children?: ReactNode }) {
   if (mermaid !== null) return <MermaidBlock source={mermaid} />
   const plantUml = plantUmlSourceFromPre(children)
   if (plantUml !== null) return <PlantUmlBlock source={plantUml} />
-  return cloneElement(children as ReactElement<{ "data-block"?: string }>, {
-    "data-block": "true",
-  })
+  return cloneElement(
+    children as ReactElement<{
+      "data-block"?: string
+      ref?: typeof overlayScrollportRef
+    }>,
+    { "data-block": "true", ref: overlayScrollportRef }
+  )
 }
 
 export const mermaidComponents: Components = {

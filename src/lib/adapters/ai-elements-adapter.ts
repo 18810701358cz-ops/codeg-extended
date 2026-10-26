@@ -75,7 +75,7 @@ export type AdaptedToolCallPart = {
    * Forwarded ACP tool-call status for live/promoted turns (`ContentBlock.
    * tool_use.status`); absent/`null` for DB-persisted rows (the Rust `ToolUse`
    * model has no status field). Consumed via `isUnsettledToolCall` by both the
-   * generic tool-group filter (`dropEmptyInFlightToolCalls`) and the specialized
+   * generic empty-call filter (`dropEmptyInFlightToolCalls`) and the specialized
    * lane row-builders (`buildDelegationTaskRows` / `buildBackgroundTaskRows`) to
    * recognise an interrupted arg-less orphan that survives `COMPLETE_TURN`
    * promotion (its `state` flips to `output-available`, but its status stays
@@ -85,9 +85,10 @@ export type AdaptedToolCallPart = {
   /**
    * ACP extensibility metadata forwarded from `ContentBlock.tool_use.meta`.
    * Opaque pass-through, read by narrow accessors rather than interpreted here:
-   * `<DelegatedSubThread>` takes `meta["codeg.delegation"]` as a binding
+   * the delegation row takes `meta["codeg.delegation"]` as a binding
    * fallback when the live DelegationContext entry is missing (page refresh,
-   * late mount), and the command card takes
+   * late mount), every row takes `meta["codeg.approval"]` for the approval
+   * the user gave the call, and the command row takes
    * `meta.jetbrains.air.asyncTasks.backgrounded` (`toolCallMovedToBackground`)
    * to explain a call that will never settle inside the turn.
    */
@@ -100,14 +101,17 @@ export type AdaptedToolCallPart = {
    * markers index into `agentStats.tool_calls`.
    */
   agentTranscript?: AgentTranscriptEntry[] | null
+  /** The command's exit code, when the transcript keeps it as a field
+   *  (`ContentBlock.tool_result.exit_code`). */
+  exitCode?: number | null
 }
 
 /**
  * Inline rendering of codex-acp v0.14+ image generation. Mirrors the
  * `ContentBlock::ImageGeneration` data shape. Distinct from regular tool
- * calls so it never folds into a `tool-group` — each image stands alone
- * with its own labeled card. One image per part — multi-image turns are
- * already split into multiple consecutive blocks at the runtime layer.
+ * calls: each image stands alone, drawn in place with its own label. One
+ * image per part — multi-image turns are already split into multiple
+ * consecutive blocks at the runtime layer.
  *
  * `status` lets the renderer distinguish "still generating" from "the call
  * failed without producing an image" when `image` is null. `null` means
@@ -133,8 +137,8 @@ export type AdaptedGoalRunPart = {
 }
 
 /**
- * A plan / todo checklist, rendered by the dedicated `<PlanCard>` instead of
- * the generic tool card (and never as a `reasoning`/thinking block). Produced
+ * A plan / todo checklist, drawn as the timeline's plan row instead of a
+ * generic tool call (and never as a `reasoning`/thinking block). Produced
  * from two converging sources:
  *   - the LIVE synthetic `ContentBlock.plan` (ACP PlanUpdate → reducer), and
  *   - a persisted plan-like `TodoWrite` tool_use (converted in
@@ -172,11 +176,6 @@ export type AdaptedContentPart =
       state: "output-available" | "output-error"
     }
   | { type: "reasoning"; content: string; isStreaming: boolean }
-  | {
-      type: "tool-group"
-      items: AdaptedToolCallPart[]
-      isStreaming: boolean
-    }
   /**
    * A run of consecutive `get_delegation_status` poll cards, merged into one
    * card. When a delegated task runs longer than the 60s status-wait cap, the
@@ -1656,93 +1655,10 @@ function adaptImageToolResultParts(
 }
 
 /**
- * Merge adjacent tool-group parts in a parts array into a single tool-group.
- * Used for cross-turn merging when concatenated content from consecutive
- * assistant turns lands two tool-groups next to each other.
- */
-export function mergeAdjacentToolGroups(
-  parts: AdaptedContentPart[]
-): AdaptedContentPart[] {
-  const result: AdaptedContentPart[] = []
-  for (const part of parts) {
-    const last = result[result.length - 1]
-    if (part.type === "tool-group" && last?.type === "tool-group") {
-      const mergedItems = [...last.items, ...part.items]
-      result[result.length - 1] = {
-        type: "tool-group",
-        items: mergedItems,
-        isStreaming: mergedItems.some(
-          (item) =>
-            item.state === "input-streaming" || item.state === "input-available"
-        ),
-      }
-    } else {
-      result.push(part)
-    }
-  }
-  return result
-}
-
-/**
- * Wrap any consecutive run of tool-call parts into a single tool-group.
- * Text, reasoning, tool-result and any other part types break the run.
- * Even a single tool call is wrapped, so the renderer can present a uniform
- * collapsed summary across history.
- */
-export function groupConsecutiveToolCalls(
-  parts: AdaptedContentPart[]
-): AdaptedContentPart[] {
-  const result: AdaptedContentPart[] = []
-  let buffer: AdaptedToolCallPart[] = []
-
-  const flush = () => {
-    if (buffer.length === 0) return
-    const items = buffer
-    buffer = []
-    const isStreaming = items.some(
-      (item) =>
-        item.state === "input-streaming" || item.state === "input-available"
-    )
-    result.push({ type: "tool-group", items, isStreaming })
-  }
-
-  for (const part of parts) {
-    if (
-      part.type === "tool-call" &&
-      !isAgentLikeToolName(part.toolName) &&
-      // Plan-mode tools (EnterPlanMode/ExitPlanMode/switch_mode) render through
-      // a dedicated <PlanModeCard>, so they break the run instead of folding
-      // into a "思考 N 次" tool-group. `part.toolName` is the raw name here;
-      // `isPlanModeToolName` normalizes it internally.
-      !isPlanModeToolName(part.toolName) &&
-      // Claude Code background-task polls (TaskOutput/TaskStop) render through a
-      // dedicated <BackgroundTaskCard> that merges a task's repeated polls, so
-      // they break the run instead of folding into a "执行 N 个任务" tool-group.
-      !isBackgroundTaskToolCall(part) &&
-      // Context-compaction items (codex `_meta.contextCompaction`, and Grok's
-      // synthesized auto_compact card) render through the dedicated subtle
-      // <ContextCompactionCard>, so they break the run and render standalone
-      // instead of being wrapped in a single-item "调用 1 个工具" tool-group.
-      !isContextCompactionMeta(part.meta)
-    ) {
-      buffer.push(part)
-      continue
-    }
-    flush()
-    result.push(part)
-  }
-  flush()
-
-  return result
-}
-
-/**
  * Drop `check_user_feedback` tool-call parts that have nothing to surface — the
  * no-op polls (count: 0), in-flight checks, and unparseable results. Only checks
  * that actually received steering notes (or errored) survive, so a turn full of
- * routine "no new feedback" polls stays clean and the survivors don't fragment
- * a neighbouring tool run into separate groups. Runs before
- * `groupConsecutiveToolCalls` so the dropped parts never reach grouping.
+ * routine "no new feedback" polls stays clean.
  */
 export function dropHiddenFeedbackChecks(
   parts: AdaptedContentPart[]
@@ -1791,9 +1707,9 @@ function toolCallHasInput(input: string | null | undefined): boolean {
  * interrupted and retried (connection error / Claude API retry), the aborted
  * attempt's arg-less `tool_call` — which carries its own id, never gets refined,
  * and is never written to the JSONL transcript — lingers in `liveMessage`. It
- * then inflates the "运行 N 个命令" tool-group count and renders as a blank
- * `bash · 运行中` card. The settled view (rebuilt from the transcript) never
- * contains it, hence the live-only mismatch.
+ * then inflates the reply's command count and draws as a blank running
+ * command. The settled view (rebuilt from the transcript) never contains it,
+ * hence the live-only mismatch.
  *
  * Two render passes see the orphan, so the predicate spans both: (1) during
  * streaming its state is `input-available` (running); (2) after `COMPLETE_TURN`
@@ -1803,13 +1719,11 @@ function toolCallHasInput(input: string | null | undefined): boolean {
  * authoritative detail reload replaces the promoted copy. DB-persisted history
  * carries no forwarded status, so it is exempt.
  *
- * The lane guard mirrors `groupConsecutiveToolCalls`'s fold condition exactly,
- * so this only ever removes parts that would fold into a generic tool-group.
- * Every specialized lane (agent/delegation/ask/feedback/goal via
- * `isAgentLikeToolName`, plan-mode, background-task) is left untouched — those
- * render through their own cards and handle their own empty in-flight polls
- * (see commit 1ddf751b, same disease in the other lanes). Runs before
- * `groupConsecutiveToolCalls`.
+ * Only generic calls are ever removed. Every specialized lane
+ * (agent/delegation/ask/feedback/goal via `isAgentLikeToolName`, plan-mode,
+ * background-task, context compaction) is left untouched — those draw through
+ * their own rows and handle their own empty in-flight polls (see commit
+ * 1ddf751b, same disease in the other lanes).
  */
 export function dropEmptyInFlightToolCalls(
   parts: AdaptedContentPart[]
@@ -1820,7 +1734,10 @@ export function dropEmptyInFlightToolCalls(
     if (
       isAgentLikeToolName(part.toolName) ||
       isPlanModeToolName(part.toolName) ||
-      isBackgroundTaskToolCall(part)
+      isBackgroundTaskToolCall(part) ||
+      // A compaction runs with no arguments until it completes; dropping it
+      // would hide the "compacting" divider for as long as it works.
+      isContextCompactionMeta(part.meta)
     ) {
       return true
     }
@@ -1841,13 +1758,11 @@ export function dropEmptyInFlightToolCalls(
 
 /**
  * Wrap each run of consecutive `get_delegation_status` poll parts into a single
- * `delegation-status-group` part. Runs after `groupConsecutiveToolCalls`, which
- * leaves delegation (agent-like) tool calls standalone — so the status polls
- * arrive here as bare `tool-call` parts. Any non-status part (text, reasoning,
- * tool-group, the `delegate_to_agent` / `cancel_delegation` cards, …) breaks
- * the run, so only genuinely consecutive polls collapse. Even a single poll is
- * wrapped, so the merged-card status resolution (a returned "running" poll
- * reads as a settled snapshot, not a spinner) applies uniformly.
+ * `delegation-status-group` part. Any non-status part (text, reasoning, another
+ * tool call, the `delegate_to_agent` / `cancel_delegation` calls, …) breaks the
+ * run, so only genuinely consecutive polls collapse. Even a single poll is
+ * wrapped, so the merged status resolution (a returned "running" poll reads as
+ * a settled snapshot, not a spinner) applies uniformly.
  */
 export function groupConsecutiveDelegationStatus(
   parts: AdaptedContentPart[]
@@ -1879,10 +1794,9 @@ export function groupConsecutiveDelegationStatus(
 }
 
 /**
- * Merge adjacent `delegation-status-group` parts into one. Mirrors
- * `mergeAdjacentToolGroups`: used for cross-turn merging, where each polling
- * round is its own assistant turn and the concatenated parts land two
- * single-poll groups next to each other.
+ * Merge adjacent `delegation-status-group` parts into one. Used for cross-turn
+ * merging, where each polling round is its own assistant turn and the
+ * concatenated parts land two single-poll groups next to each other.
  */
 export function mergeAdjacentDelegationStatusGroups(
   parts: AdaptedContentPart[]
@@ -1908,11 +1822,9 @@ export function mergeAdjacentDelegationStatusGroups(
 /**
  * Wrap each run of consecutive Claude Code background-task polls
  * (`TaskOutput`/`TaskStop`) into a single `background-task-group` part. Mirrors
- * `groupConsecutiveDelegationStatus`: those polls are left standalone by
- * `groupConsecutiveToolCalls` (they break the run), so they arrive here as bare
- * `tool-call` parts. Any other part breaks the run, so only genuinely
- * consecutive polls collapse. Even a single poll is wrapped, so the merged-card
- * status resolution applies uniformly.
+ * `groupConsecutiveDelegationStatus`: any other part breaks the run, so only
+ * genuinely consecutive polls collapse. Even a single poll is wrapped, so the
+ * merged status resolution applies uniformly.
  */
 export function groupConsecutiveBackgroundTasks(
   parts: AdaptedContentPart[]
@@ -2015,9 +1927,19 @@ function stringProperty(
     : null
 }
 
+/** The key a goal's objective is written under, as it reads in JSON. */
+const OBJECTIVE_KEY = '"objective"'
+
 function goalObjectiveKeyFromTool(part: AdaptedToolCallPart): string | null {
-  const input = parseJsonRecord(part.input)
-  const output = parseJsonRecord(part.output ?? part.errorText)
+  // Every call of a turn passes through here on each update of a streaming
+  // turn: parse only what can name an objective at all.
+  const result = part.output ?? part.errorText
+  const input = part.input?.includes(OBJECTIVE_KEY)
+    ? parseJsonRecord(part.input)
+    : null
+  const output = result?.includes(OBJECTIVE_KEY)
+    ? parseJsonRecord(result)
+    : null
   const outputGoal = nestedRecord(output, "goal")
   const objective =
     stringProperty(outputGoal, "objective") ??
@@ -2089,7 +2011,7 @@ function mergeGoalObjectiveHints(
 /**
  * Parts that ARE the turn's answer rather than the process that produced it:
  * prose, the codex Plan-mode document the user has to read, and a generated
- * image. Everything else (tool calls/results/groups, reasoning, todo plans,
+ * image. Everything else (tool calls and results, reasoning, todo plans,
  * delegation and background-task polls) is process and belongs in the capsule.
  *
  * Written as an exhaustive switch rather than a type set on purpose: a new
@@ -2108,7 +2030,6 @@ export function isTurnAnswerPart(part: AdaptedContentPart): boolean {
     case "reasoning":
     case "tool-call":
     case "tool-result":
-    case "tool-group":
     case "delegation-status-group":
     case "background-task-group":
     case "goal-run":
@@ -2453,14 +2374,14 @@ export function adaptMessageTurn(
     }
 
     if (block.type === "tool_use") {
-      // Persisted plan-like tool calls (TodoWrite, *plan*) render as the same
-      // dedicated <PlanCard> the live stream produces, so live and historical
-      // look identical. Gated on `!isStreaming`: while streaming, the plan's
-      // single source of truth is the synthetic `plan` block (ACP PlanUpdate),
-      // so converting a live TodoWrite tool call here would double-render it.
+      // Persisted plan-like tool calls (TodoWrite, *plan*) become the same plan
+      // part the live stream produces, so live and historical look identical.
+      // Gated on `!isStreaming`: while streaming, the plan's single source of
+      // truth is the synthetic `plan` block (ACP PlanUpdate), so converting a
+      // live TodoWrite tool call here would double-render it.
       // Gated on BOTH a plan-like name AND successfully parsed entries so
       // unrelated tools (e.g. "explain") never convert — unparsable input
-      // falls through to the normal tool-card path below.
+      // falls through to the normal tool-call path below.
       const planEntries =
         !isStreaming && isPlanLikeToolName(block.tool_name)
           ? parseTodosFromJson(block.input_preview ?? "")
@@ -2531,6 +2452,7 @@ export function adaptMessageTurn(
               ? matchedResult.output_preview || undefined
               : undefined,
           agentStats: matchedResult.agent_stats ?? undefined,
+          exitCode: matchedResult.exit_code ?? undefined,
           meta: block.meta ?? null,
           // The settled card keeps its interleaved view from whichever source
           // survives: the live transcript while localTurns still holds it, the
@@ -2581,6 +2503,7 @@ export function adaptMessageTurn(
                 ? positionalResult.output_preview || undefined
                 : undefined,
             agentStats: positionalResult.agent_stats ?? undefined,
+            exitCode: positionalResult.exit_code ?? undefined,
             meta: block.meta ?? null,
             // Same dual source as the id-matched branch above.
             agentTranscript: positionalResult.agent_transcript?.length
@@ -2660,11 +2583,9 @@ export function adaptMessageTurn(
       ? groupGoalRuns(
           groupConsecutiveBackgroundTasks(
             groupConsecutiveDelegationStatus(
-              groupConsecutiveToolCalls(
-                dropEmptyInFlightToolCalls(
-                  dropHiddenFeedbackChecks(
-                    dropPlanTextDuplicatedByReviewCard(adaptedContent)
-                  )
+              dropEmptyInFlightToolCalls(
+                dropHiddenFeedbackChecks(
+                  dropPlanTextDuplicatedByReviewCard(adaptedContent)
                 )
               )
             )

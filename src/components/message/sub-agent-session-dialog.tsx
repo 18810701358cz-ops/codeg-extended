@@ -3,14 +3,14 @@
 /**
  * Viewer for a delegated sub-agent's full conversation.
  *
- * Opens from `DelegatedSubThread`'s header. The whole read-only streaming
- * surface — the shared `MessageListView`, the live bridge into the runtime
- * session, and the child's blocking prompts (permission / ask_user_question /
- * plan approval, answered through the CHILD connection id) — lives in
- * `LiveTranscriptView`; this file only owns the Drawer chrome and header.
- * No attach lifecycle here: delegation children are attached by the
- * delegation provider for the parent card, and the connection registration
- * outlives this drawer.
+ * Opens from a delegation row's "Open conversation". The whole read-only
+ * streaming surface — the shared `MessageListView`, the live bridge into the
+ * runtime session, and the child's blocking prompts (permission /
+ * ask_user_question / plan approval, answered through the CHILD connection
+ * id) — lives in `LiveTranscriptView`; this file only owns the Drawer chrome
+ * and header. No attach lifecycle here: delegation children are attached by
+ * the delegation provider for the parent's row, and the connection
+ * registration outlives this drawer.
  *
  * A side drawer rather than a modal dialog, for two reasons:
  *

@@ -195,6 +195,15 @@ pub enum ContentBlock {
         /// text-only tool result.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<ImageData>,
+        /// The exit code of the process a command call ran, when the
+        /// transcript records it as a field rather than in the output text
+        /// (pi's `bashExecution.exitCode`, Cursor's shell results, Antigravity's
+        /// runs). `None` means unknown: most agents only print it (`Exit code
+        /// 1`, Codex's `Process exited with code 1`), and the frontend reads it
+        /// from the output then. An `i64` because a Windows exit status is an
+        /// unsigned 32-bit value.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i64>,
     },
     Thinking {
         text: String,

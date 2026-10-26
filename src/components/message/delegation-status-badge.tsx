@@ -11,7 +11,9 @@ import {
 import { useTranslations } from "next-intl"
 
 import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
+import { useElapsedLabel } from "@/hooks/use-elapsed-label"
+import type { StepStatus } from "@/lib/activity/types"
+import type { DelegationCardStatus } from "@/lib/delegation-card"
 
 type DelegationStatusValue =
   | "starting"
@@ -26,7 +28,7 @@ function StatusIcon({ status }: { status: DelegationStatusValue }) {
     case "starting":
       return <CircleDashed className="animate-spin text-muted-foreground" />
     case "waiting":
-      return <ShieldAlert className="text-amber-500" />
+      return <ShieldAlert className="text-tone-warning" />
     case "running":
       return <Loader2 className="animate-spin" />
     case "checked":
@@ -34,9 +36,9 @@ function StatusIcon({ status }: { status: DelegationStatusValue }) {
       // Neutral, non-spinning, so a superseded check stops spinning.
       return <Clock className="text-muted-foreground" />
     case "ok":
-      return <CheckCircleIcon className="text-green-600" />
+      return <CheckCircleIcon className="text-tone-success" />
     default:
-      return <XCircleIcon className="text-red-600" />
+      return <XCircleIcon className="text-tone-danger" />
   }
 }
 
@@ -55,20 +57,13 @@ function StatusText({
 export function StatusBadge({
   status,
   errorCode,
-  size = "default",
 }: {
   status: DelegationStatusValue
   errorCode?: string
-  /** `sm`: the narrower pill of the Session Details side panel's sub-agent
-   *  cards. */
-  size?: "default" | "sm"
 }) {
   return (
     <Badge
-      className={cn(
-        "rounded-full",
-        size === "sm" ? "h-[1.125rem] gap-1 px-1.5 text-2xs" : "gap-1.5 text-xs"
-      )}
+      className="gap-1.5 rounded-full text-xs"
       variant="secondary"
       title={status === "err" ? (errorCode ?? undefined) : undefined}
     >
@@ -78,7 +73,72 @@ export function StatusBadge({
   )
 }
 
-function ErrorLabel({ code }: { code?: string }) {
+/** A delegation's status as a step of the activity timeline reads it — what
+ *  its status ring (`RailIcon`) shows. */
+export function delegationStepStatus(status: DelegationCardStatus): StepStatus {
+  switch (status) {
+    case "starting":
+    case "running":
+      return "running"
+    case "waiting":
+      return "awaiting"
+    case "ok":
+      return "succeeded"
+    case "err":
+      return "failed"
+  }
+}
+
+/**
+ * A delegation's status in words, at the end of its line: quiet when it is
+ * done or still at work, in the failure colour with what went wrong, amber
+ * while it waits on the user. `durationMs` — how long it took — follows a
+ * finished one; `clock` — how long it has been at it — a running one.
+ */
+export function DelegationStatusWord({
+  status,
+  errorCode,
+  durationMs = null,
+  clock = null,
+}: {
+  status: DelegationCardStatus
+  errorCode?: string
+  durationMs?: number | null
+  /** How long it has been running here, once that is worth showing. */
+  clock?: string | null
+}) {
+  const t = useTranslations("Folder.chat.delegation.status")
+  const elapsedLabel = useElapsedLabel()
+  const took = elapsedLabel(durationMs)
+  const duration = took ? ` · ${took}` : ""
+  switch (status) {
+    case "err":
+      return (
+        <span className="text-tone-danger">
+          <ErrorLabel code={errorCode} />
+          {duration}
+        </span>
+      )
+    case "waiting":
+      return <span className="text-tone-warning">{t("waiting")}</span>
+    case "ok":
+      return (
+        <>
+          {t("ok")}
+          {duration}
+        </>
+      )
+    default:
+      return (
+        <>
+          {t(status)}
+          {clock ? <span aria-hidden="true">{` ${clock}`}</span> : null}
+        </>
+      )
+  }
+}
+
+export function ErrorLabel({ code }: { code?: string }) {
   const t = useTranslations("Folder.chat.delegation.status.err")
   switch (code) {
     case "delegation_disabled":

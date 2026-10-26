@@ -2,9 +2,9 @@
  * Shared parsing + state-resolution helpers for `delegate_to_agent`
  * delegation cards.
  *
- * Extracted from `DelegatedSubThread` so the inline message-stream card AND
- * the top-right sub-agent overlay resolve the same agent type / task / status /
- * child ids from the exact same logic — one source of truth, no drift.
+ * Shared so the timeline's delegation row AND the top-right sub-agent overlay
+ * resolve the same agent type / task / status / child ids from the exact same
+ * logic — one source of truth, no drift.
  *
  * Everything here is pure (no React). The React-specific binding/permission
  * lookups live in `useDelegationCardModel`.
@@ -810,6 +810,22 @@ export function parseDelegateTaskId(
 }
 
 /**
+ * The broker task id a `delegate_to_agent` call was given, from what the call
+ * itself carries: its ack, else the meta the broker stamped on it.
+ */
+export function delegateCallTaskId(call: {
+  output?: string | null
+  errorText?: string | null
+  meta?: Record<string, unknown> | null
+}): string | null {
+  return (
+    parseDelegateTaskId(call.output, call.errorText) ??
+    parseDelegationMeta(call.meta)?.taskId ??
+    null
+  )
+}
+
+/**
  * Whether a (already normalized or raw) tool name denotes the multi-agent
  * `delegate_to_agent` companion tool. Matches the bare canonical name plus any
  * host-specific server-prefixed form (`mcp__<server>__delegate_to_agent`,
@@ -824,11 +840,11 @@ export function isDelegateToAgentToolName(name: string): boolean {
 
 /**
  * Resolve the card status from the live binding / persisted meta / parsed tool
- * output, in priority order. Pure mirror of the resolution that used to live
- * inline in `DelegatedSubThread`.
+ * output, in priority order.
  *
  *   waiting (child blocked on permission) > live binding > snapshot meta
- *   > error channel > running ack > terminal outcome > output-available > starting
+ *   > error channel > a later check's outcome > running ack > terminal outcome
+ *   > output-available > starting
  */
 export function resolveDelegationStatus({
   binding,
@@ -837,6 +853,7 @@ export function resolveDelegationStatus({
   state,
   errorText,
   childAwaitingUser,
+  ended = null,
 }: {
   binding: DelegationBinding | undefined
   parsedMeta: ParsedMeta | null
@@ -845,6 +862,9 @@ export function resolveDelegationStatus({
   errorText: string | null | undefined
   /** The child is parked on a permission, a question or a plan approval. */
   childAwaitingUser: boolean
+  /** How the task ended, as a `get_delegation_status` check made after the
+   *  call reported it (`taskEnding`). */
+  ended?: { status: "ok" | "err" } | null
 }): DelegationCardStatus {
   // A child awaiting a decision is blocked until the user acts; surface it
   // over the plain running state so the card cues opening "查看会话".
@@ -852,6 +872,10 @@ export function resolveDelegationStatus({
   if (binding) return binding.status
   if (parsedMeta) return parsedMeta.status
   if (state === "output-error" || errorText) return "err"
+  // A check that came back after the hand-over is newer than the ack: with no
+  // binding or meta to go by (the child's record gone, a transcript from
+  // elsewhere), the card would otherwise run forever.
+  if (ended) return ended.status
   // Async: the parent output is a running ack while the child runs — keep
   // "running" rather than letting output-available flip the badge to "ok".
   if (toolOutput?.kind === "ack") return "running"

@@ -4,9 +4,9 @@ import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 /**
- * A Read of an image shows the picture once its card is expanded (#977).
+ * A Read of an image shows the picture once its row is opened (#977).
  * codex-acp streams `view_image` as a `read` whose only result is a link to the
- * path, so the expanded card used to show that path and nothing else.
+ * path, so the opened card once showed that path and nothing else.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -36,7 +36,6 @@ import { resetHomeDirCacheForTests } from "@/lib/file-open-target"
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6TAAAAABJRU5ErkJggg=="
 const QR = "/tmp/nanguang-login/login-qr-new.png"
-const QR_TITLE = /Read nanguang-login\/login-qr-new\.png/
 
 function toolCall(
   toolName: string,
@@ -63,8 +62,14 @@ function renderCard(part: AdaptedContentPart, root: string | null = "/w") {
   )
 }
 
-function expand(title: RegExp) {
-  fireEvent.click(screen.getAllByText(title)[0])
+/** Open the row: its header is the first button on the page. */
+function expand() {
+  fireEvent.click(screen.getAllByRole("button")[0]!)
+}
+
+/** The picture itself — the row's rail marker is an `img` too, by label. */
+function queryPicture() {
+  return screen.queryByRole("img", { name: /\.(png|jpe?g|webp|gif|svg)$/i })
 }
 
 /** Let a read that should never start prove it did not. */
@@ -80,14 +85,14 @@ beforeEach(() => {
   resetHomeDirCacheForTests()
 })
 
-describe("Read card of an image", () => {
+describe("Read row of an image", () => {
   it("shows the picture codex's view_image read, once expanded", async () => {
     // What codex-acp streams: kind `read`, `{path}`, and no text result.
     renderCard(toolCall("read", { path: QR }))
     await settle()
     expect(mocks.read).not.toHaveBeenCalled()
 
-    expand(QR_TITLE)
+    expand()
     const img = await screen.findByRole("img", { name: "login-qr-new.png" })
     expect(img).toHaveAttribute("src", `data:image/png;base64,${PNG}`)
     // The file panel's own reader, with its default size limit, on the path
@@ -96,10 +101,10 @@ describe("Read card of an image", () => {
     expect(screen.getByText(QR)).toBeInTheDocument()
   })
 
-  it("is the same card when the conversation is reloaded", async () => {
+  it("is the same row when the conversation is reloaded", async () => {
     // The rollout keeps codex's raw function name and its arguments.
     renderCard(toolCall("view_image", { path: QR, detail: "high" }))
-    expand(QR_TITLE)
+    expand()
     expect(
       await screen.findByRole("img", { name: "login-qr-new.png" })
     ).toBeInTheDocument()
@@ -108,7 +113,7 @@ describe("Read card of an image", () => {
 
   it("opens the picture full size", async () => {
     renderCard(toolCall("read", { path: QR }))
-    expand(QR_TITLE)
+    expand()
     fireEvent.click(
       await screen.findByRole("button", { name: "login-qr-new.png" })
     )
@@ -121,7 +126,7 @@ describe("Read card of an image", () => {
 
   it("resolves a relative path against the transcript's folder", async () => {
     renderCard(toolCall("read", { file_path: "shots/home.jpg" }), "/w/app")
-    expand(/Read shots\/home\.jpg/)
+    expand()
     const img = await screen.findByRole("img", { name: "home.jpg" })
     expect(img).toHaveAttribute("src", `data:image/jpeg;base64,${PNG}`)
     expect(mocks.read).toHaveBeenCalledWith("/w/app/shots/home.jpg")
@@ -129,7 +134,7 @@ describe("Read card of an image", () => {
 
   it("resolves a home-relative path against the home directory", async () => {
     renderCard(toolCall("read", { file_path: "~/Desktop/shot.webp" }))
-    expand(/Read Desktop\/shot\.webp/)
+    expand()
     expect(
       await screen.findByRole("img", { name: "shot.webp" })
     ).toHaveAttribute("src", `data:image/webp;base64,${PNG}`)
@@ -138,37 +143,37 @@ describe("Read card of an image", () => {
 
   it("guesses no folder for a relative path the transcript has none for", async () => {
     renderCard(toolCall("read", { file_path: "shots/home.jpg" }), null)
-    expand(/Read shots\/home\.jpg/)
+    expand()
     await settle()
     expect(mocks.read).not.toHaveBeenCalled()
-    expect(screen.queryByRole("img")).not.toBeInTheDocument()
+    expect(queryPicture()).not.toBeInTheDocument()
   })
 
   it("says so when the file cannot be read", async () => {
     mocks.read.mockRejectedValue(new Error("File does not exist"))
     renderCard(toolCall("read", { path: QR }))
-    expand(QR_TITLE)
+    expand()
     expect(
       await screen.findByText("Could not load the image")
     ).toBeInTheDocument()
     expect(screen.getByText("File does not exist")).toBeInTheDocument()
-    expect(screen.queryByRole("img")).not.toBeInTheDocument()
+    expect(queryPicture()).not.toBeInTheDocument()
   })
 
   it("says so when the file is no picture after all", async () => {
     renderCard(toolCall("read", { path: QR }))
-    expand(QR_TITLE)
+    expand()
     fireEvent.error(
       await screen.findByRole("img", { name: "login-qr-new.png" })
     )
     expect(screen.getByText("Could not load the image")).toBeInTheDocument()
-    expect(screen.queryByRole("img")).not.toBeInTheDocument()
+    expect(queryPicture()).not.toBeInTheDocument()
   })
 
   it("keeps a text result next to the picture", async () => {
     // OpenCode answers an image read with a line of text.
     renderCard(toolCall("read", { file_path: QR }, "Image read successfully"))
-    expand(QR_TITLE)
+    expand()
     expect(
       await screen.findByRole("img", { name: "login-qr-new.png" })
     ).toBeInTheDocument()
@@ -177,7 +182,7 @@ describe("Read card of an image", () => {
 
   it("reads nothing for a file that is not an image", async () => {
     renderCard(toolCall("read", { file_path: "/w/notes.md" }, "hello"))
-    expand(/Read w\/notes\.md|Read notes\.md/)
+    expand()
     await settle()
     expect(screen.getByText("hello")).toBeInTheDocument()
     expect(mocks.read).not.toHaveBeenCalled()
@@ -187,7 +192,7 @@ describe("Read card of an image", () => {
     renderCard(
       toolCall("write", { file_path: "/w/logo.svg", content: "<svg/>" })
     )
-    expand(/Write w\/logo\.svg|Write logo\.svg/)
+    expand()
     await settle()
     expect(screen.getByText("<svg/>")).toBeInTheDocument()
     expect(mocks.read).not.toHaveBeenCalled()

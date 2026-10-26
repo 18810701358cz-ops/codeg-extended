@@ -946,10 +946,11 @@ export function AutomationListItem({
                 )}
               >
                 {isRunning ? (
-                  <Loader2
-                    className="size-3.5 animate-spin text-amber-600 dark:text-amber-400"
-                    aria-hidden="true"
-                  />
+                  // Turned on a span, not the icon (an SVG's turn lays the
+                  // page out every frame; see the sidebar's running badge).
+                  <span className="inline-flex animate-spin" aria-hidden="true">
+                    <Loader2 className="size-3.5 text-amber-600 dark:text-amber-400" />
+                  </span>
                 ) : timeLabel ? (
                   <span
                     className={cn(

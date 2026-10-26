@@ -1052,7 +1052,12 @@ fn build_turns(
             agent_message_id: None,
             });
             let tool_id = format!("cursor-shell-{i}");
-            let (preview, exit_code) = output.unwrap_or((None, 0));
+            // proto3 leaves a zero exit code off the wire, so a present result
+            // without field 3 exited 0; no result at all is unknown.
+            let (preview, exit_code) = match output {
+                Some((preview, code)) => (preview, Some(i64::from(code))),
+                None => (None, None),
+            };
             if store_clock {
                 store_clocked.insert(turns.len());
             }
@@ -1072,9 +1077,10 @@ fn build_turns(
                     ContentBlock::ToolResult {
                         tool_use_id: Some(tool_id),
                         output_preview: preview,
-                        is_error: exit_code != 0,
+                        is_error: exit_code.is_some_and(|code| code != 0),
                         agent_stats: None,
                         images: Vec::new(),
+                        exit_code,
                     },
                 ],
                 timestamp: ts,
@@ -1436,6 +1442,8 @@ struct DecodedTool {
     input: Option<Value>,
     output: Option<String>,
     is_error: bool,
+    /// A shell call's exit code, when its result carried one.
+    exit_code: Option<i64>,
 }
 
 /// Decode one `agent.v1.ToolCall` into a ToolUse + ToolResult block pair.
@@ -1480,6 +1488,7 @@ fn decode_tool_call(
         is_error: tool.is_error,
         agent_stats: None,
         images: Vec::new(),
+        exit_code: tool.exit_code,
     });
 }
 
@@ -1499,6 +1508,7 @@ fn decode_tool_variant(
         input: None,
         output: None,
         is_error: false,
+        exit_code: None,
     };
 
     match field_no {
@@ -1536,6 +1546,7 @@ fn decode_tool_variant(
                                 .unwrap_or(0);
                             tool.output = out;
                             tool.is_error = no == 2 || exit_code != 0;
+                            tool.exit_code = Some(i64::from(exit_code));
                             break;
                         }
                         3 => {
@@ -2203,13 +2214,19 @@ mod tests {
                     tool_use_id: Some(id),
                     output_preview,
                     is_error,
+                    exit_code,
                     ..
-                } if id == "tc-shell-1" => Some((output_preview.clone(), *is_error)),
+                } if id == "tc-shell-1" => Some((output_preview.clone(), *is_error, *exit_code)),
                 _ => None,
             })
             .expect("shell result present");
         assert_eq!(shell_result.0.as_deref(), Some("build ok"));
         assert!(!shell_result.1);
+        assert_eq!(
+            shell_result.2,
+            Some(0),
+            "a shell result carries its exit code"
+        );
 
         // edit tool: diff is surfaced
         let edit_result = assistant

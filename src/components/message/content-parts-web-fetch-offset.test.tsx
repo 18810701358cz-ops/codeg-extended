@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest"
 /**
  * Claude Code 2.1.290's WebFetch reads a page past its 100,000-character
  * window from an `offset`. The call is otherwise the same URL and prompt as
- * the first read, so the card has to say where it reads from.
+ * the first read, so the row has to say where it reads from.
  */
 
 vi.mock("@/components/ai-elements/link-safety", () => ({
@@ -43,50 +43,42 @@ function webFetch(input: Record<string, unknown>): AdaptedToolCallPart {
   }
 }
 
-function renderOpen(part: AdaptedContentPart) {
-  render(
+function renderRow(part: AdaptedContentPart) {
+  return render(
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <ContentPartsRenderer parts={[part]} role="assistant" />
     </NextIntlClientProvider>
   )
-  // The input sits in the card body; open it if the card starts collapsed.
-  if (!screen.queryByText("https://example.com/long")) {
-    fireEvent.click(screen.getByText(/WebFetch/))
-  }
 }
 
-describe("WebFetch card — read offset", () => {
+describe("WebFetch row — read offset", () => {
   it("names the character offset a continued read starts from", () => {
-    renderOpen(
+    renderRow(
       webFetch({
         url: "https://example.com/long",
         prompt: "Summarize",
         offset: 100000,
       })
     )
-    expect(screen.getByText("https://example.com/long")).toBeInTheDocument()
+    // The row names the page, and beside it where this read starts.
+    expect(screen.getByText("example.com/long")).toBeInTheDocument()
     expect(screen.getByText("Offset: 100000")).toBeInTheDocument()
   })
 
   it("shows no offset for a first read", () => {
-    renderOpen(webFetch({ url: "https://example.com/long", prompt: "Read" }))
-    expect(screen.getByText("https://example.com/long")).toBeInTheDocument()
+    renderRow(webFetch({ url: "https://example.com/long", prompt: "Read" }))
+    expect(screen.getByText("example.com/long")).toBeInTheDocument()
     expect(screen.queryByText(/Offset:/)).not.toBeInTheDocument()
   })
 
   it("shows no offset for a zero or non-numeric one", () => {
     for (const offset of [0, "100000"]) {
-      const { unmount } = render(
-        <NextIntlClientProvider locale="en" messages={enMessages}>
-          <ContentPartsRenderer
-            parts={[webFetch({ url: "https://example.com/long", offset })]}
-            role="assistant"
-          />
-        </NextIntlClientProvider>
+      const { unmount } = renderRow(
+        webFetch({ url: "https://example.com/long", offset })
       )
-      if (!screen.queryByText("https://example.com/long")) {
-        fireEvent.click(screen.getByText(/WebFetch/))
-      }
+      expect(screen.getByText("example.com/long")).toBeInTheDocument()
+      // Opening the row shows the page, never an offset line.
+      fireEvent.click(screen.getByRole("button"))
       expect(screen.queryByText(/Offset:/)).not.toBeInTheDocument()
       unmount()
     }

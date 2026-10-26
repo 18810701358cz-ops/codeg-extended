@@ -22,7 +22,13 @@
  * next mount starts from a fresh persisted fetch.
  */
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from "react"
 
 import {
   MessageListView,
@@ -31,10 +37,13 @@ import {
 import { useConversationDetail } from "@/hooks/use-conversation-detail"
 import { useConversationRuntimeActions } from "@/stores/conversation-runtime-store"
 import {
+  extractPermissionToolCallId,
   useConnectionStore,
   type ConnectionState,
 } from "@/contexts/acp-connections-context"
 import { ConnectionBlockingPrompts } from "@/components/chat/connection-blocking-prompts"
+import { ActivityLiveProvider } from "@/components/message/activity/activity-live-context"
+import { EMPTY_TOOL_APPROVALS } from "@/lib/activity/approval"
 import { blockingPrompts } from "@/lib/blocking-prompts"
 import type { AgentType } from "@/lib/types"
 
@@ -270,6 +279,19 @@ export function LiveTranscriptView({
   // read-only viewer deliberately cannot do.
   const prompts = blockingPrompts(conn)
 
+  // The viewed connection's own live state for the activity timeline — this
+  // view mounts inside another conversation's panel, whose pending approval
+  // and answers are not this transcript's.
+  const awaitingToolCallId = extractPermissionToolCallId(
+    conn?.pendingPermission?.tool_call
+  )
+  const awaitingUser = prompts !== null
+  const approvals = conn?.toolApprovals ?? EMPTY_TOOL_APPROVALS
+  const activityLive = useMemo(
+    () => ({ awaitingToolCallId, awaitingUser, approvals }),
+    [awaitingToolCallId, awaitingUser, approvals]
+  )
+
   return (
     // Sized as a flex child: fills the host column's remaining height under
     // its header (h-full here would overflow by the header's height).
@@ -289,27 +311,29 @@ export function LiveTranscriptView({
           layers cost the transcript a visible chunk of its width. This is
           exactly how the main conversation panel mounts the same component. */}
       <div className="min-h-0 flex-1">
-        <MessageListView
-          conversationId={conversationId}
-          // The viewed connection's own cwd. A delegation child runs in a
-          // scratch dir whose folder row this client may not have seen yet
-          // (it is created closed, without a folder-change broadcast), so the
-          // folder lookup would come up empty; `undefined` when there is no
-          // live connection keeps that lookup as the fallback.
-          imageRoot={conn?.workingDir ?? undefined}
-          agentType={transcriptAgent ?? "claude_code"}
-          // With no agent known, that default is a guess, and what it last
-          // advertised in this folder says nothing about this transcript:
-          // `[]` badges no command at all rather than another agent's.
-          availableCommands={transcriptAgent ? conn?.availableCommands : []}
-          connStatus={connStatus}
-          isActive={false}
-          detailLoading={detailLoading}
-          detailError={error}
-          acpLoadError={acpLoadError}
-          hideEmptyState={false}
-          userTurnHeader={userTurnHeader}
-        />
+        <ActivityLiveProvider value={activityLive}>
+          <MessageListView
+            conversationId={conversationId}
+            // The viewed connection's own cwd. A delegation child runs in a
+            // scratch dir whose folder row this client may not have seen yet
+            // (it is created closed, without a folder-change broadcast), so the
+            // folder lookup would come up empty; `undefined` when there is no
+            // live connection keeps that lookup as the fallback.
+            imageRoot={conn?.workingDir ?? undefined}
+            agentType={transcriptAgent ?? "claude_code"}
+            // With no agent known, that default is a guess, and what it last
+            // advertised in this folder says nothing about this transcript:
+            // `[]` badges no command at all rather than another agent's.
+            availableCommands={transcriptAgent ? conn?.availableCommands : []}
+            connStatus={connStatus}
+            isActive={false}
+            detailLoading={detailLoading}
+            detailError={error}
+            acpLoadError={acpLoadError}
+            hideEmptyState={false}
+            userTurnHeader={userTurnHeader}
+          />
+        </ActivityLiveProvider>
       </div>
     </div>
   )

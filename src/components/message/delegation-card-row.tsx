@@ -11,11 +11,8 @@
  * first line. The sub-agent's OUTPUT never lands here; that is what "查看会话"
  * is for.
  *
- * Shared by `DelegatedSubThread` (the `delegate_to_agent` card) and
- * `ResumedDelegationCard` (the `resume_delegation` card) so the two can never
- * disagree about how a sub-agent looks — the same relationship
- * `DelegationStatusRow` has with `DelegationStatusCard` /
- * `DelegationStatusGroupCard`.
+ * Drawn by `ResumedDelegationCard`, the `resume_delegation` card the
+ * activity timeline hosts.
  *
  * Presentation only: every id and status it draws is resolved upstream by
  * `useDelegationCardModel`, and opening the viewer is the caller's business

@@ -16,10 +16,10 @@ import {
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpRightIcon,
   BotIcon,
   ChevronDown,
   ChevronUp,
-  Eye,
   FileMinus2,
   FilePen,
   FilePlus2,
@@ -34,11 +34,15 @@ import { Virtualizer, type VirtualizerHandle } from "virtua"
 
 import { CompactDiff } from "@/components/diff/compact-diff"
 import { ViewModeToggle } from "@/components/diff/unified-diff-preview"
+import { RailIcon } from "@/components/message/activity/rail-icon"
 import {
-  DelegationIdentityAvatar,
+  DelegationIdentityGlyph,
   DelegationIdentityName,
 } from "@/components/message/delegation-identity"
-import { StatusBadge } from "@/components/message/delegation-status-badge"
+import {
+  DelegationStatusWord,
+  delegationStepStatus,
+} from "@/components/message/delegation-status-badge"
 import { MessageNavScrollContext } from "@/components/message/message-nav-scroll-context"
 import { useSessionViewerHost } from "@/components/message/session-viewer-host-context"
 import { useActiveFolder } from "@/contexts/active-folder-context"
@@ -115,12 +119,18 @@ function hasDetails(entry: MessageNavEntry): boolean {
 /**
  * The message navigator of a conversation, shown in the Session Details side
  * panel: one row per user message, in order, its number in a pill down the
- * left. Clicking a message jumps the transcript to it and opens it into a
- * card of what its round did — a card per sub-agent, which opens the
- * sub-agent's conversation, and a card of the files it changed, each of which
- * shows its diff inline (inline or side by side) and opens in the workspace's
- * file tabs from its name. One message is open at a time: the latest, until
- * another is clicked.
+ * left. Clicking a message jumps the transcript to it and opens it onto a
+ * band of what its round did, drawn the way the transcript's activity draws
+ * it: a line per sub-agent — its logo in a status ring, how it is doing in
+ * words — which opens the sub-agent's conversation, then the files it
+ * changed, a line each, whose diff unfolds under the line in a panel
+ * (inline or side by side) and whose name opens the file in the workspace's
+ * file tabs. One message is open at a time: the latest, until another is
+ * clicked.
+ *
+ * Its fills are tints, never the opaque page colour, so a workspace
+ * background image shows through them as through the transcript's, and its
+ * hairlines are the transcript's (`ws-msg-scope`).
  *
  * A long conversation loads its messages a window at a time; the list still
  * covers all of them, and a message above the window is paged in when it is
@@ -211,7 +221,7 @@ export const MessageNavList = memo(function MessageNavList({
   }
 
   return (
-    <div className="min-w-0">
+    <div className="ws-msg-scope min-w-0">
       {earlier === "loading" && (
         <div className="flex h-8 min-w-0 items-center gap-2 text-2xs text-muted-foreground">
           <span className="flex w-7 shrink-0 justify-center">
@@ -224,7 +234,7 @@ export const MessageNavList = memo(function MessageNavList({
         <button
           type="button"
           onClick={onRetryEarlier}
-          className="-mx-1.5 flex h-8 w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 text-start text-2xs text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className="-mx-1.5 flex h-8 w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-lg px-1.5 text-start text-2xs text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
           <span className="flex w-7 shrink-0 justify-center">
             <RotateCw aria-hidden="true" className="size-3" />
@@ -380,14 +390,16 @@ function VirtualRows({
       </div>
       {away && current && (
         // Zero height, stuck to the bottom of the scroll area while the list
-        // runs past it.
+        // runs past it. Over a background image the fade into the page colour
+        // would be an opaque band (`ws-no-fade` drops it), and the button
+        // frosts over the rows instead (`ws-msg-card` + blur).
         <div className="pointer-events-none sticky bottom-0 z-10 h-0">
-          <div className="absolute inset-x-0 bottom-0 flex h-14 items-end justify-center bg-gradient-to-t from-background via-background/80 to-transparent pb-3">
+          <div className="ws-no-fade absolute inset-x-0 bottom-0 flex h-14 items-end justify-center bg-gradient-to-t from-background via-background/80 to-transparent pb-3">
             <button
               type="button"
               onClick={scrollToCurrent}
               aria-label={t("scrollToCurrent", { ordinal: current.ordinal })}
-              className="pointer-events-auto flex h-7 items-center gap-1.5 rounded-full border border-border bg-background ps-2.5 pe-3 text-xs shadow-md outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              className="ws-msg-card pointer-events-auto flex h-7 items-center gap-1.5 rounded-full border border-border bg-background ps-2.5 pe-3 text-xs shadow-md outline-none backdrop-blur-md transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               {away === "below" ? (
                 <ArrowDown
@@ -413,11 +425,11 @@ function VirtualRows({
 }
 
 /**
- * A message's number, in a pill of the left column: the same width for any
- * number up to three digits, so the titles beside the pills line up with
- * each other and with the section header's above them. Its side padding stays
- * narrow for that: with more, three digits outgrow the column. Solid for the
- * message the transcript is showing.
+ * A message's number, in a capsule of the left column: the same width for
+ * any number up to three digits, so the titles beside the capsules line up
+ * with each other and with the section header's above them. Its side padding
+ * stays narrow for that: with more, three digits outgrow the column. Solid for
+ * the message the transcript is showing.
  */
 function NumberPill({
   ordinal,
@@ -435,12 +447,12 @@ function NumberPill({
     <span className="flex min-w-7 shrink-0 justify-center">
       <span
         className={cn(
-          "flex h-5 min-w-7 items-center justify-center rounded-md px-0.5 text-2xs tabular-nums",
+          "flex h-5 min-w-7 items-center justify-center rounded-full px-0.5 text-2xs tabular-nums",
           current
             ? "bg-primary font-semibold text-primary-foreground"
             : onBand
-              ? "bg-background text-muted-foreground ring-1 ring-border/60"
-              : "bg-muted text-muted-foreground"
+              ? "ws-msg-card bg-background text-muted-foreground ring-1 ring-border/60"
+              : "ws-msg-card bg-muted text-muted-foreground"
         )}
       >
         {revealing ? (
@@ -507,12 +519,8 @@ function DiffStats({
         className
       )}
     >
-      {additions > 0 && (
-        <span className="text-green-600 dark:text-green-400">+{additions}</span>
-      )}
-      {deletions > 0 && (
-        <span className="text-red-600 dark:text-red-400">−{deletions}</span>
-      )}
+      {additions > 0 && <span className="text-tone-success">+{additions}</span>}
+      {deletions > 0 && <span className="text-tone-danger">−{deletions}</span>}
     </span>
   )
 }
@@ -554,8 +562,8 @@ const MessageNavRow = memo(function MessageNavRow({
   if (!open) {
     return (
       // The gap under a row is padding, not margin: the virtualizer measures
-      // the row's box.
-      <div className="pb-px">
+      // the row's box. `text-start`, as on an open row: see there.
+      <div className="pb-px text-start">
         <button
           type="button"
           data-testid="nav-message"
@@ -565,8 +573,8 @@ const MessageNavRow = memo(function MessageNavRow({
           aria-expanded={expandable ? false : undefined}
           title={entry.label}
           className={cn(
-            "-mx-1.5 flex h-8 w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 text-start outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
-            current ? "bg-muted" : "hover:bg-muted/60"
+            "-mx-1.5 flex h-8 w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-lg px-1.5 text-start outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            current ? "ws-msg-card bg-muted" : "hover:bg-muted/60"
           )}
         >
           <NumberPill
@@ -591,10 +599,16 @@ const MessageNavRow = memo(function MessageNavRow({
   }
 
   return (
-    <div className="py-1">
-      {/* The message and its round on one band: sub-agent cards, then the
-          card of its files, their left edges on the number column's. */}
-      <div className="-mx-1.5 rounded-lg bg-muted/60 px-1.5 pb-1.5">
+    // `text-start`: a list item's own `text-align` (`-webkit-match-parent`)
+    // turns the list's logical start into a physical right under RTL, which
+    // would carry through a diff's `dir="ltr"` and push its code against the
+    // panel's right edge.
+    <div className="py-1 text-start">
+      {/* The message and its round on one band: a line per sub-agent, then
+          its files, their icons in the number column. A translucent tint
+          with a hairline over a background image, like the transcript's
+          panels (`ws-msg-card` + `ws-msg-panel`). */}
+      <div className="ws-msg-card ws-msg-panel -mx-1.5 rounded-xl bg-muted/60 px-1.5 pb-1.5">
         <div className="flex min-w-0 items-start gap-1">
           <button
             type="button"
@@ -603,7 +617,7 @@ const MessageNavRow = memo(function MessageNavRow({
             aria-current={current ? "location" : undefined}
             aria-busy={revealing || undefined}
             aria-expanded={true}
-            className="-ms-1.5 flex min-w-0 flex-1 items-start gap-2 rounded-md py-1.5 ps-1.5 text-start outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="-ms-1.5 flex min-w-0 flex-1 items-start gap-2 rounded-lg py-1.5 ps-1.5 text-start outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             <NumberPill
               ordinal={entry.ordinal}
@@ -620,114 +634,141 @@ const MessageNavRow = memo(function MessageNavRow({
             onClick={onCollapse}
             aria-label={t("collapse")}
             title={t("collapse")}
-            className="mt-1.5 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-background hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className={cn(tool, "mt-1.5")}
           >
             <ChevronUp aria-hidden="true" className="size-3.5" />
           </button>
         </div>
-        <div className="space-y-1.5">
-          {entry.subAgents.map((source) => (
-            <NavSubAgentCard key={source.parentToolUseId} source={source} />
-          ))}
-          {fileCount > 0 && (
-            <div className="overflow-hidden rounded-lg border border-border bg-card">
-              <div className="flex h-7 min-w-0 items-center gap-2 border-b border-border/70 px-[0.9375rem] text-2xs text-muted-foreground">
-                <FileTextIcon
-                  aria-hidden="true"
-                  className="size-3.5 shrink-0"
-                />
-                <span className="min-w-0 truncate font-medium text-foreground/80">
-                  {t("fileCount", { count: fileCount })}
-                </span>
-                <DiffStats
-                  additions={entry.additions}
-                  deletions={entry.deletions}
-                  className="ms-auto"
-                />
-              </div>
-              <div className="space-y-1 p-1.5">
-                {entry.files.map((file) => (
-                  <NavFileBox
-                    key={file.id}
-                    file={file}
-                    diffOpen={openDiffs[file.id] ?? false}
-                    view={view}
-                    folderPath={folderPath}
-                    groupLabel={entry.turnId}
-                    onToggleDiff={onToggleDiff}
-                    onOpenFile={onOpenFile}
-                    onOpenDiffInTab={onOpenDiffInTab}
-                    onSwitchView={onSwitchView}
-                  />
-                ))}
-              </div>
+        {agentCount > 0 && (
+          <div>
+            {entry.subAgents.map((source) => (
+              <NavSubAgent key={source.parentToolUseId} source={source} />
+            ))}
+          </div>
+        )}
+        {fileCount > 0 && (
+          <div className={cn(agentCount > 0 && "mt-1")}>
+            {/* Its counts end where a closed file line's do, before the
+                line's chevron (`gap-2` + `size-5` + `pe-1`). */}
+            <div className="flex h-7 min-w-0 items-center gap-2 pe-8 text-2xs text-muted-foreground">
+              <span
+                aria-hidden="true"
+                className="flex w-7 shrink-0 justify-center"
+              >
+                <FileTextIcon className="size-3.5" />
+              </span>
+              <span className="min-w-0 truncate font-medium">
+                {t("fileCount", { count: fileCount })}
+              </span>
+              <DiffStats
+                additions={entry.additions}
+                deletions={entry.deletions}
+                className="ms-auto"
+              />
             </div>
-          )}
-        </div>
+            {entry.files.map((file) => (
+              <NavFile
+                key={file.id}
+                file={file}
+                diffOpen={openDiffs[file.id] ?? false}
+                view={view}
+                folderPath={folderPath}
+                groupLabel={entry.turnId}
+                onToggleDiff={onToggleDiff}
+                onOpenFile={onOpenFile}
+                onOpenDiffInTab={onOpenDiffInTab}
+                onSwitchView={onSwitchView}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
 })
 
+/** A small icon button on an open message's band: its tint is the band's
+ *  ink, never the page colour, which a background image would not show
+ *  through. */
+const tool =
+  "flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+
 /**
- * A sub-agent of an open message, as a smaller copy of the transcript's
- * delegation card: who ran it with its status badge, its task below, and —
- * once it has a conversation — the eye that opens it (the whole card does).
- * Resolved through the same model as that card, so the two never disagree.
+ * A sub-agent of an open message, as the transcript's activity draws a
+ * delegation: its logo in a status ring — turning while it works, amber
+ * while it waits on the user, red once it failed — its name and how it is
+ * doing in words, and its task under them. Once it has a conversation the
+ * whole line opens it, the ↗ at its end saying so. Resolved through the same
+ * model as the transcript's row, so the two never disagree.
  */
-const NavSubAgentCard = memo(function NavSubAgentCard({
+const NavSubAgent = memo(function NavSubAgent({
   source,
 }: {
   source: DelegationCardSource
 }) {
   const t = useTranslations("Folder.chat.delegation")
+  const tActivity = useTranslations("Folder.chat.activity")
   const viewerHost = useSessionViewerHost()
   const { identity, task, status, errorCode, childConversationId } =
     useDelegationCardModel(source)
   // A `resume_delegation` brought this sub-agent back.
   const resumed = source.taskIdHint != null
+  // The panel brings its own viewer host; without one there is nowhere to
+  // show the conversation, and the line only reports.
+  const openable = childConversationId != null && viewerHost != null
 
   const body = (
-    <span className="flex min-w-0 flex-1 items-center gap-2.5 py-2 ps-2.5 pe-2">
-      <DelegationIdentityAvatar
-        identity={identity}
-        size="compact"
-        badge={
-          resumed ? (
-            <span
-              className="inline-flex size-3.5 items-center justify-center rounded-full border border-border bg-background"
-              title={t("resumed")}
-            >
-              <RotateCcw className="size-2 text-muted-foreground" />
-            </span>
-          ) : undefined
-        }
-      />
-      <span className="min-w-0 flex-1 space-y-0.5">
-        <span className="flex min-w-0 items-center gap-1.5">
+    <>
+      {/* What the ring says, the words beside it say too. */}
+      <span
+        aria-hidden="true"
+        className="flex h-5 w-7 shrink-0 items-center justify-center"
+      >
+        <RailIcon
+          glyph={<DelegationIdentityGlyph identity={identity} />}
+          status={delegationStepStatus(status)}
+          label={tActivity("kind.delegation")}
+        />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex h-5 min-w-0 items-center gap-1.5 text-xs">
           <DelegationIdentityName
             identity={identity}
-            className="min-w-0 truncate text-xs font-semibold text-foreground"
+            className="min-w-0 truncate font-semibold text-foreground"
           />
-          <StatusBadge status={status} errorCode={errorCode} size="sm" />
+          {resumed ? (
+            <span
+              title={t("resumed")}
+              className="flex shrink-0 text-muted-foreground"
+            >
+              <RotateCcw aria-hidden="true" className="size-3" />
+            </span>
+          ) : null}
+          <span className="ms-auto shrink-0 text-2xs text-muted-foreground">
+            <DelegationStatusWord status={status} errorCode={errorCode} />
+          </span>
+          {openable ? (
+            <ArrowUpRightIcon
+              aria-hidden="true"
+              className="size-3.5 shrink-0 text-muted-foreground transition-colors group-hover/agent:text-foreground rtl:-scale-x-100"
+            />
+          ) : null}
         </span>
-        {task && (
+        {task ? (
           <span
-            className="block truncate text-2xs text-muted-foreground"
+            dir="auto"
             title={task}
+            className="block truncate text-2xs leading-4 text-muted-foreground"
           >
             {task}
           </span>
-        )}
+        ) : null}
       </span>
-    </span>
+    </>
   )
 
-  const card =
-    "flex w-full min-w-0 items-stretch overflow-hidden rounded-lg border border-border bg-card text-start"
-  // The panel brings its own viewer host; without one there is nowhere to
-  // show the conversation, and the card only reports.
-  if (childConversationId != null && viewerHost) {
+  const line = "flex w-full min-w-0 items-start gap-2 rounded-lg py-1.5 pe-1.5"
+  if (openable) {
     return (
       <button
         type="button"
@@ -735,22 +776,16 @@ const NavSubAgentCard = memo(function NavSubAgentCard({
         title={t("openDetail")}
         onClick={() => viewerHost.open({ kind: "delegation", source })}
         className={cn(
-          card,
-          "group/agent outline-none transition-colors hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          line,
+          "group/agent text-start outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-[3px] focus-visible:ring-ring/50"
         )}
       >
         {body}
-        <span
-          aria-hidden="true"
-          className="flex w-8 shrink-0 items-center justify-center border-s border-border text-foreground/70 transition-colors group-hover/agent:text-foreground"
-        >
-          <Eye className="size-3.5" />
-        </span>
       </button>
     )
   }
   return (
-    <div data-testid="nav-sub-agent" className={card}>
+    <div data-testid="nav-sub-agent" className={line}>
       {body}
     </div>
   )
@@ -764,21 +799,16 @@ const MODE_ICON: Record<FileMode, typeof FilePen> = {
   deleted: FileMinus2,
 }
 
-const MODE_CLASS: Record<FileMode, string> = {
-  added: "text-green-600 dark:text-green-400",
-  modified: "text-muted-foreground",
-  deleted: "text-red-600 dark:text-red-400",
-}
-
 /**
- * A changed file of an open message, in a box of its own: its row, and its
- * diff under the row while open, one frame around both. The row folds the
- * diff; the name opens the file in the workspace's file tabs (a deleted file
- * has none, so its name is plain text); while the diff shows, the row also
+ * A changed file of an open message, as the transcript's activity draws an
+ * edit: a line with its icon, its name and folder and its counts, and its diff
+ * unfolding under the line in a panel of its own. The line folds the diff;
+ * the name opens the file in the workspace's file tabs (a deleted file has
+ * none, so its name is plain text); while the diff shows, the line also
  * switches it between inline and side by side, and opens it whole in a file
  * tab.
  */
-const NavFileBox = memo(function NavFileBox({
+const NavFile = memo(function NavFile({
   file,
   diffOpen,
   view,
@@ -818,25 +848,23 @@ const NavFileBox = memo(function NavFileBox({
   const ModeIcon = MODE_ICON[mode]
   const toggle = () => onToggleDiff(file.id)
   const stop = (event: MouseEvent) => event.stopPropagation()
-  const tool =
-    "flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-background hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
   return (
-    <div className="overflow-hidden rounded-md border border-border bg-background">
-      {/* The whole row folds the diff for a pointer; keyboard users have the
+    <div>
+      {/* The whole line folds the diff for a pointer; keyboard users have the
           chevron, which says what it does. */}
       <div
         data-testid="nav-file"
         onClick={toggle}
-        className={cn(
-          "flex h-7 min-w-0 cursor-pointer items-center gap-2 ps-2 pe-1 transition-colors",
-          diffOpen ? "bg-muted/50" : "hover:bg-muted/50"
-        )}
+        className="flex h-7 min-w-0 cursor-pointer items-center gap-2 rounded-lg pe-1 transition-colors hover:bg-foreground/5"
       >
-        <span title={tDiff(`mode.${mode}`)} className="flex shrink-0">
+        <span
+          title={tDiff(`mode.${mode}`)}
+          className="flex w-7 shrink-0 justify-center"
+        >
           <ModeIcon
             aria-hidden="true"
-            className={cn("size-3.5", MODE_CLASS[mode])}
+            className="size-3.5 text-muted-foreground"
           />
         </span>
         {/* The name keeps its width; the folder takes what is left and is
@@ -881,7 +909,7 @@ const NavFileBox = memo(function NavFileBox({
               <ViewModeToggle
                 view={view}
                 onSwitch={onSwitchView}
-                className="size-5 rounded border-0 bg-transparent hover:bg-background"
+                className="size-5 rounded-md border-0 bg-transparent hover:bg-foreground/5"
                 iconClassName="size-3.5"
               />
               <button
@@ -913,11 +941,11 @@ const NavFileBox = memo(function NavFileBox({
         </span>
       </div>
       {diffOpen && (
-        <CompactDiff
-          diffText={file.diff ?? ""}
-          view={view}
-          className="border-t border-border"
-        />
+        // The panel an edit's diff opens in, in the transcript: the page
+        // colour under a hairline, translucent over a background image.
+        <div className="ws-msg-card mt-0.5 mb-1.5 overflow-hidden rounded-lg border border-border bg-background">
+          <CompactDiff diffText={file.diff ?? ""} view={view} />
+        </div>
       )}
     </div>
   )

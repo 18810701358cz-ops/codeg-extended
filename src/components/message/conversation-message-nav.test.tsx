@@ -302,6 +302,19 @@ describe("MessageNavList", () => {
     expect(onRetryEarlier).toHaveBeenCalledTimes(1)
   })
 
+  it("keeps code left to right under a right-to-left interface", () => {
+    // A list item's own text-align (`-webkit-match-parent`) turns the list's
+    // logical start into a physical right under RTL, which would carry
+    // through a diff's dir="ltr" and push its code to the right edge: each
+    // row starts its own.
+    renderList()
+    const rows = screen.getAllByRole("listitem")
+    expect(rows).toHaveLength(entries.length)
+    for (const row of rows) {
+      expect(row.firstElementChild).toHaveClass("text-start")
+    }
+  })
+
   it("sums up a closed message's sub-agents and files", () => {
     renderList()
     const edits = messageButton("edit something")
@@ -418,6 +431,26 @@ describe("MessageNavList", () => {
       expect(document.querySelector("[data-diff-row]")).toBeNull()
     })
 
+    it("unfolds a diff in a panel under the file's line, as the transcript does an edit's", () => {
+      renderList()
+      fireEvent.click(messageButton("edit something"))
+      const box = fileBox("b.ts")
+      fireEvent.click(
+        within(box).getByRole("button", {
+          name: "Show the changes to src/b.ts",
+        })
+      )
+      // The line stays a line — no frame round it and the diff together…
+      const line = box.querySelector("[data-testid=nav-file]")!
+      expect(box).not.toHaveClass("border")
+      expect(line.querySelector("[data-diff-row]")).toBeNull()
+      // …and the diff opens in a panel of its own under it: the page colour
+      // inside a hairline.
+      const panel = line.nextElementSibling as HTMLElement
+      expect(panel.querySelectorAll("[data-diff-row]")).toHaveLength(3)
+      expect(panel).toHaveClass("border", "border-border", "bg-background")
+    })
+
     it("switches a diff to side by side and back, remembering the panel's own choice", () => {
       renderList()
       fireEvent.click(messageButton("edit something"))
@@ -512,11 +545,32 @@ describe("MessageNavList", () => {
       ])
     })
 
+    it("draws a sub-agent as the transcript's activity draws a delegation", () => {
+      models.set("tu-1", {
+        task: "Investigate the flaky test",
+        childConversationId: 9,
+        status: "running",
+      })
+      renderList()
+      fireEvent.click(messageButton("edit something"))
+      const agent = screen.getByTestId("nav-sub-agent")
+      // A line, not a card: its logo in a status ring that turns while it
+      // works, how it is doing in words, and the ↗ that says the line opens
+      // its conversation.
+      expect(agent).not.toHaveClass("border")
+      const ring = agent.querySelector("[role=img]")!
+      expect(ring.querySelector(".animate-spin")).not.toBeNull()
+      expect(within(agent).getByText("running")).toBeInTheDocument()
+      expect(agent.querySelector(".lucide-arrow-up-right")).not.toBeNull()
+    })
+
     it("only reports a sub-agent with no conversation to open", () => {
       models.set("tu-1", { childConversationId: null })
       renderList()
       fireEvent.click(messageButton("edit something"))
-      expect(screen.getByTestId("nav-sub-agent").tagName).not.toBe("BUTTON")
+      const agent = screen.getByTestId("nav-sub-agent")
+      expect(agent.tagName).not.toBe("BUTTON")
+      expect(agent.querySelector(".lucide-arrow-up-right")).toBeNull()
     })
 
     it("only reports a sub-agent when there is no viewer to open it in", () => {
@@ -539,6 +593,13 @@ describe("MessageNavList", () => {
       })
       const [failed, resumed] = screen.getAllByTestId("nav-sub-agent")
       expect(failed).toHaveTextContent("timeout")
+      // In the failure colour, its ring as well as its words.
+      expect(within(failed).getByText("timeout")).toHaveClass(
+        "text-tone-danger"
+      )
+      expect(
+        failed.querySelector("[role=img] > .border-tone-danger")
+      ).not.toBeNull()
       expect(within(failed).queryByTitle("Resumed")).not.toBeInTheDocument()
       expect(within(resumed).getByTitle("Resumed")).toBeInTheDocument()
     })
@@ -634,6 +695,49 @@ describe("MessageNavList", () => {
       } finally {
         globalThis.ResizeObserver = Original
       }
+    })
+
+    it("fills nothing with an opaque colour a background image would not show through", async () => {
+      models.set("tu-1", { childConversationId: 9 })
+      const area = scrollArea(60)
+      renderList({ currentTurnId: "u3" }, { scrollElement: area })
+      await screen.findByRole("button", {
+        name: "Scroll to the current message (#3)",
+      })
+      fireEvent.click(messageButton("edit something"))
+      fireEvent.click(
+        screen.getByRole("button", { name: "Show the changes to src/b.ts" })
+      )
+      // Over a workspace background image `ws-msg-card` / `ws-msg-chip` turn
+      // a fill translucent (globals.css): every page-coloured or muted fill
+      // here — the band, the number pills, the diff's panel, the button back
+      // to the current message — has one.
+      const OPAQUE = [
+        "bg-background",
+        "bg-card",
+        "bg-muted",
+        "bg-secondary",
+        "bg-popover",
+      ]
+      const classes = (el: Element) =>
+        (el.getAttribute("class") ?? "").split(/\s+/)
+      const filled = [...document.body.querySelectorAll("*")].filter((el) =>
+        classes(el).some((c) => OPAQUE.includes(c))
+      )
+      expect(filled.length).toBeGreaterThan(3)
+      for (const el of filled) {
+        expect(classes(el).join(" ")).toMatch(/\bws-msg-(card|chip)\b/)
+      }
+      // A fade into the page colour is dropped there (`ws-no-fade`)…
+      const fades = [
+        ...document.body.querySelectorAll("[class*='from-background']"),
+      ]
+      expect(fades).toHaveLength(1)
+      expect(fades[0]).toHaveClass("ws-no-fade")
+      // …and the hairlines are the transcript's (`ws-msg-scope`).
+      expect(
+        screen.getByTestId("virtual-list").closest(".ws-msg-scope")
+      ).not.toBeNull()
     })
 
     it("offers nothing while the current message is in view", async () => {

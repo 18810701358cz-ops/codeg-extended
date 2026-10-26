@@ -8,7 +8,7 @@ vi.mock("@/components/ai-elements/link-safety", () => ({
   useStreamdownLinkSafety: () => ({ enabled: false }),
 }))
 
-import { MessageResponse } from "./message"
+import { Message, MessageContent, MessageResponse } from "./message"
 
 // Streamdown's own utility classes live in node_modules, which our Tailwind
 // scan skips, so a block's frame is decided by globals.css rules keyed on
@@ -123,6 +123,65 @@ describe("MessageResponse code block chrome", () => {
     expect(positioner.height).toBe(bar.height)
   })
 
+  it("puts a code glyph in the title bar of a fence that names no language", () => {
+    // Streamdown leaves the language label empty, and the bar bare on its
+    // left; the glyph takes the label's place. A fence with a language keeps
+    // its label and gets no glyph.
+    const LABEL = '[data-streamdown="code-block-header"] > span:empty'
+    const { container } = render(
+      <MessageResponse>
+        {["```", "retry 2/5: ECONNRESET", "```", "", "```ts", "x", "```"].join(
+          "\n"
+        )}
+      </MessageResponse>
+    )
+    const [bare, named] = [
+      ...container.querySelectorAll('[data-streamdown="code-block-header"]'),
+    ]
+    expect(bare!.getAttribute("data-language")).toBe("")
+    expect(bare!.firstElementChild!.matches(LABEL)).toBe(true)
+    expect(named!.firstElementChild!.textContent).toBe("ts")
+    expect(named!.firstElementChild!.matches(LABEL)).toBe(false)
+
+    const glyph = declarations(`${LABEL}::before`)
+    expect(glyph).toMatchObject({
+      content: '""',
+      display: "block",
+      "background-color": "currentColor",
+    })
+    // The lucide `code` glyph, as a mask in both spellings (older WebKit).
+    for (const mask of [glyph.mask, glyph["-webkit-mask"]]) {
+      expect(mask).toContain("d='m16 18 6-6-6-6'")
+      expect(mask).toContain("d='m8 6-6 6 6 6'")
+    }
+  })
+
+  it("tints the body like its title bar over a background image, a rule between them", () => {
+    // Over a workspace background image the bar and the body both take the
+    // translucent tint of the reply's other surfaces — the body used to stay
+    // an opaque white panel — and, the two now one colour, a hairline at the
+    // foot of the bar tells them apart.
+    const BAR = '[data-workspace-bg="on"] [data-streamdown="code-block-header"]'
+    const BODY = '[data-workspace-bg="on"] [data-streamdown="code-block-body"]'
+    const { container } = render(
+      <div data-workspace-bg="on">
+        <MessageResponse>{REPLY}</MessageResponse>
+      </div>
+    )
+    const root = container.querySelector(CODE_ROOT)!
+    expect(
+      root.querySelector('[data-streamdown="code-block-header"]')!.matches(BAR)
+    ).toBe(true)
+    expect(
+      root.querySelector('[data-streamdown="code-block-body"]')!.matches(BODY)
+    ).toBe(true)
+
+    const bar = declarations(BAR)
+    expect(bar["background-color"]).toContain("var(--ws-msg-alpha)")
+    expect(declarations(BODY)["background-color"]).toBe(bar["background-color"])
+    expect(bar["box-shadow"]).toBe("inset 0 -1px 0 var(--border)")
+  })
+
   it("paints light token colours, which 2.7 leaves to an ungenerated class", async () => {
     const { container } = renderReply()
 
@@ -214,5 +273,56 @@ describe("MessageResponse table chrome", () => {
       "min-height": "0",
       padding: "0",
     })
+  })
+})
+
+describe("a message's hairlines over a background image", () => {
+  const BG = '[data-workspace-bg="on"]'
+  const SCOPE = `${BG} :is(.is-user, .is-assistant, .ws-msg-scope)`
+
+  it("draws them in a tint of the text colour, not the theme's flat grey", () => {
+    const { container } = render(
+      <div data-workspace-bg="on">
+        <Message from="user">
+          <MessageContent>Sort the bindings</MessageContent>
+        </Message>
+        <Message from="assistant">
+          <MessageContent>
+            <MessageResponse>{REPLY}</MessageResponse>
+          </MessageContent>
+        </Message>
+      </div>
+    )
+    // A message, the user's or the agent's, swaps the theme's --border…
+    expect(declarations(SCOPE)["--border"]).toBe("var(--ws-msg-border)")
+    expect(container.querySelector(".is-user")!.matches(SCOPE)).toBe(true)
+    expect(container.querySelector(".is-assistant")!.matches(SCOPE)).toBe(true)
+    // …for a tint of the text colour, which shows on any colour of the image
+    // (the theme's opaque grey vanishes where the image is that grey).
+    expect(declarations(BG)["--ws-msg-border"]).toMatch(
+      /^color-mix\(in oklab, var\(--foreground\) \d+%, transparent\)$/
+    )
+    // The code block's frame and title bar, and the table's card, draw in it.
+    const root = container.querySelector(CODE_ROOT)!
+    expect(root.closest(".is-assistant")).not.toBeNull()
+    expect(declarations(TABLE_CARD).border).toBe("1px solid var(--border)")
+    expect(
+      declarations(`${BG} [data-streamdown="code-block-header"]`)["box-shadow"]
+    ).toBe("inset 0 -1px 0 var(--border)")
+  })
+
+  it("keeps the theme's grey on an engine without colour-mix", () => {
+    // Else --border would be a colour-mix such an engine drops, and every
+    // border in a message would fall back to the black of currentColor.
+    let fallback: string | undefined
+    stylesheet.walkAtRules("supports", (atRule) => {
+      if (!atRule.params.startsWith("not")) return
+      atRule.walkRules(BG, (rule) => {
+        rule.walkDecls("--ws-msg-border", (decl) => {
+          fallback = decl.value
+        })
+      })
+    })
+    expect(fallback).toBe("var(--border)")
   })
 })

@@ -985,8 +985,91 @@
   }
 }
 
+/* ===========================================================================
+   Activity timeline tokens（会话消息「执行过程」时间线）
+   语义色只在这里定义一份（亮/暗各一），不进 12 套主题预设：预设只换中性色和主色，
+   这些令牌与主色解耦 —— red / rose 预设的 --primary 色相（25° / 16°）几乎等于
+   --destructive（27°），所以「运行中」从不用主色表达（靠转动的虚线圆环），失败
+   独占红色。中性部分（轨道、圆环）从 --foreground 混色，跟随每套预设的明暗反转。
+   混色一律在 oklab（直角坐标）里做：在 oklch 里和 transparent / 白色这类无色相的
+   颜色混，旧内核会把缺失的色相当 0°（红）插值，绿色的 diff 底会混成粉色。
+   对比度按 12 套预设 × 明暗实测：文字 ≥ 4.5:1，圆环和图标 ≥ 3:1。亮色下绿 / 琥珀 /
+   MCP 青压得比直觉深，是为了在自己的 10% 底色上仍过 4.5；圆环 45% 是过 3:1 的下限。
+   ========================================================================= */
+:root {
+  --activity-rail: color-mix(in oklab, var(--foreground) 12%, transparent);
+  --activity-ring: color-mix(in oklab, var(--foreground) 45%, transparent);
+  --activity-ring-done: color-mix(in oklab, var(--foreground) 22%, transparent);
+  --activity-ring-live: color-mix(in oklab, var(--foreground) 72%, transparent);
+  --activity-surface: var(--muted);
+  /* --muted-foreground 在 --muted 底上只有约 4.3:1：详情框和灰底小标签里的次要文字
+     改用它（向前景色略收），见下方 .activity-detail-box。 */
+  --activity-muted-strong: color-mix(
+    in oklab,
+    var(--muted-foreground) 88%,
+    var(--foreground)
+  );
+  --tone-success: oklch(0.52 0.13 150);
+  --tone-danger: var(--destructive);
+  --tone-danger-surface: color-mix(
+    in oklab,
+    var(--destructive) 8%,
+    var(--background)
+  );
+  --tone-warning: oklch(0.53 0.12 65);
+  --tone-mcp: oklch(0.5 0.085 190);
+  --tone-info: oklch(0.58 0.13 255);
+  --diff-added-bg: color-mix(in oklab, var(--tone-success) 10%, transparent);
+  --diff-deleted-bg: color-mix(in oklab, var(--tone-danger) 10%, transparent);
+  --diff-modified-bg: color-mix(in oklab, var(--tone-info) 10%, transparent);
+  /* diff 行首的 + / −：画在同色系的行底上，向前景色收两成才够 4.5:1
+     （暗色下是提亮）。 */
+  --diff-added-fg: color-mix(
+    in oklab,
+    var(--tone-success) 80%,
+    var(--foreground)
+  );
+  --diff-deleted-fg: color-mix(
+    in oklab,
+    var(--tone-danger) 80%,
+    var(--foreground)
+  );
+}
+
+.dark {
+  --tone-success: oklch(0.74 0.15 150);
+  --tone-danger-surface: color-mix(
+    in oklab,
+    var(--destructive) 12%,
+    var(--background)
+  );
+  --tone-warning: oklch(0.8 0.14 80);
+  --tone-mcp: oklch(0.74 0.1 190);
+  --tone-info: oklch(0.74 0.12 255);
+  --diff-added-bg: color-mix(in oklab, var(--tone-success) 14%, transparent);
+  --diff-deleted-bg: color-mix(in oklab, var(--tone-danger) 14%, transparent);
+  --diff-modified-bg: color-mix(in oklab, var(--tone-info) 14%, transparent);
+}
+
 @theme inline {
   --font-sans: var(--font-sans);
+  --color-activity-rail: var(--activity-rail);
+  --color-activity-ring: var(--activity-ring);
+  --color-activity-ring-done: var(--activity-ring-done);
+  --color-activity-ring-live: var(--activity-ring-live);
+  --color-activity-surface: var(--activity-surface);
+  --color-activity-muted-strong: var(--activity-muted-strong);
+  --color-tone-success: var(--tone-success);
+  --color-tone-danger: var(--tone-danger);
+  --color-tone-danger-surface: var(--tone-danger-surface);
+  --color-tone-warning: var(--tone-warning);
+  --color-tone-mcp: var(--tone-mcp);
+  --color-tone-info: var(--tone-info);
+  --color-diff-added: var(--diff-added-bg);
+  --color-diff-deleted: var(--diff-deleted-bg);
+  --color-diff-modified: var(--diff-modified-bg);
+  --color-diff-added-fg: var(--diff-added-fg);
+  --color-diff-deleted-fg: var(--diff-deleted-fg);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -1241,14 +1324,65 @@
   );
 }
 
-/* 围栏代码块标题栏（Streamdown 的 code-block-header，关图时是下方「Streamdown code blocks」
-   区块给的 muted 80%）：转半透明中性染色（不磨砂），与其它 muted 标题栏统一。代码块根自带
-   rounded-xl border 作边界。代码正文（code-block-body）保持 Streamdown 自带的不透明
-   bg-background（护可读性），不在此列。 */
+/* 围栏代码块（Streamdown 的 code-block）：标题栏（关图时是下方「Streamdown code blocks」区块
+   给的 muted 80%）和代码正文（关图时是 Streamdown 自带的不透明 bg-background）开图都转同一种
+   半透明中性染色（不磨砂），跟消息里其它表面一样透出背景图。两者底色一样了，标题栏底边补一条
+   inset 1px 分隔线（纯色 var(--border)，不改盒模型；关图两者底色不同，不需要）。代码块根自带
+   rounded-xl border 作外边界。 */
 [data-workspace-bg="on"] [data-streamdown="code-block-header"] {
   background-color: color-mix(
     in oklch,
     var(--muted) calc(var(--ws-msg-alpha) * 100%),
+    transparent
+  );
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+[data-workspace-bg="on"] [data-streamdown="code-block-body"] {
+  background-color: color-mix(
+    in oklch,
+    var(--muted) calc(var(--ws-msg-alpha) * 100%),
+    transparent
+  );
+}
+
+/* 消息里的细线，开图时加深。消息里的描边（「执行过程」胶囊、代码块和它标题栏的底边、表格、
+   内联代码、用户气泡、卡片和详情面板的 border-border……）都是主题 --border：一种不透明的浅灰
+   （深色主题是白 10%）。压在被遮罩冲淡的背景图上，它和线两侧的颜色差不多，线就看不出来了。
+   开图时在消息范围里把 --border 换成前景色的一层薄染色 --ws-msg-border：它按「比下面深多少」
+   画，压在图的哪种颜色上都一样看得出（深色主题是提亮），深浅同 chrome 分隔线。范围 = 消息
+   （.is-user / .is-assistant，会话和子会话抽屉里的都是）+ 显式的 .ws-msg-scope（消息之间的上下文
+   压缩分隔线、会话详情的消息导航）：任务、自动化等页面复用的 ws-msg-* 表面不在范围里，不受
+   影响。混色用 oklab：在 oklch 里和 transparent 混，旧内核会把缺失的色相按 0°（红）插值。 */
+[data-workspace-bg="on"] {
+  --ws-msg-border: color-mix(in oklab, var(--foreground) 18%, transparent);
+}
+[data-workspace-bg="on"] :is(.is-user, .is-assistant, .ws-msg-scope) {
+  --border: var(--ws-msg-border);
+}
+
+/* 面板：执行过程里步骤展开后的详情框（DetailBox）这类关图时无边框的浅底面板，开图后底色
+   半透明，和背景图分不开——补一圈上面那种细线。失败的面板（data-tone="danger"）关图是不透明
+   的浅红底，开图也换成半透明（消息表面同一种染色里调进一点红），线也带红。两处都只设自定义
+   属性、不直接写 color-mix 的颜色声明：构建会在直接写的 color-mix 前面补一条取第一种颜色的
+   回落声明（这里就是纯红的 --destructive），不认识 color-mix 的老内核丢掉后一条、用那条回落，
+   会把失败面板整块涂红；自定义属性的两条声明在任何内核里都是后一条生效，那条回落等于没有，
+   老内核里它在用处作废——底色同关图（老内核本就算不出 --tone-danger-surface），线不画。 */
+[data-workspace-bg="on"] .ws-msg-panel {
+  border: 1px solid var(--ws-msg-panel-border, var(--border));
+}
+[data-workspace-bg="on"] .ws-msg-panel[data-tone="danger"] {
+  --tone-danger-surface: color-mix(
+    in oklab,
+    var(--destructive) 10%,
+    color-mix(
+      in oklab,
+      var(--muted) calc(var(--ws-msg-alpha) * 100%),
+      transparent
+    )
+  );
+  --ws-msg-panel-border: color-mix(
+    in oklab,
+    var(--tone-danger) 35%,
     transparent
   );
 }
@@ -1259,6 +1393,13 @@
    color-mix，故无需 @supports 降级。 */
 [data-workspace-bg="on"] .ws-transparent-bg {
   background-color: transparent;
+}
+
+/* 渐隐到页面底色的遮挡（bg-gradient-to-* from-background）：开图时那一截渐变是一条不透明的
+   底色带，压在背景图上。去掉它，浮在上面的东西自己带磨砂底（会话详情消息导航底部的「当前
+   消息」按钮）。无 base 规则，关图零回归。 */
+[data-workspace-bg="on"] .ws-no-fade {
+  background-image: none;
 }
 
 /* 终端画布：让 xterm 视口透出所属 ws-surface 面板的磨砂表面（而非黑块）。xterm 6 的视口
@@ -1320,10 +1461,12 @@
 [data-workspace-bg="on"] {
   --ws-chrome-border: color-mix(in oklch, var(--foreground) 18%, transparent);
 }
-/* 老引擎无 color-mix 时回落到主题 --border（仍随主题，至少不崩）。 */
+/* 老引擎无 color-mix 时回落到主题 --border（仍随主题，至少不崩）。消息细线 --ws-msg-border 同理：
+   不回落的话，消息里的 --border 会是一句作废的 color-mix，边框退成 currentColor 的黑线。 */
 @supports not (background: color-mix(in oklch, white, transparent)) {
   [data-workspace-bg="on"] {
     --ws-chrome-border: var(--border);
+    --ws-msg-border: var(--border);
   }
 }
 /* 组合式 utility（无 base 规则）：挂在已带 border-* / border-border* 的 chrome 元素上，开图时用加强色
@@ -1562,6 +1705,22 @@
   background-color: color-mix(in oklch, var(--muted) 80%, transparent);
 }
 
+/* A fence that names no language leaves the bar's language label empty, and
+   the bar bare on its left. A code glyph takes the label's place there: lucide
+   `code`, the icon of a script step, as big as the actions' icons across
+   the bar (so as heavy a stroke), in the bar's own ink. */
+[data-streamdown="code-block-header"] > span:empty::before {
+  content: "";
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m16 18 6-6-6-6'/%3E%3Cpath d='m8 6-6 6 6 6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m16 18 6-6-6-6'/%3E%3Cpath d='m8 6-6 6 6 6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
 /* The actions chip hangs off an `absolute top-2 right-2` positioner. Stretch
    that over the title bar so the chip centres on it, inset like the language
    label, and drop the chip's frame: it sits on the bar now. */
@@ -1620,6 +1779,47 @@
    Streamdown's stable list-item data attribute. */
 [data-streamdown="list-item"] > p {
   display: inline;
+}
+
+/* GFM task lists. remark-gfm marks a task item `task-list-item` and puts its
+   checkbox first in it (in its first paragraph, in a loose list). The checkbox
+   is the item's marker, so the bullet our inside-positioned lists would draw
+   beside it goes, and the box keeps a marker's room from the text. Plain items
+   in the same list keep their bullets. */
+[data-streamdown="list-item"].task-list-item {
+  list-style-type: none;
+}
+
+[data-streamdown="list-item"].task-list-item > input[type="checkbox"],
+[data-streamdown="list-item"].task-list-item
+  > p:first-child
+  > input[type="checkbox"]:first-child {
+  margin-inline-end: 0.5em;
+  vertical-align: middle;
+}
+
+/* A plan in its card is a document inside the reply, often inside the
+   timeline: its headings step down from a reply's own (Streamdown's 1.875rem
+   h1 would tower over the 0.875rem text around the card). */
+.plan-markdown [data-streamdown="heading-1"] {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+
+.plan-markdown [data-streamdown="heading-2"] {
+  font-size: 1rem;
+  line-height: 1.5rem;
+}
+
+.plan-markdown
+  :is(
+    [data-streamdown="heading-3"],
+    [data-streamdown="heading-4"],
+    [data-streamdown="heading-5"],
+    [data-streamdown="heading-6"]
+  ) {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 
 /* Streamdown table overrides.
@@ -1747,11 +1947,9 @@
   transition: none !important;
 }
 
-/* Tool collapsible: fade-in on expand (height must change instantly for virtualizer) */
-.tool-collapsible-content[data-state="open"] > * {
-  animation: tool-content-fade 150ms ease-out;
-}
-
+/* A fade for content that appears under a timeline row without moving it
+   (a running command's live tail, a thought's first text): opacity only, so
+   the row's height changes at once and the virtual list measures it right. */
 @keyframes tool-content-fade {
   from {
     opacity: 0;
@@ -1761,8 +1959,8 @@
   }
 }
 
-/* Reply fold body — the "Worked for …" header's progress section
-   (`CompletedTurnContent`). Unlike the tool collapsibles above, this one DOES
+/* Reply fold body — the activity header's progress section
+   (`CompletedTurnContent`). Unlike the row fades above, this one DOES
    animate its height: it is the one fold per reply the reader toggles by hand,
    and the answer below reading as pushed down / pulled back up is the whole
    point of the affordance.
@@ -1836,6 +2034,472 @@
   .reply-fold-body[data-state="closed"] {
     animation: reply-fold-close 1ms linear forwards;
   }
+}
+
+/* ===== Activity timeline（执行过程时间线，components/message/activity）=====
+   Left rail: a 1.5rem column with a 1px line down its middle and a 1.25rem
+   status ring per row. The line is drawn as SEGMENTS between rings (each row's
+   ::before runs from just under its own ring to just above the next row's)
+   rather than one line behind opaque rings, so nothing has to paint a backdrop
+   — the rail stays transparent over a workspace background image. Pure CSS,
+   no measuring: the last row has a segment only beside a body under its line
+   (`data-body`, set by the row), ending — once the list is done (`data-end`,
+   set by the list) — on an end mark level with that body's last line.
+
+   Geometry (rem, so it follows the app zoom): the column is 2rem wide and the
+   ring — 1.25rem across, the widest mark — starts flush with its left edge, so
+   the rail runs down its centre at 0.625rem. Vertically a row's first line is
+   1.5rem tall with 0.125rem of padding above it, so its centre — and the
+   ring's — sits at 0.875rem; the ring spans 0.25rem–1.5rem down the row.
+   Segments keep a 0.125rem gap to the rings on both ends. A row marked `data-marker="dot"` (prose between
+   steps) carries a 0.375rem dot on the line instead of a ring. */
+.activity-timeline {
+  --activity-gap: 0.5rem;
+  position: relative;
+}
+
+/* `text-align: start` on the rows: the UA gives <li> `-webkit-match-parent`,
+   which turns the list's logical `start` into a physical `right` under RTL —
+   and that inherits through `dir="ltr"`, so code and paths in a row's detail
+   would hug the right edge in Arabic. */
+.activity-item {
+  position: relative;
+  padding-inline-start: 2rem;
+  text-align: start;
+}
+
+/* Spaced from the row before it — keyed on position, not written as
+   `.activity-item + .activity-item`: with an adjacent-sibling rule on the
+   list, Chrome restyles every row in it whenever one leaves from the middle,
+   which a long reply's fold does on each new step while it streams. */
+.activity-item:not(:first-child) {
+  margin-top: var(--activity-gap);
+}
+
+.activity-item::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(0.625rem - 0.5px);
+  top: 1.625rem;
+  bottom: calc(-1 * (var(--activity-gap) + 0.125rem));
+  width: 1px;
+  background: var(--activity-rail);
+}
+
+.activity-item[data-marker="dot"]::before {
+  top: 1.125rem;
+}
+
+/* The last row: a segment only beside a body under its line — an open panel,
+   prose, a card (`data-body`); a folded row ends the rail at its ring. The
+   segment ends a little further above the row's bottom edge than a one-line
+   row reaches below the segment's top (0.125rem for a ring row, 0.375rem for
+   a line of prose), so a one-line note gets none either. */
+.activity-item:last-child::before {
+  bottom: 0.25rem;
+}
+
+.activity-item[data-marker="dot"]:last-child::before {
+  bottom: 0.4375rem;
+}
+
+.activity-item:last-child:not([data-body])::before {
+  content: none;
+}
+
+/* The incoming segment of a dot row: the previous row's segment stops 0.125rem
+   into this one (it was sized for a ring at 0.25rem); this fills the rest of
+   the way down to the dot. */
+.activity-item[data-marker="dot"]:not(:first-child)::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(0.625rem - 0.5px);
+  top: 0.125rem;
+  height: 0.5rem;
+  width: 1px;
+  background: var(--activity-rail);
+}
+
+/* A reply's list under its header capsule (`data-headed`, set by the turn).
+   It starts a row's gap plus 0.25rem below the capsule — as if the capsule's
+   edge were the bottom of a ring on a row before it — so the first ring sits
+   as far under the capsule (1rem) as a ring under the one before. The first
+   row's rail runs up to that edge: down to 0.125rem above its ring, or, when
+   prose comes first, into its dot as a dot's incoming segment does. */
+.activity-timeline[data-headed] {
+  padding-top: calc(var(--activity-gap) + 0.25rem);
+}
+
+.activity-timeline[data-headed] > .activity-item:first-child::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(0.625rem - 0.5px);
+  top: calc(-1 * (var(--activity-gap) + 0.25rem));
+  height: calc(var(--activity-gap) + 0.375rem);
+  width: 1px;
+  background: var(--activity-rail);
+}
+
+.activity-timeline[data-headed]
+  > .activity-item[data-marker="dot"]:first-child::after {
+  height: calc(var(--activity-gap) + 0.875rem);
+}
+
+/* Once the list is done (`data-end="reached"`: the reply, or the sub-agent,
+   has finished) that segment ends on the end mark, a 0.5rem ring around a dot
+   level with the last line beside it. The list measures where that line is
+   (`--activity-end-line`, use-end-mark-line.ts: a card or a panel with no
+   footer ends higher); unmeasured, the mark takes a panel footer's, a group
+   member's or a line of prose's — 0.875rem above the row's bottom edge. The
+   mark is drawn in the segment's own box (at its bottom, the line above it
+   stopping 0.125rem short), so a row with no body under its line — or a
+   one-line note, whose dot already sits on that line — shows neither. */
+.activity-timeline[data-end="reached"] > .activity-item:last-child::before {
+  bottom: calc(var(--activity-end-line, 0.875rem) - 0.25rem);
+  inset-inline-start: calc(0.625rem - 0.25rem);
+  width: 0.5rem;
+  background:
+    radial-gradient(
+        circle,
+        var(--activity-ring) 1px,
+        transparent 1.5px 2.5px,
+        var(--activity-ring) 3px 3.5px,
+        transparent 4px
+      )
+      50% 100% / 0.5rem 0.5rem no-repeat,
+    linear-gradient(var(--activity-rail), var(--activity-rail)) 50% 0 / 1px
+      calc(100% - 0.625rem) no-repeat;
+}
+
+/* Rows inside an expanded group: indented into the content column, with a
+   1rem marker column of their own on a dashed sub-rail, and spaced like the
+   rows around the group — the same gap, the same 0.125rem above and below the
+   line (centre 0.875rem). A child ring is 1rem (0.375rem–1.375rem), a child
+   dot 0.375rem (0.6875rem–1.0625rem). Like the main rail, a segment stops
+   0.125rem short of the next marker, and the last child has one only beside
+   its open panel, ending on a smaller end mark once the group is done. */
+.activity-children {
+  position: relative;
+  margin-top: 0.125rem;
+}
+
+.activity-child {
+  position: relative;
+  padding-inline-start: 1.5rem;
+  text-align: start;
+}
+
+.activity-child:not(:first-child) {
+  margin-top: var(--activity-gap);
+}
+
+.activity-child::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(0.5rem - 0.5px);
+  border-inline-start: 1px dashed var(--activity-rail);
+}
+
+.activity-child[data-marker="ring"]::before {
+  top: 1.5rem;
+  bottom: calc(-1 * (var(--activity-gap) + 0.25rem));
+}
+
+.activity-child[data-marker="dot"]::before {
+  top: 1.1875rem;
+  bottom: calc(-1 * (var(--activity-gap) + 0.5625rem));
+}
+
+.activity-child[data-marker="ring"]:last-child::before {
+  bottom: 0.3125rem;
+}
+
+.activity-child[data-marker="dot"]:last-child::before {
+  bottom: 0.625rem;
+}
+
+.activity-child:last-child:not([data-body])::before {
+  content: none;
+}
+
+/* A finished group's mark sits level with its last member's last line, the
+   same way: measured, else a panel footer's 0.875rem above the bottom. */
+.activity-children[data-end="reached"] > .activity-child:last-child::before {
+  bottom: calc(var(--activity-end-line, 0.875rem) + 0.3125rem);
+}
+
+.activity-children[data-end="reached"]
+  > .activity-child:last-child[data-body]::after {
+  content: "";
+  position: absolute;
+  bottom: calc(var(--activity-end-line, 0.875rem) - 0.1875rem);
+  inset-inline-start: calc(0.5rem - 0.1875rem);
+  width: 0.375rem;
+  height: 0.375rem;
+  border: 1px solid var(--activity-ring);
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    var(--activity-ring) 0 1px,
+    transparent 1.5px
+  );
+}
+
+/* A live list's rail grows down to the steps that join it rather than
+   appearing at once. `use-rail-growth.ts` marks, while the list is live, a row
+   that joined (`data-rail-enter`) and the row that was last before it
+   (`data-rail-extend`), and clears the marks once they have run. A new
+   row's segment — down to the next row, or to the turning mark at the foot of
+   a reply's rail — and a dot's incoming one grow from the top, and so does the
+   segment the last row gains once a row follows it. A last row with a body
+   already had a segment beside it (`data-rail-body`, noted as the rows join):
+   only the part past its line grows, the clip let out from where the segment
+   stopped. The rows one join touched take
+   their turn top to bottom (the hook holds each one's growth back a little
+   longer), so the rail draws down through them, and the turning mark fades in
+   as it arrives. The rail up to the header stands as it is: a first row that
+   joins takes over the one already drawn. Transform and clip only, so no row
+   changes size under the virtual list. */
+@keyframes activity-rail-grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes activity-rail-extend {
+  from {
+    clip-path: inset(0 0 var(--activity-rail-extension) 0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .activity-item[data-rail-enter]::before,
+  .activity-item[data-rail-enter][data-marker="dot"]:not(:first-child)::after,
+  .activity-item[data-rail-extend]:not(
+      [data-rail-enter],
+      [data-rail-body]
+    )::before,
+  .activity-child[data-rail-enter]::before,
+  .activity-child[data-rail-extend]:not(
+      [data-rail-enter],
+      [data-rail-body]
+    )::before {
+    transform-origin: top;
+    animation: activity-rail-grow 0.26s cubic-bezier(0.33, 1, 0.68, 1) backwards;
+  }
+
+  .activity-item[data-rail-extend][data-rail-body]:not(
+      [data-rail-enter]
+    )::before,
+  .activity-child[data-rail-extend][data-rail-body]:not(
+      [data-rail-enter]
+    )::before {
+    animation: activity-rail-extend 0.26s cubic-bezier(0.33, 1, 0.68, 1)
+      backwards;
+  }
+
+  /* How much further the segment reaches once a row follows: from a last
+     row's `bottom` to a middle row's, per marker. */
+  .activity-item[data-rail-extend]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 0.375rem);
+  }
+  .activity-item[data-rail-extend][data-marker="dot"]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 0.5625rem);
+  }
+  .activity-child[data-rail-extend]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 0.5625rem);
+  }
+  .activity-child[data-rail-extend][data-marker="dot"]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 1.1875rem);
+  }
+  /* A done group's last member stopped at the end mark, a line higher (its
+     measured offset is gone by now: the mark's default stands in). */
+  .activity-child[data-rail-extend="reached"]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 1.4375rem);
+  }
+  .activity-child[data-rail-extend="reached"][data-marker="dot"]::before {
+    --activity-rail-extension: calc(var(--activity-gap) + 1.75rem);
+  }
+
+  .activity-item[data-marker="working"][data-rail-enter] {
+    animation: tool-content-fade 0.2s ease-out 0.12s both;
+  }
+}
+
+/* A row's panel that closes by itself — a group folding once the reply has
+   moved past it (`slideShut`, activity-row.tsx) — slides shut rather than
+   vanishing, so what follows it rises instead of jumping, on a grid track like
+   the reply's own fold: no layout read, the engine interpolates the track. The
+   row holds the panel mounted until the animation ends; with no animation
+   (reduced motion, chat animations off) it drops it at once. */
+@media (prefers-reduced-motion: no-preference) {
+  .activity-detail-shut {
+    display: grid;
+    grid-template-rows: 1fr;
+    animation: activity-detail-shut 0.24s cubic-bezier(0.65, 0, 0.35, 1)
+      forwards;
+  }
+
+  /* The panel's one child. In flow its margins collapsed into the panel's
+     own; a grid item's do not, so they go — the track would start taller and
+     never reach zero. */
+  .activity-detail-shut > * {
+    min-height: 0;
+    margin-block: 0;
+    overflow: hidden;
+  }
+}
+
+@keyframes activity-detail-shut {
+  to {
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    margin-bottom: 0;
+    opacity: 0;
+  }
+}
+
+/* Figures and short labels the timeline sets in the monospace face (the
+   header summary, a row's end column, a detail box's footer). Words in a
+   script the monospace stack has no glyphs for — CJK, Arabic — fall back to a
+   letter-spaced substitute that reads badly, so those languages keep the
+   interface face. */
+.activity-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+:lang(zh) .activity-mono,
+:lang(ja) .activity-mono,
+:lang(ko) .activity-mono,
+:lang(ar) .activity-mono {
+  font-family: var(--font-sans);
+}
+
+/* Muted text with a foreground highlight sweeping across it, for the live
+   label of a running step. The highlight is mixed from the foreground, never
+   the primary: on the red and rose presets the primary reads as failure. */
+.activity-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 40%,
+    color-mix(in oklab, var(--foreground) 90%, transparent) 50%,
+    var(--muted-foreground) 60%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: activity-shimmer 1.6s linear infinite;
+}
+
+@keyframes activity-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-shimmer {
+    animation: none;
+    background: none;
+    color: var(--muted-foreground);
+  }
+}
+
+/* A detail box's scroll body fades out at whichever edge has more content
+   beyond it; the class and attributes go on its OverlayScrollbars viewport,
+   set by the box while it is open, so the overlay scrollbar stays crisp — or
+   on each part's that scrolls itself in a box that does not (`DetailScroll`,
+   a half of a side-by-side diff). */
+.activity-detail-viewport[data-overflow="end"] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
+}
+.activity-detail-viewport[data-overflow="start"] {
+  mask-image: linear-gradient(to top, #000 calc(100% - 1.5rem), transparent);
+}
+.activity-detail-viewport[data-overflow="both"] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 1.5rem,
+    #000 calc(100% - 1.5rem),
+    transparent
+  );
+}
+
+/* Inside a detail box the surface is darker than the page, so secondary text
+   (labels, line numbers, footers — the box's own and the components it hosts)
+   takes the slightly stronger muted tone to keep 4.5:1. Set on the children:
+   the token is resolved at the root, so this does not reference itself. */
+.activity-detail-box > * {
+  --muted-foreground: var(--activity-muted-strong);
+}
+
+/* Command output colours. ansi-to-react writes anser's xterm palette as
+   inline `color: rgb(…)` styles, made for a black terminal: on the light
+   surfaces yellow, cyan, white and every bright colour all but vanish, and on
+   the dark ones black, blue, red and magenta do. Remap the 16 base colours per
+   theme, as terminals do, and leave 256-colour / truecolour output as the
+   program chose it. Only spans without a background are remapped (their style
+   then starts with `color:`), so text on a coloured badge keeps its pair. */
+.activity-ansi {
+  --ansi-black: var(--foreground);
+  --ansi-white: var(--muted-foreground);
+  --ansi-red: oklch(0.52 0.19 27);
+  --ansi-green: oklch(0.5 0.13 145);
+  --ansi-yellow: oklch(0.5 0.1 90);
+  --ansi-blue: oklch(0.48 0.17 262);
+  --ansi-magenta: oklch(0.5 0.19 330);
+  --ansi-cyan: oklch(0.5 0.08 205);
+}
+.dark .activity-ansi {
+  --ansi-black: var(--muted-foreground);
+  --ansi-white: var(--foreground);
+  --ansi-red: oklch(0.7 0.17 25);
+  --ansi-green: oklch(0.75 0.17 145);
+  --ansi-yellow: oklch(0.82 0.15 95);
+  --ansi-blue: oklch(0.72 0.13 262);
+  --ansi-magenta: oklch(0.74 0.16 330);
+  --ansi-cyan: oklch(0.78 0.11 205);
+}
+.activity-ansi [style^="color: rgb(0, 0, 0)"] {
+  color: var(--ansi-black) !important;
+}
+.activity-ansi [style^="color: rgb(85, 85, 85)"] {
+  color: var(--muted-foreground) !important;
+}
+.activity-ansi [style^="color: rgb(255, 255, 255)"] {
+  color: var(--ansi-white) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(187, 0, 0)"], [style^="color: rgb(255, 85, 85)"]) {
+  color: var(--ansi-red) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(0, 187, 0)"], [style^="color: rgb(0, 255, 0)"]) {
+  color: var(--ansi-green) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(187, 187, 0)"], [style^="color: rgb(255, 255, 85)"]) {
+  color: var(--ansi-yellow) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(0, 0, 187)"], [style^="color: rgb(85, 85, 255)"]) {
+  color: var(--ansi-blue) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(187, 0, 187)"], [style^="color: rgb(255, 85, 255)"]) {
+  color: var(--ansi-magenta) !important;
+}
+.activity-ansi
+  :is([style^="color: rgb(0, 187, 187)"], [style^="color: rgb(85, 255, 255)"]) {
+  color: var(--ansi-cyan) !important;
 }
 
 /* Settings → Appearance → "Chat animations" off. <html> carries

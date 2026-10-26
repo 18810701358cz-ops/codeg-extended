@@ -54,6 +54,7 @@ mod m20261016_000001_assistant;
 mod m20261016_000002_conversation_assistant;
 mod m20261017_000002_conversation_source;
 mod m20261020_000001_folder_command_run_local;
+mod m20261022_000001_tool_approval;
 pub struct Migrator;
 
 #[async_trait::async_trait]
@@ -114,6 +115,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261016_000002_conversation_assistant::Migration),
             Box::new(m20261017_000002_conversation_source::Migration),
             Box::new(m20261020_000001_folder_command_run_local::Migration),
+            Box::new(m20261022_000001_tool_approval::Migration),
         ]
     }
 }

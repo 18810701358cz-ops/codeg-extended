@@ -247,6 +247,30 @@ describe("SidebarConversationCard command-line badge", () => {
   })
 })
 
+describe("SidebarConversationCard running badge", () => {
+  it("turns a span around its icon, never the icon itself", () => {
+    // An SVG element's turn animates on the main thread and lays the page out
+    // every frame, for as long as the conversation runs.
+    const { getByTitle } = renderWithIntl(
+      <SidebarConversationCard
+        conversation={{ ...conv(1), status: "in_progress" }}
+        isSelected={false}
+        timeLabel=""
+        onSelect={onSelect}
+        onDoubleClick={onDoubleClick}
+        onRename={onRename}
+        onDelete={onDelete}
+        onStatusChange={onStatusChange}
+      />
+    )
+    const badge = getByTitle("Running")
+    const turning = badge.querySelector(".animate-spin")
+    expect(turning?.tagName).toBe("SPAN")
+    expect(turning?.querySelector("svg")).not.toBeNull()
+    expect(badge.querySelector("svg.animate-spin")).toBeNull()
+  })
+})
+
 // The hover-reveal icon buttons live in the row's right slot as siblings of the
 // clickable row button (never nested). They carry only an aria-label (icon, no
 // text), so getByLabelText addresses them unambiguously — distinct from the

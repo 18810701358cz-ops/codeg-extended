@@ -37,6 +37,7 @@ import type {
   FolderDetail,
   LiveSessionSnapshot,
   SessionConfigOptionInfo,
+  ToolApprovalInfo,
   UserMessageBlock,
 } from "@/lib/types"
 
@@ -4984,6 +4985,83 @@ describe("HYDRATE_FROM_SNAPSHOT last_error recovery", () => {
     expect(h.store!.getConnection(TAB)!.error).toBe(
       "backendErrors.turnFailedRefusal"
     )
+  })
+})
+
+describe("tool approvals", () => {
+  async function connectOwner(): Promise<AttachHandlers> {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    h.acpGetAgentStatus.mockResolvedValue({
+      agent_type: "claude_code",
+      enabled: true,
+      available: true,
+      installed_version: "1.0.0",
+      host_tools_agent_mode: false,
+      is_acp_adapter: true,
+    })
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    return latestAttachHandlers()
+  }
+
+  function approval(
+    toolCallId: string,
+    optionKind: string,
+    decidedAt: string
+  ): ToolApprovalInfo {
+    return {
+      tool_call_id: toolCallId,
+      option_kind: optionKind,
+      option_name: optionKind,
+      origin: "user",
+      decided_at: decidedAt,
+    }
+  }
+
+  it("records each answered request by its tool call", async () => {
+    const handlers = await connectOwner()
+    const first = approval("tc-1", "allow_once", "2026-10-22T09:00:00Z")
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "tool_approval",
+      approval: first,
+    })
+    expect(h.store!.getConnection(TAB)!.toolApprovals).toEqual({
+      "tc-1": first,
+    })
+  })
+
+  it("lets even a stale snapshot add calls, never walk one back", async () => {
+    const handlers = await connectOwner()
+    const live = approval("tc-1", "reject_once", "2026-10-22T09:05:00Z")
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "tool_approval",
+      approval: live,
+    })
+    // Generated before that answer (eventSeq 1 <= lastAppliedSeq 3): its
+    // earlier record of tc-1 must not replace the live one, but tc-2 — answered
+    // before this client attached — is news.
+    const earlier = approval("tc-2", "allow_always", "2026-10-22T08:00:00Z")
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      eventSeq: 1,
+      toolApprovals: [
+        approval("tc-1", "allow_once", "2026-10-22T09:00:00Z"),
+        earlier,
+      ],
+    })
+    hydrateSnapshot(handlers, {
+      event_seq: 1,
+    } as unknown as LiveSessionSnapshot)
+    expect(h.store!.getConnection(TAB)!.toolApprovals).toEqual({
+      "tc-1": live,
+      "tc-2": earlier,
+    })
   })
 })
 

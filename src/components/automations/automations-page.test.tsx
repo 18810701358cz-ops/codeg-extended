@@ -176,6 +176,16 @@ describe("AutomationsPage (master-detail)", () => {
     vi.clearAllMocks()
   })
 
+  it("turns a running automation's badge on a span, never the icon", () => {
+    // An SVG element's turn lays the page out every frame while it runs.
+    automations = [{ ...FIXTURE, last_run_status: "running" }]
+    const { container } = renderPage()
+    const badge = container.querySelector(".text-amber-600")
+    expect(badge?.tagName).toBe("svg")
+    expect(badge?.parentElement).toHaveClass("animate-spin")
+    expect(badge).not.toHaveClass("animate-spin")
+  })
+
   it("can open the gallery from New and cancel back to the detail", () => {
     renderPage()
     // Detail of the only automation is shown (name appears in list + detail).

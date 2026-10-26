@@ -2,7 +2,11 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties, ReactNode, RefObject } from "react"
-import { Virtualizer, type VirtualizerHandle } from "virtua"
+import {
+  Virtualizer,
+  type CustomContainerComponentProps,
+  type VirtualizerHandle,
+} from "virtua"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { Loader2 } from "lucide-react"
 import {
@@ -33,6 +37,52 @@ const VIEWPORT_TOP_PROBE_PX = 4
 
 /** Slack (px) under which the viewport counts as scrolled to the end. */
 const VIEWPORT_END_SLACK_PX = 2
+
+/**
+ * The rows `keepMounted` holds near the end of the list: from the first one
+ * within the buffer above the viewport to the last — or none, while the end is
+ * more than a viewport below the view.
+ *
+ * Scrolling down, virtua drops the rows above the viewport and mounts them
+ * again once the scroll settles. A row that mounts at another height than it
+ * settles at — a clamped message before its toggle is measured, an image
+ * still loading — then resizes above the view twice, and the scroll
+ * correction for the pair can land a pixel off at a fractional zoom. Near the
+ * bottom the stick-to-bottom lock slides that pixel back down, which drops the
+ * rows again: the view shook up and down for as long as it rested there. Kept
+ * mounted near the end, the rows are not mounted again. Exported for unit
+ * tests.
+ */
+export function rowsKeptNearEnd(view: {
+  offset: number
+  viewportSize: number
+  scrollSize: number
+  bufferSize: number
+  findItemIndex: (offset: number) => number
+}): number | null {
+  if (view.offset + view.viewportSize * 2 < view.scrollSize) return null
+  return view.findItemIndex(Math.max(0, view.offset - view.bufferSize))
+}
+
+/**
+ * The virtualizer's container, without the `pointer-events: none` virtua puts
+ * on it while the list scrolls. The property is inherited, so turning it on as
+ * a scroll starts and off as it ends restyles everything the thread has drawn —
+ * in a reply with an opened timeline of hundreds of rows, a frame of hundreds
+ * of milliseconds each way. What it buys — rows under the pointer neither
+ * hover nor take a click while the list moves — is what any page does anyway.
+ */
+function ThreadContainer({
+  style,
+  children,
+  ref,
+}: CustomContainerComponentProps) {
+  return (
+    <div ref={ref} style={{ ...style, pointerEvents: undefined }}>
+      {children}
+    </div>
+  )
+}
 
 /** What `onViewportTopChange` reports. */
 export interface ViewportTop {
@@ -252,10 +302,12 @@ function VirtualizedMessageThreadImpl<T>({
   // streaming re-renders; scroll events only fire after commit.
   const loadOlderStateRef = useRef({ hasOlder, isLoadingOlder, onLoadOlder })
   const viewportTopListenerRef = useRef(onViewportTopChange)
+  const itemsRef = useRef({ items, getItemKey })
   useEffect(() => {
     rowOffsetRef.current = rowOffset
     loadOlderStateRef.current = { hasOlder, isLoadingOlder, onLoadOlder }
     viewportTopListenerRef.current = onViewportTopChange
+    itemsRef.current = { items, getItemKey }
   })
 
   // The row at the viewport's top, reported when it changes. Read a frame
@@ -305,10 +357,57 @@ function VirtualizedMessageThreadImpl<T>({
     scheduleViewportTop()
   }, [items, scheduleViewportTop])
 
+  // The first item `keepMounted` holds (see `rowsKeptNearEnd`), by key: an
+  // index would point elsewhere once history is paged in above it, or another
+  // conversation's items replace these.
+  const [keepFromKey, setKeepFromKey] = useState<string | null>(null)
+  const keepMounted = useMemo(() => {
+    if (keepFromKey === null) return undefined
+    for (let index = items.length - 1; index >= 0; index--) {
+      if (getItemKey(items[index]!, index) !== keepFromKey) continue
+      const rows: number[] = []
+      for (let row = index; row < items.length; row++) {
+        rows.push(row + rowOffset)
+      }
+      return rows
+    }
+    return undefined
+  }, [keepFromKey, items, getItemKey, rowOffset])
+
+  // Where the kept rows start with the view at `offset`.
+  const updateKeptRows = useCallback(
+    (offset: number) => {
+      const handle = virtualizerHandleRef.current
+      if (!handle) return
+      const row = rowsKeptNearEnd({
+        offset,
+        viewportSize: handle.viewportSize,
+        scrollSize: handle.scrollSize,
+        bufferSize,
+        findItemIndex: (at) => handle.findItemIndex(at),
+      })
+      const { items, getItemKey } = itemsRef.current
+      const index = row === null ? -1 : Math.max(0, row - rowOffsetRef.current)
+      const item = items[index]
+      const key = item === undefined ? null : getItemKey(item, index)
+      setKeepFromKey((current) => (current === key ? current : key))
+    },
+    [bufferSize]
+  )
+  // Rows appended under a still view move the end away from it. Read a frame
+  // later, once virtua has laid the rows out, like the viewport top.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() =>
+      updateKeptRows(virtualizerHandleRef.current?.scrollOffset ?? 0)
+    )
+    return () => cancelAnimationFrame(frame)
+  }, [items, updateKeptRows])
+
   const prevScrollOffsetRef = useRef<number | null>(null)
   const handleScroll = useCallback(
     (offset: number) => {
       scheduleViewportTop()
+      updateKeptRows(offset)
       const prev = prevScrollOffsetRef.current
       prevScrollOffsetRef.current = offset
       const s = loadOlderStateRef.current
@@ -321,7 +420,7 @@ function VirtualizedMessageThreadImpl<T>({
         s.onLoadOlder()
       }
     },
-    [scheduleViewportTop]
+    [scheduleViewportTop, updateKeptRows]
   )
 
   // Make the scroll viewport focusable so the browser's native keyboard
@@ -430,10 +529,12 @@ function VirtualizedMessageThreadImpl<T>({
         ) : (
           <Virtualizer
             ref={virtualizerHandleRef}
+            as={ThreadContainer}
             scrollRef={scrollRef as unknown as RefObject<HTMLElement | null>}
             itemSize={itemSize}
             bufferSize={bufferSize}
             shift={shift}
+            keepMounted={keepMounted}
             onScroll={handleScroll}
           >
             {hasOlder ? (

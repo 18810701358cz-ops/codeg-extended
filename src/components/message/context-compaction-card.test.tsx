@@ -163,6 +163,27 @@ describe("ContextCompactionCard", () => {
     ).not.toBeInTheDocument()
   })
 
+  it("draws its hairlines as the messages around it do", () => {
+    // Over a workspace background image a message's hairlines darken
+    // (`ws-msg-scope`, globals.css); the divider and the summary's panel sit
+    // between messages, so they carry the scope themselves.
+    const { container, unmount } = renderCard({
+      state: "output-available",
+      meta: { contextCompaction: { version: 1 } },
+    })
+    expect(container.firstElementChild).toHaveClass("ws-msg-scope")
+    unmount()
+    renderCard({
+      state: "output-available",
+      meta: { contextCompaction: { version: 1 } },
+      summary: "We refactored **the parser**.",
+    })
+    fireEvent.click(screen.getByRole("button", { name: /Summary/ }))
+    expect(
+      screen.getByTestId("context-compaction-summary").closest(".ws-msg-scope")
+    ).not.toBeNull()
+  })
+
   // An unterminated `**` is the tell: streaming mode completes it into bold,
   // static mode prints the asterisks.
   it("renders a summary that is still arriving in streaming mode", () => {

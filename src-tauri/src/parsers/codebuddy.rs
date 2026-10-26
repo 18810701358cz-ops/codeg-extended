@@ -378,6 +378,7 @@ impl CodeBuddyParser {
                             is_error: tool_is_error(&value),
                             agent_stats,
                             images: Vec::new(),
+                            exit_code: None,
                         }],
                         timestamp: ts,
                         usage: None,
