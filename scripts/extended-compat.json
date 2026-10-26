@@ -1,0 +1,80 @@
+{
+  "ownSelectors": ["data-slot-name"],
+  "host": [
+    {
+      "file": "src-tauri/src/commands/acp.rs",
+      "pattern": "pub async fn acp_connect\\(\\s*agent_type: AgentType,\\s*working_dir: Option<String>,\\s*session_id: Option<String>,",
+      "why": "antigravity-account-switcher reconnects with acp_connect(agentType, workingDir, sessionId)."
+    },
+    {
+      "file": "src-tauri/src/commands/acp.rs",
+      "pattern": "pub async fn acp_disconnect\\(\\s*connection_id: String,",
+      "why": "antigravity-account-switcher drops the stale connection with acp_disconnect(connectionId)."
+    },
+    {
+      "file": "src-tauri/src/commands/acp.rs",
+      "pattern": "pub async fn acp_list_connections\\(",
+      "why": "antigravity-account-switcher finds the live connection with acp_list_connections()."
+    },
+    {
+      "file": "src-tauri/src/lib.rs",
+      "pattern": "acp_commands::acp_connect,[\\s\\S]*acp_commands::acp_disconnect,[\\s\\S]*acp_commands::acp_list_connections,",
+      "why": "antigravity-account-switcher: the desktop invoke() fails unless the three acp_* commands stay registered."
+    },
+    {
+      "file": "src-tauri/src/acp/types.rs",
+      "pattern": "pub struct ConnectionInfo \\{\\s*pub id: String,\\s*pub agent_type: [\\w:]*AgentType,",
+      "why": "antigravity-account-switcher reads connection.id and connection.agent_type."
+    },
+    {
+      "file": "src-tauri/src/models/agent.rs",
+      "pattern": "AgentType::Antigravity => Cow::Borrowed\\(\"antigravity\"\\)",
+      "why": "antigravity-account-switcher filters conversations and connections by agent_type \"antigravity\"."
+    },
+    {
+      "file": "src-tauri/src/models/agent.rs",
+      "pattern": "AgentType::CodeBuddy => Cow::Borrowed\\(\"code_buddy\"\\)",
+      "why": "antigravity-account-switcher filters conversations and connections by agent_type \"code_buddy\"."
+    },
+    {
+      "file": "src-tauri/src/db/entities/conversation.rs",
+      "pattern": "table_name = \"conversation\"(?=[\\s\\S]*pub folder_id: i32)(?=[\\s\\S]*pub agent_type: String)(?=[\\s\\S]*pub external_id: Option<String>)(?=[\\s\\S]*pub updated_at:)(?=[\\s\\S]*pub deleted_at:)",
+      "why": "antigravity-account-switcher queries conversation(id, agent_type, external_id, folder_id, updated_at, deleted_at) straight from codeg.db."
+    },
+    {
+      "file": "src-tauri/src/db/entities/folder.rs",
+      "pattern": "table_name = \"folder\"[\\s\\S]*pub path: String",
+      "why": "antigravity-account-switcher joins folder.path as the reconnect working directory."
+    },
+    {
+      "file": "src/lib/transport/detect.ts",
+      "pattern": "\"__TAURI_INTERNALS__\" in window",
+      "why": "antigravity-account-switcher only auto-reconnects where window.__TAURI_INTERNALS__.invoke exists."
+    },
+    {
+      "file": "src-tauri/src/commands/mcp.rs",
+      "pattern": "pub async fn mcp_upsert_local_server\\(\\s*server_id: String,\\s*spec: Value,\\s*apps: Vec<McpAppType>,\\s*shown_spec: Option<Value>,\\s*\\)",
+      "why": "plugin_host/contributions.rs applies contributes.mcpServers through mcp_upsert_local_server."
+    },
+    {
+      "file": "src-tauri/src/commands/mcp.rs",
+      "pattern": "pub async fn mcp_remove_server\\(\\s*server_id: String,\\s*apps: Option<Vec<McpAppType>>,\\s*\\)",
+      "why": "plugin_host/contributions.rs removes contributes.mcpServers through mcp_remove_server."
+    },
+    {
+      "file": "src-tauri/src/commands/model_provider.rs",
+      "pattern": "pub async fn create_model_provider_core\\([\\s\\S]*pub async fn update_model_provider_core\\([\\s\\S]*pub async fn delete_model_provider_core\\(",
+      "why": "plugin_host/contributions.rs applies contributes.modelProviders through these three functions."
+    },
+    {
+      "file": "src/components/ui/scroll-area.tsx",
+      "pattern": "export function ScrollArea\\(",
+      "why": "Every settings page, the plugin settings page included, scrolls through ScrollArea."
+    },
+    {
+      "file": "src/components/shared/setting-card.tsx",
+      "pattern": "export function SettingCard\\([\\s\\S]*export function SettingRow\\(",
+      "why": "The plugin settings page builds its cards from SettingCard and SettingRow."
+    }
+  ]
+}

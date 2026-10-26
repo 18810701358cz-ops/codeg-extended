@@ -10,10 +10,12 @@ import type {
   PendingPlanApprovalState,
   PendingQuestionState,
   PromptCapabilitiesInfo,
+  RemoteControlInfo,
   SessionConfigOptionInfo,
   SessionFailureRecord,
   SessionModeStateInfo,
   SessionUsageUpdateInfo,
+  ToolApprovalInfo,
   ToolCallState,
 } from "@/lib/types"
 
@@ -41,11 +43,22 @@ export interface SnapshotPatch {
   // a freshly-started replacement at the same contextKey.
   connectionId: string
   status: ConnectionStatus
+  /** Whether a turn has run on the connection: it is mid-turn, or it is
+   *  linked to its conversation row (`conversation_id`), which the backend
+   *  does at the connection's first prompt (or a fork), never at connect.
+   *  Latched in `ConnectionState.hasPrompted`. */
+  hasPrompted: boolean
   sessionId: string | null
   modes: SessionModeStateInfo | null
   configOptions: SessionConfigOptionInfo[] | null
   availableCommands: AvailableCommandInfo[] | null
   usage: SessionUsageUpdateInfo | null
+  /** The follow-up prompt the agent last predicted, or `null`. Current state,
+   *  like `usage`: applied on the fresh hydrate branch only. */
+  promptSuggestion: string | null
+  /** Claude Code's Remote Control while it is on, or `null`. Current state,
+   *  like `usage`: applied on the fresh hydrate branch only. */
+  remoteControl: RemoteControlInfo | null
   liveMessage: LocalLiveMessage | null
   pendingPermission: PendingPermission | null
   /** Awaiting-answer multiple-choice `ask_user_question` carried by the
@@ -81,6 +94,10 @@ export interface SnapshotPatch {
    *  records, never clobber a fresher live one. `[]` when the server omitted
    *  the field. */
   sessionFailures: SessionFailureRecord[]
+  /** The connection's recent approval records. Merged into the in-memory map
+   *  on both hydrate branches by `mergeToolApprovals` (later decision per call
+   *  wins, so it can only add). `[]` when the server omitted the field. */
+  toolApprovals: ToolApprovalInfo[]
   /** AIR async tasks carried by the snapshot, already merged backend-side.
    *  Terminal rows included — they are the ids subsequent live deltas revise.
    *  `[]` when the server omitted the field. */
@@ -118,11 +135,16 @@ export function denormalizeSnapshot(wire: LiveSessionSnapshot): SnapshotPatch {
   return {
     connectionId: wire.connection_id,
     status: wire.status,
+    hasPrompted: wire.status === "prompting" || wire.conversation_id != null,
     sessionId: wire.external_id,
     modes: wire.modes,
     configOptions: wire.config_options,
     availableCommands: wire.available_commands ?? null,
     usage: wire.usage,
+    promptSuggestion: wire.prompt_suggestion ?? null,
+    remoteControl: wire.remote_control
+      ? { session_url: wire.remote_control.session_url ?? null }
+      : null,
     liveMessage: wire.live_message
       ? denormalizeLiveMessage(wire.live_message, toolMap)
       : null,
@@ -158,6 +180,7 @@ export function denormalizeSnapshot(wire: LiveSessionSnapshot): SnapshotPatch {
     configStaleKind: wire.config_stale_kind ?? null,
     backgroundOutstanding: wire.background_outstanding ?? 0,
     sessionFailures: wire.session_failures ?? [],
+    toolApprovals: wire.tool_approvals ?? [],
     asyncTasks: wire.async_tasks ?? [],
     lastError,
     lastErrorCode,

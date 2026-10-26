@@ -1,50 +1,79 @@
-# Codeg Extended 插件生态 (Plugins Ecosystem)
+# Codeg Extended Plugins
 
-欢迎来到 Codeg Extended 插件中心！Codeg Extended 引入了基于 DSH（DeepSeek Harness）规范的**热插拔插件架构**。
-
-## 什么是热插拔？
-编译后的 Codeg Extended 客户端在启动时会自动扫描用户目录中的插件：
-- **Windows**: `%APPDATA%/codeg/plugins/`
-- **Linux / macOS**: `~/.config/codeg/plugins/`
-
-你可以直接把写好的插件文件夹丢进该目录，立即生效，**无需重新编译客户端**！
+Welcome to the Codeg Extended plugin repository. This directory contains official and community plugins for the **Codeg Plugin Host v2** architecture.
 
 ---
 
-## 插件分类
+## 📦 Repository Plugins
 
-1. **模型通道插件 (Model Providers)**:
-   - 自动探测并代理外部大模型服务（如本地 Ollama、WorkBuddy、LM Studio 等）。
-   - 提供 OpenAI 兼容的 `/v1/models` 和 `/v1/chat/completions` 格式。
-2. **MCP 服务插件 (MCP Tools)**:
-   - 快捷注册与监控 Model Context Protocol 服务器。
-3. **指令与模板插件 (Prompt Snippets)**:
-   - 注入常用的 Prompt 模板与快速斜杠指令。
-4. **自定义自动化插件 (Custom Automations)**:
-   - 定时任务、代码检查、自动文档生成器。
+| Directory | Plugin ID | Category | Description | Documentation |
+|---|---|---|---|---|
+| [`workbuddy-connect/`](./workbuddy-connect) | `workbuddy-connect` | `model-provider` | Integrates authenticated WorkBuddy local/remote AI models into Codeg as a model provider. | [README](./workbuddy-connect/README.md) |
+| [`prompt-pack/`](./prompt-pack) | `prompt-pack` | `workflow` | Contributes a curated set of developer prompts to Codeg's Quick Messages. | [README](./prompt-pack/README.md) |
+| [`_template/`](./_template) | `sample-plugin` | `utility` | Starter template containing manifest, ESM entrypoint, CSS styling, and documentation. | [README](./_template/README.md) |
 
 ---
 
-## 插件目录结构规范
+## 🎨 Built-in Plugins
 
-每个插件应当是一个独立的文件夹，包含：
+In addition to repository plugins, Codeg Extended bundles three built-in UI and widget plugins directly into the application binary (located in `src-tauri/builtin-plugins/`):
+
+1. **`dsh-cyber-glow`**: DeepSeek Harness-inspired translucent dark neon glow theme.
+2. **`dsh-compact-layout`**: High information density layout tuning conversation transcript and card dimensions.
+3. **`dsh-quick-actions`**: Status bar right-slot action widget.
+
+All built-in plugins are disabled by default and can be enabled individually in **Settings -> Plugins (偏好设置 -> 插件中心)**.
+
+---
+
+## 📂 Plugin Structure (v2)
+
+Each plugin resides in a dedicated directory named after its plugin `id` (matching `^[a-z0-9][a-z0-9-]{1,63}$`):
+
 ```text
-my-plugin/
-├── manifest.json       # 插件元数据（ID、名称、版本、类别、入口等）
-├── server.py (可选)    # 后台代理或守护进程
-└── README.md           # 插件说明文档
+<plugin-id>/
+├── codeg-plugin.json   # Plugin manifest (required)
+├── src/                # Multi-file source code (TypeScript / React)
+│   └── index.ts
+├── dist/               # Bundled frontend ESM artifacts
+│   └── index.js        # Entrypoint (required if main is specified)
+├── styles/             # Stylesheets (optional)
+│   └── style.css
+├── backend/            # Backend service scripts/binaries (optional)
+│   ├── server.py
+│   └── requirements.txt
+└── README.md           # Plugin documentation
 ```
 
-### manifest.json 示例
-```json
-{
-  "id": "my-plugin",
-  "name": "My Plugin",
-  "version": "1.0.0",
-  "author": "Community",
-  "description": "A customized plugin for Codeg Extended",
-  "category": "utility",
-  "enabled": true,
-  "endpoint": "http://127.0.0.1:18080/v1"
-}
+---
+
+## 🚀 Installing Plugins
+
+Plugins can be installed in Codeg Extended via:
+1. **Git Repository**: Enter a GitHub repository URL or deep-link (e.g. `https://github.com/18810701358cz-ops/codeg-extended/tree/main/plugins/workbuddy-connect`).
+2. **Zip Upload**: Upload a zipped plugin directory containing `codeg-plugin.json` at root.
+3. **Local Directory**: Place the plugin directory in the host's plugins data directory (`~/.codeg/plugins/`).
+
+---
+
+## 🛠️ Developer Mode & Hot Reload
+
+When Developer Mode is enabled in Settings -> Plugins:
+- The host backend automatically monitors `~/.codeg/plugins/` using Rust `notify` with ~300ms trailing debounce.
+- Non-plugin directories (`.deps`, `.trash`, `.staging`, `node_modules`, `.git`) are automatically excluded.
+- Saving changes to `dist/index.js` triggers instant hot reload without restarting Codeg.
+
+Bundling with `esbuild`:
+```bash
+npx esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js --watch
 ```
+
+---
+
+## 📚 Documentation & Specifications
+
+- [Architecture & Manifest Specification](../docs/plugin-host/manifest-spec.md)
+- [Plugin Development Guide](../docs/plugin-host/plugin-development-guide.md)
+- [Plugin SDK & API Reference](../docs/plugin-host/sdk.md)
+- [JSON Schema Specification](../docs/plugin-host/codeg-plugin.schema.json)
+- [Starter Template Guide](./_template/README.md)

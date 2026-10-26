@@ -16,12 +16,15 @@ use std::path::{Path, PathBuf};
 
 const CODEG_DIR_NAME: &str = ".codeg";
 const PETS_DIR_NAME: &str = "pets";
+// [codeg-extended] plugin host
+const PLUGINS_DIR_NAME: &str = "plugins";
 const BROWSER_PROFILES_DIR_NAME: &str = "browser-profiles";
 const UPLOADS_DIR_NAME: &str = "uploads";
 const LOGS_DIR_NAME: &str = "logs";
 const TURN_TIMINGS_DIR_NAME: &str = "turn-timings";
 const ACP_TRANSCRIPTS_DIR_NAME: &str = "acp-transcripts";
 const BACKGROUNDS_DIR_NAME: &str = "backgrounds";
+const TEXT_GENERATION_DIR_NAME: &str = "text-generation";
 
 /// `$CODEG_HOME` if set (and non-empty), else `~/.codeg/`.
 ///
@@ -52,6 +55,25 @@ pub fn codeg_pets_root() -> PathBuf {
     dirs::home_dir()
         .map(|h| h.join(CODEG_DIR_NAME).join(PETS_DIR_NAME))
         .unwrap_or_else(|| PathBuf::from(CODEG_DIR_NAME).join(PETS_DIR_NAME))
+}
+
+// [codeg-extended] plugin host
+/// Root directory for plugin packages (`codeg-plugin.json`).
+///
+/// Resolution order matches [`codeg_pets_root`] exactly:
+/// 1. `$CODEG_HOME/plugins` (explicit override, used in tests and custom installs)
+/// 2. `$CODEG_DATA_DIR/plugins` (the data directory, see the module docs)
+/// 3. `~/.codeg/plugins` (neither set)
+pub fn codeg_plugins_root() -> PathBuf {
+    if let Some(custom) = std::env::var_os("CODEG_HOME").filter(|s| !s.is_empty()) {
+        return PathBuf::from(custom).join(PLUGINS_DIR_NAME);
+    }
+    if let Some(data) = std::env::var_os("CODEG_DATA_DIR").filter(|s| !s.is_empty()) {
+        return PathBuf::from(data).join(PLUGINS_DIR_NAME);
+    }
+    dirs::home_dir()
+        .map(|h| h.join(CODEG_DIR_NAME).join(PLUGINS_DIR_NAME))
+        .unwrap_or_else(|| PathBuf::from(CODEG_DIR_NAME).join(PLUGINS_DIR_NAME))
 }
 
 /// Root directory for built-in browser profiles (WebView2 user-data folders
@@ -193,6 +215,28 @@ pub fn codeg_acp_transcripts_root() -> PathBuf {
     dirs::home_dir()
         .map(|h| h.join(CODEG_DIR_NAME).join(ACP_TRANSCRIPTS_DIR_NAME))
         .unwrap_or_else(|| PathBuf::from(CODEG_DIR_NAME).join(ACP_TRANSCRIPTS_DIR_NAME))
+}
+
+/// Working directory of the throwaway sessions codeg starts to have an agent
+/// write a piece of text for it (see `crate::acp::one_shot`). Kept empty: the
+/// agent gets everything it needs in the prompt, and running here rather than
+/// in the user's repository keeps those sessions out of the repository's own
+/// resume lists, its project instructions and its project MCP servers.
+///
+/// Resolution mirrors [`codeg_acp_transcripts_root`]:
+/// 1. `$CODEG_HOME/text-generation`
+/// 2. `$CODEG_DATA_DIR/text-generation` (the data directory, see the module docs)
+/// 3. `~/.codeg/text-generation` (neither set)
+pub fn codeg_text_generation_root() -> PathBuf {
+    if let Some(custom) = std::env::var_os("CODEG_HOME").filter(|s| !s.is_empty()) {
+        return PathBuf::from(custom).join(TEXT_GENERATION_DIR_NAME);
+    }
+    if let Some(data) = std::env::var_os("CODEG_DATA_DIR").filter(|s| !s.is_empty()) {
+        return PathBuf::from(data).join(TEXT_GENERATION_DIR_NAME);
+    }
+    dirs::home_dir()
+        .map(|h| h.join(CODEG_DIR_NAME).join(TEXT_GENERATION_DIR_NAME))
+        .unwrap_or_else(|| PathBuf::from(CODEG_DIR_NAME).join(TEXT_GENERATION_DIR_NAME))
 }
 
 /// The data directory the desktop app exports as `CODEG_DATA_DIR` at the top

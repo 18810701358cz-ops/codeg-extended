@@ -209,7 +209,7 @@ export type FileWorkspaceTab = FileLikeWorkspaceTab | BrowserWorkspaceTab
 // links, search) subscribe to WorkspaceActionsContext, whose value is
 // stable for the provider's lifetime; layout chrome subscribes to
 // WorkspaceViewContext, which only changes on mode/pane/maximize flips.
-interface WorkspaceActionsValue {
+export interface WorkspaceActionsValue {
   setActivePane: (pane: WorkspacePane) => void
   activateConversationPane: () => void
   activateFilePane: () => void
@@ -3412,6 +3412,24 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
           </WorkspaceFileTabsContext.Provider>
         </WorkspaceExternalConflictContext.Provider>
       </WorkspaceViewContext.Provider>
+    </WorkspaceActionsContext.Provider>
+  )
+}
+
+/**
+ * Fixed actions in place of `WorkspaceProvider` — for surfaces that render chat
+ * cards outside a workspace (the activity gallery page, component tests).
+ */
+export function StaticWorkspaceActionsProvider({
+  value,
+  children,
+}: {
+  value: WorkspaceActionsValue
+  children: ReactNode
+}) {
+  return (
+    <WorkspaceActionsContext.Provider value={value}>
+      {children}
     </WorkspaceActionsContext.Provider>
   )
 }

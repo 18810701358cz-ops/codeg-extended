@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Streamdown } from "streamdown"
 import { readFileBase64 } from "@/lib/api"
 import { normalizeMathDelimiters } from "@/components/ai-elements/message"
+import { scrollportComponents } from "@/components/ai-elements/markdown-scrollport"
 import { mermaidComponents } from "@/components/ai-elements/mermaid-block"
 import { useStreamdownPlugins } from "@/components/ai-elements/streamdown-plugins"
 import { BrowserLink } from "@/components/ui/browser-link"
@@ -272,6 +273,7 @@ export function MarkdownDocumentPreview({
         parseIncompleteMarkdown={false}
         components={{
           ...mermaidComponents,
+          ...scrollportComponents,
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           img: ({ node, ...imgProps }) => (
             <PreviewImage

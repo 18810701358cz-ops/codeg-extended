@@ -127,7 +127,7 @@ function blocksOf(id: string): ContentBlock[] {
     )
 }
 
-/** The rendered tool-call part for `id`, out of a tool group if need be. */
+/** The rendered tool-call part for `id`. */
 function renderedCard(id: string): AdaptedToolCallPart {
   const parts: AdaptedContentPart[] = localTurns().flatMap(
     (turn) =>
@@ -139,10 +139,6 @@ function renderedCard(id: string): AdaptedToolCallPart {
   )
   for (const part of parts) {
     if (part.type === "tool-call" && part.toolCallId === id) return part
-    if (part.type === "tool-group") {
-      const item = part.items.find((p) => p.toolCallId === id)
-      if (item) return item
-    }
   }
   throw new Error(`no card for ${id}`)
 }

@@ -19,11 +19,12 @@ import {
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import {
+  extractPermissionToolCallId,
   getCachedSelectors,
   useAcpActions,
   useAcpEvent,
-  useConnectionStore,
 } from "@/contexts/acp-connections-context"
+import { ActivityLiveProvider } from "@/components/message/activity/activity-live-context"
 import { useAcpAgents } from "@/hooks/use-acp-agents"
 import { useActiveFolder } from "@/contexts/active-folder-context"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
@@ -92,10 +93,6 @@ import {
 } from "@/lib/api"
 import { isWindowedDetail } from "@/lib/turn-window"
 import {
-  hasTranscriptOverlay,
-  isOutOfTurnContentEvent,
-} from "@/lib/background-agent"
-import {
   flushRetryDelayMs,
   isConnectionReady,
   shouldQueueDirectSend,
@@ -104,6 +101,7 @@ import {
 import { TurnBusyError } from "@/lib/turn-busy"
 import { deliverQueuedSteer } from "@/lib/queued-steer"
 import { toErrorMessage } from "@/lib/app-error"
+import { blockingPrompts } from "@/lib/blocking-prompts"
 import { notify } from "@/lib/notify"
 import {
   claimRuntimeSession,
@@ -116,6 +114,7 @@ import {
 } from "@/stores/conversation-runtime-store"
 import { useShallow } from "zustand/react/shallow"
 import { useConversationDetail } from "@/hooks/use-conversation-detail"
+import { useOutOfTurnContentNotice } from "@/hooks/use-out-of-turn-content-notice"
 import {
   buildSteerPayload,
   extractUserImagesFromDraft,
@@ -318,7 +317,6 @@ const ConversationTabView = memo(function ConversationTabView({
     removeOptimisticTurn,
     appendViewerUserTurn,
     completeTurn,
-    markOutOfTurnContent,
     refetchDetail,
     syncTurnMetadata,
     setAcpLoadError,
@@ -329,9 +327,6 @@ const ConversationTabView = memo(function ConversationTabView({
     setSyncState,
   } = useConversationRuntimeActions()
   const acpActions = useAcpActions()
-  // Stable store handle, for event-time status reads that must not go through
-  // an effect-refreshed ref (see the out-of-turn subscriber below).
-  const connectionStore = useConnectionStore()
 
   // Stable runtime session key — set once at mount, never changes.
   // For new conversations this is a virtual (negative) ID; for existing
@@ -994,48 +989,8 @@ const ConversationTabView = memo(function ConversationTabView({
     )
   )
 
-  // An agent can run a turn CODEG never started: CodeBuddy drains a finished
-  // background task by prompting itself, and streams a whole turn for it.
-  // `applyStreamingAction`'s out-of-turn guard drops that content because the
-  // `background_activity` overlay is supposed to own it — but that overlay only
-  // has a producer for Claude Code, so for every other agent the turn renders
-  // nowhere and the session looks frozen until it is reopened. The content IS
-  // on disk and the agent's own parser already reads it correctly, so flag the
-  // session and let the timeline offer a re-read.
-  //
-  // This runs per streamed token, so every step is O(1) and ordered cheapest
-  // first; the reducer also early-returns once the flag is set.
-  useAcpEvent(
-    useCallback(
-      (envelope: EventEnvelope) => {
-        if (!isOutOfTurnContentEvent(envelope)) return
-        if (envelope.connection_id !== conn.connectionId) return
-        // The same condition the guard drops on, read from the SAME place the
-        // guard read it. Not `connStatusRef`: that is refreshed in an effect,
-        // so it still says "connected" for any envelope that lands between the
-        // StatusChanged(prompting) dispatch and React committing — which is
-        // exactly the burst at the start of every turn, and would arm the pill
-        // on turns we started ourselves. `getConnection` reads the store the
-        // reducer just wrote, and subscribers fire after that write.
-        if (connectionStore.getConnection(tabId)?.status === "prompting") return
-        // Unknown agent (no connection bound yet) → no pill. A connection that
-        // is streaming content always carries its type, so this only degrades
-        // to today's behavior in a case that shouldn't arise.
-        if (conn.agentType == null || hasTranscriptOverlay(conn.agentType)) {
-          return
-        }
-        markOutOfTurnContent(effectiveConversationId)
-      },
-      [
-        conn.agentType,
-        conn.connectionId,
-        connectionStore,
-        tabId,
-        effectiveConversationId,
-        markOutOfTurnContent,
-      ]
-    )
-  )
+  // A turn the agent runs on its own renders nowhere live; offer a re-read.
+  useOutOfTurnContentNotice(tabId, conn.connectionId, effectiveConversationId)
 
   useEffect(() => {
     if (effectiveConversationId <= 0) return
@@ -1544,6 +1499,16 @@ const ConversationTabView = memo(function ConversationTabView({
     },
     [conn.connectionId, tAsyncTasks]
   )
+
+  /** Turn Claude Code's Remote Control off the way the user would: by sending
+   *  `/remote-control off`, which the adapter answers itself. */
+  const handleRemoteControlOff = useCallback(() => {
+    const command = "/remote-control off"
+    handleSend({
+      blocks: [{ type: "text", text: command }],
+      displayText: command,
+    })
+  }, [handleSend])
 
   const handleOpenAgentsSettings = useCallback(() => {
     openSettingsWindow("agents", { agentType: selectedAgent }).catch((err) => {
@@ -2145,48 +2110,69 @@ const ConversationTabView = memo(function ConversationTabView({
     [effectiveConversationId]
   )
 
+  // Which tool call a pending approval is about, so the activity timeline can
+  // mark that step as waiting on the user; whether any blocking prompt is
+  // open, so a live reply stops saying its agent is at work; and how the
+  // connection's answered approvals went, for the chips on their rows.
+  const awaitingToolCallId = extractPermissionToolCallId(
+    conn.pendingPermission?.tool_call
+  )
+  const awaitingUser = blockingPrompts(conn) !== null
+  const approvals = conn.toolApprovals
+  const activityLive = useMemo(
+    () => ({ awaitingToolCallId, awaitingUser, approvals }),
+    [awaitingToolCallId, awaitingUser, approvals]
+  )
+
   const messageListNode = (
     <GoalControlProvider value={goalControlValue}>
-      <MessageListView
-        conversationId={effectiveConversationId}
-        imageRoot={workingDirForConnection ?? null}
-        agentType={selectedAgent}
-        availableCommands={connectionCommands}
-        connStatus={connStatus}
-        isActive={isActive}
-        sendSignal={sendSignal}
-        detailLoading={detailLoading}
-        detailError={detailError}
-        acpLoadError={acpLoadError}
-        hideEmptyState={!hasPersistedConversation || hasSentMessage}
-        onReload={canShowDetailErrorActions ? handleReloadDetail : undefined}
-        onNewSession={
-          canShowDetailErrorActions ? handleOpenNewSession : undefined
-        }
-        onQuoteSelection={composerAvailable ? handleQuoteSelection : undefined}
-        // Asking opens its own conversation, so it needs a folder to open it in
-        // rather than a usable composer here — a transcript whose composer is
-        // blocked (session/load failure) can still spawn the question elsewhere.
-        onAskSelection={canAskSelection ? handleAskSelection : undefined}
-        // Fork carries no draft, so — unlike a send — a non-empty queue is
-        // not at risk of being jumped and needs no guard here. A turn in
-        // flight is still rejected, by the backend, which is the only place
-        // that can see it without racing.
-        //
-        // "prompting" belongs on this side of the gate (same shape as the
-        // goal-control gate above): this answers "can this surface fork at
-        // all", and a turn in flight is a passing "not right now" that the
-        // view greys the button out for. Dropping the handler instead made
-        // every reply's fork icon disappear for the length of each reply.
-        // `handleForkFromTurn` re-checks liveness at click time.
-        onForkFromTurn={
-          (connStatus === "connected" || connStatus === "prompting") &&
-          hasPersistedConversation &&
-          conn.supportsFork
-            ? handleForkFromTurn
-            : undefined
-        }
-      />
+      <ActivityLiveProvider value={activityLive}>
+        <MessageListView
+          conversationId={effectiveConversationId}
+          imageRoot={workingDirForConnection ?? null}
+          agentType={selectedAgent}
+          availableCommands={connectionCommands}
+          connStatus={connStatus}
+          isActive={isActive}
+          sendSignal={sendSignal}
+          detailLoading={detailLoading}
+          detailError={detailError}
+          acpLoadError={acpLoadError}
+          hideEmptyState={!hasPersistedConversation || hasSentMessage}
+          // The conversation page's navigator, plan and sub-agents show in the
+          // Session Details side panel rather than over the messages.
+          insightsInSidebar
+          onReload={canShowDetailErrorActions ? handleReloadDetail : undefined}
+          onNewSession={
+            canShowDetailErrorActions ? handleOpenNewSession : undefined
+          }
+          onQuoteSelection={
+            composerAvailable ? handleQuoteSelection : undefined
+          }
+          // Asking opens its own conversation, so it needs a folder to open it in
+          // rather than a usable composer here — a transcript whose composer is
+          // blocked (session/load failure) can still spawn the question elsewhere.
+          onAskSelection={canAskSelection ? handleAskSelection : undefined}
+          // Fork carries no draft, so — unlike a send — a non-empty queue is
+          // not at risk of being jumped and needs no guard here. A turn in
+          // flight is still rejected, by the backend, which is the only place
+          // that can see it without racing.
+          //
+          // "prompting" belongs on this side of the gate (same shape as the
+          // goal-control gate above): this answers "can this surface fork at
+          // all", and a turn in flight is a passing "not right now" that the
+          // view greys the button out for. Dropping the handler instead made
+          // every reply's fork icon disappear for the length of each reply.
+          // `handleForkFromTurn` re-checks liveness at click time.
+          onForkFromTurn={
+            (connStatus === "connected" || connStatus === "prompting") &&
+            hasPersistedConversation &&
+            conn.supportsFork
+              ? handleForkFromTurn
+              : undefined
+          }
+        />
+      </ActivityLiveProvider>
     </GoalControlProvider>
   )
 
@@ -2312,6 +2298,13 @@ const ConversationTabView = memo(function ConversationTabView({
           ? handleStopAsyncTask
           : undefined
       }
+      remoteControl={connIsForOtherAgent ? null : conn.remoteControl}
+      onRemoteControlOff={
+        // Owners of a live connection only, like the stop above.
+        conn.connectionId !== null && !conn.isViewer
+          ? handleRemoteControlOff
+          : undefined
+      }
       pendingPermission={conn.pendingPermission}
       pendingQuestion={conn.pendingQuestion}
       pendingAskQuestion={conn.pendingAskQuestion}
@@ -2333,6 +2326,8 @@ const ConversationTabView = memo(function ConversationTabView({
       onConfigOptionChange={handleSetConfigOption}
       agentType={selectedAgent}
       availableCommands={connectionCommands}
+      // The previous agent's prediction is no use to the one just picked.
+      promptSuggestion={connIsForOtherAgent ? null : conn.promptSuggestion}
       attachmentTabId={tabId}
       draftStorageKey={draftStorageKey}
       hideInput={isWelcomeMode || Boolean(acpLoadError)}

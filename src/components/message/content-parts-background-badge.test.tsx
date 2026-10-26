@@ -1,5 +1,5 @@
 import { type ReactNode } from "react"
-import { render } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it, vi } from "vitest"
 
@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from "vitest"
  * and `_meta.jetbrains.air.asyncTasks.backgrounded`, so the badge derived from
  * it is the difference between "running detached" and "apparently hung".
  *
- * The badge is deliberately the SAME copy Claude's parsed launch notice uses:
+ * The badge is deliberately the SAME chip Claude's parsed launch notice gets:
  * one claim, two wire sources.
  */
 
@@ -36,8 +36,10 @@ import { ContentPartsRenderer } from "./content-parts-renderer"
 import enMessages from "@/i18n/messages/en.json"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
 
-const BADGE = enMessages.Folder.chat.contentParts.backgroundTask
-  .runningInBackground as string
+/** The row's chip: `background`, or `background · #<task id>` when known. */
+const BADGE = enMessages.Folder.chat.activity.row.backgroundShort
+const badgeWithId = (id: string) =>
+  enMessages.Folder.chat.activity.row.background.replace("{id}", id)
 
 type AdaptedToolCallPart = Extract<AdaptedContentPart, { type: "tool-call" }>
 
@@ -71,10 +73,10 @@ const AIR_BACKGROUNDED = {
   jetbrains: { air: { asyncTasks: { backgrounded: true } } },
 }
 
-describe("command card — AIR backgrounded marker", () => {
+describe("command row — AIR backgrounded marker", () => {
   it("badges a codex call that was moved to the background", () => {
-    const { container } = renderPart(codexBackgroundedExec(AIR_BACKGROUNDED))
-    expect(container.textContent).toContain(BADGE)
+    renderPart(codexBackgroundedExec(AIR_BACKGROUNDED))
+    expect(screen.getByText(BADGE)).toBeInTheDocument()
   })
 
   it("keeps the badge through COMPLETE_TURN promotion", () => {
@@ -82,12 +84,12 @@ describe("command card — AIR backgrounded marker", () => {
     // `output-available` while the forwarded ACP status stays `in_progress`.
     // The process is still running, so the badge must survive that flip — which
     // a bare `state` check would not.
-    const { container } = renderPart({
+    renderPart({
       ...codexBackgroundedExec(AIR_BACKGROUNDED),
       state: "output-available",
       toolStatus: "in_progress",
     })
-    expect(container.textContent).toContain(BADGE)
+    expect(screen.getByText(BADGE)).toBeInTheDocument()
   })
 
   it("drops the badge once the call settles", () => {
@@ -107,12 +109,12 @@ describe("command card — AIR backgrounded marker", () => {
       toolStatus: "failed",
       output: "",
     })
-    expect(container.textContent).not.toContain(BADGE)
+    expect(container.textContent).not.toMatch(/\bbackground\b/)
   })
 
   it("leaves an ordinary in-flight command unbadged", () => {
     const { container } = renderPart(codexBackgroundedExec(null))
-    expect(container.textContent).not.toContain(BADGE)
+    expect(container.textContent).not.toMatch(/\bbackground\b/)
   })
 
   it("does not badge on the AIR session-failure block that shares the envelope", () => {
@@ -129,11 +131,11 @@ describe("command card — AIR backgrounded marker", () => {
         },
       })
     )
-    expect(container.textContent).not.toContain(BADGE)
+    expect(container.textContent).not.toMatch(/\bbackground\b/)
   })
 })
 
-describe("command card — claude's parsed launch badge is unaffected", () => {
+describe("command row — claude's parsed launch badge is unaffected", () => {
   /**
    * The two arms share one badge but not one gate: claude's launch call
    * COMPLETES the moment it hands back the task id, so gating that arm on
@@ -153,13 +155,15 @@ describe("command card — claude's parsed launch badge is unaffected", () => {
         "Command running in background with ID: bash_1. Output is being " +
         "written to: /tmp/tasks/bash_1.output",
     })
-    expect(container.textContent).toContain(BADGE)
+    expect(screen.getByText(badgeWithId("bash_1"))).toBeInTheDocument()
+    // The model-facing notice stays in the folded panel.
+    expect(container.textContent).not.toContain("Output is being written")
   })
 
   it("badges a command a steer moved to the background", () => {
     // Claude Code 2.1.286: a steer that lands during a foreground command
     // moves it to the background, and the call completes with this notice in
-    // place of output. The card says so in a line instead of printing the
+    // place of output. The row says so in its chip instead of printing the
     // model-facing notice and its temp-file path.
     const { container } = renderPart({
       type: "tool-call",
@@ -180,7 +184,7 @@ describe("command card — claude's parsed launch badge is unaffected", () => {
         "completes.\n```",
       meta: AIR_BACKGROUNDED,
     })
-    expect(container.textContent).toContain(BADGE)
+    expect(screen.getByText(badgeWithId("bj0x9uqsf"))).toBeInTheDocument()
     expect(container.textContent).not.toContain("so that a message")
   })
 })

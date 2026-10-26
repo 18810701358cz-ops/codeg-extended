@@ -447,6 +447,7 @@ fn tool_result_blocks(data: &Value, tools: &HashMap<String, CanonicalTool>) -> V
             is_error: body.get("status").and_then(Value::as_str) == Some("error"),
             agent_stats: None,
             images,
+            exit_code: None,
         });
     }
     blocks

@@ -4,14 +4,14 @@
  * Resolves a unified "delegation card model" — agent type, task, status,
  * child ids — from a `delegate_to_agent` tool call, in priority order:
  *   live `DelegationContext` binding → persisted `meta["codeg.delegation"]`
- *   → parsed tool input/output. The same model drives both the inline
- *   `DelegatedSubThread` card and the top-right `SubAgentOverlay`, so the two
- *   never disagree on what a sub-agent is doing.
+ *   → parsed tool input/output. The same model drives the timeline's
+ *   delegation row, the resumed-delegation card and the top-right
+ *   `SubAgentOverlay`, so they never disagree on what a sub-agent is doing.
  *
  * Pure parsing lives in `@/lib/delegation-card`; this hook adds the two
  * React-state reads it can't do on its own: the live binding
- * (`useDelegatedSubSession`) and the child connection's pending-permission
- * status (so the card can badge "waiting").
+ * (`useDelegatedSubSession`) and whether the child connection is parked on a
+ * decision (so the card can badge "waiting").
  */
 
 import { useCallback, useMemo, useSyncExternalStore } from "react"
@@ -23,6 +23,7 @@ import {
   type ConnectionState,
 } from "@/contexts/acp-connections-context"
 import { useDelegatedSubSession } from "@/hooks/use-delegated-sub-session"
+import { blockingPrompts } from "@/lib/blocking-prompts"
 import {
   isAffirmedResume,
   parseDelegateTaskId,
@@ -33,9 +34,10 @@ import {
   type DelegationCardStatus,
   type ParsedToolOutput,
 } from "@/lib/delegation-card"
+import { taskEnding, type StatusReport } from "@/lib/delegation-status"
 
-/** The raw inputs a `delegate_to_agent` tool call carries — the props
- *  `DelegatedSubThread` already receives, and the shape `SubAgentOverlay`
+/** The raw inputs a `delegate_to_agent` tool call carries — what the
+ *  delegation row reads off its call, and the shape `SubAgentOverlay`
  *  extracts from the last assistant turn's tool-call parts. */
 export interface DelegationCardSource {
   parentToolUseId: string
@@ -51,6 +53,12 @@ export interface DelegationCardSource {
    * call's own id is never a binding key — the task id in its arguments is.
    */
   taskIdHint?: string | null
+  /**
+   * The newest `get_delegation_status` report on this task that came after the
+   * call (the timeline hands it over): how the task ended, when no live binding
+   * or stored meta says.
+   */
+  laterReport?: StatusReport | null
 }
 
 /**
@@ -112,8 +120,16 @@ function useDelegationChildLive(
 export function useDelegationCardModel(
   source: DelegationCardSource
 ): DelegationCardModel {
-  const { parentToolUseId, input, output, errorText, state, meta, taskIdHint } =
-    source
+  const {
+    parentToolUseId,
+    input,
+    output,
+    errorText,
+    state,
+    meta,
+    taskIdHint,
+    laterReport,
+  } = source
 
   const parsed = useMemo(() => parseInput(input), [input])
   const parsedMeta = useMemo(() => parseDelegationMeta(meta), [meta])
@@ -197,7 +213,9 @@ export function useDelegationCardModel(
     null
 
   const childLive = useDelegationChildLive(childConnectionId)
-  const childAwaitingPermission = childLive?.pendingPermission != null
+  // Parked on ANY decision — a permission, a question, a plan approval — as
+  // the backend's `blocked_on` and the `get_delegation_status` row count it.
+  const childAwaitingUser = blockingPrompts(childLive) != null
 
   // The assistant the task runs as: the live binding → the call's own
   // `assistant_id` → the broker report → the historical meta. Its name comes
@@ -230,13 +248,15 @@ export function useDelegationCardModel(
     () => ({ agentType, assistantId, assistantName }),
     [agentType, assistantId, assistantName]
   )
+  const ended = useMemo(() => taskEnding(laterReport), [laterReport])
   const status = resolveDelegationStatus({
     binding,
     parsedMeta,
     toolOutput,
     state,
     errorText,
-    childAwaitingPermission,
+    childAwaitingUser,
+    ended,
   })
   // The report is the only source for a call refused before any delegation
   // started (`assistant_not_found`, the companion's local refusals): no
@@ -245,6 +265,7 @@ export function useDelegationCardModel(
     binding?.errorCode ??
     parsedMeta?.errorCode ??
     toolOutput?.errorCode ??
+    ended?.errorCode ??
     undefined
 
   return {

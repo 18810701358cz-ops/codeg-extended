@@ -69,8 +69,8 @@ use crate::acp::agent_mentions::render_assistant_brief;
 use crate::acp::delegation::assistants::{AssistantLookup, AssistantRosterEntry, NoAssistants};
 use crate::acp::delegation::types::{
     AgentDelegationDefaults, AssistantRef, BlockedKind, BlockedOn, DelegationAssistant,
-    DelegationError, DelegationOutcome, DelegationRequest, DelegationTaskReport,
-    ResumeDelegationRequest, TaskStatus,
+    DelegationError, DelegationOutcome, DelegationProgress, DelegationRequest,
+    DelegationTaskReport, ResumeDelegationRequest, TaskStatus,
 };
 use crate::acp::types::DelegationResultSummary;
 use crate::models::AgentType;
@@ -331,6 +331,11 @@ struct CompletedTask {
     error_code: Option<String>,
     message: Option<String>,
     duration_ms: u64,
+    /// The child's tool-call progress when it finished (bounded: at most
+    /// `MAX_STEP_MARKS` marks and a one-line title, so it stays outside the
+    /// byte valve like `message`). `None` when the child called no tool or
+    /// finished on a path that never saw its session.
+    progress: Option<DelegationProgress>,
 }
 
 #[derive(Default)]
@@ -775,6 +780,7 @@ fn build_completed(
         error_code,
         message,
         duration_ms,
+        progress: None,
     }
 }
 
@@ -869,6 +875,7 @@ fn report_from_outcome(
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        progress: None,
     }
 }
 
@@ -909,6 +916,7 @@ fn running_ack(
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        progress: None,
     }
 }
 
@@ -1000,6 +1008,7 @@ fn resume_ack(
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        progress: None,
     }
 }
 
@@ -1031,6 +1040,7 @@ fn not_resumable_report(
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        progress: None,
     }
 }
 
@@ -1114,6 +1124,7 @@ fn running_report(task_id: &str, task: &RunningTask) -> DelegationTaskReport {
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        progress: None,
     }
     .with_assistant(task.assistant.as_ref())
 }
@@ -1132,6 +1143,7 @@ fn completed_report(task_id: &str, c: &CompletedTask) -> DelegationTaskReport {
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        progress: c.progress.clone(),
     }
     .with_assistant(c.assistant.as_ref())
 }
@@ -1155,6 +1167,7 @@ fn unknown_report(task_id: &str) -> DelegationTaskReport {
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        progress: None,
     }
 }
 
@@ -1176,6 +1189,7 @@ fn db_report(task_id: &str, rec: &ChildStatusRecord) -> DelegationTaskReport {
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        progress: None,
     }
     .with_assistant(rec.assistant.as_ref())
 }
@@ -3085,6 +3099,22 @@ impl DelegationBroker {
     /// the `call_id` is no longer reserved the call was already resolved by
     /// another terminal path, so the buffer is skipped (silent no-op).
     pub async fn complete_call(&self, call_id: &str, outcome: DelegationOutcome) {
+        // What the child got through, for the finished report. Read with the
+        // pending lock released — the child's `SessionState` lock never nests
+        // inside it (see the live-reply lock-ordering note) — and before the
+        // teardown below takes the child down. Its turn's tool calls are
+        // already cleared by now, so this is the tally its `TurnComplete` kept.
+        let child_connection_id = {
+            let inner = self.pending.inner.lock().await;
+            inner
+                .running
+                .get(call_id)
+                .map(|task| task.child_connection_id.clone())
+        };
+        let progress = match &child_connection_id {
+            Some(child) => self.live_reply_lookup.progress(child).await,
+            None => None,
+        };
         let task = {
             let mut inner = self.pending.inner.lock().await;
             match inner.running.remove(call_id) {
@@ -3092,17 +3122,16 @@ impl DelegationBroker {
                     // Atomic running → completed so a concurrent status query
                     // never sees the task as neither running nor completed.
                     let duration_ms = task.started_at.elapsed().as_millis() as u64;
-                    inner.insert_completed(
-                        call_id,
-                        build_completed(
-                            &task.parent_connection_id,
-                            task.child_conversation_id,
-                            task.agent_type,
-                            task.assistant.as_ref(),
-                            duration_ms,
-                            &outcome,
-                        ),
+                    let mut completed = build_completed(
+                        &task.parent_connection_id,
+                        task.child_conversation_id,
+                        task.agent_type,
+                        task.assistant.as_ref(),
+                        duration_ms,
+                        &outcome,
                     );
+                    completed.progress = progress;
+                    inner.insert_completed(call_id, completed);
                     Some((task, duration_ms))
                 }
                 None => {
@@ -3811,6 +3840,9 @@ impl DelegationBroker {
                                 .await
                         }
                     }
+                    // The steps it got through stay true while it waits, so
+                    // they ride along either way.
+                    report.progress = self.live_reply_lookup.progress(&child_connection_id).await;
                     report
                 }
                 StatusClass::NotInMemory => self.status_from_db(parent_conversation_id, id).await,
@@ -5176,6 +5208,68 @@ mod tests {
             report.message.as_deref(),
             Some("Running.\nLatest sub-agent reply: Reading config.rs")
         );
+    }
+
+    /// A running report carries the child's progress, and the finished one the
+    /// tally its session kept at the end — the parent's card draws both.
+    #[tokio::test]
+    async fn status_reports_carry_the_childs_progress() {
+        use crate::acp::delegation::live_reply::mock::MockChildLiveReplyLookup;
+        use crate::acp::delegation::types::StepMark;
+
+        let mock = Arc::new(MockSpawner::new());
+        mock.queue_spawn(Ok("child-conn-1".into())).await;
+        mock.queue_send(Ok(42)).await;
+        let lookup = Arc::new(MockChildLiveReplyLookup::new(None));
+        let broker =
+            DelegationBroker::new(mock.clone() as Arc<dyn ConnectionSpawner>, shallow_lookup())
+                .with_live_reply_lookup(lookup.clone());
+        enable_delegation(&broker).await;
+        let task_id = broker
+            .start_delegation(request(1, "pt-1"))
+            .await
+            .task_id
+            .expect("running task carries an id");
+
+        let midway = DelegationProgress {
+            steps: 2,
+            marks: vec![StepMark::Ok, StepMark::Failed],
+            last_step: Some("pnpm test".into()),
+        };
+        lookup.set_progress(Some(midway.clone()));
+        let running = broker
+            .get_task_status("parent-conn", Some(1), &task_id, StatusWait::Immediate)
+            .await;
+        assert_eq!(running.status, TaskStatus::Running);
+        assert_eq!(running.progress, Some(midway));
+
+        let done = DelegationProgress {
+            steps: 3,
+            marks: vec![StepMark::Ok, StepMark::Failed, StepMark::Ok],
+            last_step: Some("pnpm test".into()),
+        };
+        lookup.set_progress(Some(done.clone()));
+        broker
+            .complete_call(
+                &task_id,
+                DelegationOutcome::Ok(DelegationSuccess {
+                    text: "fixed".into(),
+                    child_conversation_id: 42,
+                    child_agent_type: AgentType::Codex,
+                    turn_count: 1,
+                    duration_ms: 0,
+                    token_usage: None,
+                }),
+            )
+            .await;
+        // The child is gone once it finished: the report keeps what it
+        // recorded at completion.
+        lookup.set_progress(None);
+        let finished = broker
+            .get_task_status("parent-conn", Some(1), &task_id, StatusWait::Immediate)
+            .await;
+        assert_eq!(finished.status, TaskStatus::Completed);
+        assert_eq!(finished.progress, Some(done));
     }
 
     /// With no live reply (default Noop lookup / child produced nothing yet) the
@@ -9555,6 +9649,7 @@ mod tests {
             message: None,
             duration_ms: 0,
             assistant: None,
+            progress: None,
         }
     }
 

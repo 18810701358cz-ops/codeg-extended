@@ -976,6 +976,7 @@ fn project_steps(steps: &[Step]) -> SessionParse {
                     is_error: failed_unresolved.contains(call.id.as_str()),
                     agent_stats: None,
                     images: Vec::new(),
+                    exit_code: None,
                 });
             }
             continue;
@@ -992,6 +993,12 @@ fn project_steps(steps: &[Step]) -> SessionParse {
             is_error: outcome.is_error,
             agent_stats: None,
             images: Vec::new(),
+            // A proto3 int: a run that exited 0 leaves it off the wire, which
+            // decodes to the same 0.
+            exit_code: step
+                .run_command
+                .as_ref()
+                .map(|run| i64::from(run.exit_code)),
         });
     }
 
@@ -1734,14 +1741,21 @@ mod tests {
                 ContentBlock::ToolResult {
                     output_preview,
                     is_error: true,
+                    exit_code,
                     ..
-                } => output_preview.clone(),
+                } => Some((output_preview.clone(), *exit_code)),
                 _ => None,
             })
             .collect();
         assert_eq!(errors.len(), 2, "{errors:?}");
-        assert!(errors[0].contains("boom"));
-        assert!(errors[1].contains("quota exhausted"));
+        assert!(errors[0].0.as_deref().unwrap_or_default().contains("boom"));
+        assert_eq!(errors[0].1, Some(2), "the run's exit code is kept");
+        assert!(errors[1]
+            .0
+            .as_deref()
+            .unwrap_or_default()
+            .contains("quota exhausted"));
+        assert_eq!(errors[1].1, None, "an error step ran no process");
     }
 
     // The decoder declares a strict SUBSET of the real `Step`. Every field it

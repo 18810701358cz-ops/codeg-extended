@@ -3,3 +3,7 @@
 # and must equal what src/lib/json-render/skill.ts generates, which is LF.
 # Windows checkouts convert text to CRLF by default (core.autocrlf), so pin it.
 src-tauri/genui/** text eol=lf
+
+# [codeg-extended] Agents on Windows keep committing CRLF, which turns every line of an
+# upstream file into a diff (lib.rs showed +2307 lines for 33 real ones). The repo is LF.
+* text=auto eol=lf

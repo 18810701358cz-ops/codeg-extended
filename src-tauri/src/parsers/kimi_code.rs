@@ -545,6 +545,7 @@ fn parse_wire(path: &Path, agents_dir: Option<&Path>) -> WireParse {
                                 // capture (cf. main's tool-result image support)
                                 // is a follow-up that needs a real image sample.
                                 images: Vec::new(),
+                                exit_code: None,
                             },
                             ts,
                         ));

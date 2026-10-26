@@ -1,0 +1,30 @@
+{
+  "id": "sample-plugin",
+  "name": "Sample Plugin Template",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "engines": {
+    "pluginHost": ">=1.0.0 <2.0.0"
+  },
+  "description": "A starter template for Codeg Extended v2 plugins",
+  "author": "codeg-community",
+  "category": "utility",
+  "permissions": [
+    "ui"
+  ],
+  "main": "dist/index.js",
+  "styles": [
+    "styles/style.css"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "greeting": {
+        "type": "string",
+        "title": "Greeting Message",
+        "description": "Message to display when triggered",
+        "default": "Hello from Plugin!"
+      }
+    }
+  }
+}

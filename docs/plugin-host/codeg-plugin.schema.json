@@ -1,0 +1,298 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CodegPluginManifest",
+  "description": "Schema for Codeg Extended plugin manifest (codeg-plugin.json)",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version",
+    "apiVersion",
+    "engines"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique plugin identifier (2-64 chars, lowercase alphanumeric and hyphens).",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable display name of the plugin.",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version of the plugin (SemVer 2.0).",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "apiVersion": {
+      "type": "integer",
+      "description": "Plugin host API specification version. Must be 1 for v2 architecture.",
+      "enum": [
+        1
+      ]
+    },
+    "engines": {
+      "type": "object",
+      "description": "Engine requirements for running this plugin.",
+      "required": [
+        "pluginHost"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "pluginHost": {
+          "type": "string",
+          "description": "SemVer range requirement for the plugin host version (e.g. '>=1.0.0 <2.0.0')."
+        }
+      }
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of the plugin's capabilities and purpose."
+    },
+    "author": {
+      "type": "string",
+      "description": "Author or maintainer name or organization."
+    },
+    "category": {
+      "type": "string",
+      "description": "Functional category of the plugin.",
+      "enum": [
+        "appearance",
+        "model-provider",
+        "tools",
+        "workflow",
+        "utility"
+      ]
+    },
+    "icon": {
+      "type": "string",
+      "description": "Icon name or relative path to an icon image file."
+    },
+    "permissions": {
+      "type": "array",
+      "description": "List of permissions declared by the plugin.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "ui",
+          "process",
+          "modelProviders",
+          "mcp",
+          "quickMessages",
+          "network"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "main": {
+      "type": "string",
+      "description": "Relative path to the single-file ESM frontend entrypoint (e.g. 'dist/index.js')."
+    },
+    "styles": {
+      "type": "array",
+      "description": "List of relative paths to CSS stylesheets injected when the plugin is enabled.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "configSchema": {
+      "type": "object",
+      "description": "JSON Schema subset describing the plugin configuration form.",
+      "required": [
+        "type",
+        "properties"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "object"
+          ]
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "string",
+                  "number",
+                  "integer",
+                  "boolean"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "default": {},
+              "enum": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "secret"
+                ]
+              }
+            }
+          }
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "description": "Optional backend daemon or service configuration.",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Executable or command template (e.g. '${python}')."
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "setup": {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "port": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "healthcheck": {
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 100
+            }
+          }
+        },
+        "restart": {
+          "type": "string",
+          "enum": [
+            "no",
+            "always",
+            "on-failure"
+          ]
+        }
+      }
+    },
+    "contributes": {
+      "type": "object",
+      "description": "Declarative contributions to host features.",
+      "properties": {
+        "modelProviders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "key",
+              "name",
+              "apiUrl"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "apiUrl": {
+                "type": "string"
+              },
+              "apiKey": {
+                "type": "string"
+              },
+              "agentTypes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "mcpServers": {
+          "type": "object"
+        },
+        "quickMessages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "title",
+              "content"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

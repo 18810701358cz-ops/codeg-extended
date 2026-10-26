@@ -14,6 +14,16 @@ describe("PlainTextWithBadges", () => {
     expect(container.querySelector("[data-reference-badge]")).toBeNull()
   })
 
+  it("reads the message in the direction of its own text", () => {
+    // An English message in the Arabic interface keeps its full stop at the
+    // end; an Arabic one in an English interface reads right to left.
+    const plain = render(<PlainTextWithBadges text="Commit it." />)
+    expect(plain.container.firstElementChild).toHaveAttribute("dir", "auto")
+    plain.unmount()
+    const quoted = render(<PlainTextWithBadges text={"> quoted\nreply"} />)
+    expect(quoted.container.firstElementChild).toHaveAttribute("dir", "auto")
+  })
+
   it("renders Markdown syntax verbatim (no formatting elements)", () => {
     const { container } = render(
       <PlainTextWithBadges text={"# Heading\n**bold**\n- item"} />
@@ -161,7 +171,7 @@ describe("PlainTextWithBadges", () => {
       )
       const [quote] = quotes(container)
       expect(quote).toBeDefined()
-      expect(quote.className).toContain("border-l-2")
+      expect(quote.className).toContain("border-s-2")
       expect(quote.textContent).toBe("first\nsecond")
       // No stray marker anywhere in the bubble.
       expect(container.textContent).not.toContain(">")

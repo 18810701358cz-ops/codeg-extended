@@ -1,0 +1,16 @@
+{
+  "id": "dsh-quick-actions",
+  "name": "DSH Quick Actions",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "engines": {
+    "pluginHost": ">=1.0.0 <2.0.0"
+  },
+  "description": "Status bar widget providing quick access and notification trigger",
+  "author": "codeg-community",
+  "category": "utility",
+  "permissions": [
+    "ui"
+  ],
+  "main": "dist/index.js"
+}

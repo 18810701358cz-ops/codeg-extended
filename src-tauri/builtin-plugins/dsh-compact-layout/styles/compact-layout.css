@@ -1,0 +1,44 @@
+/* DSH Compact Layout - High Density Styling for Codeg Extended */
+
+/* 1. Chat column spacing & container width */
+.chat-content-w {
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+}
+
+/* 2. Message bubbles vertical spacing */
+.is-user,
+.is-assistant {
+  gap: 0.25rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+/* 3. User message bubble padding */
+.is-user .ws-msg-secondary {
+  padding: 0.375rem 0.625rem !important;
+}
+
+/* 4. Sidebar conversation card height and margins */
+[data-conv-key] {
+  height: 1.75rem !important;
+  margin-top: 1px !important;
+  margin-bottom: 1px !important;
+}
+
+/* 5. General cards padding */
+[data-slot="card"] {
+  padding: 0.5rem 0.75rem !important;
+}
+
+/* 6. Sidebar surface padding */
+.ws-surface-sidebar {
+  padding-left: 0.25rem !important;
+  padding-right: 0.25rem !important;
+}
+
+/* 7. Status bar slot gaps */
+[data-slot-name="statusbar.left"],
+[data-slot-name="statusbar.right"] {
+  gap: 0.375rem !important;
+}

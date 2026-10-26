@@ -684,7 +684,7 @@ export const CodexVisualizeCard = memo(function CodexVisualizeCard({
             className={cn(
               "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs transition-colors",
               scripts
-                ? "text-amber-600 hover:bg-amber-500/10 dark:text-amber-500"
+                ? "text-tone-warning hover:bg-tone-warning/10"
                 : "text-muted-foreground hover:bg-primary/8"
             )}
           >

@@ -552,6 +552,7 @@ impl OpenCodeParser {
                         is_error: false,
                         agent_stats: None,
                         images: Vec::new(),
+                        exit_code: None,
                     });
                 }
                 // A slash command that targets a sub-agent is recorded as a
@@ -710,6 +711,7 @@ impl OpenCodeParser {
                             is_error: is_error_status(status) || has_error_field,
                             agent_stats,
                             images: Vec::new(),
+                            exit_code: None,
                         });
                     } else {
                         let normalized = normalize_tool_call(raw_tool_name, state);
@@ -734,6 +736,7 @@ impl OpenCodeParser {
                             is_error: normalized.is_error,
                             agent_stats: None,
                             images: Vec::new(),
+                            exit_code: None,
                         });
                     }
                 }
@@ -2290,6 +2293,7 @@ fn v2_assistant_blocks(
                     is_error: normalized.is_error,
                     agent_stats: None,
                     images: Vec::new(),
+                    exit_code: None,
                 });
             }
             _ => {}
@@ -2387,6 +2391,7 @@ fn v2_agent_blocks(
                 child_session_id: None,
             }),
             images: Vec::new(),
+            exit_code: None,
         },
     ]
 }
@@ -3064,6 +3069,7 @@ mod tests {
             is_error: false,
             agent_stats: None,
             images: Vec::new(),
+            exit_code: None,
         };
 
         assert!(super::is_compaction_only(&[compaction(), result()]));

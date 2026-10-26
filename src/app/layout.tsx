@@ -19,9 +19,9 @@ import { OverlayScrollbarsInit } from "@/components/overlay-scrollbars-init"
 import { ClipboardFallbackInit } from "@/components/clipboard-fallback-init"
 import { ServiceWorkerInit } from "@/components/service-worker-init"
 import { WebConnectionGuard } from "@/components/connection/web-connection-guard"
+import { WebVersionNotice } from "@/components/connection/web-version-notice"
 import { WindowResizeGrips } from "@/components/layout/window-resize-grips"
 import { CloseRequestDialog } from "@/components/workspace/close-request-dialog"
-import { PluginRuntimeProvider } from "@/components/plugins/plugin-runtime-provider"
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -107,12 +107,12 @@ export default async function RootLayout({
                 <ClipboardFallbackInit />
                 <ServiceWorkerInit />
                 <WebConnectionGuard />
+                <WebVersionNotice />
                 <WindowResizeGrips />
                 {/* Self-gated to the main window: every route it can show
                     (/workspace, /login, the redirecting /) must be able to
                     answer a close press. */}
                 <CloseRequestDialog />
-                <PluginRuntimeProvider />
                 {children}
               </AppearanceProvider>
             </ThemeProvider>

@@ -40,11 +40,23 @@ function runningGoalRun(items: AdaptedContentPart[]): AdaptedGoalRunPart {
   }
 }
 
-const renderTextPart = (part: AdaptedContentPart, key: string) =>
-  part.type === "text" ? <div key={key}>{part.text}</div> : null
+/** The run with its items drawn as plain text — what the timeline's nested
+ *  timeline does with real steps. */
+function Run({ part }: { part: AdaptedGoalRunPart }) {
+  return (
+    <GoalRunPart
+      part={part}
+      renderBody={() =>
+        part.items.map((item, index) =>
+          item.type === "text" ? <div key={index}>{item.text}</div> : null
+        )
+      }
+    />
+  )
+}
 
 describe("GoalToolCallPart", () => {
-  it("renders Codex goal completion as a compact goal card", () => {
+  it("renders Codex goal completion as a compact goal row", () => {
     renderWithIntl(
       <GoalToolCallPart
         part={{
@@ -83,7 +95,7 @@ describe("GoalToolCallPart", () => {
 
   it("wraps in-progress goal process content and shimmers the running title", () => {
     renderWithIntl(
-      <GoalRunPart
+      <Run
         part={{
           type: "goal-run",
           start: {
@@ -97,17 +109,12 @@ describe("GoalToolCallPart", () => {
           items: [{ type: "text", text: "Reading README.md" }],
           isRunning: true,
         }}
-        renderPart={(part, key) =>
-          part.type === "text" ? <div key={key}>{part.text}</div> : null
-        }
       />
     )
 
-    const button = screen.getByRole("button")
     const runningTitle = screen.getByText("Goal: Analyze README file")
-    expect(runningTitle).toHaveClass("text-transparent")
+    expect(runningTitle).toHaveClass("activity-shimmer")
     expect(screen.queryByText("Goal active")).not.toBeInTheDocument()
-    expect(button.querySelectorAll("svg")).toHaveLength(1)
     // A live goal with process text starts open so the work is visible.
     expect(screen.getByText("Reading README.md")).toBeInTheDocument()
 
@@ -120,17 +127,14 @@ describe("GoalToolCallPart", () => {
     // The production mount order: `create_goal` is adapted on its own, so the
     // card first renders with an EMPTY body and the process content streams in
     // afterwards under the same key. A mount-time seed would miss this.
-    const { rerender } = renderWithIntl(
-      <GoalRunPart part={runningGoalRun([])} renderPart={renderTextPart} />
-    )
+    const { rerender } = renderWithIntl(<Run part={runningGoalRun([])} />)
 
     expect(screen.queryByText("Reading README.md")).not.toBeInTheDocument()
 
     rerender(
       <NextIntlClientProvider locale="en" messages={enMessages}>
-        <GoalRunPart
+        <Run
           part={runningGoalRun([{ type: "text", text: "Reading README.md" }])}
-          renderPart={renderTextPart}
         />
       </NextIntlClientProvider>
     )
@@ -140,9 +144,8 @@ describe("GoalToolCallPart", () => {
 
   it("keeps a manual collapse across later body updates", () => {
     const { rerender } = renderWithIntl(
-      <GoalRunPart
+      <Run
         part={runningGoalRun([{ type: "text", text: "Reading README.md" }])}
-        renderPart={renderTextPart}
       />
     )
 
@@ -151,12 +154,11 @@ describe("GoalToolCallPart", () => {
 
     rerender(
       <NextIntlClientProvider locale="en" messages={enMessages}>
-        <GoalRunPart
+        <Run
           part={runningGoalRun([
             { type: "text", text: "Reading README.md" },
             { type: "text", text: "Reading CLAUDE.md" },
           ])}
-          renderPart={renderTextPart}
         />
       </NextIntlClientProvider>
     )
@@ -166,13 +168,12 @@ describe("GoalToolCallPart", () => {
     expect(screen.queryByText("Reading CLAUDE.md")).not.toBeInTheDocument()
   })
 
-  it("collapses the capsule again once the run settles", () => {
+  it("collapses the row again once the run settles", () => {
     // Settling lifts the answer out of the run (see `groupGoalRuns`), so the
     // capsule folds back to a status chip without hiding anything.
     const { rerender } = renderWithIntl(
-      <GoalRunPart
+      <Run
         part={runningGoalRun([{ type: "text", text: "Reading README.md" }])}
-        renderPart={renderTextPart}
       />
     )
 
@@ -180,12 +181,11 @@ describe("GoalToolCallPart", () => {
 
     rerender(
       <NextIntlClientProvider locale="en" messages={enMessages}>
-        <GoalRunPart
+        <Run
           part={{
             ...runningGoalRun([{ type: "text", text: "Reading README.md" }]),
             isRunning: false,
           }}
-          renderPart={renderTextPart}
         />
       </NextIntlClientProvider>
     )
@@ -209,7 +209,6 @@ describe("GoalToolCallPart", () => {
           items: [],
           isRunning: true,
         }}
-        renderPart={() => null}
       />
     )
 
@@ -233,7 +232,6 @@ describe("GoalToolCallPart", () => {
           items: [],
           isRunning: true,
         }}
-        renderPart={() => null}
       />,
       zhMessages,
       "zh-CN"
@@ -248,7 +246,7 @@ describe("GoalRunPart error", () => {
   // card shows it as preformatted text, as the transcript records it.
   it("shows a fenced error without its fence", () => {
     renderWithIntl(
-      <GoalRunPart
+      <Run
         part={{
           type: "goal-run",
           start: {
@@ -263,7 +261,6 @@ describe("GoalRunPart error", () => {
           items: [],
           isRunning: false,
         }}
-        renderPart={renderTextPart}
       />
     )
     expect(screen.getByText("Goal already active.").textContent).toBe(
