@@ -12,12 +12,14 @@ import {
 import { registerSlotContribution } from "./slots"
 import { usePluginHostStore } from "./store"
 import { injectPluginCSS } from "./styles"
+import { getTokenMeterSnapshot, subscribeTokenMeter } from "./token-meter"
 import type {
   BackendFetchInit,
   BackendFetchResult,
   BackendStatus,
   PluginContext,
   PluginInfo,
+  PluginTokens,
   SlotContribution,
   SlotName,
 } from "./types"
@@ -172,6 +174,13 @@ export function createPluginContext(plugin: PluginInfo): ManagedPluginContext {
     },
   }
 
+  const tokens: PluginTokens = {
+    get: getTokenMeterSnapshot,
+    onChange(fn) {
+      onDispose(subscribeTokenMeter(fn))
+    },
+  }
+
   const getEnv = () => {
     const isDesktop = getTransport().isDesktop()
     let locale = "en"
@@ -202,6 +211,7 @@ export function createPluginContext(plugin: PluginInfo): ManagedPluginContext {
     config,
     backend,
     assets,
+    tokens,
     get env() {
       return getEnv()
     },
